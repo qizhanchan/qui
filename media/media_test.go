@@ -16,7 +16,7 @@ func TestBackendRegistered(t *testing.T) {
 	}
 	caps := activeBackend().Capabilities()
 	if len(caps.AudioCodecs) == 0 {
-		t.Error("backend reports no audio codecs — Phase 1 needs at least one")
+		t.Error("backend reports no audio codecs")
 	}
 }
 

@@ -19,8 +19,7 @@ import (
 // tray, dialogs, rich clipboard, native fullscreen, gestures) is already
 // implemented by going around it. Making it a replaceable backend rather
 // than a dependency threaded through ten files is what lets that
-// situation be fixed one platform at a time. See
-// docs/backend-abstraction-plan.md.
+// situation be fixed one platform at a time.
 //
 // # Designing against three platforms while implementing one
 //

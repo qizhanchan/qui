@@ -13,7 +13,7 @@ import (
 // equally, so a common idiom is one fixed "ID" column + variable-
 // width "Name" column.
 //
-// This MVP does not yet include:
+// Current limitations:
 //   - Column resize drag (handle on column boundary)
 //   - Sort on header click
 //   - Multi-select

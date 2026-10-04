@@ -1296,11 +1296,10 @@ func (c imageCanvas) DrawShape(shape Shape, paint Paint) {
 //     even-odd rasterizer behavior so pixel-perfect tests stay stable.
 //
 // Inspired by Skia's SkAnalyticEdge walker and the classic
-// "supersampled scanline" approach in Foley & van Dam. The Skia
-// reference at /opt/cpp_work/skia uses SkRunHead for run-length
-// encoded coverage on horizontal spans; ours is simpler but the
-// shape-level visual difference at 4x subsampling is small enough
-// to defer that optimization.
+// "supersampled scanline" approach in Foley & van Dam. Skia uses
+// SkRunHead for run-length encoded coverage on horizontal spans; ours
+// is simpler but the shape-level visual difference at 4x subsampling is
+// small enough to defer that optimization.
 // fillPolygonAA is a legacy alias — new callers should use fillPolygon
 // which accepts a Shader / invMatrix pair. Kept because a few internal
 // callers still pass a solid color.

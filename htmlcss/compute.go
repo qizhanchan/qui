@@ -767,7 +767,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		}
 	}
 	if v, ok := m["background"]; ok {
-		// MVP: treat `background` as a color if it parses as one. Try the whole
+		// Simplification: treat `background` as a color if it parses as one. Try the whole
 		// value first (so functional colors like rgb()/hsl() with internal
 		// spaces/commas survive), then fall back to the first field.
 		if c, ok := parseColor(strings.TrimSpace(v)); ok {

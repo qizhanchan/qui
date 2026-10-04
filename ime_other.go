@@ -2,7 +2,7 @@
 
 package qui
 
-// Non-macOS (or no-cgo) fallback for Phase 5.2 IME integration.
+// Non-macOS (or no-cgo) IME integration.
 // No native backend is installed — Chinese / Japanese / Korean input
 // would require platform-specific work (X11 XIM / ibus / fcitx on
 // Linux, Win32 IMM on Windows). The Go-side IMEClient machinery

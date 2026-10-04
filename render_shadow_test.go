@@ -56,8 +56,8 @@ func TestDrawShadowZeroOpacityIsNoOp(t *testing.T) {
 // rounds DOWN to an integer but the radius rounds UP (e.g. W=3.4 →
 // right-left=3 while radius=1.7 → rInt=2), the top/bottom strip's
 // `right - rInt < left + rInt` and fillBand used to slice with x0 > x1.
-// Triggered in q-excel when a freshly-laid-out icon button briefly
-// presents a sub-4-px shadow during the first mouse-move tick.
+// Triggered by a freshly-laid-out icon button that briefly presents a
+// sub-4-px shadow during the first mouse-move tick.
 func TestDrawShadowTinyPillDoesNotPanic(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 50, 50))
 	canvas := newImageCanvasForTest(img)

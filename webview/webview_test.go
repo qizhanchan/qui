@@ -77,7 +77,7 @@ type fakePage struct {
 	pendingDirty  qui.Rect
 	frameReleases int
 
-	// Phase C scripted EvaluateJS state.
+	// Scripted EvaluateJS state.
 	evalScripts []string
 	evalValue   JSValue
 	evalErr     error

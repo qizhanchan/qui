@@ -673,7 +673,7 @@ func collapseFor(s string, cs *ComputedStyle) string {
 // collapseInline collapses whitespace runs to a single space but keeps a
 // leading/trailing space when present — this preserves the word gaps
 // between adjacent inline pieces ("text <a>link</a> more") that a full
-// trim would swallow. CSS inline whitespace collapsing, MVP-style.
+// trim would swallow. CSS inline whitespace collapsing.
 func collapseInline(s string) string {
 	if s == "" {
 		return ""

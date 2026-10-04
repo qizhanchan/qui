@@ -19,8 +19,8 @@ package qui
 //     for effects that don't belong to any single widget (a
 //     shadertoy background, a post-process overlay).
 //
-// GLViewport (Phase 4) will combine (1) + (2): render a scene into
-// an FBO, then DrawTexture that FBO onto its widget bounds.
+// GLViewport combines (1) + (2): render a scene into an FBO, then
+// DrawTexture that FBO onto its widget bounds.
 
 // GLState carries framebuffer/window sizing info to raw GL callbacks.
 // It deliberately doesn't expose the *Window or *GLRenderer so

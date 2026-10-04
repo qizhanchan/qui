@@ -18,8 +18,7 @@
 //     not from fmt.Sprintf.
 //   - RTL text: switching to Arabic renders right-to-left through the same
 //     shaping pipeline as everything else. NOTE the layout does not mirror
-//     yet — that is phase 2 of docs/i18n-design.md; text direction works,
-//     box order does not.
+//     yet; text direction works, box order does not.
 //   - Locale-tagged shaping: the shaper is handed the locale's language
 //     tag, which is the precondition for OpenType `locl` glyph
 //     substitution (the mechanism that renders 骨/直/戸 differently in
@@ -28,7 +27,7 @@
 //     `locl` feature at all, so the sample line below is pixel-identical
 //     across the three. Register a font that does — a full Source Han
 //     Sans / Noto Sans CJK build — and the same code renders the right
-//     regional forms. See the note in docs/i18n-design.md.
+//     regional forms.
 //   - Locale-independent agent selectors: every control carries a message
 //     key, so `[key=demo.items]` matches in all seven languages while
 //     `[name="3 items in the basket"]` only matches in English.

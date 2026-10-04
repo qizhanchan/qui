@@ -203,8 +203,8 @@ func TestRasterizePathWithArc(t *testing.T) {
 
 func TestParseSkipsUnknownElements(t *testing.T) {
 	// Unknown <text> + <defs> should be silently consumed without
-	// breaking later siblings — q-excel uses real Font Awesome SVGs
-	// which sometimes embed <!-- license --> comments and <defs>.
+	// breaking later siblings — real-world SVGs sometimes embed
+	// <!-- license --> comments and <defs>.
 	src := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
 		<defs><linearGradient id="g"/></defs>
 		<rect x="0" y="0" width="10" height="10" fill="black"/>

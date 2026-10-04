@@ -1,0 +1,135 @@
+# qui — Features
+
+**English** · [中文](features.zh.md)
+
+A catalog of what ships today. For how it is built, see [architecture.md](architecture.md). For the authoritative HTML/CSS matrix, see [../htmlcss/COVERAGE.md](../htmlcss/COVERAGE.md).
+
+## Engine (root `qui`)
+
+**Window and lifecycle**
+
+- `App` owns the platform backend; `App.NewWindow` / `App.NewOverlayPanel`; `App.Run` with SIGINT/SIGTERM close handling.
+- Multiple windows per app; detached windows may be constructed off-thread.
+- Per-window renderer selection, device-pixel-ratio handling and content-viewport zoom.
+- Window modes: normal, fullscreen, overlay panel (non-activating, transparent, always-on-top — cocoa backend).
+- Client-side title bars with `TitlebarOverlay`, `TitlebarInsets` and window-manager drag.
+- Monitor enumeration and geometry persistence helpers.
+
+**Event dispatch**
+
+- DOM-style three-phase dispatch (capture → target → bubble) with `StopPropagation`.
+- Mouse capture, synthesized hover enter/leave, focus on click + Tab cycling, 4px-dead-zone drag/drop.
+- Per-widget coordinate spaces with `WindowPointToLocal` / `LocalPointToWindow` / `InteractionBoundsOf`.
+- Modifier abstraction (`IsCommandMod`) and named-key + text/char events.
+- Gestures: pinch, rotation, two-finger double-tap; precise scroll phase and modifiers.
+- Modal overlay focus trapping and top-down hit testing.
+
+**Layout**
+
+- `FlexLayout` (CSS-aligned flexbox), `GridLayout`, `FlowLayout`, `AbsoluteLayout`.
+- CSS margin-box semantics in flex/container measure.
+- Controlled per-child metadata: `SetFlexItem` / `SetGridItem` / `SetAbsolutePosition`.
+- Shrink-to-fit measurement; grid row spans; debug overflow overlay (`QUI_DEBUG_LAYOUT=1`).
+
+**Rendering**
+
+- `Canvas` frontend: Save/Restore state stack (clip + 2×3 affine matrix), `Path` with quad/cubic Béziers, anti-aliased winding/even-odd fill, stroke cap/join/miter.
+- `SaveLayer` with blend modes and `Paint.Alpha`; `ClipPath`; linear/radial gradient shaders; `ColorFilter` / `ImageFilter` (drop shadow, blur); `DrawShadow`.
+- `RasterBackend` seam: pure-Go CPU reference (`backend_cpu.go`) and optional GPU backend (`QUI_GPU_RASTER=1`, `backend_gpu.go`).
+- Dirty-region painting, `Invalidate` / `InvalidateRect` / `InvalidateLayout` with bounds-change promotion.
+- Offscreen rendering and readback; PDF canvas backend; SVG canvas helper.
+- GL escape hatch: `GPUCanvas.QueueGLDraw`, `GLState`, `ActiveGLRenderer().DrawTexture`, `PhysicalScissor`.
+
+**Text**
+
+- `go-text/typesetting` glyph-run shaping: OpenType GSUB/GPOS, Unicode bidi, UAX #14 line breaking, UAX #29 grapheme boundaries.
+- Shared shaped clusters across measurement, drawing, PDF, wrapping, hit testing, selection and editor carets.
+- Inline flow (`inline.go`, `widgets.InlineBox`): text and atomic inline boxes on shared lines with baseline alignment.
+- Rich styled runs (`text_rich.go`), text selection across widgets, CJK line breaking and emoji.
+
+**Theme**
+
+- Global design-token `Theme`: surface ladder, text roles, accent, borders, semantic colors, elevation, state opacities, spacing/radius/font/transition scales.
+- `SetTheme` invalidation; live `CurrentTheme()` reads. One light scheme; dark UI is CSS.
+
+**Internationalization seam**
+
+- `Locale`, `Direction`, `Translate`, `LocaleGeneration`, `SetDefaultLocale`, `SubscribeLocale`.
+- Locale-aware text-measurement cache keys; `Translator` interface plugging in the `i18n` package.
+
+**Threading and jobs**
+
+- `PostJob` / `TryPostJob` / `PostPriorityJob` main-thread queue; `IdleState`.
+- `QUI_DEBUG_THREAD=1` fail-fast UI-thread ownership checks.
+- `Tickable` / `Animator` / `Focusable` / `IMEClient` contracts.
+
+**AI-native introspection**
+
+- Accessibility tree with roles, names, values, bounds and message keys.
+- CSS-attribute selector grammar (`#id`, `[role=]`, `[name*=]`, `[key=]`, `:nth`, `:visible`, `:focused`, `:layer(modal)`).
+- Selector-targeted actions (click, type, drag, scroll, …) with modal blocking and scroll-into-view.
+- Scaled / region / annotated PNG snapshots through the main-thread job queue.
+- `WaitIdle` / `WaitOverlay`; event recording; in-window agent overlay on `Cmd/Ctrl+Shift+A`.
+
+## `widgets`
+
+- Structure: `Box`, `Container` layouts, `Rule`, `FieldSet`, `Anchor`, `ScrollView`, `ListView` (virtualized), `TableView` (fixed + virtual rows), `TabView`.
+- Text: `Label`, `RichText`, `InlineBox`; text selection and copy.
+- Input: `Input`, `TextArea` (both with clipboard, IME and undo/redo), `CheckBox`, `RadioButton` / `RadioGroup`, `Switch`, `Slider`, `Select`.
+- Feedback: `Progress`, `Tooltip`.
+- Overlays: `Popup`, `Dialog`, `MenuBar`, `ContextMenu`, `MenuItem` panels.
+- Media: `Image` (raster + vector).
+- i18n: `TextKey` fields resolved in Measure/Draw, with `AccessibleNameKey()`.
+- Text-widget undo history (`undo.go`) and a reusable selection model.
+
+## `htmlcss`
+
+**HTML tags:** structural/semantic containers (`div`, `section`, `article`, `header`, `footer`, `nav`, `main`, `aside`, `p`, headings, lists, `table`/`tr`/`td`/`th`/`caption`/`colgroup`, `pre`, `code`, `blockquote`, `hr`, `br`, `span`, `b`, `em`, `strong`, `i`, `u`, `a`, `img`, `svg`, `canvas`, `input` variants, `textarea`, `select`/`option`, `button`, `label`, `fieldset`, `datalist`, `template`). Unsupported tags are parsed and skipped.
+
+**CSS:** the full selector set including interactive states (`:hover`, `:focus`, `:checked`, `:disabled`, `:enabled`, `:required`, `:optional`, `:read-only`, `:read-write`), `var()` + `:root`, shorthands, the box model with per-side borders, background color/gradient, box-shadow, opacity, transform, `position:relative`, overflow (`auto`/`scroll` hosted by a `ScrollView`), `display:flex`/`grid`, list markers, text-decoration/transform/overflow, white-space, `overflow-wrap`/`word-break`.
+
+**Events and interaction:** click/double-click, hover, focus, keyboard, pointer events (`pointer-events:none`), wheel, drag-reorder (`Draggable`/`DragHandle`/`OnDrop`/`OnDragOver`), `<a>` link activation, `app-region: drag|no-drag`.
+
+**Two entry points, one assembly:** the live `El` + `StyleEngine` (retained, subtree-scoped restyle) and the one-shot `Render` / `RenderDoc` that compiles a parsed DOM into a static but still mutable `El` tree.
+
+**Known gaps:** CSS transitions/animations, `display:none` toggling at runtime in static `Render`, native date/time pickers, real validation pseudo-classes, `::placeholder`.
+
+## `reactive` and `reactive/html`
+
+- Reconciler for structure: `UseState`, `UseReducer`, `UseRef`, `UseMemo`, `UseCallback`, `UseEffect(Once)`, `UseSignal`, `UseContext`; keyed lists; error boundaries; portals.
+- Signal engine for high-frequency updates: `Signal[T]`, `Map`/`Computed`, `BindWidget`, `Show`/`For` bound nodes — all skipping the render pass.
+- `reactive/html`: fluent builders for every common tag, chainable props under HTML names, `h.If`/`h.Show`/`h.For`/`h.Each`/`h.Frag`, overlays (`h.Portal`/`h.ModalPortal`/`h.ContextMenu`), `h.Mount`.
+- HTML components: `h.MustParse` / `MustParseSet` compile markup fragments; `Template.Bind(Scope)` fills them; signal-valued holes bind instead of interpolating; errors carry the template line number.
+
+## `i18n` + `cmd/qui-i18n`
+
+- Message catalogs (JSON) with CLDR plural categories via `golang.org/x/text`.
+- Locale-sensitive formatting: number, percentage, currency, date, relative time, list joining, collation.
+- `i18n.Install` (built-in `qui.*` strings), `i18n.Load` (app catalogs), `i18n.In(loc)` printer.
+- CLI: `extract` (scan source, update catalog without overwriting translations), `lint` (missing/unused keys, placeholder drift, plural shape), `pseudo` (accented +40% pseudo-locale).
+
+## `agent` + `cmd/qui-agent`
+
+- HTTP + SSE server over the engine's introspection primitives; Unix socket by default, TCP + bearer token opt-in.
+- Endpoints: `GET /tree`, `/screenshot`, `/diagnostics`, `/health`, `/wait`, `/console`, `/events` (SSE), `POST /act`, plus `/llm.txt` and the DOM/reactive surfaces (`/dom`, `/dom/styles`, `/dom/act`, `/reactive`).
+- `agent.BindEnv(window)` env-gated binding; `cmd/qui-agent` CLI (`tree`, `click`, `rightclick`, `type`, `wait`, `pinch`, `shot`, `raw`).
+
+## Auxiliary packages
+
+| Package | Highlights |
+|---|---|
+| `anim` | `Tween[T]`, `Spring`, `Timeline`; easing catalog; satisfies `qui.Animator` |
+| `graphs` | Line / Scatter / Bar / Area / Pie series, value + category axes, legend, tooltip, pan/zoom, theme palette |
+| `svg` | SVG 1.1 subset: parse/build/rasterize (with tint)/serialize; `Document` satisfies `qui.VectorSource` |
+| `scene3d` | Scene graph (nodes, mesh, material, lights, camera), `Viewport` FBO widget, orbit controls, picking, `Vec3Field` |
+| `media` | `AudioPlayer` (service) and `VideoView` (widget) without ffmpeg; AVFoundation backend on macOS |
+| `webview` | CEF-based embedded browser widget, gated behind `webview_cef`; CPU frame path working, GL/IOSurface path future; JSON-only JS↔Go bridge |
+| `physics` / `p2` / `p3` | Dimension-independent vocabulary plus mirrored 2D/3D engines: swept AABB, spatial hash, contact flags, one-way platforms, sensors |
+| `icons` | ~135 Material Symbols outlined glyphs as `*svg.Document` |
+| `fonts/jetbrainsmono` | Embedded JetBrains Mono; `Use()` swaps the global default family |
+
+## Tooling
+
+- `cmd/qui-agent` — agent CLI client.
+- `cmd/qui-i18n` — catalog extraction, linting and pseudo-locale generation.
+- `examples/` — runnable demos, including the canonical `reactive-html`, the htmlcss showcase (`html-css`), i18n, chrome-tabs, overlay-panel, graphs, svg, media, scene3d and more.

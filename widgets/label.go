@@ -15,10 +15,9 @@ import (
 // wider than the original measurement; that footgun is now gone.
 // Access via Text() / SetText / Spans() / SetSpans.
 //
-// Phase 2:
-//   - Paragraph style support (wrap/alignment/line-height).
-//   - Selection and copy: double-click word, triple-click logical line,
-//     drag to expand, Cmd/Ctrl+C to copy the selected text.
+// Supports paragraph style (wrap/alignment/line-height) and selection
+// and copy: double-click word, triple-click logical line, drag to
+// expand, Cmd/Ctrl+C to copy the selected text.
 type Label struct {
 	BaseWidget
 	Paragraph  ParagraphStyle

@@ -188,8 +188,8 @@ func (c *pdfCanvas) DrawText(text string, rect Rect, color Color, font Font) {
 }
 
 // DrawShape handles the common rect shapes; exotic shapes fall through to
-// the convenience-method paths elsewhere. q-excel's cell renderer uses the
-// FillRect/DrawText/StrokeRect helpers, so this stays minimal in v1.
+// the convenience-method paths elsewhere. Cell-style renderers use the
+// FillRect/DrawText/StrokeRect helpers, so this stays minimal.
 func (c *pdfCanvas) DrawShape(shape Shape, paint Paint) {
 	r, ok := shape.(ShapeRect)
 	if !ok {

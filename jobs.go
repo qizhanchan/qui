@@ -29,7 +29,7 @@ import (
 //     one — keeps Step time bounded.
 //
 // PendingJobs is the count of currently-queued jobs, used by
-// IdleState (Phase 3) to detect "no work outstanding".
+// IdleState to detect "no work outstanding".
 
 const defaultJobQueueLimit = 1024
 

@@ -46,6 +46,6 @@ package svg
 
 // Icon is a backwards-compat alias for Document. The original API
 // returned *Icon from Parse*; existing callers (examples/svg,
-// q-excel toolbar, anything keyed *Icon in a map) keep compiling
+// toolbars, anything keyed *Icon in a map) keep compiling
 // unchanged while gaining the full new Document API.
 type Icon = Document

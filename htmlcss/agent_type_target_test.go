@@ -8,7 +8,7 @@ import (
 )
 
 // A custom leaf widget hosted inside an El tree — the shape apps use for
-// canvas-like surfaces (q-excel's sheet grid, editors, chart panes): it holds
+// canvas-like surfaces (sheet grids, editors, chart panes): it holds
 // focus itself and consumes CharEvent to start its own inline editing.
 type charSink struct {
 	qui.BaseWidget

@@ -157,7 +157,7 @@ func (r *RecordingCanvas) projectRect(rect Rect) (Rect, bool) {
 	return eff, true
 }
 
-// DrawShape — Phase C. Dispatches each shape into the existing
+// DrawShape dispatches each shape into the existing
 // per-primitive record (Fills / Rounds / Strokes / Lines / Polylines)
 // so tests written against the convenience API see the same recorded
 // effect when widget code switches to DrawShape directly.

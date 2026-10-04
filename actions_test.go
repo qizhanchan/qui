@@ -8,7 +8,7 @@ import (
 	"github.com/qizhanchan/qui/widgets"
 )
 
-// Phase 3 tests cover the actuation API. We use NewTestWindow so the
+// These tests cover the actuation API. We use NewTestWindow so the
 // PostJob path runs inline (no GLFW). The test buttons / fields
 // drive the same dispatch pipeline production input uses.
 

@@ -7,7 +7,7 @@ import (
 	"github.com/qizhanchan/qui"
 )
 
-// Table layout (MVP). A <table> flattens into ONE qui.GridLayout: every
+// Table layout. A <table> flattens into ONE qui.GridLayout: every
 // <td>/<th> becomes a grid item placed at its (row, col) with col/row spans,
 // so columns ALIGN across rows (the defining table property) and reuse the
 // grid track solver for content-based auto column widths. Structural row /
@@ -21,13 +21,13 @@ import (
 // correctly pushes later cells past the occupied columns.
 //
 // Scope: auto column widths (or equal 1fr when the table has a width);
-// colspan; rowspan placement; per-cell padding/border (separate model); th
+// colspan and rowspan placement; <caption> as a full-width spanning grid
+// row (caption-side top/bottom); <colgroup>/<col> widths (from the `width`
+// attr or inline style → GridFixedTrack); table-layout:fixed (equal columns
+// ignoring content); border-collapse single-line merging; rowspan
+// row-height contribution; per-cell padding/border (separate model); th
 // bold+centered; row striping (a cell adopts its <tr>'s background when it
-// has none). Phase 2 adds: <caption> as a full-width spanning grid row
-// (caption-side top/bottom), <colgroup>/<col> widths (from the `width` attr
-// or inline style → GridFixedTrack), and table-layout:fixed (equal columns
-// ignoring content). Deferred: border-collapse single-line merging, rowspan
-// row-height contribution.
+// has none).
 
 // buildTable assembles the table El as a grid of its cells. cs is the
 // table's own computed style (its border/background paint normally).

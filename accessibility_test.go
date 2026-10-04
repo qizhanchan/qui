@@ -8,7 +8,7 @@ import (
 	"github.com/qizhanchan/qui/widgets"
 )
 
-// Phase 1 covers: BaseWidget ID, AccessibilityTree shape, selector
+// These tests cover: BaseWidget ID, AccessibilityTree shape, selector
 // grammar (id / role / name / value / layer / nth / visibility /
 // focused), and modal-layer detection.
 //
@@ -261,7 +261,7 @@ func TestAgentOverlayShortcut_TogglesWithoutOptIn(t *testing.T) {
 	// EnableDebugOverlay call) should self-configure and toggle the
 	// agent overlay on. Bug: the shortcut was wired through the
 	// existing debugOverlayConfigured gate, so it stayed silent in
-	// apps like q-excel.
+	// apps that had never opted in.
 	w := qui.NewTestWindow(qui.Size{W: 200, H: 100})
 	w.SetRoot(qui.NewContainer(qui.FlexLayout{}))
 	w.DispatchTestEvent(qui.NewKeyEvent(qui.EventKeyDown, qui.KeyA, qui.ModSuper|qui.ModShift))

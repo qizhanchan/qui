@@ -351,8 +351,7 @@ func newWindowFromConfig(plat platformApp, cfg platformWindowConfig) (*Window, e
 		w.InvalidateLayout()
 	})
 
-	// Phase 5.2 IME: install platform-specific backend (no-op stub
-	// today; macOS Cgo bridge lands here later).
+	// Install the platform-specific IME backend.
 	w.installIMEBackend()
 
 	return w, nil

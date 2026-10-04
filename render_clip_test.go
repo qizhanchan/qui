@@ -2,10 +2,7 @@ package qui
 
 import "testing"
 
-// Phase-B state-stack tests. Previously these exercised clipCanvas — a
-// wrapper that composed (base, clip Rect) on every method call. Phase B
-// folded that into a Save/RestoreTo/ClipRect stack on the canvas
-// itself, so the tests instead push state on a RecordingCanvas and
+// State-stack clip tests. They push state on a RecordingCanvas and
 // assert on the recorded effective rects.
 
 func newRecorderWithClip(clip Rect) *RecordingCanvas {
@@ -86,7 +83,7 @@ func TestStateClipTextDropped(t *testing.T) {
 }
 
 func TestStateClipRoundedForwardsClipped(t *testing.T) {
-	// Phase B: a partially-out-of-clip rounded rect goes through
+	// A partially-out-of-clip rounded rect goes through
 	// FillRoundedRect on the backend, which applies the state clip
 	// directly. RecordingCanvas's FillRoundedRect records the eff rect.
 	rec := newRecorderWithClip(Rect{X: 10, Y: 10, W: 20, H: 20})

@@ -7,7 +7,7 @@ import (
 )
 
 // EventRecord is one entry in the agent's event log — typically a
-// dispatched event, but Phase 5 also pushes layout/repaint/focus
+// dispatched event, but the recorder also pushes layout/repaint/focus
 // transitions. Each record carries a monotonic SeqID so consumers
 // can de-duplicate across /console + SSE.
 type EventRecord struct {
@@ -120,7 +120,7 @@ func (r *eventRing) Unsubscribe(ch chan EventRecord) {
 	r.mu.Unlock()
 }
 
-// Record exposes Push for the recording layer (Phase 5) to push
+// Record exposes Push for the recording layer to push
 // new entries without reaching into private fields.
 func (s *Server) Record(rec EventRecord) {
 	if s == nil || s.recordedEvents == nil {

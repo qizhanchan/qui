@@ -6,9 +6,9 @@ import (
 )
 
 // Clock is the master beat the video pump uses to decide when a
-// decoded frame is "due". Phase 2 ships only wallClock; Phase 3 will
-// add an audioClock that wraps AudioRenderer.HostTime so video stays
-// locked to the audio output. The pump (in video_view.go) is
+// decoded frame is "due". wallClock paces against wall time; audioClock
+// wraps AudioRenderer.HostTime so video stays locked to the audio
+// output. The pump (in video_view.go) is
 // clock-agnostic — swapping implementations doesn't touch it.
 //
 // HostTime advances monotonically while the clock is playing; it
@@ -29,7 +29,7 @@ type Clock interface {
 var nowFunc = time.Now
 
 // wallClock paces playback against wall time, scaled by rate. It has
-// no notion of A/V sync — that's audioClock's job in Phase 3.
+// no notion of A/V sync — that's audioClock's job.
 //
 // Internally tracked state:
 //
@@ -117,7 +117,7 @@ func (c *wallClock) Rate() float32 {
 	return c.rate
 }
 
-// audioClock is the Phase-3 master clock for sources that have an
+// audioClock is the master clock for sources that have an
 // AudioRenderer. HostTime delegates to the renderer (= audio hardware
 // position) so video frames are paced against the actual audio
 // playback, not wall time. This removes the slow accumulating drift

@@ -1,5 +1,5 @@
 // flowchart is a drawio-style 2D diagram editor that mirrors the core
-// edge-routing surface of AntV G6 (/opt/cpp_work/G6). Files:
+// edge-routing surface of AntV G6. Files:
 //
 //   - main.go          — entry point, diagram model, editor state machine,
 //     event dispatch.
@@ -10,7 +10,7 @@
 //   - inspector.go     — right-side panel exposing per-edge routing,
 //     arrow style, dashed toggle.
 //
-// Exercises the Phase E rendering features (affine matrix in the canvas
+// Exercises the rendering features (affine matrix in the canvas
 // state stack, AA non-zero winding fill, stroke caps/joins, Path) end
 // to end.
 package main

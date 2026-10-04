@@ -1,4 +1,4 @@
-// Phase-1 media smoke test: open an audio file and play it inside a
+// Media smoke test: open an audio file and play it inside a
 // minimal qui window. Validates the cgo plumbing end-to-end —
 // AVAudioPlayer open, transport controls, the AVAudioPlayerDelegate
 // → quiAudioDidEnd → Go OnEnded chain, and the handle registry.

@@ -5,7 +5,7 @@
 // horizontals before the vertical). See the parent physics package doc
 // for the cross-dimension contract this implementation obeys.
 //
-// Units are world units (the q-kart app uses meters); +Y points DOWN to
+// Units are world units (a game may use meters); +Y points DOWN to
 // match p2's screen-space convention, so gravity is +Y and "on ground"
 // means blocked while moving toward +Y.
 package p3

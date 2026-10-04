@@ -12,9 +12,9 @@ import (
 // existing purely so the interface is exercised by something that is not
 // GLFW and not macOS.
 //
-// This is the cheap version of the argument in
-// docs/backend-abstraction-plan.md: an interface with one implementation
-// grows that implementation's assumptions silently. Everything below
+// This is the cheap version of the argument for a platform seam: an
+// interface with one implementation grows that implementation's
+// assumptions silently. Everything below
 // records calls instead of touching an OS, which means a method that could
 // only be satisfied by Cocoa would be obviously unimplementable here.
 type fakePlatformWindow struct {

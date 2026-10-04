@@ -110,9 +110,8 @@ func TestMatrixColorFilterIdentity(t *testing.T) {
 // bounds ∩ clip, so the blur ran over a slice of the shape cut at the
 // dirty rect, and the grown result composited back with no clip at all —
 // painting a blurred rim OUTSIDE the invalidated region, where nothing
-// ever repaints it. In q-ppt that showed up as a dark border hugging
-// whatever was last redrawn over a shadowed shape (a hovered menu row),
-// darkening on every hover.
+// ever repaints it — a dark border hugging whatever was last redrawn
+// over a shadowed shape (a hovered menu row), darkening on every hover.
 func TestFilteredLayerPartialRepaintMatchesFullRepaint(t *testing.T) {
 	const w, h = 80, 80
 	shadow := func() Paint {

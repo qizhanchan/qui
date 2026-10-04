@@ -347,7 +347,7 @@ func (listNoopCanvas) DrawShadow(Rect, float32, ElevationSpec, Color)  {}
 func (listNoopCanvas) DrawVector(VectorSource, Rect, Color)            {}
 func (listNoopCanvas) DrawShape(Shape, Paint)                          {}
 
-// Canvas (Phase B) state stack — no-op stubs. ClipBounds returns a
+// Canvas state stack — no-op stubs. ClipBounds returns a
 // large sentinel so ListView's "intersect outer clip with my body"
 // arithmetic produces a non-empty rect and row drawing actually runs.
 func (listNoopCanvas) Save() int                  { return 0 }

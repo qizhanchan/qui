@@ -1,9 +1,11 @@
 // Package webview embeds an HTML/CSS/JS web engine into the qui widget
-// tree. Web content renders into a GL texture that qui owns and composites
-// onto its framebuffer via the same GPUCanvas.QueueGLDraw + ActiveGLRenderer
-// path that scene3d.Viewport and media.VideoView use — so a WebView
-// participates in the qui dirty-region pipeline, can be obscured by other
-// widgets, and can live inside ScrollView / Tabs with proper clipping.
+// tree. Web content renders into either an OpenGL texture or a Go-owned
+// image, and whichever the backend produces is composited onto qui's
+// framebuffer, so a WebView participates in the qui dirty-region
+// pipeline, can be obscured by other widgets, and can live inside
+// ScrollView / Tabs with proper clipping. The CEF backend currently
+// delivers CPU frames via canvas.DrawImage; GL/IOSurface compositing is
+// not implemented yet.
 //
 // # Architecture
 //
@@ -13,7 +15,7 @@
 // interfaces, so its event handling, focus, and IME plumbing stays
 // platform-agnostic.
 //
-// v1 covers macOS via CEF (Chromium Embedded Framework) multi-process
+// Currently macOS via CEF (Chromium Embedded Framework) multi-process
 // OSR. Other platforms return ErrNotSupported until a platform-specific
 // backend is added.
 //
@@ -40,21 +42,21 @@
 // goroutine) via an internal mpsc channel drained inside Backend.Tick.
 // Synchronous methods (EvaluateJS) block on a per-call reply channel.
 //
-// # Limitations (v1)
+// # Limitations
 //
 //   - macOS only.
 //   - JS↔Go bridge transports JSON strings only (no automatic struct
 //     reflection); JS side uses `window.qui.<name>(JSON.stringify(...))`
 //     and awaits a Promise resolving to the reply string.
 //   - Popups (select dropdowns, datepickers) collapse to non-popup
-//     fallbacks; richer popup support is post-v1.
-//   - No printing, no extensions, no DevTools (yet).
+//     fallbacks; richer popup support is not implemented.
+//   - No printing, no extensions, no DevTools.
 //
 // # Subpackage Import Direction
 //
 // Allowed: this package imports `github.com/qizhanchan/qui`. It does
 // NOT import widgets/, scene3d/, anim/, graphs/, svg/, or media/ — and
 // root never imports webview/. Reuse of rect-shader machinery from
-// media/ is via copy-paste in v1; Phase D may promote a shared rect-
-// texture helper to root for cleanliness.
+// media/ is via copy-paste; a shared rect-texture helper could be
+// promoted to root later for cleanliness.
 package webview

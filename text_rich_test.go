@@ -103,7 +103,7 @@ func TestParagraphStyleToLayoutOptions(t *testing.T) {
 // It used to multiply the FACE's natural line height (≈1.16 em for the
 // common text faces), which every caller then compounded: htmlcss feeds it
 // the computed `line-height` property verbatim, so `line-height: 1.5`
-// rendered as 1.74; q-word feeds it Docs' 1.38 and got 1.60.
+// rendered as 1.74.
 func TestLineHeightIsCSSSemantics(t *testing.T) {
 	font := Font{Size: 20}
 	for _, scale := range []float32{1, 1.38, 1.5, 2} {

@@ -10,11 +10,6 @@ import "testing"
 // + HiDPI scale at the Window boundary cannot safely target an
 // arbitrary backend.
 //
-// Phase B context: the previous version of this test enumerated ~7
-// optional capability interfaces (clippedShadowDrawer / clippedVectorDrawer /
-// pillCircleFiller / …) and reflect-checked every wrapper. Phase B
-// dissolved those into a single Canvas + state stack on the backend,
-// so the wrappers — and the optional interfaces — no longer exist.
 // The remaining backends are imageCanvas, gpuImageCanvas, noopCanvas,
 // and the test-only RecordingCanvas; var-asserts in the package
 // already check them at compile time, this test is the runtime echo.

@@ -72,11 +72,11 @@ import (
 	"github.com/qizhanchan/qui"
 )
 
-// darwinBackend is the CEF-backed Backend for macOS. Phase A wires up
+// darwinBackend is the CEF-backed Backend for macOS. It wires up
 // CefInitialize + Tick + per-page CreateBrowserSync + OnPaint into a
 // Go-side image.RGBA so the WebView widget can blit web pixels through
 // the standard canvas.DrawImage path. IOSurface zero-copy + GL
-// compositing land in Phase D.
+// compositing are not implemented yet.
 type darwinBackend struct {
 	mu          sync.Mutex
 	initStarted bool
@@ -327,7 +327,7 @@ type darwinPage struct {
 	onCursor  func(CursorKind)
 	onConsole func(level int, message string)
 
-	// Phase C: JS↔Go bridge state.
+	// JS↔Go bridge state.
 	//
 	// nextEvalID assigns DevTools-protocol message ids. We start at 1
 	// because the CEF/DevTools convention treats 0 as "auto-assign"
@@ -388,7 +388,7 @@ func (p *darwinPage) LoadHTML(html, baseURL string) error {
 		return ErrClosed
 	}
 	// CEF removed CefFrame::LoadString; the canonical replacement is a
-	// data URL. baseURL is currently unused (Phase A); a future
+	// data URL. baseURL is currently unused; a future
 	// improvement is to spin up a custom CefSchemeHandlerFactory to
 	// honor it for relative resource resolution.
 	_ = baseURL
@@ -451,7 +451,7 @@ func (p *darwinPage) Resize(w, h int, scale float32) error {
 	return nil
 }
 
-// AcquireFrame is part of the GL path; Phase A returns (0, …, false)
+// AcquireFrame is part of the GL path; this backend returns (0, …, false)
 // to signal "no GL texture available" so WebView.Draw falls through to
 // the CPU path via LatestCPUFrame.
 func (p *darwinPage) AcquireFrame() (uint32, int, int, qui.Rect, bool) {
@@ -764,7 +764,7 @@ func (p *darwinPage) CaretRect() qui.Rect {
 }
 
 // -----------------------------------------------------------------------------
-// JS bridge — Phase C.
+// JS bridge.
 //
 // EvaluateJS uses the DevTools Protocol's Runtime.evaluate method via
 // CefBrowserHost::SendDevToolsMessage. Replies come back asynchronously
@@ -1081,8 +1081,8 @@ func quiWebviewOnPaint(handle C.uintptr_t, buf unsafe.Pointer, width, height C.i
 
 	// CEF on macOS hands us BGRA premultiplied; image.RGBA wants RGBA.
 	// Swap byte 0 ↔ byte 2 per pixel. The full-frame copy is the
-	// fastest correct Phase A approach; IOSurface zero-copy (Phase D)
-	// removes the copy entirely.
+	// fastest correct approach here; IOSurface zero-copy removes the
+	// copy entirely.
 	bgraToRGBA(dst, srcBytes)
 }
 
@@ -1475,7 +1475,7 @@ func cefCursorToKind(t int) CursorKind {
 	// Hardcoded against cef_cursor_type_t's iota order in cef_types.h.
 	// If CEF ever reorders this enum (very rare — would break ABI for
 	// every embedder), the build will keep working but cursors will be
-	// wrong; a Phase-D-era integration test would catch it.
+	// wrong; an integration test would catch it.
 	const (
 		ctPointer = iota
 		ctCross

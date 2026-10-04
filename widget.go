@@ -6,8 +6,8 @@ package qui
 // SetParent when a child is added; event dispatch walks up the chain
 // to build capture/bubble paths without any ancillary parent map.
 //
-// InvalidateLayout / IsLayoutDirty / ClearLayoutDirty power Phase 3.4
-// layout caching. A widget whose size-affecting state changes should
+// InvalidateLayout / IsLayoutDirty / ClearLayoutDirty power layout
+// caching. A widget whose size-affecting state changes should
 // call InvalidateLayout so the next Window.Step re-runs Measure and
 // Layout; otherwise idle frames (cursor blink, hover repaint) skip
 // the layout pass entirely. Default implementations on BaseWidget

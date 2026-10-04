@@ -234,7 +234,7 @@ func (b *gpuBackend) CPUImage() *image.RGBA { return nil }
 //     so a flush would blit into the default framebuffer instead.
 //
 // The result is NOT bit-identical to a CPU-raster snapshot of the same UI.
-// Measured on q-excel: ~98.6% of pixels match exactly, and the differences
+// Measured in practice: ~98.6% of pixels match exactly, and the differences
 // sit entirely on stroked rectangle outlines — the primitives this backend
 // rasterizes in a shader rather than forwarding to the CPU fallback. Text,
 // fills and lines match exactly. So golden snapshots cannot be shared

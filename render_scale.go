@@ -1,16 +1,13 @@
 package qui
 
 // Geometry helpers shared by every Canvas backend's state-stack
-// projection. These used to live on a scaleCanvas wrapper that wrapped
-// imageCanvas; Phase B folded scale into the state stack itself, so
-// the wrapper went away but the math is still needed by imageCanvas's
-// public-method entry points and by scaleRoundedShape's callers (e.g.
-// shadow / pill projection).
+// projection. The math is needed by imageCanvas's public-method entry
+// points and by scaleRoundedShape's callers (e.g. shadow / pill
+// projection).
 //
-// Phase E promoted scale to a full 2x3 matrix; these helpers stay for
-// the axis-aligned fast paths that don't need rotation. They are
-// called only when the matrix's off-diagonal terms are known to be 0
-// (the rasterizers gate on Matrix.IsAxisAligned() first).
+// These are the axis-aligned fast paths that don't need rotation. They
+// are called only when the matrix's off-diagonal terms are known to be
+// 0 (the rasterizers gate on Matrix.IsAxisAligned() first).
 
 func scalePoint(p Point, sx, sy float32) Point {
 	return Point{X: p.X * sx, Y: p.Y * sy}

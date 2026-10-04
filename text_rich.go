@@ -277,15 +277,12 @@ func layoutStyledRunes(stream []styledRune, baseFont Font, opts TextLayoutOption
 // scale is a CSS `line-height`: a multiple of the FONT SIZE, not of the
 // face's own line height. Every caller means it that way — htmlcss hands
 // over the computed `line-height` property (a length is stored as px ÷
-// font-size), the widgets copy that through, and q-word derives it from
-// Docs, whose "1.15 spacing" is `line-height:1.38` in its own clipboard CSS
-// against `font-size:10pt`.
+// font-size) and the widgets copy that through.
 //
 // Multiplying the FACE's natural height instead — which is what this did —
 // inflated every line box by that height, ≈1.16 em for Arial and Times. It
 // was invisible in isolation (text just looked airy) and obvious in
-// aggregate: q-word fitted 38 lines on a page where Docs fits 46, and every
-// htmlcss page rendered `line-height: 1.5` as 1.74.
+// aggregate: every htmlcss page rendered `line-height: 1.5` as 1.74.
 //
 // scale <= 0 is CSS `line-height: normal` — the face's own height.
 func scaledLineHeight(fontSpec Font, scale float32) float32 {

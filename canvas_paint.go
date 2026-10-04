@@ -50,7 +50,7 @@ type Paint struct {
 	// FillRule decides which side of a self-intersecting path counts as
 	// "inside". FillNonZero (the default) follows SVG / Postscript /
 	// Skia; FillEvenOdd matches the older "alternating" rule and is
-	// what the pre-Phase-E rasterizer used.
+	// what the earlier rasterizer used.
 	FillRule FillRule
 
 	// AntiAlias enables edge AA for path fills and rounded-rect
@@ -190,7 +190,7 @@ const (
 
 // FillRule picks the inside-determination algorithm for self-
 // intersecting paths. SVG / Postscript / Skia default to non-zero;
-// even-odd is what the pre-Phase-E rasterizer used.
+// even-odd is what the earlier rasterizer used.
 type FillRule int8
 
 const (

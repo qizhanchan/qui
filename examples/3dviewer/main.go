@@ -2,12 +2,11 @@ package main
 
 // 3D viewer — a GLViewport showing a spinning lit cube sitting on a
 // subtle plane. Demonstrates: FBO-backed 3D inside a 2D layout,
-// continuous animation via the Phase 1 animation framework, and
+// continuous animation via the anim package, and
 // 2D UI (title label, toolbar buttons) sitting beside the viewport.
 //
 // Drag on the viewport to orbit the camera (pseudo: we just rotate
-// the cube itself with the mouse delta — a full camera orbit helper
-// lives in the creative-tool follow-up).
+// the cube itself with the mouse delta).
 
 import (
 	"fmt"

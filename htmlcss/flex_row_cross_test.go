@@ -8,8 +8,7 @@ import (
 
 // A flex ROW is as tall as its tallest item, not as tall as its text: a row
 // holding a 12px label and a 30px control measures 30. This is the invariant
-// q-word's Table options panel leans on — every property row there is a
-// muted caption beside a taller field.
+// a property-panel row leans on — a muted caption beside a taller field.
 func TestFlexRowTakesTallestChildHeight(t *testing.T) {
 	res := RenderDoc(`<body><div id="row" style="display:flex;flex-direction:row;align-items:center;gap:6px">
 		<span id="label" style="font-size:12px">Column width</span>
@@ -33,9 +32,9 @@ func TestFlexRowTakesTallestChildHeight(t *testing.T) {
 
 // The same rows inside a COLUMN that is too short to hold them: flex-shrink
 // defaults to 1, so CSS squeezes the rows and their fixed-height controls
-// spill out. That — not a bad row measurement — is what made q-word's panel
-// report a dozen "widget overflows parent bounds" diagnostics before the
-// sheet became a scroll host. flex-shrink:0 is the fix, and this pins both
+// spill out. That — not a bad row measurement — is what makes a panel
+// report a dozen "widget overflows parent bounds" diagnostics before it
+// becomes a scroll host. flex-shrink:0 is the fix, and this pins both
 // halves so the panel cannot silently regress to the squeezed layout.
 func TestFlexColumnShrinkSquashesRowsUnlessOptedOut(t *testing.T) {
 	markup := func(shrink string) string {

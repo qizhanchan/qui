@@ -11,7 +11,7 @@ package qui
 //
 //	macOS NSTextInputClient             Window.SetPreedit / CommitIME
 //	    │                                         │
-//	(Cgo bridge, Phase-5.2 TODO) ─────────────────┤
+//	(Cgo bridge) ──────────────────────────────────┤
 //	                                              ↓
 //	                                  focused Widget (IMEClient)
 //	                                    - SetPreedit(text, cursor)

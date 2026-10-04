@@ -277,8 +277,8 @@ func (w *Window) EffectiveScale() float32 {
 //
 // Opt-in rather than automatic. Zoom is a whole-application behavior with
 // a visible effect on every existing app, and plenty of apps have their
-// own idea of what pinch means — q-excel zooms its grid, q-word zooms the
-// page, a chart zooms an axis. Turning it on for everyone would hand those
+// own idea of what pinch means — a chart zooms an axis, for example.
+// Turning it on for everyone would hand those
 // apps a second, competing zoom. Apps that want the browser default say
 // so in one line; apps that already handle pinch consume the event and
 // this never fires anyway.

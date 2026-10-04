@@ -66,7 +66,7 @@ func (d *Document) invalidateCache() {
 //
 // width or height <= 0 returns nil. This matches the predecessor
 // Icon.Rasterize behavior so existing callsites (Button.IconVector,
-// q-excel toolbar) stay no-op safe when computing size from an empty
+// toolbars) stay no-op safe when computing size from an empty
 // rect.
 func (d *Document) Rasterize(width, height int, tint qui.Color) image.Image {
 	if d == nil || width <= 0 || height <= 0 {
@@ -98,7 +98,7 @@ func (d *Document) Rasterize(width, height int, tint qui.Color) image.Image {
 }
 
 // ParseFile opens path and parses its contents. Mirrors the previous
-// signature so q-excel / examples don't need to change.
+// signature so existing callers don't need to change.
 func ParseFile(path string) (*Document, error) {
 	f, err := os.Open(path)
 	if err != nil {

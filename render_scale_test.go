@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// Phase B: scale lives on the canvas state stack, not in a separate
+// Scale lives on the canvas state stack, not in a separate
 // wrapper. These tests push scale onto RecordingCanvas / imageCanvas
 // and verify that draws come out at the expected physical-pixel
 // position / size.
@@ -29,8 +29,7 @@ func TestStateScaleLineWidthAndEndpoints(t *testing.T) {
 	}
 }
 
-// scaleRoundedShape's bugfix regression — kept verbatim from Phase A
-// since the helper still exists in render_scale.go.
+// scaleRoundedShape's bugfix regression.
 
 func TestScaleRoundedShapePartialKeepsPerAxis(t *testing.T) {
 	rect := Rect{X: 10, Y: 10, W: 100, H: 60}

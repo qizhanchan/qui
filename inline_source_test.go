@@ -339,8 +339,8 @@ func TestFirstIndentShiftsFirstLine(t *testing.T) {
 
 // The character-level break must keep preserve mode's exact-source-slice
 // contract: an editor's caret still round-trips through a run that was cut
-// mid-token, which is what makes the break usable in a text editor (q-word
-// pastes long unbroken strings this way).
+// mid-token, which is what makes the break usable in a text editor (a
+// paste of a long unbroken string, for example).
 func TestPreserveBreakLongWordsCaretRoundTrip(t *testing.T) {
 	f := Font{Size: 16}
 	src := "12312123121231212312123121231212312"

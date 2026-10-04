@@ -3,7 +3,7 @@
 // inheritance), and builds a retained qui widget tree that lays out and
 // paints through the framework's normal Measure/Layout/Draw path.
 //
-// Scope (v1 / MVP): a practical subset aimed at rendering real-looking
+// Scope: a practical subset aimed at rendering real-looking
 // pages, not full spec compliance. Layout maps CSS `display` onto qui's
 // engines — block → FlowLayout (normal flow), flex → FlexLayout, inline
 // runs of text are folded into a single rich-text Label. See the package

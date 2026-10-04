@@ -239,8 +239,7 @@ func TestWindowCaretRectNonIMEReturnsEmpty(t *testing.T) {
 // Some IMEs (macOS 拼音 among them) commit via insertText without
 // calling unmarkText afterwards. If we don't clear preedit on CharEvent
 // ourselves, the stale marked text keeps rendering on top of the
-// newly-committed characters. Reproduces the "回车后拼音文本叠在中文后
-// 面" bug reported against Phase 5.2 IME.
+// newly-committed characters.
 
 func TestInputCharCommitClearsStalePreedit(t *testing.T) {
 	_, tf := focusedTFWithIME("")

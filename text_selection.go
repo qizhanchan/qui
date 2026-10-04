@@ -909,7 +909,7 @@ func tableRunEnd(parts []clipPart, i int) int {
 // Returns rows indexed 0..maxRow (sparse rows are empty slices) and the
 // column count (max col+colSpan). Multiple parts in one cell (a cell holding
 // several blocks / list items) join with a separator — nested block/list
-// structure inside a cell flattens to line breaks (MVP).
+// structure inside a cell flattens to line breaks.
 func groupTableCells(tparts []clipPart) (rows [][]clipCell, maxCol int) {
 	var cells []clipCell
 	for k := 0; k < len(tparts); {

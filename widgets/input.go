@@ -15,18 +15,16 @@ import (
 // horizontal overflow (no line wrap) is managed with text-offset
 // scrolling so the cursor stays visible.
 //
-// Scope (MVP):
+// Supports:
 //   - Text entry + backspace / delete / arrow nav
 //   - Mouse: click to position cursor, drag to select
 //   - Shift+arrow extends selection
 //   - Blinking cursor while focused
+//   - Clipboard (Cmd/Ctrl + A/C/V/X)
+//   - IME composition
+//   - Undo / redo
 //   - OnChange after any text mutation, OnSubmit on Enter, OnCommit on
 //     Enter + focus-out (see the field's doc comment)
-//
-// Not yet:
-//   - Clipboard (Phase 5.1 — Cmd+C/V needs OS clipboard plumbing)
-//   - IME / composition (Phase 5.2 — macOS NSTextInputClient bridge)
-//   - Undo/redo (Phase 5.5)
 //
 // InputVariant selects Filled (background fill + bottom underline)
 // vs Outlined (transparent + stroke border) presentation. Maps to
@@ -1571,7 +1569,7 @@ func (t *Input) TextState() TextState {
 }
 
 // ----------------------------------------------------------------------
-// IMEClient implementation — the widget-side of Phase 5.2 IME support.
+// IMEClient implementation — the widget side of IME support.
 
 // SetPreedit stores in-flight composition text. Draw renders it with
 // underline at the caret. Call with ("", 0) to clear.

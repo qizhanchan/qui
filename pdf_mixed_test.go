@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestPDFMixedFonts mirrors the q-excel setup: a Latin primary (JetBrains
+// TestPDFMixedFonts exercises a Latin primary (JetBrains
 // Mono, glyf -> Type0 subset) plus a CJK fallback, with a single DrawText
 // string spanning both. Verifies run-splitting produces two embedded fonts
 // and all text (Latin + CJK) is selectable.

@@ -82,7 +82,7 @@ func TestPDFVectorIsStillUnimplemented(t *testing.T) {
 	before := pc.page.buf.Len()
 	cv.DrawVector(nil, Rect{X: 10, Y: 10, W: 50, H: 50}, Color{A: 1})
 	if pc.page.buf.Len() != before {
-		t.Log("pdfCanvas.DrawVector now emits content — the v1 stub has been " +
-			"implemented; update this test and the q-ppt PDF-export notes")
+		t.Log("pdfCanvas.DrawVector now emits content — the stub has been " +
+			"implemented; update this test")
 	}
 }

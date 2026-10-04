@@ -81,7 +81,7 @@ type Font struct {
 // single pipeline. `Merge(base, override)` (or `base.MergedWith(over)`)
 // walks field-by-field and picks non-zero from override — Draw and
 // Measure receive the merged Style; there is no separate
-// `ResolvedStyle` type. See docs/style-system-plan.md.
+// `ResolvedStyle` type.
 type Style struct {
 	// Box model.
 	Background Color

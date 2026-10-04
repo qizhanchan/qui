@@ -15,6 +15,9 @@ func loadShapingTestFont(t *testing.T, path string) {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			t.Skipf("shaping test font %s not present; skipping", path)
+		}
 		t.Fatalf("read shaping test font: %v", err)
 	}
 	if err := LoadFontFromBytes(data); err != nil {

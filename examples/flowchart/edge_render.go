@@ -6,7 +6,7 @@ import (
 	"github.com/qizhanchan/qui"
 )
 
-// edgeRouting mirrors AntV G6's edge family in /opt/cpp_work/G6 —
+// edgeRouting mirrors AntV G6's edge family —
 // the five built-in shapes plus a loop variant for self-edges.
 //
 //	routingLine       — straight segment, G6 "line"
@@ -237,8 +237,7 @@ func edgeBBoxes(e *edge, d *diagram) edgeBoxes {
 
 const nodePadding float32 = 10 // matches G6's default OrthRouterOptions.padding
 
-// orthVertices ports G6's orth router from
-// /opt/cpp_work/G6/packages/g6/src/utils/router/orth.ts. The algorithm:
+// orthVertices ports G6's orth router. The algorithm:
 //
 //  1. Inflate both bboxes by nodePadding.
 //  2. From the source side, pick a single L-corner aligned with the

@@ -1,4 +1,4 @@
-// Phase-3 media smoke test: open an mp4 / mov and play it (with
+// Media smoke test: open an mp4 / mov and play it (with
 // synchronized audio) inside a minimal qui window. Video runs via
 // the AVAssetReader + CVOpenGLTextureCache path; audio runs via
 // AVAudioFile + AVAudioEngine. The two share an audioClock so

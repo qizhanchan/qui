@@ -578,7 +578,7 @@ func findMenuList(popup *Popup) *menuListView {
 // A Panel row hands the menu over to caller content: the widget is in the
 // tree (so it hit-tests, paints and shows up in the accessibility walk), the
 // row itself is not activatable, and the panel's `close` unwinds the popup —
-// the contract q-word's Insert > Table size grid is built on.
+// the contract a Panel row provides.
 func TestMenuPanelRowHostsCallerContent(t *testing.T) {
 	w := NewTestWindow(Size{W: 500, H: 500})
 	content := newFocusableSpy("picker")

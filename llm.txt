@@ -23,7 +23,7 @@ WHAT QUI IS
       webview/   embedded HTML/JS via CEF
       physics/   game physics (p2 / p3)
       agent/     AI-native operability server (this is what you want)
-      apps/      sample applications (q-excel, q-hopper, q-kart)
+      examples/  runnable demos (reactive-html is the canonical one)
 
   - Cross-platform: macOS (full), Linux / Windows (partial — native
     dialogs / IME / emoji are darwin-only today).
@@ -132,4 +132,4 @@ WHERE TO LEARN MORE
 
   - agent/llm.txt — full wire spec (also served live at /llm.txt)
   - CLAUDE.md     — full framework architecture overview
-  - apps/q-excel  — non-trivial demo that ships with agent.BindEnv
+  - examples/reactive-html — canonical app-dev demo with agent.BindEnv

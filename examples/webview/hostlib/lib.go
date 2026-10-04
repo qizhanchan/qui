@@ -100,7 +100,7 @@ func QuiStart() C.int {
 	// The host has already called CefInitialize. PreInitialize and Open
 	// both see qui_webview_cef_is_initialized()=1 and skip re-init. Open
 	// still returns ErrNotSupported until backend_darwin.go's NewPage
-	// stops being a Phase-A stub, but the runtime is healthy.
+	// stops being a stub, but the runtime is healthy.
 	if err := view.Open(); err != nil {
 		status.SetText("open error: " + err.Error())
 		fmt.Println("[hostlib] view.Open:", err)

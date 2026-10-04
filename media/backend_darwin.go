@@ -32,7 +32,7 @@ void    quiAudioSetRate(uintptr_t handle, float r);    // 1.0 = normal
 
 void    quiAudioClose(uintptr_t handle);
 
-// --- Video (Phase 2) ------------------------------------------------
+// --- Video ----------------------------------------------------------
 //
 // AVAssetReader-backed playback decoder. Returns 0 on failure with
 // errOut populated. quiVideoStart kicks off the background decode
@@ -75,7 +75,7 @@ void      quiVideoCacheFlush(void);
 void      quiVideoReleaseGLTex(void* cvTex);
 void      quiVideoReleasePixBuf(void* pixBuf);
 
-// --- Video-source audio (Phase 3) -----------------------------------
+// --- Video-source audio --------------------------------------------
 //
 // AVAudioFile + AVAudioEngine + AVAudioPlayerNode driver for the
 // audio track inside an mp4. Separate from the audio-only
@@ -203,8 +203,8 @@ type darwinBackend struct{}
 
 func (darwinBackend) Capabilities() Capabilities {
 	return Capabilities{
-		// v1 supports the AVFoundation common decodable set for audio
-		// and (in Phase 2) H.264 / HEVC for video.
+		// The AVFoundation common decodable set for audio
+		// and H.264 / HEVC for video.
 		VideoCodecs: []string{"h264", "hevc"},
 		AudioCodecs: []string{"aac", "mp3", "lpcm"},
 		Containers:  []string{"mp4", "m4a", "mov", "mp3", "wav", "aac"},
@@ -216,9 +216,8 @@ func (darwinBackend) OpenSource(path string) (Source, error) {
 		return nil, errors.New("media: empty path")
 	}
 
-	// File-extension routing. Phase 2 only opens the video track for
-	// mp4/mov/m4v; the audio track is ignored (rewired in Phase 3).
-	// Other extensions go through the existing AVAudioPlayer path.
+	// File-extension routing. mp4/mov/m4v open the video source;
+	// other extensions go through the audio-only AVAudioPlayer path.
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".mp4", ".mov", ".m4v":
 		return openDarwinVideoSource(path)
@@ -365,7 +364,7 @@ func (s *darwinSource) AudioRenderer() AudioRenderer {
 }
 
 func (s *darwinSource) NextVideoFrame(ctx context.Context) (VideoFrame, error) {
-	// Phase 1: audio-only; video pipeline arrives in Phase 2.
+	// Audio-only source: no video track.
 	return nil, ErrNoTrack
 }
 
@@ -750,7 +749,7 @@ func flushFrameCache() {
 	C.quiVideoCacheFlush()
 }
 
-// ----- darwinVideoAudioRenderer (Phase 3) -------------------------------
+// ----- darwinVideoAudioRenderer -----------------------------------------
 //
 // AudioRenderer driving an AVAudioEngine for the audio track inside
 // an mp4. Owned by darwinVideoSource; only created when the source's

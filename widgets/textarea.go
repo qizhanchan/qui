@@ -52,7 +52,7 @@ type TextArea struct {
 	cursorVisible     bool  // current cursor visibility state
 	OnChange          func(text string)
 
-	// IME composition state (Phase 5.2). preeditText is the in-flight
+	// IME composition state. preeditText is the in-flight
 	// composed string; preeditCursor is the rune position inside it.
 	// Rendered near the caret with an underline while composing.
 	preeditText   string
@@ -1520,7 +1520,7 @@ func (t *TextArea) visibleContentRect(rect Rect) (Rect, bool, bool) {
 }
 
 // ----------------------------------------------------------------------
-// IMEClient (Phase 5.2) — widget side of IME composition.
+// IMEClient — widget side of IME composition.
 
 // SetPreedit stores in-flight composition text. Drawn at the caret
 // with an underline while composing. Call with ("", 0) to clear.
