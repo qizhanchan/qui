@@ -136,7 +136,7 @@ func TestDialogRecentersOnWindowResize(t *testing.T) {
 func TestDialogCloseRemovesOverlay(t *testing.T) {
 	onCloseCalled := false
 	d := NewDialog("Title", nil)
-	d.OnClose = func() { onCloseCalled = true }
+	d.OnClose = func(DialogCloseReason) { onCloseCalled = true }
 	w := NewTestWindow(Size{W: 800, H: 600})
 	d.Show(w)
 	d.Close()

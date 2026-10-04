@@ -15,8 +15,7 @@ import (
 //
 //	┌────────────────── backdrop (full window, dimmed) ──────────────┐
 //	│              ┌───── contentBounds (centered) ───────┐          │
-//	│              │  Title                               │          │
-//	│              │  ────────────                        │          │
+//	│              │  Title  (or the Header widget)       │          │
 //	│              │                                      │          │
 //	│              │  Content widget                      │          │
 //	│              │                                      │          │
@@ -26,31 +25,78 @@ import (
 //
 // Usage:
 //
-//	dlg := qui.NewDialog("Save changes?", bodyContent)
-//	dlg.AddButton("Cancel", nil)  // nil onClick = just close
-//	dlg.AddButton("Save", func() { saveDocument() })
+//	dlg := widgets.NewDialog("Save changes?", bodyContent)
+//	dlg.AddButton("Cancel", nil)          // nil onClick = just close
+//	save := dlg.AddButton("Save", saveDocument)
+//	dlg.DefaultAction = save              // Enter presses Save
 //	dlg.Show(window)
+//
+// Actions are arbitrary widgets. AddButton is the shorthand for a plain
+// button that closes the dialog after its callback; AddAction appends any
+// widget (an icon button, a destructive-styled button, a checkbox) and
+// leaves closing to the caller — the shape for validation:
+//
+//	save := widgets.NewButton("Save", nil)
+//	save.OnClick = func() {
+//		if err := validate(); err != nil {
+//			errLabel.SetText(err.Error()) // dialog stays open
+//			return
+//		}
+//		dlg.CloseWith(widgets.DialogCloseAction)
+//	}
+//	dlg.AddAction(save)
+//
+// The content area clips its widget. Content that can outgrow the window
+// should be wrapped in a ScrollView by the caller.
 type Dialog struct {
 	BaseWidget
-	Title   string
+	// Title is the literal headline; SetTitleKey localizes it. Ignored
+	// when Header is set.
+	Title string
+	// Header, when non-nil, replaces the default title row — a custom
+	// headline with an icon, a close ✕, a step indicator. It is laid out
+	// across the headline row at its measured height.
+	Header  Widget
 	Content Widget
-	Buttons []*Button
-	OnClose func()
+	// Actions is the bottom row, laid out per ActionsAlign at each
+	// widget's measured width. Append with AddButton / AddAction.
+	Actions      []Widget
+	ActionsAlign DialogActionsAlign
+
+	// DefaultAction is pressed by Enter while the dialog is up (unless the
+	// focused widget consumed the key first — a TextArea's newline, a
+	// focused button pressing itself). A *Button fires its OnClick; any
+	// other widget needs an Activate() method.
+	DefaultAction Widget
+	// InitialFocus receives focus on Show. Nil = the first focusable
+	// widget inside the dialog.
+	InitialFocus Widget
+	// DismissOnBackdrop closes the dialog (DialogCloseBackdrop) on a
+	// click outside the box. Off by default: a backdrop click is absorbed.
+	DismissOnBackdrop bool
+	// CanClose vetoes a user-initiated close (an AddButton action,
+	// Escape, a backdrop click, or CloseWith): returning false keeps the
+	// dialog open. Close() — the app closing it — is never vetoed.
+	CanClose func(reason DialogCloseReason) bool
+	// OnClose fires after the dialog leaves the window, with the reason.
+	OnClose func(reason DialogCloseReason)
 
 	// Width / Height override the default box dimensions when > 0.
-	// Set them directly or via SetSize. The 280–560 width band only
+	// Set them directly or via SetSize. The Metrics width band only
 	// applies when Width is zero (the "alert" preset); a non-zero Width
-	// is honored as-is, clamped only against the window edges (rect-48).
-	// Height defaults to whatever the content+actions sum to. This lets
-	// callers build wider "settings"/"form" dialogs without forking.
+	// is honored as-is, clamped only against the window edges.
+	// Height defaults to whatever the header+content+actions sum to.
 	Width  float32
 	Height float32
 
-	// Color knobs. NewDialog fills them with a plain, HTML-modal look;
-	// set them for a designed one (raised container fill, scrim,
-	// elevation level), or render a dialog on the htmlcss layer inside
-	// h.ModalPortal.
-	ScrimColor      Color // painted over the whole window; A=0 skips
+	// Metrics overrides the spacing. Nil = DefaultDialogMetrics().
+	Metrics *DialogMetrics
+
+	// Color knobs. A zero ContainerColor / TitleColor resolves the theme
+	// (SurfaceOverlay / Text) at draw time, so a theme switch restyles
+	// an open dialog. ScrimColor is painted over the whole window; A=0
+	// skips it.
+	ScrimColor      Color
 	ContainerColor  Color
 	TitleColor      Color
 	ContainerRadius float32
@@ -58,43 +104,105 @@ type Dialog struct {
 	// shadow. 0 = flat.
 	ContainerElevation int
 
+	titleKey      messageKey
 	window        *Window
 	contentBounds Rect
 }
 
-// Dialog spacing. These are the plain numbers the layout uses — a
-// 24 px content inset, a 40 px action-button row, an alert box that
-// stays inside a 280–560 band.
+// DialogCloseReason says why a dialog closed — passed to CanClose and
+// OnClose.
+type DialogCloseReason int
+
 const (
-	dialogHeadlinePadTop   float32 = 24 // slotted[headline] padding 24 24 0
-	dialogHeadlinePadX     float32 = 24
-	dialogHeadlineLineH    float32 = 32 // headline-small line-height
-	dialogContentPadTop    float32 = 24 // slotted[content] padding 24
-	dialogContentPadX      float32 = 24
-	dialogContentPadBottom float32 = 8  // has-actions override on content
-	dialogActionsPadTop    float32 = 16 // slotted[actions] padding 16 24 24
-	dialogActionsPadX      float32 = 24
-	dialogActionsPadBottom float32 = 24
-	dialogActionsButtonH   float32 = 40 // action-button container height
-	dialogActionsGap       float32 = 8  // slotted[actions] gap
-	dialogMinWidth         float32 = 280
-	dialogMaxWidth         float32 = 560
-	dialogScrimOpacity     float32 = 0.32
-	dialogDefaultWidth     float32 = 312 // typical "alert" width for snapshot
+	// DialogCloseProgrammatic: the app called Close.
+	DialogCloseProgrammatic DialogCloseReason = iota
+	// DialogCloseAction: an AddButton action, or CloseWith from an action.
+	DialogCloseAction
+	// DialogCloseEscape: the user pressed Escape.
+	DialogCloseEscape
+	// DialogCloseBackdrop: a click outside the box (DismissOnBackdrop).
+	DialogCloseBackdrop
 )
 
+func (r DialogCloseReason) String() string {
+	switch r {
+	case DialogCloseAction:
+		return "action"
+	case DialogCloseEscape:
+		return "escape"
+	case DialogCloseBackdrop:
+		return "backdrop"
+	}
+	return "programmatic"
+}
+
+// DialogActionsAlign places the action row's widgets.
+type DialogActionsAlign int
+
+const (
+	// DialogActionsEnd right-aligns the actions (the platform default).
+	DialogActionsEnd DialogActionsAlign = iota
+	// DialogActionsStart left-aligns them.
+	DialogActionsStart
+	// DialogActionsSpaceBetween pins the first action left and the last
+	// right, spreading the rest between.
+	DialogActionsSpaceBetween
+	// DialogActionsStretch gives every action an equal share of the row.
+	DialogActionsStretch
+)
+
+// DialogMetrics is the dialog's spacing. The defaults are a 24 px inset,
+// a 40 px action row and an alert box inside a 280–560 band.
+type DialogMetrics struct {
+	HeadlinePadTop float32 // above the title / Header
+	HeadlinePadX   float32
+	HeadlineHeight float32 // the default title row (Header measures its own)
+
+	ContentPadTop    float32
+	ContentPadX      float32
+	ContentPadBottom float32 // when actions follow; otherwise ContentPadTop
+
+	ActionsPadTop    float32
+	ActionsPadX      float32
+	ActionsPadBottom float32
+	ActionsHeight    float32 // minimum action-row height
+	ActionsGap       float32
+
+	MinWidth, MaxWidth, DefaultWidth float32 // the Width==0 band
+	WindowMargin                     float32 // min gap to each window edge
+}
+
+// DefaultDialogMetrics returns the stock spacing.
+func DefaultDialogMetrics() DialogMetrics {
+	return DialogMetrics{
+		HeadlinePadTop: 24, HeadlinePadX: 24, HeadlineHeight: 32,
+		ContentPadTop: 24, ContentPadX: 24, ContentPadBottom: 8,
+		ActionsPadTop: 16, ActionsPadX: 24, ActionsPadBottom: 24,
+		ActionsHeight: 40, ActionsGap: 8,
+		MinWidth: 280, MaxWidth: 560, DefaultWidth: 312,
+		WindowMargin: 24,
+	}
+}
+
+var defaultDialogMetrics = DefaultDialogMetrics()
+
+func (d *Dialog) metrics() *DialogMetrics {
+	if d.Metrics != nil {
+		return d.Metrics
+	}
+	return &defaultDialogMetrics
+}
+
 // NewDialog creates a plain dialog with the given title and body
-// content. Look: white rounded box, thin translucent-black scrim, no
-// shadow. For a designed look, set the color knobs, or render a dialog
-// on the htmlcss layer inside h.ModalPortal.
+// content. Look: theme-colored rounded box, thin translucent-black
+// scrim, no shadow. For a designed look, set the color knobs, or render
+// a dialog on the htmlcss layer with h.Dialog.
 func NewDialog(title string, content Widget) *Dialog {
 	d := &Dialog{
 		BaseWidget:      NewBaseWidget(),
 		Title:           title,
 		Content:         content,
 		ScrimColor:      Color{R: 0, G: 0, B: 0, A: 0.32},
-		ContainerColor:  Color{R: 1, G: 1, B: 1, A: 1},
-		TitleColor:      Color{R: 0.10, G: 0.10, B: 0.10, A: 1},
 		ContainerRadius: 8,
 	}
 	d.SetSelf(d)
@@ -107,40 +215,70 @@ func NewDialog(title string, content Widget) *Dialog {
 // Modal marks this overlay as focus-trapping. Satisfies modalOverlay.
 func (d *Dialog) Modal() bool { return true }
 
+// SetTitleKey makes the title come from the message catalog. Pass "" to
+// go back to the literal Title field.
+func (d *Dialog) SetTitleKey(key string, args ...any) {
+	if d.titleKey.set(key, args) {
+		d.InvalidateLayout()
+	}
+}
+
+// TitleKey returns the title's message key, or "".
+func (d *Dialog) TitleKey() string { return d.titleKey.key }
+
+// DisplayTitle is the title the dialog renders: the resolved message
+// when a title key is set, otherwise Title.
+func (d *Dialog) DisplayTitle() string { return d.titleKey.resolve(d.Title) }
+
+// SetHeader replaces the default title row with w (nil restores it).
+func (d *Dialog) SetHeader(w Widget) {
+	d.Header = w
+	if w != nil {
+		w.SetParent(d)
+	}
+	d.InvalidateLayout()
+}
+
 // SetSize overrides the dialog box dimensions. Pass 0 for either axis to
-// fall back to the default for that axis — width 312 (clamped to
-// 280–560), height = headline + content + actions. Call before Show, or
-// re-call + Layout to re-size a visible dialog.
+// fall back to the default for that axis — the Metrics width band, and
+// height = headline + content + actions.
 func (d *Dialog) SetSize(width, height float32) {
 	d.Width = width
 	d.Height = height
+	d.InvalidateLayout()
 }
 
-// AddButton appends an action button to the dialog's button row.
-// onClick may be nil — in that case the button just closes the dialog
-// (useful for "Cancel"-style buttons). A non-nil onClick fires, then
-// the dialog auto-closes; callers that want to keep the dialog open
-// after a button press (e.g., form validation) should call d.Show
-// again or manage state externally.
+// AddButton appends a plain button that runs onClick and then closes the
+// dialog (DialogCloseAction, subject to CanClose). onClick may be nil —
+// the button just closes, the usual "Cancel". Restyle the returned
+// button through its States, or use AddAction for a widget that decides
+// for itself when to close.
 func (d *Dialog) AddButton(text string, onClick func()) *Button {
-	// Dialog uses the plain Button default; apps that want borderless
-	// text-style actions (accent label, no fill) reassign btn.States
-	// after AddButton returns.
 	btn := NewButton(text, nil)
 	btn.OnClick = func() {
 		if onClick != nil {
 			onClick()
 		}
-		d.Close()
+		d.CloseWith(DialogCloseAction)
 	}
-	btn.SetParent(d)
-	d.Buttons = append(d.Buttons, btn)
+	d.AddAction(btn)
 	return btn
 }
 
-// Show pushes the dialog onto the window's overlay stack and auto-
-// focuses the first focusable widget inside (title bar and buttons
-// count). No-op if already shown.
+// AddAction appends any widget to the action row. It never closes the
+// dialog by itself; its handler calls CloseWith / Close when done.
+func (d *Dialog) AddAction(w Widget) {
+	if w == nil {
+		return
+	}
+	w.SetParent(d)
+	d.Actions = append(d.Actions, w)
+	d.InvalidateLayout()
+}
+
+// Show pushes the dialog onto the window's overlay stack and focuses
+// InitialFocus, or else the first focusable widget inside. No-op if
+// already shown.
 func (d *Dialog) Show(w *Window) {
 	if w == nil || d.window != nil {
 		return
@@ -149,7 +287,13 @@ func (d *Dialog) Show(w *Window) {
 	// Full-window rect = the backdrop dims the whole view.
 	d.Layout(Rect{X: 0, Y: 0, W: w.Size().W, H: w.Size().H})
 	w.PushOverlay(d)
-	// Auto-focus: find first focusable within this dialog after push.
+	if d.InitialFocus != nil {
+		w.SetFocus(d.InitialFocus)
+		if w.Focused() == d.InitialFocus {
+			return
+		}
+	}
+	// The modal trap scopes CollectFocusables to this dialog.
 	for _, wd := range w.CollectFocusables() {
 		w.SetFocus(wd)
 		break
@@ -157,89 +301,118 @@ func (d *Dialog) Show(w *Window) {
 }
 
 // OnWindowResize re-centers the dialog when the window is resized.
-// Overlays aren't re-laid-out by the frame loop, so a centered dialog
-// would otherwise drift off-center as the window grows/shrinks. Laying
-// out against the new full-window rect re-centers via Dialog.Layout and
-// invalidates the old+new extents. Satisfies OverlayResizer.
-func (d *Dialog) OnWindowResize(newSize Size) {
+// Satisfies OverlayResizer.
+func (d *Dialog) OnWindowResize(newSize Size) { d.RelayoutOverlay(newSize) }
+
+// RelayoutOverlay re-lays the dialog out against the full window — after
+// a resize, or when its content changed size while shown (satisfies
+// OverlayLayouter). The box may move or resize inside the unchanged
+// full-window bounds, so the whole window is repainted.
+func (d *Dialog) RelayoutOverlay(winSize Size) {
 	if d.window == nil {
 		return
 	}
-	d.Layout(Rect{X: 0, Y: 0, W: newSize.W, H: newSize.H})
+	d.Layout(Rect{X: 0, Y: 0, W: winSize.W, H: winSize.H})
+	d.window.InvalidateRect(d.Bounds())
 }
 
-// Close removes the dialog from the window overlay stack and fires
-// OnClose. Safe to call from button callbacks or externally.
-func (d *Dialog) Close() {
+// Close removes the dialog and fires OnClose(DialogCloseProgrammatic).
+// Not subject to CanClose. Safe to call when not shown.
+func (d *Dialog) Close() { d.close(DialogCloseProgrammatic) }
+
+// CloseWith closes the dialog for reason, first asking CanClose — the
+// call for an action widget's own handler. Programmatic reasons skip the
+// veto, like Close.
+func (d *Dialog) CloseWith(reason DialogCloseReason) {
+	if d.window == nil {
+		return
+	}
+	if reason != DialogCloseProgrammatic && d.CanClose != nil && !d.CanClose(reason) {
+		return
+	}
+	d.close(reason)
+}
+
+func (d *Dialog) close(reason DialogCloseReason) {
 	if d.window == nil {
 		return
 	}
 	d.window.RemoveOverlay(d)
 	d.window = nil
 	if d.OnClose != nil {
-		d.OnClose()
+		d.OnClose(reason)
 	}
 }
 
-// Tick fans frame ticks out to Content + action buttons. Without this
-// Dialog's overlay subtree is invisible to Window.Step's tick loop
-// (tickWidget doesn't recurse, and Dialog itself doesn't animate), so
-// the action buttons' hover/ripple Transitions would never advance —
-// MouseEnter would call hoverTrans.Begin once, the very next repaint
-// captured t ≈ 0, and no further frames ever drove t→1. That's why a
-// hovered Dialog action button looked stuck at a sub-transition tint
-// while a normally-tree-mounted button reached its full state-layer.
-// Returns the union of children's dirty rects so animation frames the
-// window's dirty-region path correctly.
+// IsShown reports whether the dialog is on a window's overlay stack.
+func (d *Dialog) IsShown() bool { return d.window != nil }
+
+// activateDefault presses DefaultAction. Reports whether it fired.
+func (d *Dialog) activateDefault() bool {
+	switch a := d.DefaultAction.(type) {
+	case nil:
+		return false
+	case *Button:
+		if !a.Focusable() || a.OnClick == nil { // Focusable = enabled and not disabled
+			return false
+		}
+		a.OnClick()
+		return true
+	case interface{ Activate() }:
+		if !d.DefaultAction.Enabled() {
+			return false
+		}
+		a.Activate()
+		return true
+	}
+	return false
+}
+
+// Tick fans frame ticks out to the header, content and actions. Dialog
+// is Tickable, so the window's tick walk hands it the whole subtree;
+// TickWidget recurses through children that aren't Tickable themselves
+// (a ScrollView wrapping a form), so a caret or hover transition deep in
+// the content still advances.
 func (d *Dialog) Tick(now time.Time) Rect {
 	var dirty Rect
-	tick := func(w Widget) {
-		if t, ok := w.(Tickable); ok {
-			dirty = dirty.Union(t.Tick(now))
-		}
-	}
-	if d.Content != nil {
-		tick(d.Content)
-	}
-	for _, btn := range d.Buttons {
-		tick(btn)
+	for _, w := range d.ChildList() {
+		dirty = dirty.Union(TickWidget(w, now))
 	}
 	return dirty
 }
 
-// ChildList exposes content + buttons for the focus collector.
+// ChildList exposes header, content and actions for focus / tick / AX.
 func (d *Dialog) ChildList() []Widget {
-	var children []Widget
+	children := make([]Widget, 0, 2+len(d.Actions))
+	if d.Header != nil {
+		children = append(children, d.Header)
+	}
 	if d.Content != nil {
 		children = append(children, d.Content)
 	}
-	for _, btn := range d.Buttons {
-		children = append(children, btn)
-	}
-	return children
+	return append(children, d.Actions...)
 }
 
 // Measure returns the natural content box size. When Width/Height are
-// unset, width is pinned to the alert width (clamped to 280–560) and
-// height is the section sum (headline + content + actions). A
-// non-zero Width or Height bypasses that band for that axis — the
-// only clamp is the window-edge clamp in Layout. Used by the golden
-// snapshot harness; full-window modal layout via Show() recomputes via
-// its own path.
+// unset, width is pinned to the Metrics default width (clamped to the
+// min/max band) and height is the section sum. A non-zero Width or
+// Height bypasses that band for that axis — the only clamp is the
+// window-edge clamp in Layout.
 func (d *Dialog) Measure(available Size) Size {
+	m := d.metrics()
 	var boxW float32
 	if d.Width > 0 {
 		boxW = d.Width
 	} else {
-		boxW = dialogDefaultWidth
+		boxW = m.DefaultWidth
 		if available.W > 0 && available.W < boxW {
 			boxW = available.W
 		}
-		if boxW < dialogMinWidth {
-			boxW = dialogMinWidth
+		if boxW < m.MinWidth {
+			boxW = m.MinWidth
 		}
-		if boxW > dialogMaxWidth {
-			boxW = dialogMaxWidth
+		if boxW > m.MaxWidth {
+			boxW = m.MaxWidth
 		}
 	}
 	boxH := d.Height
@@ -249,49 +422,78 @@ func (d *Dialog) Measure(available Size) Size {
 	return Size{W: boxW, H: boxH}
 }
 
-// boxHeight sums the three sections for a content box of width
-// boxW: headline = top-pad +
-// headline-line-height + 0 bottom-pad; content = top-pad + body
-// natural-height + (has-actions ? 8 : 24) bottom-pad; actions =
-// 16 top-pad + 40 button + 24 bottom-pad. Sections without their
-// optional element collapse to zero.
-func (d *Dialog) boxHeight(boxW float32) float32 {
-	var h float32
-	if d.Title != "" {
-		h += dialogHeadlinePadTop + dialogHeadlineLineH
+// headerHeight is the headline row: top pad + the Header's measured
+// height, or + the title line; zero with neither.
+func (d *Dialog) headerHeight(boxW float32) float32 {
+	m := d.metrics()
+	switch {
+	case d.Header != nil:
+		sz := MeasureConstrained(d.Header, Size{W: boxW - 2*m.HeadlinePadX, H: 1 << 20})
+		return m.HeadlinePadTop + sz.H
+	case d.DisplayTitle() != "":
+		return m.HeadlinePadTop + m.HeadlineHeight
 	}
-	if d.Content != nil {
-		size := d.Content.Measure(Size{W: boxW - 2*dialogContentPadX, H: 1 << 20})
-		bottom := dialogContentPadTop
-		if len(d.Buttons) > 0 {
-			bottom = dialogContentPadBottom
+	return 0
+}
+
+// actionsRowHeight is the tallest action, at least ActionsHeight.
+func (d *Dialog) actionsRowHeight(boxW float32) float32 {
+	m := d.metrics()
+	h := m.ActionsHeight
+	for _, a := range d.Actions {
+		if sz := MeasureConstrained(a, Size{W: boxW, H: m.ActionsHeight}); sz.H > h {
+			h = sz.H
 		}
-		h += dialogContentPadTop + size.H + bottom
-	}
-	if len(d.Buttons) > 0 {
-		h += dialogActionsPadTop + dialogActionsButtonH + dialogActionsPadBottom
 	}
 	return h
 }
 
+func (d *Dialog) actionsHeight(boxW float32) float32 {
+	if len(d.Actions) == 0 {
+		return 0
+	}
+	m := d.metrics()
+	return m.ActionsPadTop + d.actionsRowHeight(boxW) + m.ActionsPadBottom
+}
+
+func (d *Dialog) contentPadBottom() float32 {
+	m := d.metrics()
+	if len(d.Actions) > 0 {
+		return m.ContentPadBottom
+	}
+	return m.ContentPadTop
+}
+
+// boxHeight sums headline + content + actions for a box of width boxW.
+// Sections without their optional element collapse to zero.
+func (d *Dialog) boxHeight(boxW float32) float32 {
+	m := d.metrics()
+	h := d.headerHeight(boxW)
+	if d.Content != nil {
+		size := MeasureConstrained(d.Content, Size{W: boxW - 2*m.ContentPadX, H: 1 << 20})
+		h += m.ContentPadTop + size.H + d.contentPadBottom()
+	}
+	return h + d.actionsHeight(boxW)
+}
+
 func (d *Dialog) Layout(rect Rect) {
 	d.BaseWidget.Layout(rect)
+	m := d.metrics()
 
 	// Two layout modes:
 	//   - Embedded (no window): rect IS the content box. Used by golden
 	//     snapshots and any caller embedding the dialog inline.
 	//   - Modal (after Show): rect is the full window. Compute box
-	//     size from content + clamp to min/max, center within rect.
+	//     size from content, clamp to the window margins, center.
 	var box Rect
 	if d.window == nil {
 		box = rect
 	} else {
 		size := d.Measure(Size{W: rect.W, H: rect.H})
-		// Clamp against window dimensions (560 max, or 100% - 48).
-		if maxByWin := rect.W - 48; size.W > maxByWin {
+		if maxByWin := rect.W - 2*m.WindowMargin; size.W > maxByWin {
 			size.W = maxByWin
 		}
-		if maxByWin := rect.H - 48; size.H > maxByWin {
+		if maxByWin := rect.H - 2*m.WindowMargin; size.H > maxByWin {
 			size.H = maxByWin
 		}
 		box = Rect{
@@ -303,43 +505,71 @@ func (d *Dialog) Layout(rect Rect) {
 	}
 	d.contentBounds = box
 
-	// Headline + content split: headline occupies rows 0..headlineH
-	// from box top; content sits between headlineH and actionsTop.
-	headlineH := float32(0)
-	if d.Title != "" {
-		headlineH = dialogHeadlinePadTop + dialogHeadlineLineH
-	}
-	actionsH := float32(0)
-	if len(d.Buttons) > 0 {
-		actionsH = dialogActionsPadTop + dialogActionsButtonH + dialogActionsPadBottom
-	}
-	if d.Content != nil {
-		bottom := dialogContentPadTop
-		if len(d.Buttons) > 0 {
-			bottom = dialogContentPadBottom
-		}
-		d.Content.Layout(Rect{
-			X: box.X + dialogContentPadX,
-			Y: box.Y + headlineH + dialogContentPadTop,
-			W: box.W - 2*dialogContentPadX,
-			H: box.H - headlineH - dialogContentPadTop - bottom - actionsH,
+	headlineH := d.headerHeight(box.W)
+	if d.Header != nil {
+		d.Header.Layout(Rect{
+			X: box.X + m.HeadlinePadX,
+			Y: box.Y + m.HeadlinePadTop,
+			W: box.W - 2*m.HeadlinePadX,
+			H: headlineH - m.HeadlinePadTop,
 		})
 	}
-
-	// Action button row — right-aligned, gap 8, natural button widths.
-	if len(d.Buttons) > 0 {
-		btnY := box.Y + box.H - dialogActionsPadBottom - dialogActionsButtonH
-		btnRight := box.X + box.W - dialogActionsPadX
-		for i := len(d.Buttons) - 1; i >= 0; i-- {
-			btn := d.Buttons[i]
-			size := btn.Measure(Size{W: box.W, H: dialogActionsButtonH})
-			if size.H < dialogActionsButtonH {
-				size.H = dialogActionsButtonH
-			}
-			btnRight -= size.W
-			btn.Layout(Rect{X: btnRight, Y: btnY, W: size.W, H: size.H})
-			btnRight -= dialogActionsGap
+	actionsH := d.actionsHeight(box.W)
+	if d.Content != nil {
+		h := box.H - headlineH - m.ContentPadTop - d.contentPadBottom() - actionsH
+		if h < 0 {
+			h = 0
 		}
+		d.Content.Layout(Rect{
+			X: box.X + m.ContentPadX,
+			Y: box.Y + headlineH + m.ContentPadTop,
+			W: box.W - 2*m.ContentPadX,
+			H: h,
+		})
+	}
+	if len(d.Actions) > 0 {
+		d.layoutActions(box, actionsH)
+	}
+}
+
+// layoutActions places the action row at the bottom of box per
+// ActionsAlign, each action at its measured width (Stretch: equal
+// shares) and the row's height.
+func (d *Dialog) layoutActions(box Rect, actionsH float32) {
+	m := d.metrics()
+	n := len(d.Actions)
+	rowH := actionsH - m.ActionsPadTop - m.ActionsPadBottom
+	y := box.Y + box.H - m.ActionsPadBottom - rowH
+	left := box.X + m.ActionsPadX
+	avail := box.W - 2*m.ActionsPadX
+
+	widths := make([]float32, n)
+	var total float32
+	for i, a := range d.Actions {
+		widths[i] = MeasureConstrained(a, Size{W: avail, H: rowH}).W
+		total += widths[i]
+	}
+	gap := m.ActionsGap
+	x := left
+	switch d.ActionsAlign {
+	case DialogActionsStretch:
+		share := (avail - gap*float32(n-1)) / float32(n)
+		for i := range widths {
+			widths[i] = share
+		}
+	case DialogActionsSpaceBetween:
+		if n > 1 {
+			if g := (avail - total) / float32(n-1); g > gap {
+				gap = g
+			}
+		}
+	case DialogActionsStart:
+	default: // DialogActionsEnd
+		x = left + avail - total - gap*float32(n-1)
+	}
+	for i, a := range d.Actions {
+		a.Layout(Rect{X: x, Y: y, W: widths[i], H: rowH})
+		x += widths[i] + gap
 	}
 }
 
@@ -357,40 +587,69 @@ func (d *Dialog) Draw(canvas Canvas) {
 	if d.ContainerElevation > 0 {
 		DrawElevation(canvas, box, d.ContainerRadius, d.ContainerElevation)
 	}
-	if d.ContainerColor.A > 0 {
-		canvas.FillRoundedRect(box, d.ContainerRadius, d.ContainerColor)
+	fill := d.ContainerColor
+	if fill == (Color{}) {
+		fill = CurrentTheme().SurfaceOverlay
+	}
+	if fill.A > 0 {
+		canvas.FillRoundedRect(box, d.ContainerRadius, fill)
 	}
 
-	if d.Title != "" {
-		titleRect := Rect{
-			X: box.X + dialogHeadlinePadX,
-			Y: box.Y + dialogHeadlinePadTop,
-			W: box.W - 2*dialogHeadlinePadX,
-			H: dialogHeadlineLineH,
+	m := d.metrics()
+	if d.Header != nil {
+		d.Header.Draw(canvas)
+	} else if title := d.DisplayTitle(); title != "" {
+		titleColor := d.TitleColor
+		if titleColor == (Color{}) {
+			titleColor = CurrentTheme().Text
 		}
-		canvas.DrawText(d.Title, titleRect, d.TitleColor, ThemeFont(TextHeading))
+		titleRect := Rect{
+			X: box.X + m.HeadlinePadX,
+			Y: box.Y + m.HeadlinePadTop,
+			W: box.W - 2*m.HeadlinePadX,
+			H: m.HeadlineHeight,
+		}
+		canvas.DrawText(title, titleRect, titleColor, ThemeFont(TextHeading))
 	}
 
 	if d.Content != nil {
+		// Clip to the content slot so content taller than the box never
+		// paints over the headline or the actions.
+		depth := canvas.Save()
+		canvas.ClipRect(d.Content.Bounds())
 		d.Content.Draw(canvas)
+		canvas.RestoreTo(depth)
 	}
-	for _, btn := range d.Buttons {
-		btn.Draw(canvas)
+	for _, a := range d.Actions {
+		a.Draw(canvas)
 	}
 }
 
 func (d *Dialog) Handle(event Event) bool {
-	// Esc cancels the dialog — convention on every platform.
-	if ke, ok := event.(KeyEvent); ok && ke.Type() == EventKeyDown && ke.Key == KeyEscape {
-		d.Close()
-		return true
+	if ke, ok := event.(KeyEvent); ok {
+		// Keys act on the way back up: during capture the dialog is an
+		// ancestor of the focused widget, which gets first say over
+		// Escape (closing its own popup) and Enter (a TextArea newline).
+		if ke.Phase() == PhaseCapture || ke.Type() != EventKeyDown {
+			return false
+		}
+		switch ke.Key {
+		case KeyEscape:
+			d.CloseWith(DialogCloseEscape)
+			return true
+		case KeyEnter:
+			return d.activateDefault()
+		}
+		return false
 	}
 	// Mouse clicks outside the content box are absorbed so the backdrop
-	// blocks interaction with whatever's underneath — but we don't
-	// auto-dismiss (clicking backdrop is not a confirm/cancel action;
-	// user must use a button or Esc).
+	// blocks interaction with whatever's underneath; they dismiss only
+	// with DismissOnBackdrop.
 	if me, ok := event.(MouseEvent); ok && me.Type() == EventMouseDown {
 		if !d.contentBounds.Contains(Point{X: me.X, Y: me.Y}) {
+			if d.DismissOnBackdrop {
+				d.CloseWith(DialogCloseBackdrop)
+			}
 			return true
 		}
 	}
@@ -401,12 +660,17 @@ func (d *Dialog) Handle(event Event) bool {
 // itself so Handle can absorb clicks on the backdrop (modal).
 func (d *Dialog) HitTest(p Point) Widget {
 	if d.contentBounds.Contains(p) {
-		for _, btn := range d.Buttons {
-			if hit := btn.HitTest(p); hit != nil {
+		for _, a := range d.Actions {
+			if hit := a.HitTest(p); hit != nil {
 				return hit
 			}
 		}
-		if d.Content != nil {
+		if d.Header != nil {
+			if hit := d.Header.HitTest(p); hit != nil {
+				return hit
+			}
+		}
+		if d.Content != nil && d.Content.Bounds().Contains(p) {
 			if hit := d.Content.HitTest(p); hit != nil {
 				return hit
 			}

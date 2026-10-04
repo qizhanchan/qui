@@ -315,6 +315,11 @@ func (s *Slider) setValueFromX(x float32) {
 
 // setValue clamps to [Min, Max], updates Value, and fires OnChange when
 // the value actually changed.
+// SetValue moves the slider to v, clamped to [Min, Max], repaints, and
+// fires OnChange when the value changed — the same path a drag takes, so
+// state bound through OnChange stays in sync.
+func (s *Slider) SetValue(v float32) { s.setValue(v) }
+
 func (s *Slider) setValue(v float32) {
 	if v < s.Min {
 		v = s.Min

@@ -219,7 +219,8 @@ func (g *FieldSet) AccessibleName() string { return g.Title() }
 
 // Popup's default role ("popup") matches the constant. No override.
 
-func (d *Dialog) AccessibleName() string { return d.Title }
+func (d *Dialog) AccessibleName() string    { return d.DisplayTitle() }
+func (d *Dialog) AccessibleNameKey() string { return d.TitleKey() }
 
 // -------------------------------------------------------------------
 // MenuBar

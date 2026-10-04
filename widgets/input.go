@@ -1135,10 +1135,16 @@ func (t *Input) handleKey(e KeyEvent) bool {
 		if w := t.Window(); w != nil {
 			w.RecordInputSubmit(t, t.Text)
 		}
-		return true
+		// Without a submit handler Enter keeps bubbling — the HTML
+		// "implicit submission": a dialog's default action presses on
+		// Enter while its text field has focus.
+		return t.OnSubmit != nil
 	case KeyEscape:
-		// Clear selection on Esc — no dialog context here, so this is
-		// the most useful local behavior.
+		// Esc first drops a selection. With none, it is not the field's
+		// key: it bubbles to whatever dismisses (a dialog, a popup).
+		if !t.hasSelection() {
+			return false
+		}
 		t.clearSelection()
 		t.history.breakCoalesce()
 		t.resetBlink()
