@@ -1,0 +1,135 @@
+# qui — AI-native Go GUI framework
+
+qui is a retained-mode desktop GUI framework written in Go. It runs on
+GLFW + OpenGL with a custom CPU-side rasterizer, and ships a built-in
+operability layer for AI agents — no third-party plugin, no special
+build step. This file teaches an LLM how to use both halves.
+
+------------------------------------------------------------------
+WHAT QUI IS
+------------------------------------------------------------------
+
+  - Retained-mode (widget tree is persistent; events route through it).
+  - Single Go module: github.com/qizhanchan/qui
+  - Root package `qui` carries the engine (Window, events, layout,
+    rendering, theme, BaseWidget, Container).
+  - Subpackages:
+      widgets/   concrete widgets (Button, TextField, Dialog, Tabs, …)
+      scene3d/   3D scene graph + Viewport widget
+      anim/      Tween / Spring / Timeline
+      graphs/    2D charting on the Canvas
+      svg/       SVG 1.1 subset (parse + rasterize)
+      media/     audio + video playback
+      webview/   embedded HTML/JS via CEF
+      physics/   game physics (p2 / p3)
+      agent/     AI-native operability server (this is what you want)
+      apps/      sample applications (q-excel, q-hopper, q-kart)
+
+  - Cross-platform: macOS (full), Linux / Windows (partial — native
+    dialogs / IME / emoji are darwin-only today).
+
+------------------------------------------------------------------
+HOW AI AGENTS DRIVE A QUI APP
+------------------------------------------------------------------
+
+In-process (Go API, always-on, zero overhead):
+
+  import "github.com/qizhanchan/qui"
+
+  widget, _ := window.Find("[role=button][name=\"Save\"]")
+  _ = window.Click("#submit", qui.ClickOptions{})
+  _ = window.Type("#email", "foo@bar.com", qui.TypeOptions{})
+  img := window.SnapshotAnnotated(qui.AnnotateOptions{Scale: 0.4})
+  tree := window.AccessibilityTree()
+  _ = window.WaitIdle(2 * time.Second)
+
+Out-of-process (HTTP + JSON + Server-Sent Events):
+
+  import "github.com/qizhanchan/qui/agent"
+
+  // In your main(), after window.SetRoot(...):
+  srv, _ := agent.BindEnv(window) // honors QUI_AGENT / QUI_AGENT_TCP env
+
+Then run the app with `QUI_AGENT=1 ./my-app` and connect from any LLM
+that can curl:
+
+  SOCK=$TMPDIR/qui-agent-*.sock
+  curl --unix-socket "$SOCK" http://./llm.txt   # detailed wire spec
+  curl --unix-socket "$SOCK" http://./tree | jq
+  curl --unix-socket "$SOCK" 'http://./screenshot?scale=0.4&annotate=1' > ui.png
+  curl --unix-socket "$SOCK" -X POST http://./act \
+    -H 'Content-Type: application/json' \
+    -d '{"action":"click","target":"[role=button][name=\"OK\"]"}'
+
+The full wire reference (every endpoint, every selector form, every
+error code, every recipe) lives at `agent/llm.txt` in this repo and
+is also served by the running app at `/llm.txt`. That document is
+the canonical model-facing API; this file is the orientation guide.
+
+------------------------------------------------------------------
+KEY CONCEPTS
+------------------------------------------------------------------
+
+  - Accessibility tree (`/tree`) is the source of truth. Read it
+    before acting. Don't try to infer addresses from screenshots
+    alone — use the tree's `path` or developer-assigned `id`.
+
+  - Selector grammar is CSS-attribute style:
+      #id
+      [role=button]
+      [role=button][name="Save"]
+      [text*="agree"]
+      [role=button]:nth(2)
+      [role=button]:visible
+      :focused
+      :layer(modal)
+
+  - Roles (stable): button, textbox, textarea, label, checkbox,
+    radio, slider, spinner, combobox, listbox, listitem, tree,
+    treeitem, table, row, cell, tabs, tab, scrollview, split, menu,
+    menuitem, dialog, popup, tooltip, frame, colorpicker, viewport3d,
+    video, webview, chart, container.
+
+  - Modal-trap respect: an action targeting a widget hidden behind a
+    modal dialog returns errorCode="modal_blocked" with the
+    blocking overlay's path — never silent-clicks through.
+
+  - Scroll-into-view is automatic. The action layer walks ancestors
+    for a ScrollIntoViewable container and brings the target visible
+    before hit-testing.
+
+  - `treeHash` in every /act response lets you detect "did the tree
+    change?" without re-fetching it.
+
+  - `/wait?for=idle` blocks until paint + layout + animator + job
+    queue are all quiescent for two consecutive frames. Use this
+    after an action before screenshotting. Other waits:
+    `for=selector&selector=<sel>&state=appears|gone` (wait for a
+    widget to appear/disappear) and `for=stable` (wait for the tree
+    hash to settle).
+
+  - `/tree` accepts optional `selector=`, `maxDepth=N`, and `leaves=1`
+    filters to shrink the response; no params = the full tree.
+
+  - `/act` click usually takes a `target` selector, but with no
+    target you may pass raw `x`,`y` to click a window coordinate
+    (escape hatch for custom-drawn surfaces).
+
+  - `/health` returns {ok, ready}; ready=true once a frame exists.
+
+------------------------------------------------------------------
+SECURITY
+------------------------------------------------------------------
+
+  - Unix domain socket by default — same-user, same-machine access
+    only. Filesystem permission is the auth.
+  - TCP requires QUI_AGENT_TOKEN bearer auth.
+  - No /eval endpoint. Action surface is declarative.
+
+------------------------------------------------------------------
+WHERE TO LEARN MORE
+------------------------------------------------------------------
+
+  - agent/llm.txt — full wire spec (also served live at /llm.txt)
+  - CLAUDE.md     — full framework architecture overview
+  - apps/q-excel  — non-trivial demo that ships with agent.BindEnv

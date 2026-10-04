@@ -1,0 +1,9 @@
+<!-- A component written as markup instead of Go builders (route 2 of the
+     DSL: h.MustParse + Bind). Holes name ONE key in the Scope the caller
+     passes — there is no expression language, so anything computed stays
+     in Go where the compiler checks it. -->
+<div class="card">
+  <img class="card-icon" :icon="icon">
+  <h3 class="card-title">{title}</h3>
+  <p class="card-desc">{desc}</p>
+</div>

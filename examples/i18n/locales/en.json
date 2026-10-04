@@ -1,0 +1,23 @@
+{
+  "@meta": {"locale": "en", "source": "en.json"},
+
+  "demo.title": "Internationalization",
+  "demo.subtitle": "One tree, seven languages, no rebuild.",
+  "demo.section.plurals": "Plurals",
+  "demo.section.formats": "Formatting",
+  "demo.section.text": "Text rendering",
+  "demo.inc": "Add one",
+  "demo.dec": "Remove one",
+  "demo.items": {"one": "{n} item in the basket", "other": "{n} items in the basket"},
+  "demo.label.number": "Number",
+  "demo.label.percent": "Percent",
+  "demo.label.currency": "Currency",
+  "demo.label.date": "Date",
+  "demo.label.relative": "Relative time",
+  "demo.label.list": "List",
+  "demo.fruit.apple": "apples",
+  "demo.fruit.pear": "pears",
+  "demo.fruit.plum": "plums",
+  "demo.hanNote": "Shaping is locale-tagged; regional forms need a font with locl coverage.",
+  "demo.sample": "The quick brown fox jumps over the lazy dog."
+}

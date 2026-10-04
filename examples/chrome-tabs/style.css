@@ -1,0 +1,250 @@
+:root {
+  --bg: #dee1e6;          /* the strip's backdrop, like Chrome's frame */
+  --tab: #f1f3f4;
+  --tab-active: #ffffff;
+  --fg: #202124;
+  --muted: #5f6368;
+  --accent: #1a73e8;
+  --line: #c6c9ce;
+}
+
+.window {
+  display: flex;
+  flex-direction: column;
+  background: var(--tab-active);
+  color: var(--fg);
+  font-size: 14px;
+}
+
+/* The title bar. app-region: drag is the whole point: a press anywhere in
+   here that no child claims moves the OS window (qui.Window.BeginWindowDrag),
+   including the standard double-click-to-zoom. It is inherited, so children
+   opt out rather than in. */
+.tabstrip {
+  app-region: drag;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 0 8px 0 0;
+  background: var(--bg);
+}
+
+/* Room for the platform's own window buttons; width comes from
+   Window.TitlebarInsets(), not from a hardcoded number. align-self: stretch
+   matters — a zero-height box would not be hit-testable, so pressing there
+   would fall through instead of dragging the window. */
+.lights {
+  app-region: drag;
+  align-self: stretch;
+}
+
+.strip-fill {
+  app-region: drag;
+  align-self: stretch;
+  flex: 1;
+}
+
+.tab {
+  app-region: no-drag;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  width: 200px;
+  height: 34px;
+  padding: 0 8px 0 12px;
+  border-top-left-radius: 10px;
+  border-top-right-radius: 10px;
+  background: var(--tab);
+  color: var(--muted);
+}
+
+.tab:hover {
+  background: #e7eaed;
+}
+
+.tab-active {
+  background: var(--tab-active);
+  color: var(--fg);
+}
+
+.favicon {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+}
+
+.tab-active .favicon {
+  color: var(--accent);
+}
+
+.tab-title {
+  flex: 1;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-close {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.tab-close:hover {
+  background: #dadce0;
+  color: var(--fg);
+}
+
+.newtab {
+  app-region: no-drag;
+  width: 28px;
+  height: 28px;
+  margin-bottom: 3px;
+  padding: 0;
+  border: none;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.newtab:hover {
+  background: #cdd0d5;
+}
+
+/* --- content ------------------------------------------------------------ */
+
+.content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line);
+  background: var(--tab-active);
+}
+
+/* Inactive panes keep their widgets (and their state) but take no space. */
+.pane {
+  display: none;
+}
+
+.pane-active {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  padding: 28px 32px;
+}
+
+.empty {
+  align-items: center;
+  justify-content: center;
+}
+
+h2 {
+  font-size: 22px;
+  font-weight: bold;
+  color: var(--fg);
+}
+
+p {
+  max-width: 620px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+ul {
+  color: var(--muted);
+  line-height: 1.6;
+  padding-left: 18px;
+}
+
+.row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+}
+
+.round {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: #f8f9fa;
+  color: var(--fg);
+  font-size: 20px;
+}
+
+.round:hover {
+  background: #e8f0fe;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.count {
+  font-size: 34px;
+  font-weight: bold;
+  color: var(--accent);
+}
+
+.primary {
+  padding: 9px 18px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.primary:hover {
+  background: #1765cc;
+}
+
+.notes {
+  width: 560px;
+  height: 200px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.chips {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+}
+
+.chip {
+  width: 40px;
+  height: 40px;
+  border-radius: 20px;
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.chip:hover {
+  transform: scale(1.12);
+}
+
+.swatch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 260px;
+  height: 120px;
+  border-radius: 12px;
+}
+
+.swatch-label {
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: bold;
+}

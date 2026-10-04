@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+        "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    Info.plist template for a CEF helper .app.
+
+    Placeholders (filled in by build-helpers.sh):
+        @APP_NAME@           Host application display name. e.g. "WebViewDemo"
+        @HELPER_NAME@        Specific helper, including any suffix.
+                             e.g. "WebViewDemo Helper", "WebViewDemo Helper (GPU)"
+        @HELPER_SUFFIX@      Just the suffix in parens, possibly empty.
+                             e.g. "", " (GPU)", " (Renderer)"
+        @BUNDLE_ID_HOST@     Host CFBundleIdentifier, e.g. com.example.WebViewDemo
+        @BUNDLE_ID_HELPER@   Helper bundle id, must be UNIQUE per helper.
+                             e.g. com.example.WebViewDemo.helper.gpu
+        @VERSION@            App version, e.g. "0.1.0"
+
+    Note: LSUIElement=true keeps the helper out of the Dock and Cmd-Tab
+    list. CEF requires this for all helpers; without it the GPU helper
+    pops up as a second app icon during page navigation.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>@HELPER_NAME@</string>
+    <key>CFBundleExecutable</key>
+    <string>@HELPER_NAME@</string>
+    <key>CFBundleIdentifier</key>
+    <string>@BUNDLE_ID_HELPER@</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>@HELPER_NAME@</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@VERSION@</string>
+    <key>LSEnvironment</key>
+    <dict>
+        <key>MallocNanoZone</key>
+        <string>0</string>
+    </dict>
+    <key>LSFileQuarantineEnabled</key>
+    <true/>
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+    <key>LSUIElement</key>
+    <string>1</string>
+    <key>NSSupportsAutomaticGraphicsSwitching</key>
+    <true/>
+</dict>
+</plist>

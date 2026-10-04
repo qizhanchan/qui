@@ -1,0 +1,508 @@
+# qui-agent — operating a qui app from outside
+
+You are driving a desktop UI built with qui (a Go retained-mode GUI
+framework). This document tells you how to observe and act on the
+app. All endpoints speak HTTP. The server is listening on either a
+Unix domain socket (default) or TCP. Use `curl --unix-socket` for
+UDS; standard `curl` for TCP.
+
+The default socket path is $TMPDIR/qui-agent-<pid>.sock. When more than
+one qui app is running, DO NOT rely on "the newest live socket" — pin the
+path on both sides, or you will silently drive the wrong window (every
+command returns ok; the screenshot is of another app):
+
+  QUI_AGENT_SOCK=/tmp/my-app.sock ./my-app &     # implies QUI_AGENT=1
+  qui-agent -sock /tmp/my-app.sock tree
+
+The single most important concept is the **accessibility tree** at
+GET /tree: a JSON snapshot of every widget on screen, with stable
+selectors. Read the tree before acting; the tree is the source of
+truth, not the screenshot.
+
+If this app is built with HTML+CSS (htmlcss / reactive-html — most
+business UIs are), prefer the **HTML-level /dom surface** instead: it
+lets you observe and act with real CSS selectors and inspect computed
+styles the way browser DevTools does. See "HTML-LEVEL DEBUGGING" below.
+
+------------------------------------------------------------------
+ADDRESSING WIDGETS — selector grammar
+------------------------------------------------------------------
+
+Selectors are CSS-attribute-style. Combine criteria (they AND).
+
+  #id                       — match by developer-assigned ID
+  [role=button]             — exact role
+  [name="Save"]             — accessible name (exact)
+  [name*="Save"]            — name contains
+  [name^="Save"]            — name prefix
+  [name$="Save"]            — name suffix
+  [text=...]                — alias for name
+  [key=qui.save]            — message key (locale-independent; also
+                              *=, ^=, $=)
+  [value=...] / [value*=…]  — current widget value
+  [role=button]:nth(0)      — N-th match (0-indexed)
+  [role=button]:visible     — non-zero bounds
+  [role=button]:hidden      — zero bounds (collapsed tab etc.)
+  :focused                  — currently-focused widget
+  :layer(root)              — restrict to main tree
+  :layer(modal)             — restrict to topmost modal overlay
+  :layer(topmost)           — restrict to topmost overlay (any)
+
+Quote attribute values containing spaces or special chars. Backslash
+escapes inside quoted values: \" and \\.
+
+LOCALIZED APPS — pick selectors that survive a language switch.
+[name=] matches the RENDERED caption, so `[name="Save"]` stops matching
+the moment the app runs in German. Prefer, in order:
+
+  1. #id            — never changes
+  2. [key=qui.save] — the message key the caption was translated from;
+                      present on any widget whose text comes from a
+                      catalog, and reported as `nameKey` in /tree
+  3. [role=…]       — combined with :nth or a structural constraint
+  4. [name=…]       — only when the app is single-language
+
+A node's `nameKey` field being empty means its text is a literal, not a
+translation; for those, [name=] is safe.
+
+Standard roles: button, textbox, textarea, label, checkbox, radio,
+slider, spinner, combobox, listbox, listitem, tree, treeitem,
+table, row, cell, tabs, tab, scrollview, split, menu, menuitem,
+dialog, popup, tooltip, frame, colorpicker, viewport3d, video,
+webview, chart, container.
+
+------------------------------------------------------------------
+OBSERVING — what the app looks like
+------------------------------------------------------------------
+
+GET /tree
+   Returns: { root, overlays[], devicePixelRatio, windowSize }
+   Each AXNode: { path, id, role, name, value, state, bounds,
+                  visible, layer, children[] }
+   Use this first. Path strings are stable across runs given the
+   same widget construction; IDs (when present) are even more
+   stable across UI restructuring.
+
+GET /tree?selector=<sel>&maxDepth=N&leaves=1
+   Optional filters (default — no params — is unchanged):
+     selector=<sel> → returns a JSON array of matched subtrees
+                      (same AXNode shape, rooted at each match).
+     maxDepth=N     → stop recursing below depth N (0 = the node
+                      itself, no children).
+     leaves=1       → flatten output to only nodes with no children.
+   Use to keep token cost down on large trees.
+
+GET /screenshot?scale=0.5
+   PNG of the window at logical-pixel size × scale. scale=1 is
+   logical resolution; scale=0.5 is half (good for shrinking token
+   cost); scale=2 is physical pixels on Retina. Add &annotate=1 to
+   overlay widget bounds + id/role/name labels — one PNG that
+   shows the UI and tells you how to address it. annotate=1 also
+   honors &onlyLeaves=1, &onlyFocusable=1, &highlight=<selector>.
+
+GET /screenshot?region=x,y,w,h&scale=1
+   Sub-region in logical coordinates; useful when you want to
+   zoom into a single widget.
+
+GET /diagnostics
+   Layout warnings/errors (overflow, out-of-bounds, flex
+   misconfiguration). Helpful if a target you expected to find
+   doesn't appear in the tree.
+
+GET /console?since=<seq>
+   Recent events (mouse, key, focus changes, repaints). Returns
+   an array of { seq, ts, kind, target, payload }. Pass the last
+   seq you received as `since` to get only newer entries.
+
+GET /events
+   Server-Sent Events stream of new entries pushed in real time.
+   Same JSON shape as /console.
+
+------------------------------------------------------------------
+ACTING — perform an action atomically
+------------------------------------------------------------------
+
+POST /act     Content-Type: application/json
+   Body: {
+     "action": "<one of: click|doubleclick|rightclick|hover|focus|
+                blur|type|sendkey|sendchord|scroll|pinch|drag>",
+     "target":  "<selector>",            // required for most
+     "x": 0, "y": 0,                     // point escape hatch: with
+                                         //   action=click and no
+                                         //   target, clicks raw
+                                         //   window point (x,y).
+                                         //   "modifiers" apply here too
+                                         //   (Cmd+click a link drawn
+                                         //   inside a canvas)
+     "x2": 0, "y2": 0,                   // with action=drag and no
+                                         //   from/to, drags (x,y) ->
+                                         //   (x2,y2) in raw window
+                                         //   coords — for handles that
+                                         //   are not widgets (ruler
+                                         //   markers, canvas grips)
+     "text":    "<string>",              // for type
+     "key":     "<key or chord>",        // for sendkey
+     "chord":   "<chord>",               // for sendchord
+     "dx": 0, "dy": 0,                   // for scroll
+     "scale": 1.5,                       // for pinch: cumulative
+                                         //   magnification to end at
+                                         //   (1.5 = pinch out to 150%,
+                                         //   0.5 = pinch in to half).
+                                         //   Synthesizes a full
+                                         //   Began→Changed→Ended
+                                         //   two-finger gesture.
+     "from":    "<selector>",            // for drag
+     "to":      "<selector>",            // for drag
+     "steps":   N,                       // for drag
+     "modifiers": ["cmd","shift",…],     // OR-ed into events
+     "scrollIntoView": true,             // default true
+     "raw":     false                    // for type: bypass TextSink
+   }
+
+   Response: {
+     "ok": bool,
+     "error": "<text>",        // present when ok=false
+     "errorCode": "<one of: modal_blocked, no_match, timeout,
+                             not_text_target, bad_selector, error>",
+     "blockingPath": "<path>",  // only when errorCode=modal_blocked
+     "treeHash": "ax-<hex>",
+     "newOverlays": ["<layer>"],
+     "focusChange": {"from": "<path>", "to": "<path>"} | null,
+     "diagnostics": [...],
+     "idleState": { dirtyRegion, layoutDirty, activeAnimators,
+                    activeTickables, pendingJobs, overlayCount }
+   }
+
+Modifiers: shift, ctrl, alt (== option), cmd (== super / meta).
+
+`type` picks its route from the target: a text control (or a
+<select>, whose option labels it matches) gets the string in one
+call as a single undo entry; a widget that owns its own editing (a
+sheet grid opening an inline cell editor) gets the characters
+dispatched to it once focused. A target that is neither — a
+container, a heading, a plain <div> — is an error
+(errorCode=not_text_target) with NOTHING mutated: typing never
+falls back to rewriting an element's own content or to spraying
+characters at whatever happened to be focused.
+Chord syntax: "Cmd+Shift+Z", "Ctrl+A", "Enter", "Escape", "Tab",
+arrow keys "Left/Right/Up/Down".
+
+==================================================================
+HTML-LEVEL DEBUGGING — the /dom surface (like browser DevTools)
+==================================================================
+
+There are TWO ways to observe/drive this app:
+
+  * WIDGET level (/tree, /act above): the rendered widget tree. Use it
+    for low-level rendering / layout debugging.
+  * HTML/DOM level (/dom below): the app as its author wrote it — an
+    HTML DOM addressed with real CSS selectors, plus a DevTools-style
+    "Styles" view. USE THIS for apps built with htmlcss / reactive-html
+    (most business UIs). It is far more direct: you address by class /
+    tag / combinator and can see which CSS rule won and why.
+
+The DOM view collapses rendering plumbing (inline runs, control backings,
+scroll hosts, list-marker rows) so each node maps 1:1 to an HTML element,
+the way DevTools' Elements panel shows it.
+
+GET /dom
+   The full projected DOM tree: { root, overlays[], devicePixelRatio,
+   windowSize }. Each node:
+     { path, tag, id, classes[], attrs{}, text, role, display, state,
+       bounds, visible, layer, children[] }
+   `state` reuses the widget state bits (focused/disabled/checked/…).
+
+GET /dom?selector=<css>&maxDepth=N
+   Returns a JSON ARRAY of the elements matching a CSS selector (like
+   DevTools $$(sel)), each as a node subtree. maxDepth caps recursion.
+
+   SELECTOR GRAMMAR = the engine's own CSS: tag, #id, .class, [attr],
+   [attr=v], [attr*=v], [attr^=v], [attr$=v], [attr~=v], :nth-child(An+B),
+   :first-child, :last-child, :not(...), and combinators — descendant
+   ("a b"), child ("a > b"), adjacent ("a + b"), sibling ("a ~ b").
+   Examples: ".card.active", "ul > li:nth-child(2)", "nav a[href^=/]".
+   NOTE: interactive-state pseudos (:hover/:focus/:active) evaluate at the
+   resting state here and match nothing — read the `state` field instead.
+
+   TEXT LOCATOR (Playwright-style): :has-text("…") keeps only elements
+   whose text content (own + descendants, whitespace-normalized) contains
+   the string, case-insensitively; it resolves to the innermost such
+   element. Combine with a tag/class to be precise:
+       button:has-text("Save")        the Save button (label may be nested)
+       .row:has-text("invoice #42")   the row mentioning that text
+       :has-text("Sign out")          any innermost element with that text
+   Multiple :has-text clauses AND. It filters the matched (subject)
+   element — put it on the element you want, not an ancestor.
+
+GET /dom/styles?selector=<css>
+   The DevTools "Styles" + "Computed" view for every matching element:
+     [ { path, selector, computed{prop:value},
+         matchedRules[ { selector, origin, specificity, declarations[
+             {property, value, important, active} ] } ],
+         boxModel{ content, padding, border, margin } } ]
+   `computed` is the winning value per property. `matchedRules` lists
+   every rule that applied, inline first, then author rules by descending
+   specificity, then user-agent; a declaration with active=false was
+   overridden by a higher-cascade rule (DevTools strikes these through).
+   This answers "why is my element styled this way / why didn't my rule
+   apply" — the single highest-value HTML debugging question.
+
+POST /dom/act    Content-Type: application/json
+   Same shape as POST /act, but `target` is a CSS SELECTOR resolved
+   against the DOM (first visible match wins). Actions: click,
+   doubleclick, rightclick, hover, focus, blur, type, scroll, sendkey,
+   sendchord. Body: { "action", "target", "text", "key", "chord",
+   "dx","dy", "modifiers":[…], "scrollIntoView", "raw", "timeoutMs" }.
+
+   AUTO-WAIT (Playwright-style): the action first waits for its target to
+   appear and become visible, so you usually DON'T need a separate /wait.
+   `timeoutMs` bounds the wait (default 1000ms); set "timeoutMs":0 to
+   disable it (single attempt, fail fast). Only appearance+visibility are
+   awaited; if the element is present but obscured by a modal you still
+   get errorCode=modal_blocked (dismiss it or target :layer(modal)).
+
+   Response mirrors /act (ok, error, errorCode, treeHash, newOverlays,
+   focusChange, idleState) plus "matched": { path, selector } — the
+   element that was acted on. Modal-blocking, scroll-into-view and
+   undo-coalescing behave exactly as on the widget /act path.
+
+DOM RECIPES
+   # inspect what applied to a styled element
+   curl -s --unix-socket "$SOCK" './dom/styles?selector=.card.active'
+   # click a button by its visible label (auto-waits for it to appear)
+   curl -s --unix-socket "$SOCK" -X POST http://./dom/act \
+     -d '{"action":"click","target":"button:has-text(\"Save\")"}'
+   # click a button addressed by its CSS class path
+   curl -s --unix-socket "$SOCK" -X POST http://./dom/act \
+     -d '{"action":"click","target":".toolbar button.save"}'
+   # fill a field by class
+   curl -s --unix-socket "$SOCK" -X POST http://./dom/act \
+     -d '{"action":"type","target":"input.search","text":"hello"}'
+
+------------------------------------------------------------------
+DEBUGGING INPUTS — text-field state & lifecycle
+------------------------------------------------------------------
+
+Text fields (<input>/<textarea>, and native Input/TextArea widgets)
+carry a `textState` object in /tree AND /dom nodes:
+   { value, caret, selStart, selEnd, preedit, canUndo, canRedo }
+   - caret: cursor position (in runes)
+   - selStart/selEnd: current selection; selStart=-1 means no selection
+   - preedit: in-flight IME composition (uncommitted text)
+Use it to see WHY an input looks wrong — caret stuck, stale selection,
+an IME composition mid-flight, or a value that isn't what you typed.
+
+Input lifecycle events appear in /console and /events with:
+   kind="Input"   → the value changed; payload.value is the new text
+                    (payload.oldValue when known)
+   kind="Submit"  → Enter/commit fired; payload.value is the submitted text
+So "did my onInput/onChange/onSubmit handler actually fire, and what
+value did it see?" is answerable without decoding raw Char events.
+
+Each Input/Submit record carries payload.source:
+   "user"              → a keystroke / paste / IME commit
+   "program"           → a programmatic SetText (app code, data binding,
+                         or an agent type action)
+   "program-overwrite" → a programmatic SetText that replaced a value the
+                         USER had just typed. This is the signature of a
+                         controlled-value fight: a data binding writing a
+                         stale value back over the user's input, so the
+                         field "won't type" or reverts. If a field ignores
+                         typing, look for program-overwrite records right
+                         after the user's keystrokes — the binding isn't
+                         tracking the input (missing/incorrect onInput).
+
+NOTE on programmatic typing: POST .../act type (and /dom/act type) use a
+fast path (SetText) that replaces the value in one step and fires the
+change handler, but does NOT replay per-keystroke behavior. If a bug only
+reproduces with real key-by-key input (IME, key handlers, controlled-value
+races), add "raw":true to the type action to dispatch per-rune events.
+
+------------------------------------------------------------------
+DEBUGGING SELECTS / COMBOBOXES — read the choices, pick in one call
+------------------------------------------------------------------
+
+A Select (role=combobox, or a <select> on the /dom surface) is awkward to
+drive by mouse: the trigger toggles its popup on mouse-DOWN, the option
+rows only exist in an overlay layer while it is open, and arrow-key nav
+needs the trigger focused first. So DON'T open the popup and hunt for the
+row. Instead:
+
+READ the choices without opening it. Every combobox node carries an
+`options` array in BOTH /tree and /dom:
+   "options": [ { "label": "GET", "selected": true }, { "label": "POST" }, … ]
+plus `value` = the selected label and, in `state`, `expanded` when the
+dropdown is currently open. So "what can I pick / what is picked / is it
+open" is answerable from one /tree or /dom read.
+
+PICK an option with the `type` action — type the option's LABEL, and the
+Select jumps to it, fires its change handler, and closes any open popup in
+one atomic call:
+   curl -s --unix-socket "$SOCK" -X POST http://./act \
+     -d '{"action":"type","target":"#method","text":"POST"}'
+   # or on the DOM surface:
+   curl -s --unix-socket "$SOCK" -X POST http://./dom/act \
+     -d '{"action":"type","target":"select#method","text":"POST"}'
+Matching is forgiving: exact label, else a whitespace-trimmed match (so an
+indented tree label "    OAuth" is reachable by typing "OAuth"), else a
+case-insensitive trimmed match. An unknown label is a no-op (selection
+unchanged) — verify with a follow-up /tree read of `value`.
+
+(Clicking the trigger to open the popup and clicking a [role=menuitem] row
+in the overlay still works, but the `type` path is one call and immune to
+the toggle/focus pitfalls above.)
+
+------------------------------------------------------------------
+REACTIVE — component tree, state & signals (like React DevTools)
+------------------------------------------------------------------
+
+GET /reactive
+   For apps built on the reactive engine (reactive-html), a snapshot of
+   the live component tree. 204 No Content if the window isn't reactive.
+   Each node: { kind, name, key, dirty, widgetRole, widgetId, props,
+                hooks[], children[] }
+     kind        component | host | fragment | provider | boundary |
+                 bound:show | bound:for | portal
+     name        component name (kind=component)
+     dirty       a re-render is pending for this node/subtree — answers
+                 "why hasn't my UI updated / is an update queued?"
+     widgetRole/widgetId  the backing widget for host nodes — correlate
+                 with a /dom or /tree node (same id)
+     hooks[]     per component: { kind, value, watchers }
+                 kind = state | signal | memo | effect
+                 value  = the CURRENT value (state/signal/memo)
+                 watchers = subscriber count (signal) — 0 means nothing
+                            reacts to it
+   Use this to answer "which components are mounted, what is their state
+   right now, and what is waiting to re-render" — invisible to /dom and
+   /tree, which only see the committed widgets.
+
+------------------------------------------------------------------
+WAITING — synchronize with the UI
+------------------------------------------------------------------
+
+GET /wait?for=idle&timeoutMs=2000
+   Blocks until the window has no pending repaints, animators,
+   tickables, or queued jobs for two consecutive observations.
+   Use after an action to ensure subsequent /tree / /screenshot
+   reflect the post-action state.
+
+GET /wait?for=overlayAppears&pattern=modal&timeoutMs=1500
+   Blocks until an overlay with a Layer string containing
+   `pattern` appears. Use `modal` to wait for any modal dialog.
+
+GET /wait?for=overlayDisappears&pattern=modal&timeoutMs=1500
+   Symmetric: blocks until matching overlays are gone.
+
+GET /wait?for=selector&selector=<sel>&state=appears&timeoutMs=2000
+   Blocks until the selector matches a visible widget (state=appears,
+   the default) or matches nothing (state=gone), confirmed across
+   two consecutive observations.
+
+GET /wait?for=stable&timeoutMs=2000
+   Blocks until the accessibility-tree content hash is unchanged
+   across two consecutive samples — use when waiting for structure
+   to settle (rows loading, layout converging).
+
+------------------------------------------------------------------
+HEALTH
+------------------------------------------------------------------
+
+GET /health
+   Returns { "ok": true, "ready": <bool> }. ready=true once at
+   least one laid-out frame/tree is available.
+
+------------------------------------------------------------------
+ERROR CODES
+------------------------------------------------------------------
+
+  no_match        — selector matched nothing. Re-fetch /tree.
+  modal_blocked   — target is hidden behind a modal overlay.
+                    Use :layer(modal) to address the modal, or
+                    dismiss it (often click its Cancel / Close
+                    button) before retrying.
+  timeout         — action waited for the main loop > 5s.
+                    The app may be busy or wedged.
+  not_text_target — `type` hit a widget that takes no text (a
+                    heading, a plain <div>, a container). NOTHING
+                    was typed and nothing was mutated. Re-read the
+                    tree and address a control: a [role=textbox] /
+                    [role=combobox], the <input>/<select> element,
+                    or the widget that owns its own editing.
+  bad_selector    — selector failed to parse (an EMPTY selector
+                    counts: `target` is required — a body that
+                    spells it "selector" leaves it empty).
+  error           — generic failure; check `error` text.
+
+------------------------------------------------------------------
+RECIPES
+------------------------------------------------------------------
+
+1) CLICK A LABELED BUTTON
+   curl -s --unix-socket "$SOCK" -X POST http://./act \
+     -H 'Content-Type: application/json' \
+     -d '{"action":"click","target":"[role=button][name=\"Save\"]"}'
+
+2) FILL A FORM FIELD
+   curl -s --unix-socket "$SOCK" -X POST http://./act \
+     -H 'Content-Type: application/json' \
+     -d '{"action":"type","target":"#email","text":"foo@bar.com"}'
+
+3) WAIT FOR A DIALOG, THEN ACT INSIDE IT
+   curl -s --unix-socket "$SOCK" -X POST http://./act \
+     -d '{"action":"click","target":"#new"}'
+   curl -s --unix-socket "$SOCK" 'http://./wait?for=overlayAppears&pattern=modal'
+   curl -s --unix-socket "$SOCK" -X POST http://./act \
+     -d '{"action":"click","target":":layer(modal) [role=button][name=\"OK\"]"}'
+
+4) SWITCH TABS AND VERIFY
+   curl -s --unix-socket "$SOCK" -X POST http://./act \
+     -d '{"action":"click","target":"[role=tab][name=\"Settings\"]"}'
+   curl -s --unix-socket "$SOCK" 'http://./tree' | jq '.root.children[] | select(.role=="tabs") | .value'
+
+5) DRAG A SLIDER HANDLE
+   curl -s --unix-socket "$SOCK" -X POST http://./act \
+     -d '{"action":"drag","from":"#volume","to":"#volumeRightEdge","steps":12}'
+
+5b) DRAG A CUSTOM-DRAWN HANDLE (no widget to select — raw points)
+   curl -s --unix-socket "$SOCK" -X POST http://./act \
+     -d '{"action":"drag","x":11,"y":318,"x2":11,"y2":418,"steps":10}'
+
+5c) MODIFIER-CLICK A POINT (Cmd+click a link inside a document canvas)
+   curl -s --unix-socket "$SOCK" -X POST http://./act \
+     -d '{"action":"click","x":300,"y":246,"modifiers":["cmd"]}'
+
+------------------------------------------------------------------
+LIMITS (v1)
+------------------------------------------------------------------
+
+  - WebView, scene3d.Viewport, media.VideoView, graphs.Chart are
+    opaque leaves: no descendant introspection through them.
+  - Annotated screenshots use a 1-px outline; very dense trees
+    will have overlapping labels. Use `onlyLeaves=1` or
+    `onlyFocusable=1` to thin them.
+  - SSE event stream needs a long-lived HTTP connection. If your
+    transport doesn't support that, poll /console?since=… instead.
+  - No /eval endpoint exists. The agent surface is declarative
+    only — actions, observations, waits.
+
+------------------------------------------------------------------
+PROCESS LIFECYCLE
+------------------------------------------------------------------
+
+The qui binary traps SIGINT and SIGTERM and routes them through the
+same OnClose path as a user-clicked window close — the agent UDS is
+unlinked and any host OnClose callbacks fire. So `kill <pid>` is the
+clean way to shut the app down.
+
+CAUTION: `go run` does NOT forward signals to the binary it spawns.
+If you launched the app with `go run ./cmd/app &`, the PID you
+captured ($!) is `go run`'s own — `kill` against it leaves the real
+GLFW binary alive as an orphan. Build first:
+
+  go build -o /tmp/app ./cmd/app
+  /tmp/app &
+  PID=$!
+  # ... drive via /act, /tree, /screenshot ...
+  kill $PID    # graceful: OnClose fires, UDS unlinks
+

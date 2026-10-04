@@ -1,0 +1,23 @@
+{
+  "@meta": {"locale": "zh-Hans", "source": "en.json"},
+
+  "demo.title": "国际化",
+  "demo.subtitle": "一棵树，七种语言，无需重建。",
+  "demo.section.plurals": "复数",
+  "demo.section.formats": "格式化",
+  "demo.section.text": "文字渲染",
+  "demo.inc": "增加一个",
+  "demo.dec": "减少一个",
+  "demo.items": {"other": "购物篮中有 {n} 件商品"},
+  "demo.label.number": "数字",
+  "demo.label.percent": "百分比",
+  "demo.label.currency": "货币",
+  "demo.label.date": "日期",
+  "demo.label.relative": "相对时间",
+  "demo.label.list": "列表",
+  "demo.fruit.apple": "苹果",
+  "demo.fruit.pear": "梨",
+  "demo.fruit.plum": "李子",
+  "demo.hanNote": "整形已带上语言标记；地区字形还需要字体提供 locl 特性。",
+  "demo.sample": "天地玄黄，宇宙洪荒。日月盈昃，辰宿列张。"
+}

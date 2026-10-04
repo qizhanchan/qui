@@ -1,0 +1,23 @@
+{
+  "@meta": {"locale": "ja", "source": "en.json"},
+
+  "demo.title": "国際化",
+  "demo.subtitle": "ひとつのツリー、7つの言語、再構築なし。",
+  "demo.section.plurals": "複数形",
+  "demo.section.formats": "書式",
+  "demo.section.text": "テキスト描画",
+  "demo.inc": "1つ追加",
+  "demo.dec": "1つ削除",
+  "demo.items": {"other": "かごに {n} 個の商品"},
+  "demo.label.number": "数値",
+  "demo.label.percent": "パーセント",
+  "demo.label.currency": "通貨",
+  "demo.label.date": "日付",
+  "demo.label.relative": "相対時間",
+  "demo.label.list": "リスト",
+  "demo.fruit.apple": "りんご",
+  "demo.fruit.pear": "梨",
+  "demo.fruit.plum": "すもも",
+  "demo.hanNote": "シェーピングは言語タグ付き。地域字形にはlocl対応フォントが必要です。",
+  "demo.sample": "いろはにほへと ちりぬるを わかよたれそ つねならむ"
+}

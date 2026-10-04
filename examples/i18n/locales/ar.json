@@ -1,0 +1,23 @@
+{
+  "@meta": {"locale": "ar", "source": "en.json"},
+
+  "demo.title": "التدويل",
+  "demo.subtitle": "شجرة واحدة، سبع لغات، دون إعادة بناء.",
+  "demo.section.plurals": "صيغ الجمع",
+  "demo.section.formats": "التنسيق",
+  "demo.section.text": "عرض النص",
+  "demo.inc": "إضافة واحد",
+  "demo.dec": "إزالة واحد",
+  "demo.items": {"zero": "لا توجد عناصر في السلة", "one": "عنصر واحد في السلة", "two": "عنصران في السلة", "few": "{n} عناصر في السلة", "many": "{n} عنصرًا في السلة", "other": "{n} عنصر في السلة"},
+  "demo.label.number": "رقم",
+  "demo.label.percent": "نسبة مئوية",
+  "demo.label.currency": "عملة",
+  "demo.label.date": "تاريخ",
+  "demo.label.relative": "وقت نسبي",
+  "demo.label.list": "قائمة",
+  "demo.fruit.apple": "تفاح",
+  "demo.fruit.pear": "كمثرى",
+  "demo.fruit.plum": "برقوق",
+  "demo.hanNote": "التشكيل موسوم باللغة؛ الأشكال الإقليمية تتطلب خطًا يدعم locl.",
+  "demo.sample": "نص حكيم له سر قاطع وذو شأن عظيم مكتوب على ثوب أخضر ومغلف بجلد أزرق."
+}

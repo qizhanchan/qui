@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Native HTML Widget Reference</title>
+<!--
+  Renders a single RAW HTML form control per page load, styled with a
+  deterministic, cross-platform baseline (appearance:none + explicit UA
+  metrics). This is the reference the qui default widgets are tuned to
+  match pixel-for-pixel via ImageMagick AE — the "html 原生标准" target.
+
+  We do NOT use the browser's appearance:auto (macOS Aqua) rendering:
+  it is OS-specific, un-matchable, and is not what qui's htmlcss engine
+  produces for an unstyled element. Instead this file IS the spec — its
+  numbers mirror the Chromium UA stylesheet box model.
+
+  Font: Go Regular (go-regular.ttf, the same face qui pins in
+  html_golden_test.go) is injected via @font-face so glyph metrics match
+  qui's raster exactly — AE then isolates geometry + color, not the font.
+
+  URL params:
+    ?widget=<input|textarea|select|button|checkbox|radio>   default: input
+    ?v=<variant>   checkbox/radio: checked|unchecked   (others ignored)
+-->
+<style>
+  @font-face {
+    font-family: 'GoRegular';
+    src: url('go-regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100vw;
+    min-height: 100vh;
+    background: #ffffff;
+  }
+  /* 16 px inset so puppeteer clips element-rect + fixed pad, matching the
+     16 px pad the qui golden snapshot uses. */
+  #stage {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    /* Prevent line-height/baseline leakage from the anonymous inline box
+       around a replaced/inline-block control. */
+    line-height: 0;
+  }
+
+  /* ---- Deterministic UA baseline ------------------------------------ */
+  .ctl {
+    box-sizing: border-box;
+    font-family: 'GoRegular', sans-serif;
+    font-size: 14px;
+    line-height: normal;
+    color: #000000;
+    background: #ffffff;
+    margin: 0;
+    border: 1px solid #767676;
+    border-radius: 2px;
+    -webkit-appearance: none;
+    appearance: none;
+    vertical-align: top;
+  }
+  input.text {
+    padding: 1px 2px;
+    width: 180px;
+    height: 22px;
+  }
+  textarea.text {
+    padding: 2px 3px;
+    width: 180px;
+    height: 40px;
+    resize: none;
+    overflow: hidden;
+    white-space: pre;
+  }
+  button.btn {
+    background: #efefef;
+    padding: 2px 8px;
+    height: 22px;
+    color: #000000;
+  }
+
+  /* Select: appearance:none strips the native arrow, so we draw a
+     deterministic CSS-triangle chevron inside the trailing padding. */
+  .selectwrap {
+    position: relative;
+    display: inline-block;
+    line-height: 0;
+  }
+  select.sel {
+    padding: 1px 22px 1px 4px;
+    height: 22px;
+    line-height: normal;
+  }
+  .chevron {
+    position: absolute;
+    top: 50%;
+    right: 8px;
+    width: 0;
+    height: 0;
+    margin-top: -2px;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid #333333;
+    pointer-events: none;
+  }
+
+  /* Checkbox / radio: appearance:none gives an empty box we style
+     ourselves so the look is identical on every OS. 13×13 UA metric. */
+  input.check, input.rad {
+    width: 13px;
+    height: 13px;
+    padding: 0;
+    position: relative;
+    background: #ffffff;
+  }
+  input.rad { border-radius: 50%; }
+  /* checked check-mark: a rotated border L. */
+  input.check:checked {
+    background: #4d8cd8;
+    border-color: #4d8cd8;
+  }
+  input.check:checked::after {
+    content: '';
+    position: absolute;
+    left: 4px;
+    top: 1px;
+    width: 3px;
+    height: 7px;
+    border: solid #ffffff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+  input.rad:checked {
+    border-color: #4d8cd8;
+  }
+  input.rad:checked::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 7px;
+    height: 7px;
+    margin: -3.5px 0 0 -3.5px;
+    border-radius: 50%;
+    background: #4d8cd8;
+  }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<script type="module">
+const params = new URLSearchParams(location.search);
+const widget = params.get('widget') || 'input';
+const variant = params.get('v') || 'unchecked';
+const stage = document.getElementById('stage');
+
+let el;
+switch (widget) {
+  case 'input': {
+    el = document.createElement('input');
+    el.type = 'text';
+    el.className = 'ctl text';
+    el.value = 'Text';
+    break;
+  }
+  case 'textarea': {
+    el = document.createElement('textarea');
+    el.className = 'ctl text';
+    el.rows = 2;
+    el.value = 'Text';
+    break;
+  }
+  case 'button': {
+    el = document.createElement('button');
+    el.className = 'ctl btn';
+    el.textContent = 'Button';
+    break;
+  }
+  case 'select': {
+    const wrap = document.createElement('span');
+    wrap.className = 'selectwrap';
+    el = document.createElement('select');
+    el.className = 'ctl sel';
+    for (const opt of ['Apple', 'Banana', 'Cherry']) {
+      const o = document.createElement('option');
+      o.textContent = opt;
+      el.appendChild(o);
+    }
+    const chev = document.createElement('span');
+    chev.className = 'chevron';
+    wrap.appendChild(el);
+    wrap.appendChild(chev);
+    stage.appendChild(wrap);
+    break;
+  }
+  case 'checkbox': {
+    el = document.createElement('input');
+    el.type = 'checkbox';
+    el.className = 'ctl check';
+    if (variant === 'checked') el.checked = true;
+    break;
+  }
+  case 'radio': {
+    el = document.createElement('input');
+    el.type = 'radio';
+    el.className = 'ctl rad';
+    if (variant === 'checked') el.checked = true;
+    break;
+  }
+}
+if (el && el.parentElement !== stage && !stage.contains(el)) {
+  stage.appendChild(el);
+}
+
+await document.fonts.ready;
+await new Promise(requestAnimationFrame);
+await new Promise(requestAnimationFrame);
+window.__qui_ready__ = true;
+window.__qui_bbox__ = (() => {
+  const r = el.getBoundingClientRect();
+  return { x: r.left, y: r.top, w: r.width, h: r.height };
+})();
+</script>
+</body>
+</html>

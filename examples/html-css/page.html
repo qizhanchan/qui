@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>qui html-css demo</title>
+</head>
+<body>
+  <!-- ============================================================
+       This page is a VERIFICATION harness for the htmlcss engine.
+       It is organized into numbered feature modules; every module
+       exercises one area of the engine (see htmlcss/COVERAGE.md).
+       Each module is a <section class="module"> with a head strip
+       and a body of <div class="demo"> blocks. Interactive demos
+       (display:none toggle, form submit, canvas) are wired in main.go
+       against the ids marked below.
+       ============================================================ -->
+
+  <header class="hero">
+    <div class="hero-row">
+      <span class="brand">qui</span>
+      <span class="hero-sub">a lightweight HTML + CSS engine, in Go</span>
+    </div>
+    <p class="hero-lead">
+      Every pixel below is real <strong>HTML</strong> parsed by
+      <code>golang.org/x/net/html</code>, styled with real <em>CSS</em>,
+      and rendered into the retained qui widget tree — no browser, no
+      WebView. Read more in the <a href="https://example.com">project docs</a>.
+    </p>
+    <nav class="toc">
+      <span class="toc-chip">01 · Text</span>
+      <span class="toc-chip">02 · Box &amp; Border</span>
+      <span class="toc-chip">03 · Effects</span>
+      <span class="toc-chip">04 · Flexbox</span>
+      <span class="toc-chip">05 · Grid</span>
+      <span class="toc-chip">06 · Position</span>
+      <span class="toc-chip">07 · Lists</span>
+      <span class="toc-chip">08 · Tables</span>
+      <span class="toc-chip">09 · Selectors</span>
+      <span class="toc-chip">10 · Colors</span>
+      <span class="toc-chip">11 · Forms</span>
+      <span class="toc-chip new">12 · Canvas</span>
+      <span class="toc-chip new">13 · Pointer</span>
+      <span class="toc-chip">14 · Composites</span>
+    </nav>
+  </header>
+
+  <!-- ===== 01 · Text & Typography ============================== -->
+  <section class="module" id="m-text">
+    <div class="module-head">
+      <span class="module-num">01</span>
+      <h2 class="module-title">Text &amp; Typography</h2>
+      <span class="module-tags">inline runs · decoration · spacing · pre · transform · justify</span>
+    </div>
+    <div class="module-body">
+      <div class="demo">
+        <h3>Inline runs — mixed bold / italic / links wrap together</h3>
+        <p class="lead">
+          Mixed <strong>bold</strong>, <em>italic</em>,
+          <code>inline code</code> and
+          <a href="https://example.com">links</a> flow together inside a
+          single wrapping text box, breaking cleanly at word boundaries.
+        </p>
+      </div>
+
+      <div class="demo">
+        <h3>text-decoration — line / color / style / thickness</h3>
+        <p class="deco">
+          Base variants: <ins>inserted</ins>, <del>deleted</del>,
+          <span class="under">underlined</span>,
+          <span class="strike">struck-through</span>. This
+          <a href="https://example.com">link keeps its underline</a> while
+          <a class="plain" href="https://example.com">this one drops it</a>.
+        </p>
+        <div class="decos">
+          <span class="d-solid">solid red</span>
+          <span class="d-wavy">wavy green</span>
+          <span class="d-dashed">dashed blue thick</span>
+          <span class="d-dotted">dotted orange</span>
+          <span class="d-double">double purple</span>
+          <p class="d-para">整段 paragraph 也支持 —— text-decoration: underline wavy 独立于文字色。</p>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>letter-spacing / word-spacing / text-indent</h3>
+        <p class="tracked">LETTER SPACING 字间距加宽（每个字形后追加 tracking）</p>
+        <p class="worded">word spacing 词间距：仅空格加宽 而 字形 之 间 不变</p>
+        <p class="indented">text-indent：首行缩进 32px，段落其余行回到左边界。这段话足够长以触发换行，从而能看到首行相对其余行明显向右缩进的效果，其余行贴住左边界。</p>
+      </div>
+
+      <div class="demo">
+        <h3>white-space:pre — code block preserves whitespace + newlines</h3>
+        <pre class="code">func main() {
+    msg := "hello, qui"
+    for i := 0; i &lt; 3; i++ {
+        fmt.Println(msg)   // 缩进 + 多空格 + 换行都被保留
+    }
+}</pre>
+      </div>
+
+      <div class="demo">
+        <h3>text-transform &amp; text-align:justify</h3>
+        <p class="upper">text-transform: uppercase 作用于整行英文 · works on this line.</p>
+        <div class="justdemo">
+          <p class="just">Justified text stretches every soft-wrapped line to the full column width by widening the word gaps, while the final line of the paragraph keeps its natural spacing exactly like a browser does.</p>
+          <p class="just">混排也支持：alpha <b>bold beta</b> gamma <a href="https://example.com">a link</a> delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau.</p>
+          <p class="nojust">对照组（默认 start 对齐）：Justified text stretches every soft-wrapped line to the full column width by widening the word gaps.</p>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>overflow-wrap — long unbreakable runs</h3>
+        <div class="wrapdemo">
+          <p class="ow-normal">overflow-wrap: normal（默认，溢出）<br>https://example.com/a/very/long/path/that-has-no-break-opportunity-at-all-1231212312123121231212312</p>
+          <p class="ow-break">overflow-wrap: break-word（列内断行）<br>https://example.com/a/very/long/path/that-has-no-break-opportunity-at-all-1231212312123121231212312</p>
+          <p class="ow-break">混排同样生效：<b>bold</b> 12312123121231212312123121231212312123121231212312 <a href="https://example.com">link</a></p>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>Inline formatting — text + atomic boxes share a baseline</h3>
+        <p class="inline-demo">
+          Ship it <img class="ico" src="icons/add.svg"> with confidence: mix an
+          <span class="tag new">NEW</span> and a <span class="tag beta">BETA</span>
+          badge, an inline <img class="ico" src="icons/link.svg"> icon, and a
+          <a href="https://example.com">real link</a> — text and atomic inline
+          boxes share one wrapping baseline, breaking cleanly when the line runs
+          out of room instead of dropping each box onto its own line.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 02 · Box Model, Borders & Radius =================== -->
+  <section class="module" id="m-box">
+    <div class="module-head">
+      <span class="module-num">02</span>
+      <h2 class="module-title">Box Model, Borders &amp; Radius</h2>
+      <span class="module-tags">border-style · per-side · box-sizing · per-corner radius · outline</span>
+    </div>
+    <div class="module-body">
+      <div class="demo">
+        <h3>Border styles &amp; per-side borders</h3>
+        <div class="border-demo">
+          <div class="bd solid">solid</div>
+          <div class="bd dashed">dashed</div>
+          <div class="bd dotted">dotted</div>
+          <div class="bd left">left only</div>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>box-sizing · content-box(默认) vs border-box（同为 width:120px）</h3>
+        <div class="bs-row">
+          <div class="bs cbx">content-box<br>外框 = 120 + padding + border</div>
+          <div class="bs bbx">border-box<br>外框 = 120（含 padding）</div>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>per-corner border-radius · 单角 / 4值简写 / overflow 圆角裁剪</h3>
+        <div class="fx-row">
+          <div class="rad tabtop">tab 顶角 16 16 0 0</div>
+          <div class="rad leaf">叶形 18 0 18 0</div>
+          <div class="rad chip">chip 4值 2 8 16 24</div>
+          <div class="rad clipbox">
+            <div class="rad-inner">overflow:hidden<br>圆角裁子元素</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>outline — 边框外描一圈（不占布局）</h3>
+        <span class="outlined">outline: 2px solid</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 03 · Backgrounds & Visual Effects ================== -->
+  <section class="module" id="m-effects">
+    <div class="module-head">
+      <span class="module-num">03</span>
+      <h2 class="module-title">Backgrounds &amp; Visual Effects</h2>
+      <span class="module-tags">shadow · linear/radial gradient · opacity · transform</span>
+    </div>
+    <div class="module-body">
+      <div class="demo">
+        <h3>shadow / gradient / opacity / transform</h3>
+        <div class="fx-row">
+          <div class="fx shadow">box-shadow</div>
+          <div class="fx grad">linear-gradient</div>
+          <div class="fx faded">opacity 0.5</div>
+          <div class="fx tilt">rotate -6°</div>
+          <div class="fx radial">radial-gradient</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 04 · Flexbox ======================================= -->
+  <section class="module" id="m-flex">
+    <div class="module-head">
+      <span class="module-num">04</span>
+      <h2 class="module-title">Flexbox</h2>
+      <span class="module-tags">grow/shrink/basis · order · align-self · align-content · auto margins</span>
+    </div>
+    <div class="module-body">
+      <div class="demo">
+        <h3>display:flex + gap — three grow:1 feature cards</h3>
+        <div class="cards">
+          <div class="card">
+            <h3>Block flow</h3>
+            <p>Headings, paragraphs and rules stack top-to-bottom in normal
+            document flow with proper margins.</p>
+          </div>
+          <div class="card">
+            <h3>Inline runs</h3>
+            <p>Mixed <strong>bold</strong>, <em>italic</em> and
+            <a href="https://example.com">links</a> flow together inside a
+            single wrapping text box.</p>
+          </div>
+          <div class="card accent">
+            <h3>Flexbox</h3>
+            <p>These three cards are laid out with
+            <code>display:flex</code> and <code>gap</code>, reusing qui's
+            flex engine.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>order · align-self · flex-basis · flex-shrink</h3>
+        <div class="flexrow">
+          <div class="fi" style="order:3">order:3</div>
+          <div class="fi" style="order:1">order:1</div>
+          <div class="fi" style="order:2;align-self:flex-end">order:2 · self-end</div>
+          <div class="fi grow">flex-grow:1（吃掉剩余）</div>
+          <div class="fi" style="flex-basis:60px;flex-shrink:0">basis60 no-shrink</div>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>flex-wrap + align-content（多行在剩余交叉轴空间的分布）</h3>
+        <div class="acrow">
+          <div class="acdemo ac-start"><i></i><i></i><i></i><i></i><i></i><span class="aclabel">start</span></div>
+          <div class="acdemo ac-center"><i></i><i></i><i></i><i></i><i></i><span class="aclabel">center</span></div>
+          <div class="acdemo ac-between"><i></i><i></i><i></i><i></i><i></i><span class="aclabel">space-between</span></div>
+          <div class="acdemo ac-stretch"><i></i><i></i><i></i><i></i><i></i><span class="aclabel">stretch(默认)</span></div>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>auto margins（margin:auto 吸收剩余空间）</h3>
+        <nav class="navbar">
+          <span class="brand">qui</span>
+          <a class="navlink" href="#">Docs</a>
+          <a class="navlink navpush" href="#">Sign in</a>
+          <a class="navlink" href="#">Get started</a>
+        </nav>
+        <div class="centerrow">
+          <span class="centeritem">margin: 0 auto → 我居中</span>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>display:none 无 gap 残留 · max-width:100% 不溢出</h3>
+        <div class="gaprow">
+          <div class="gapcell">A</div>
+          <div class="gapcell gone">B（display:none）</div>
+          <div class="gapcell">C —— 与 A 只隔一个 gap</div>
+        </div>
+        <div class="mmwrap">
+          <div class="mmbox">width:640px 但 max-width:100% → 收进容器</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 05 · Grid ========================================== -->
+  <section class="module" id="m-grid">
+    <div class="module-head">
+      <span class="module-num">05</span>
+      <h2 class="module-title">Grid</h2>
+      <span class="module-tags">repeat(3, 1fr) · gap · var() · grid-template-areas · span</span>
+    </div>
+    <div class="module-body">
+      <div class="demo">
+        <h3>display:grid · repeat(3, 1fr) · gap · 变量 var()</h3>
+        <div class="grid3">
+          <div class="gcell">1</div>
+          <div class="gcell">2</div>
+          <div class="gcell">3</div>
+          <div class="gcell">4</div>
+          <div class="gcell">5</div>
+          <div class="gcell">6</div>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>grid-template-areas 命名区 + 显式放置（span）</h3>
+        <div class="galayout">
+          <div class="ga head">header（grid-area:head · 跨两列）</div>
+          <div class="ga side">side</div>
+          <div class="ga main">main（grid-column:2 / span 1）</div>
+          <div class="ga foot">footer（跨两列）</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 06 · Positioning & Overflow ======================== -->
+  <section class="module" id="m-position">
+    <div class="module-head">
+      <span class="module-num">06</span>
+      <h2 class="module-title">Positioning &amp; Overflow</h2>
+      <span class="module-tags">position:relative · position:absolute · overflow:auto</span>
+    </div>
+    <div class="module-body">
+      <div class="demo">
+        <h3>position:relative 偏移 · overflow:auto 滚动区</h3>
+        <div class="posrow">
+          <div class="tile">normal</div>
+          <div class="tile bump">relative<br>↑16 →16</div>
+          <div class="tile">normal</div>
+          <div class="scrollbox">
+            <p>Scrollable region (overflow:auto).</p>
+            <p>Row 2 — content taller than the box.</p>
+            <p>Row 3 — a scrollbar appears.</p>
+            <p>Row 4 — drag or wheel to scroll.</p>
+            <p>Row 5 — the last line.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>position:absolute · 角标钉在 position:relative 卡片上</h3>
+        <div class="abs-card">
+          <span class="badge">NEW</span>
+          <h4 class="abs-title">Product card</h4>
+          <p>右上角的 NEW 角标用 <code>position:absolute; top; right</code>
+          钉在这张 <code>position:relative</code> 卡片上，脱离常规流、不占布局空间。
+          卡片本身是常规流里的 block，<code>width:320px</code> 现已生效（不再撑满整行）。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 07 · Lists ========================================= -->
+  <section class="module" id="m-lists">
+    <div class="module-head">
+      <span class="module-num">07</span>
+      <h2 class="module-title">Lists</h2>
+      <span class="module-tags">ol/ul markers · :nth-child · :first / :last / :not</span>
+    </div>
+    <div class="module-body">
+      <div class="cols">
+        <div class="col">
+          <h3>Ordered list · :nth-child(odd)</h3>
+          <ol class="steps">
+            <li>Parse the HTML</li>
+            <li>Resolve the cascade</li>
+            <li>Build the widget tree</li>
+            <li>Lay out &amp; paint</li>
+          </ol>
+        </div>
+        <div class="col">
+          <h3>Unordered list · :first / :last / :not</h3>
+          <ul class="feats">
+            <li>Combinators &gt; + ~</li>
+            <li>Attribute selectors</li>
+            <li>Structural pseudo-classes</li>
+            <li>text-decoration</li>
+            <li>Per-side borders</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 08 · Tables ======================================== -->
+  <section class="module" id="m-tables">
+    <div class="module-head">
+      <span class="module-num">08</span>
+      <h2 class="module-title">Tables</h2>
+      <span class="module-tags">thead/colspan/caption · colgroup · border-collapse · rowspan</span>
+    </div>
+    <div class="module-body">
+      <div class="demo">
+        <h3>列跨行对齐 + thead + colspan + 斑马纹 + caption</h3>
+        <table class="tbl">
+          <caption>Contributors（&lt;caption&gt; 跨全宽居中）</caption>
+          <thead>
+            <tr><th>Name</th><th>Role</th><th>City</th><th>Commits</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Ann</td><td>Engineer</td><td>Tokyo</td><td>128</td></tr>
+            <tr><td>Bob</td><td>Designer</td><td>Berlin</td><td>74</td></tr>
+            <tr><td>Cyn</td><td>Product Manager</td><td>Lisbon</td><td>52</td></tr>
+          </tbody>
+          <tfoot>
+            <tr><td colspan="3">Total</td><td>254</td></tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <div class="demo">
+        <h3>colgroup/col 固定列宽 + table-layout:fixed</h3>
+        <table class="tbl fixed">
+          <colgroup>
+            <col width="120">
+            <col width="90">
+            <col width="90">
+          </colgroup>
+          <caption style="caption-side:bottom">列宽由 &lt;col width&gt; 固定；caption-side:bottom</caption>
+          <tr><th>SKU</th><th>Qty</th><th>Price</th></tr>
+          <tr><td>A-100</td><td>3</td><td>$12</td></tr>
+          <tr><td>B-max-long-name</td><td>1</td><td>$99</td></tr>
+        </table>
+      </div>
+
+      <div class="demo">
+        <h3>border-collapse 单线 + rowspan 行高</h3>
+        <table class="tbl collapse">
+          <tr><th>Region</th><th>Team</th><th>Q</th></tr>
+          <tr><td rowspan="2">APAC</td><td>Alpha</td><td>A rowspan cell spans two rows; the rows grow so it fits.</td></tr>
+          <tr><td>Bravo</td><td>Short.</td></tr>
+          <tr><td>EMEA</td><td>Charlie</td><td>Single hairlines between every cell (no doubling).</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 09 · Selectors & Pseudo-classes ==================== -->
+  <section class="module" id="m-selectors">
+    <div class="module-head">
+      <span class="module-num">09</span>
+      <h2 class="module-title">Selectors &amp; Pseudo-classes</h2>
+      <span class="module-tags">[attr] · :nth-of-type · :hover/:focus/:active · :checked/:disabled · ::before/::after</span>
+    </div>
+    <div class="module-body">
+      <div class="demo">
+        <h3>Attribute selectors <code>[data-kind=…]</code></h3>
+        <div class="pill-row">
+          <span class="pill" data-kind="new">New</span>
+          <span class="pill" data-kind="beta">Beta</span>
+          <span class="pill" data-kind="stable">Stable</span>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>Interactive states · :hover / :active / :focus 改文字颜色 + 下划线</h3>
+        <div class="state-row">
+          <div class="btnlike">Hover / press me</div>
+          <div class="focusbox">Tab or click to focus</div>
+          <a class="hoverlink" href="https://example.com">Hover me → color + underline</a>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>祖先 / 兄弟状态触发 · <code>.row:hover .del</code> · <code>.a:hover ~ .b</code> · <code>.row:focus</code>(-within) · <code>.row:active</code></h3>
+        <div class="reveal-list">
+          <div class="reveal-row">悬停整行 → 右侧按钮浮现（触发器精确到 .reveal-row，悬停列表其它处不触发）<span class="reveal-del">✕ delete</span></div>
+          <div class="reveal-row">第二行同款 —— 每行只被自己的 hover 揭示<span class="reveal-del">✕ delete</span></div>
+        </div>
+        <div class="sib-row">
+          <div class="sib-a">hover 我</div>
+          <div class="sib-b">← 悬停左块时我变红（.sib-a:hover ~ .sib-b）</div>
+        </div>
+        <div class="focus-row">
+          <input placeholder="聚焦这个输入框…" />
+          <span class="focus-hint">focus-within 揭示的提示 ✓</span>
+        </div>
+        <div class="press-row">按住我不放（:active）<span class="press-hint">按住时我出现</span></div>
+      </div>
+
+      <div class="demo">
+        <h3>运行时切换 display:none（点击按钮 · main.go 接线）</h3>
+        <div class="toggle-row">
+          <button id="toggle-btn" class="toggle-btn">Hide panel</button>
+          <div id="toggle-panel" class="panel">
+            我通过 <code>display:none</code> 在运行时被隐藏/显示 —— 点左侧按钮切换。
+            隐藏时不占布局空间（measure 归零）。
+          </div>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>::before / ::after 的 attr() 生成内容</h3>
+        <div class="attrlist">
+          <div class="attritem" data-tag="NEW">带 data-tag 的第一项</div>
+          <div class="attritem" data-tag="HOT">带 data-tag 的第二项</div>
+          <a class="attrlink" href="https://example.com/docs">Docs</a>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>:nth-of-type · :disabled · :checked</h3>
+        <div class="chips">
+          <span class="chip">alpha</span>
+          <span class="chip">beta</span>
+          <span class="chip">gamma</span>
+          <span class="chip">delta</span>
+          <span class="chip">epsilon</span>
+        </div>
+        <div class="btnrow">
+          <button class="act">Enabled</button>
+          <button class="act" disabled>Disabled (:disabled)</button>
+        </div>
+        <ul class="optlist">
+          <li class="opt" checked>Wi-Fi（:checked 高亮）</li>
+          <li class="opt">Bluetooth</li>
+          <li class="opt" checked>Airplane mode（:checked 高亮）</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 10 · Colors & Units =============================== -->
+  <section class="module" id="m-colors">
+    <div class="module-head">
+      <span class="module-num">10</span>
+      <h2 class="module-title">Colors &amp; Units</h2>
+      <span class="module-tags">hsl()/hsla() · calc() · named colors · % width · [attr i]</span>
+    </div>
+    <div class="module-body">
+      <div class="demo">
+        <h3>hsl() / hsla() 颜色</h3>
+        <div class="swatches">
+          <div class="sw" style="background: hsl(0, 80%, 55%)">0°</div>
+          <div class="sw" style="background: hsl(40, 85%, 55%)">40°</div>
+          <div class="sw" style="background: hsl(140, 55%, 45%)">140°</div>
+          <div class="sw" style="background: hsl(210, 70%, 55%)">210°</div>
+          <div class="sw" style="background: hsl(280, 55%, 60%)">280°</div>
+          <div class="sw" style="background: hsla(0, 0%, 0%, 0.35)">a=.35</div>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>calc() 长度</h3>
+        <div class="calcrow">
+          <div class="calcbox a">calc(180px + 120px) = 300px</div>
+          <div class="calcbox b">calc(60px * 3) = 180px</div>
+          <div class="calcbox c">calc(400px - 280px) = 120px</div>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>% 宽度 + margin:0 auto 水平居中（参照包含块）</h3>
+        <div class="pctdemo">
+          <div class="pctbar w50">width:50%</div>
+          <div class="pctbar w75">width:75%</div>
+          <div class="pctbar centered">width:50% · margin:0 auto（居中）</div>
+          <div class="pctbar pushright">width:40% · margin-left:auto（靠右）</div>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>CSS 具名色全集（任取几例）+ 属性选择器 i 大小写不敏感标志</h3>
+        <div class="namedcolors">
+          <div class="nc" style="background:rebeccapurple">rebeccapurple</div>
+          <div class="nc" style="background:dodgerblue">dodgerblue</div>
+          <div class="nc" style="background:mediumseagreen">mediumseagreen</div>
+          <div class="nc" style="background:goldenrod">goldenrod</div>
+          <div class="nc" style="background:slateblue">slateblue</div>
+          <div class="nc" style="background:indianred">indianred</div>
+        </div>
+        <p>
+          <span data-kind="ALERT" class="ciflag">[data-kind="alert" i] 命中了大写 ALERT 属性 → 红字</span>
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 11 · Forms & Controls ============================= -->
+  <section class="module" id="m-forms">
+    <div class="module-head">
+      <span class="module-num">11</span>
+      <h2 class="module-title">Forms &amp; Controls</h2>
+      <span class="module-tags">text · checkbox · switch · radio · range · password · file · color · &lt;form&gt; submit</span>
+    </div>
+    <div class="module-body">
+      <div class="demo">
+        <h3>text · checkbox · switch · button</h3>
+        <div class="form">
+          <input type="text" placeholder="Your name">
+          <input type="checkbox" value="Subscribe to updates">
+          <input type="checkbox" switch checked value="开关（switch 属性）">
+          <button title="Buttons accept a title attribute — hover me">Sign up</button>
+        </div>
+        <div class="plans">
+          <span class="plans-label">Plan · &lt;input type=radio name=plan&gt;</span>
+          <input type="radio" name="plan" value="Free" checked>
+          <input type="radio" name="plan" value="Pro">
+          <input type="radio" name="plan" value="Team">
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>&lt;form&gt; 提交 + :checked 实时联动（勾选变色 / 点提交收集字段 · main.go 接线）</h3>
+        <form id="signup" class="signup">
+          <input name="user" type="text" placeholder="用户名" value="alice">
+          <div class="agree">
+            <input id="agree" name="agree" type="checkbox" value="同意条款（勾选本行变绿 = :checked 实时联动）">
+          </div>
+          <div class="planrow">
+            <input type="radio" name="plan2" value="Free" checked>
+            <input type="radio" name="plan2" value="Pro">
+          </div>
+          <button type="submit" class="submit-btn">提交表单</button>
+          <!-- Push-button <input> types render as real buttons (value = label). -->
+          <input type="submit" value="Submit (input)" class="submit-btn">
+          <input type="reset" value="Reset" class="reset-btn">
+        </form>
+        <div id="form-status" class="form-status">提交后这里显示收集到的字段</div>
+      </div>
+
+      <div class="demo">
+        <h3>password 掩码 · range 滑块 · label[for] · fieldset</h3>
+        <fieldset class="fs">
+          <legend>Account</legend>
+          <div class="frow"><label for="pw">Password</label> <input id="pw" type="password" value="hunter2"></div>
+          <div class="frow"><label for="vol">Volume</label> <input id="vol" type="range" min="0" max="100" value="60"></div>
+          <div class="frow"><input id="tos" type="checkbox"> <label for="tos">I accept（点标签也能勾选）</label></div>
+          <div class="frow"><label for="dis">Disabled</label> <input id="dis" value="can't edit" disabled></div>
+        </fieldset>
+      </div>
+
+      <div class="demo">
+        <h3>Input pickers（file 原生对话框 · color 应用内色板 · date 格式提示）</h3>
+        <div class="pickers">
+          <label class="pickrow">选文件 <input id="file1" type="file" accept=".png,.jpg,.jpeg"></label>
+          <label class="pickrow">选颜色 <input id="color1" type="color" value="#4363d8"></label>
+          <label class="pickrow">选日期 <input id="date1" type="date"></label>
+        </div>
+      </div>
+
+      <div class="demo">
+        <h3>&lt;select&gt; option 语义 · type=search 清空按钮 <span class="badge-new">NEW</span></h3>
+        <p class="muted">
+          <code>&lt;option value&gt;</code> 是**提交值**（不是可见文字）、<code>selected</code> 设初选、
+          <code>disabled</code> 灰掉不可选、<code>&lt;optgroup label&gt;</code> 变成不可点的分组标题行；
+          聚焦后**敲字母**可跳到匹配项（连敲同一字母循环）。
+          <code>type=search</code> 有内容时右侧出现 UA 清空按钮，<code>type=number</code> 有步进器，
+          <code>&lt;input list&gt;</code> + <code>&lt;datalist&gt;</code> 是**原生补全**（不是组件库的 filterable）。
+        </p>
+        <form id="picker" class="signup">
+          <div class="frow">
+            <label for="country">国家</label>
+            <select id="country" name="country">
+              <option value="">（未选择）</option>
+              <option value="cn" selected>中国</option>
+              <option value="jp">日本</option>
+              <option value="atlantis" disabled>亚特兰蒂斯（暂不支持）</option>
+              <optgroup label="欧洲">
+                <option value="de">德国</option>
+                <option value="fr">法国</option>
+              </optgroup>
+            </select>
+          </div>
+          <div class="frow">
+            <label for="q">搜索</label>
+            <input id="q" name="q" type="search" value="qui" placeholder="输入后右侧出现 ✕">
+          </div>
+          <div class="frow">
+            <label for="city">城市</label>
+            <input id="city" name="city" list="cities" placeholder="输入 b / o 试试补全（↓↑ 选，Enter 确认，Esc 关）">
+          </div>
+          <div class="frow">
+            <label for="qty">数量</label>
+            <input id="qty" name="qty" type="number" value="3" min="0" max="10" step="1">
+          </div>
+          <button type="submit" class="submit-btn">提交（看提交值）</button>
+          <input type="reset" value="Reset" class="reset-btn">
+        </form>
+        <datalist id="cities">
+          <option value="Beijing">
+          <option value="Boston">
+          <option value="Osaka">
+          <option value="Portland">
+          <option>Berlin</option>
+        </datalist>
+        <div id="picker-status" class="form-status">提交后这里显示 name=value（注意 select 交的是 value 而非可见文字）</div>
+      </div>
+
+      <div class="demo">
+        <h3>Dark controls（accent-color + color 驱动的暗色主题）</h3>
+        <p class="muted">业务暗色主题走 CSS：<code>color</code> 改控件文字、<code>accent-color</code>
+          改勾选框 / 单选点 / 开关轨道 / 滑块。无需切换全局 theme。</p>
+        <div class="dark-panel">
+          <input type="text" value="dark input" placeholder="type here">
+          <div class="drow"><input type="checkbox" value="checkbox（青色 accent）" checked></div>
+          <div class="drow">
+            <input type="radio" name="dk" value="Radio A" checked>
+            <input type="radio" name="dk" value="Radio B">
+          </div>
+          <div class="drow"><input type="range" min="0" max="100" value="70"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 12 · Canvas (widget 自绘) ========================== -->
+  <section class="module" id="m-canvas">
+    <div class="module-head">
+      <span class="module-num">12</span>
+      <h2 class="module-title">Canvas <span class="badge-new">NEW</span></h2>
+      <span class="module-tags">&lt;canvas&gt; → widget 自绘：SetCanvasDraw 回调 · SetCanvas 自定义 widget</span>
+    </div>
+    <div class="module-body">
+      <p class="muted">
+        <code>&lt;canvas&gt;</code> 是 htmlcss 引擎里的「自绘」挂载点：不像浏览器给一个 JS 2D
+        context，qui 让你直接用 widget 的绘制能力实现画布内容。CSS
+        <code>width/height</code> 决定尺寸（缺省 HTML 的 300×150），盒装饰画在其后。
+        下面四块画布都在 <code>main.go</code> 里按 id 接线。
+      </p>
+
+      <div class="canvas-grid">
+        <div class="demo">
+          <h3>Bar chart · <code>SetCanvasDraw</code> 纯自绘回调</h3>
+          <canvas id="cv-bars" class="cv"></canvas>
+        </div>
+        <div class="demo">
+          <h3>Generative art · <code>DrawPolyline</code> 参数曲线</h3>
+          <canvas id="cv-art" class="cv"></canvas>
+        </div>
+        <div class="demo">
+          <h3>Scribble pad · <code>SetCanvas</code> 自定义 widget + 鼠标事件</h3>
+          <canvas id="cv-pad" class="cv"></canvas>
+          <p class="hint">在框内按住鼠标拖动绘制 —— 一个响应事件、自己管理状态的自绘 widget。</p>
+        </div>
+        <div class="demo">
+          <h3>未接线的 &lt;canvas&gt; · 引擎内建占位</h3>
+          <canvas class="cv small"></canvas>
+          <p class="hint">没有 SetCanvas/SetCanvasDraw 时渲染一个虚线占位框。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 13 · Pointer & selection ============================ -->
+  <section class="module" id="m-pointer">
+    <div class="module-head">
+      <span class="module-num">13</span>
+      <h2 class="module-title">Pointer &amp; Selection <span class="badge-new">NEW</span></h2>
+      <span class="module-tags">cursor · user-select · pointer-events</span>
+    </div>
+    <div class="module-body">
+      <p class="muted">
+        三个交互手感属性，都**继承**。把鼠标移过下面的方块看形状变化，
+        用鼠标拖过文字看哪些能选中。
+      </p>
+
+      <div class="ptr-grid">
+        <div class="ptr-card cur-pointer">cursor: pointer<br><span class="hint">卡片声明的形状压住内部文字的 I 形</span></div>
+        <div class="ptr-card cur-text">cursor: text</div>
+        <div class="ptr-card cur-crosshair">cursor: crosshair</div>
+        <div class="ptr-card cur-colresize">cursor: col-resize</div>
+        <div class="ptr-card cur-notallowed">cursor: not-allowed<br><span class="hint">已声明但退化成箭头（GLFW 3.3 只有 6 种）</span></div>
+        <div class="ptr-card cur-pointer">cursor: auto 的孩子<div class="cur-auto">auto → 交还给文字 I 形</div></div>
+      </div>
+
+      <div class="ptr-grid">
+        <div class="ptr-card noselect">
+          user-select: none<br>
+          <span class="hint">拖不动这段文字</span>
+          <span class="reselect">但这一段 user-select: text，可以选</span>
+        </div>
+        <div class="ptr-card">
+          可选文字（默认）<br>
+          <span class="hint">拖选看看</span>
+        </div>
+        <!-- pointer-events: 半透明遮罩盖住按钮，但点击穿透到按钮上 -->
+        <div class="ptr-card stack">
+          <button id="ptr-btn">点我（被遮罩盖住）</button>
+          <div class="scrim"></div>
+          <span class="hint">遮罩 pointer-events:none，点击穿透</span>
+        </div>
+        <div class="ptr-card stack">
+          <button id="ptr-blocked">点我（被拦住）</button>
+          <div class="scrim solid"></div>
+          <span class="hint">同样的遮罩，没有 pointer-events:none —— 点不到</span>
+        </div>
+      </div>
+      <p class="hint" id="ptr-log">（还没有点击）</p>
+
+      <h3>DOM 事件：enter/leave · dblclick · wheel · keydown · focus/blur</h3>
+      <div class="ptr-grid">
+        <div class="ptr-card" id="ev-hover">鼠标移进/移出我<span class="hint">onMouseEnter / onMouseLeave</span></div>
+        <div class="ptr-card" id="ev-dbl">双击我<span class="hint">onDoubleClick（单击也会各触发一次）</span></div>
+        <div class="ptr-card" id="ev-wheel">在我身上滚滚轮<span class="hint">onWheel，返回 true 消费掉不外传</span></div>
+        <div class="ptr-card" id="ev-keys" tabindex="0">先点我再按键<span class="hint">onKeyDown + onFocus/onBlur（声明 key handler 即可聚焦）</span></div>
+      </div>
+      <p class="hint" id="ev-log">（还没有事件）</p>
+    </div>
+  </section>
+
+  <!-- ===== 14 · Composites ==================================== -->
+  <section class="module" id="m-composites">
+    <div class="module-head">
+      <span class="module-num">14</span>
+      <h2 class="module-title">Composites</h2>
+      <span class="module-tags">density stress test — a Google-Sheets-style toolbar</span>
+    </div>
+    <div class="module-body">
+      <p class="muted">A compact toolbar packed with small controls, to check for
+        occlusion / overlap under tight density.</p>
+      <div class="gsheet">
+        <div class="menubar">
+          <div class="logo"></div>
+          <span class="doctitle">Untitled spreadsheet</span>
+          <span class="star">*</span>
+          <nav class="menus">
+            <a href="#">File</a><a href="#">Edit</a><a href="#">View</a><a href="#">Insert</a><a href="#">Format</a><a href="#">Data</a><a href="#">Tools</a><a href="#">Extensions</a><a href="#">Help</a>
+          </nav>
+          <div class="spacer"></div>
+          <button class="share">Share</button>
+        </div>
+
+        <div class="toolbar">
+          <div class="ib"><img src="icons/search.svg"></div>
+          <div class="ib"><img src="icons/undo.svg"></div>
+          <div class="ib"><img src="icons/redo.svg"></div>
+          <div class="ib"><img src="icons/print.svg"></div>
+          <button class="wide">100% v</button>
+          <div class="sep"></div>
+          <button>£</button>
+          <button>%</button>
+          <button>.0</button>
+          <button>.00</button>
+          <button>123</button>
+          <div class="sep"></div>
+          <button class="wide">Default v</button>
+          <div class="sep"></div>
+          <div class="ib"><img src="icons/remove.svg"></div>
+          <div class="fbox">10</div>
+          <div class="ib"><img src="icons/add.svg"></div>
+          <div class="sep"></div>
+          <div class="ib"><img src="icons/format_bold.svg"></div>
+          <div class="ib"><img src="icons/format_italic.svg"></div>
+          <div class="ib"><img src="icons/format_color_text.svg"></div>
+          <div class="ib"><img src="icons/format_color_fill.svg"></div>
+          <div class="sep"></div>
+          <div class="ib"><img src="icons/format_align_left.svg"></div>
+          <button>Merge</button>
+          <button>Wrap</button>
+          <div class="sep"></div>
+          <div class="ib"><img src="icons/link.svg"></div>
+          <button>Chart</button>
+          <div class="ib"><img src="icons/filter_list.svg"></div>
+          <button>Sum</button>
+          <button class="collapse">^</button>
+        </div>
+
+        <div class="formulabar">
+          <div class="cellref">A1</div>
+          <span class="fxlabel">fx</span>
+          <div class="finput"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <p>© 2026 qui — rendered by the html-css engine.</p>
+  </footer>
+</body>
+</html>

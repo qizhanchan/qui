@@ -1,0 +1,93 @@
+/* i18n example styling.
+   Deliberately generous with min-widths and wrapping: German and Russian
+   labels run 40-60% longer than English, and a stylesheet that only fits
+   English is the single most common localization bug in a UI. */
+
+:root {
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --ink: #16181d;
+  --muted: #656a75;
+  --line: #e2e5ea;
+  --accent: #4a5cf0;
+  --accent-soft: #eef0ff;
+}
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 24px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 14px;
+  overflow: auto;
+}
+
+.header { display: flex; flex-direction: column; gap: 4px; }
+h1 { font-size: 26px; font-weight: 700; margin: 0; }
+.sub { color: var(--muted); margin: 0; }
+
+/* Language switcher. Wraps rather than clipping — seven endonyms in
+   mixed scripts do not fit one line at every window width. */
+.langs {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  padding: 10px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.lang {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 13px;
+}
+.lang:hover { background: var(--accent-soft); border-color: var(--accent); }
+.lang.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+h2 {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0;
+}
+
+.row { display: flex; flex-direction: row; align-items: center; gap: 12px; }
+.step {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 18px;
+}
+.step:hover { background: var(--accent-soft); border-color: var(--accent); }
+.count { font-size: 20px; font-weight: 700; min-width: 44px; text-align: center; }
+.result { font-size: 16px; margin: 0; }
+
+/* Key/value rows. The key column has a min-width rather than a fixed
+   width so "Relative time" (en) and "Относительное время" (ru) both fit. */
+.kv { display: flex; flex-direction: row; gap: 14px; align-items: baseline; }
+.k { color: var(--muted); min-width: 150px; }
+.v { font-weight: 600; }
+
+.han { font-size: 30px; letter-spacing: 0.12em; margin: 0; }
+.note { color: var(--muted); font-size: 12px; margin: 0; }
+.sample { font-size: 15px; margin: 0; line-height: 1.5; }

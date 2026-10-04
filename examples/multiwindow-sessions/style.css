@@ -1,0 +1,89 @@
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --line: #232833;
+  --fg: #e6e9ef;
+  --muted: #8b93a3;
+  --accent: #5aa9e6;
+  --prompt: #6fcf97;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: monospace;
+}
+
+.toolbar {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.toolbar .title {
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.toolbar .count {
+  color: var(--accent);
+  font-size: 12px;
+  padding: 0 6px;
+}
+
+.toolbar .banner {
+  flex-grow: 1;
+  color: var(--muted);
+  font-style: italic;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.btn {
+  background: var(--line);
+  color: var(--fg);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.btn:hover { background: var(--accent); color: #06121c; }
+
+.log {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px;
+  overflow: auto;
+}
+
+.log .row { display: flex; flex-direction: row; gap: 8px; }
+.log .prompt { color: var(--prompt); }
+.log .out { color: var(--fg); }
+.log .hint { color: var(--muted); font-style: italic; }
+
+.composer {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+}
+.composer .caret { color: var(--prompt); }
+.composer .field {
+  flex-grow: 1;
+  background: transparent;
+  color: var(--fg);
+  border: none;
+  font-family: monospace;
+  font-size: 14px;
+}

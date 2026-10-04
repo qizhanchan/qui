@@ -1,0 +1,5 @@
+# CEF binary distribution lives here after running scripts/fetch-cef.sh.
+# Hundreds of megabytes — never commit.
+*
+!.gitignore
+!README.md

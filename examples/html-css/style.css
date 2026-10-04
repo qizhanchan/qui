@@ -1,0 +1,505 @@
+/* =============================================================
+   html-css verification harness — stylesheet.
+
+   Organized to mirror page.html:
+     · Page shell (body / hero / TOC / module chrome / footer)
+     · Then one block per feature MODULE, in page order.
+   ============================================================= */
+
+:root {
+  --brand: #2f6fed;
+  --ink: #14161f;
+  --muted: #5f6368;
+  --line: #e2e5ec;
+  --surface: #f7f8fb;
+}
+
+body {
+  background: #eef1f6;
+  padding: 24px 32px;
+  font-family: sans-serif;
+  color: #2a2a33;
+}
+
+/* ---- Hero ---- */
+.hero {
+  background: #1e2130;
+  border-radius: 14px;
+  padding: 22px 26px;
+  margin-bottom: 22px;
+}
+.hero-row { display: flex; align-items: baseline; gap: 14px; }
+.brand { color: #ffffff; font-size: 26px; font-weight: bold; }
+.hero-sub { color: #9fb3ff; font-size: 15px; }
+.hero-lead {
+  color: #c7cede;
+  font-size: 15px;
+  line-height: 1.6;
+  margin: 12px 0 16px 0;
+  max-width: 720px;
+}
+.hero-lead code { background: #2b3040; color: #ffd98a; }
+.hero-lead a { color: #8ab4ff; }
+.hero-lead strong { color: #ffffff; }
+.hero-lead em { color: #ffffff; }
+
+/* ---- Table of contents ---- */
+.toc { display: flex; flex-wrap: wrap; gap: 8px; }
+.toc-chip {
+  background: #2b3040;
+  color: #c7cede;
+  border-radius: 14px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: bold;
+}
+.toc-chip.new { background: #14532d; color: #86efac; }
+
+/* ---- Module chrome ---- */
+.module {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  margin: 0 0 20px 0;
+  box-shadow: 0 2px 10px rgba(20, 22, 31, 0.06);
+  overflow: hidden;
+}
+.module-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  background: #f4f6fb;
+  border-bottom: 1px solid var(--line);
+}
+.module-num {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--brand);
+  color: #ffffff;
+  font-weight: bold;
+  font-size: 14px;
+  text-align: center;
+  padding: 8px 0;
+}
+.module-title { font-size: 20px; color: var(--ink); margin: 0; }
+.module-tags { color: var(--muted); font-size: 12px; margin-left: auto; }
+.module-body { padding: 18px 20px; }
+.badge-new {
+  background: #16a34a; color: #ffffff; font-size: 11px; font-weight: bold;
+  border-radius: 8px; padding: 2px 8px; margin-left: 6px;
+}
+
+/* Each demo block: a labelled slab inside a module. */
+.demo { margin: 0 0 18px 0; }
+.demo:last-child { margin-bottom: 0; }
+h3 { font-size: 15px; color: var(--ink); margin: 0 0 10px 0; }
+h4 { font-size: 14px; }
+.muted { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.hint { color: var(--muted); font-size: 12px; margin: 6px 0 0 0; }
+code { background: #eef0f5; color: #b0306a; }
+a { color: var(--brand); }
+.footer { color: #8a90a2; font-size: 13px; padding: 4px 6px 20px; }
+
+/* =============================================================
+   01 · Text & Typography
+   ============================================================= */
+.lead { font-size: 16px; line-height: 1.6; color: #4a4f60; }
+
+/* text-decoration variants. */
+.deco { font-size: 15px; line-height: 1.7; color: #3a3f4d; }
+.under { text-decoration: underline; }
+.strike { text-decoration: line-through; color: #b0306a; }
+.plain { text-decoration: none; }
+.deco a:hover { color: #d93025; }
+
+.decos { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; color: #24272e; font-size: 15px; }
+.decos span { padding: 2px 0; }
+.d-solid  { text-decoration: underline; text-decoration-color: #e53935; }
+.d-wavy   { text-decoration: underline wavy #2e9e5b; }
+.d-dashed { text-decoration: underline dashed #2563eb; text-decoration-thickness: 3px; }
+.d-dotted { text-decoration: underline dotted #ef8a17; }
+.d-double { text-decoration: underline double #7c3aed; }
+.d-para   { flex-basis: 100%; text-decoration: underline wavy #d6336c; }
+
+/* overflow-wrap: a long run with no break opportunity overflows by default
+   (CSS normal) and wraps inside the column with break-word. */
+.wrapdemo { display: flex; gap: 16px; }
+.ow-normal, .ow-break {
+  width: 220px; padding: 8px; border: 1px solid #d6d9e0; border-radius: 6px;
+  overflow: hidden; color: #3a3f4b; line-height: 1.5;
+}
+.ow-normal { overflow-wrap: normal; }
+.ow-break { overflow-wrap: break-word; }
+.tracked { letter-spacing: 4px; font-weight: bold; color: #1e2130; }
+.worded { word-spacing: 12px; color: #1e2130; }
+.indented { text-indent: 32px; max-width: 460px; color: #3a3f4b; line-height: 1.5; }
+
+.code {
+  white-space: pre;
+  background: #1e2130;
+  color: #e6e9f0;
+  padding: 14px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow: auto;
+}
+
+.upper { text-transform: uppercase; color: #7a5200; font-weight: bold; font-size: 13px; }
+
+.justdemo { display: flex; gap: 16px; }
+.justdemo p { width: 250px; margin: 0; font-size: 14px; color: #24272e;
+  border: 1px dashed #c8cdd6; border-radius: 6px; padding: 8px; }
+.just { text-align: justify; }
+
+.inline-demo { font-size: 16px; line-height: 1.8; color: #3a3f4d; }
+.inline-demo .ico { width: 18px; height: 18px; vertical-align: middle; color: #2f6fed; }
+.tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: bold;
+  vertical-align: middle;
+}
+.tag.new { background: #e6f4ea; color: #137333; }
+.tag.beta { background: #fef7e0; color: #b06000; }
+
+/* =============================================================
+   02 · Box Model, Borders & Radius
+   ============================================================= */
+.border-demo { display: flex; gap: 14px; }
+.bd { padding: 14px 18px; border-radius: 6px; color: #3a3f4d; background: #fbfcfe; }
+.bd.solid { border: 2px solid #6b7280; }
+.bd.dashed { border: 2px dashed #2f6fed; }
+.bd.dotted { border: 3px dotted #b0306a; }
+.bd.left { border-left: 5px solid #0f9d58; background: #f2f8f4; }
+
+.bs-row { display: flex; gap: 14px; align-items: flex-start; }
+.bs {
+  width: 120px; padding: 16px;
+  border: 2px solid #2f6fed; border-radius: 8px;
+  background: #eef3ff; color: #1a56c4; font-size: 13px; line-height: 1.4;
+}
+.bbx { box-sizing: border-box; }
+
+.rad { padding: 14px 16px; font-size: 13px; color: #14161f; background: #ffffff; border: 1px solid #dfe3ec; }
+.rad.tabtop { border-radius: 16px 16px 0 0; background: #eef2ff; border-color: #c7d2fe; }
+.rad.leaf { border-radius: 18px 0 18px 0; background: #ecfdf5; border-color: #a7f3d0; }
+.rad.chip { border-radius: 2px 8px 16px 24px; background: #fff7ed; border-color: #fed7aa; }
+.rad.clipbox { padding: 0; border-radius: 18px; overflow: hidden; border: 2px solid #6a5cff; width: 150px; }
+.rad-inner { background: linear-gradient(135deg, #6a5cff, #2f6fed); color: #ffffff; padding: 18px 14px; font-weight: bold; }
+
+.outlined { display: inline-block; padding: 6px 12px; margin: 4px; outline: 2px solid hsl(280, 50%, 55%); border-radius: 4px; color: #4a4f60; font-size: 13px; }
+
+/* =============================================================
+   03 · Backgrounds & Visual Effects
+   ============================================================= */
+.fx-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.fx { padding: 16px 18px; border-radius: 10px; color: #14161f; background: #ffffff; font-size: 14px; }
+.fx.shadow { box-shadow: 0 6px 18px rgba(20, 22, 31, 0.22); border: 1px solid #eef0f5; }
+.fx.grad { background: linear-gradient(135deg, #6a5cff, #2f6fed); color: #ffffff; font-weight: bold; }
+.fx.faded { background: #1e2130; color: #ffffff; opacity: 0.5; }
+.fx.tilt { background: #ffd54a; transform: rotate(-6deg); font-weight: bold; }
+.fx.radial { background: radial-gradient(circle, #ffd54a, #e5602f); color: #fff; font-weight: bold; }
+
+/* =============================================================
+   04 · Flexbox
+   ============================================================= */
+.cards { display: flex; gap: 16px; }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  flex-grow: 1;
+  box-shadow: 0 2px 8px rgba(20, 22, 31, 0.08);
+}
+.card h3 { font-size: 16px; color: #14161f; margin: 0 0 6px 0; }
+.card p { color: #555c6e; line-height: 1.5; margin: 0; }
+.card.accent { background: #eef3ff; border-color: #cddaff; }
+
+.flexrow {
+  display: flex; align-items: flex-start; gap: 8px;
+  height: 64px; background: #f5f5f5; padding: 8px; border-radius: 6px;
+}
+.fi { padding: 6px 10px; border-radius: 4px; font-size: 12px; background: hsl(210, 60%, 88%); color: hsl(210, 60%, 28%); }
+.fi.grow { background: hsl(150, 50%, 86%); color: hsl(150, 55%, 26%); }
+
+.acrow { display: flex; gap: 14px; }
+.acdemo { display: flex; flex-wrap: wrap; gap: 6px; width: 130px; height: 120px;
+  border: 1px solid #c8cdd6; border-radius: 8px; padding: 6px; position: relative; }
+.acdemo i { display: inline-block; width: 32px; height: 22px; background: #6a5cff; border-radius: 4px; }
+.aclabel { position: absolute; top: 2px; right: 6px; color: #8a8f9c; font-size: 11px; }
+.ac-start   { align-content: flex-start; }
+.ac-center  { align-content: center; }
+.ac-between { align-content: space-between; }
+.ac-stretch { /* CSS 初始值 stretch */ }
+/* stretch 只拉伸交叉轴尺寸为 auto 的项（同浏览器：显式 height 的项保持自己
+   的高度、贴行首）。这一格特意不给 <i> 设高度，行高增长才看得见。 */
+.ac-stretch i { height: auto; }
+
+.navbar { display: flex; align-items: center; gap: 16px;
+  background: #1f2430; border-radius: 8px; padding: 10px 16px; }
+.navbar .brand { color: #8ab4ff; font-weight: bold; font-size: 18px; }
+.navbar .navlink { color: #d5dae4; text-decoration: none; font-size: 14px; }
+.navbar .navlink:hover { color: #ffffff; text-decoration: underline; }
+.navbar .navpush { margin-left: auto; }
+.centerrow { display: flex; margin-top: 12px; background: #eef1f6; border-radius: 8px; padding: 10px; }
+.centerrow .centeritem { margin: 0 auto; background: #4363d8; color: #fff; border-radius: 6px; padding: 6px 14px; font-size: 14px; }
+
+.gaprow { display: flex; gap: 12px; border: 1px dashed #c8cdd6; padding: 8px; }
+.gapcell { background: #eef0f4; border-radius: 6px; padding: 6px 12px; font-size: 14px; color: #24272e; }
+.gone { display: none; }
+
+.mmwrap { width: 320px; background: #eef1f6; border-radius: 8px; padding: 10px; margin-top: 12px; }
+.mmbox { width: 640px; max-width: 100%; background: #42a5a0; color: #fff; border-radius: 6px; padding: 10px; font-size: 14px; }
+
+/* =============================================================
+   05 · Grid
+   ============================================================= */
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.gcell { background: var(--brand); color: #ffffff; padding: 16px; border-radius: 8px; text-align: center; font-weight: bold; }
+
+.galayout {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  grid-template-rows: auto auto auto;
+  grid-template-areas: "head head" "side main" "foot foot";
+  gap: 8px;
+}
+.ga { padding: 10px; border-radius: 6px; font-size: 12px; color: #fff; }
+.ga.head { grid-area: head; background: hsl(210, 60%, 52%); }
+.ga.side { grid-area: side; background: hsl(280, 45%, 58%); }
+.ga.main { grid-area: main; background: hsl(150, 50%, 42%); }
+.ga.foot { grid-area: foot; background: hsl(30, 70%, 52%); }
+
+/* =============================================================
+   06 · Positioning & Overflow
+   ============================================================= */
+.posrow { display: flex; gap: 16px; align-items: flex-start; }
+.tile { padding: 14px 16px; border-radius: 8px; background: #eef3ff; color: #1a56c4; font-size: 13px; text-align: center; }
+.tile.bump { position: relative; top: -16px; left: 16px; background: #ffe08a; color: #7a5200; }
+.scrollbox { width: 240px; height: 90px; overflow: auto; border: 1px solid #dcdfe6; border-radius: 8px; padding: 8px 12px; background: #ffffff; }
+.scrollbox p { margin: 4px 0; color: #4a4f60; font-size: 13px; }
+
+.abs-card {
+  position: relative; width: 320px; padding: 16px;
+  border: 1px solid var(--line); border-radius: 12px; background: #ffffff;
+  box-shadow: 0 2px 8px rgba(20, 22, 31, 0.08);
+}
+.badge { position: absolute; top: 10px; right: 10px; background: #d93025; color: #ffffff; padding: 2px 9px; border-radius: 10px; font-size: 12px; font-weight: bold; }
+.abs-title { margin: 0 0 6px 0; font-size: 16px; color: #14161f; }
+.abs-card p { margin: 0; color: #555c6e; font-size: 13px; line-height: 1.5; }
+
+/* =============================================================
+   07 · Lists
+   ============================================================= */
+.cols { display: flex; gap: 24px; }
+.col { flex-grow: 1; }
+.steps li { padding: 4px 8px; color: #3a3f4d; }
+.steps li:nth-child(odd) { background: #f2f5fb; }
+.feats li { padding: 5px 4px; color: #444b5c; }
+.feats li:first-child { font-weight: bold; color: #14161f; }
+.feats li:last-child { color: #2f6fed; }
+.feats li:not(:last-child) { border-bottom: 1px solid #e6e9f0; }
+
+/* =============================================================
+   08 · Tables
+   ============================================================= */
+.tbl { border-top: 1px solid #cfd3dc; border-left: 1px solid #cfd3dc; background: #ffffff; margin: 4px 0; }
+.tbl th, .tbl td { padding: 7px 12px; border-right: 1px solid #cfd3dc; border-bottom: 1px solid #cfd3dc; color: #333333; font-size: 14px; }
+.tbl thead th { background: #eef1f6; color: #14161f; }
+.tbl tbody tr:nth-child(even) { background: #f7f8fb; }
+.tbl tfoot td { background: #fafbfd; font-weight: bold; }
+.tbl caption { color: #5f6368; font-size: 13px; font-style: italic; }
+.tbl.fixed { table-layout: fixed; width: 300px; }
+.tbl.collapse { border-collapse: collapse; width: 480px; }
+
+/* =============================================================
+   09 · Selectors & Pseudo-classes
+   ============================================================= */
+.pill-row { display: flex; gap: 10px; }
+.pill { padding: 4px 12px; border-radius: 12px; font-size: 13px; font-weight: bold; background: #eef0f5; color: #3c4043; }
+.pill[data-kind="new"] { background: #e6f4ea; color: #137333; }
+.pill[data-kind="beta"] { background: #fef7e0; color: #b06000; }
+.pill[data-kind="stable"] { background: #e8f0fe; color: #1a56c4; }
+
+.state-row { display: flex; gap: 14px; align-items: center; }
+.btnlike { padding: 10px 18px; border-radius: 8px; background: #e8f0fe; color: #1a56c4; font-weight: bold; }
+.btnlike:hover { background: #d2e3fc; color: #0b3d91; }
+.btnlike:active { background: #a8c7fa; color: #06266b; }
+.focusbox { padding: 10px 18px; border-radius: 8px; border: 2px solid #dadce0; color: #3c4043; }
+.focusbox:focus { border: 2px solid #2f6fed; background: #f0f5ff; color: #2f6fed; }
+.hoverlink { color: #5f6368; text-decoration: none; font-weight: bold; }
+.hoverlink:hover { color: #d93025; text-decoration: underline; }
+
+/* 祖先 / 兄弟状态触发：reveal 只由选择器点名的元素驱动 */
+.reveal-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.reveal-row { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: 8px; background: #f4f6fa; color: #3c4043; font-size: 14px; }
+.reveal-row:hover { background: #e8f0fe; }
+.reveal-del { visibility: hidden; padding: 2px 10px; border-radius: 6px; background: #fce8e6; color: #c5221f; font-size: 12px; font-weight: bold; }
+.reveal-row:hover .reveal-del { visibility: visible; }
+.sib-row { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+.sib-a { padding: 8px 16px; border-radius: 8px; background: #e8f0fe; color: #1a56c4; font-weight: bold; }
+.sib-a:hover { background: #d2e3fc; }
+.sib-b { color: #5f6368; font-size: 14px; }
+.sib-a:hover ~ .sib-b { color: #d93025; font-weight: bold; }
+.focus-row { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+.focus-row input { width: 220px; }
+.focus-hint { visibility: hidden; color: #137333; font-size: 13px; font-weight: bold; }
+.focus-row:focus .focus-hint { visibility: visible; }
+.press-row { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-radius: 8px; background: #f4f6fa; color: #3c4043; font-size: 14px; }
+.press-row:active { background: #fef7e0; }
+.press-row:active .press-hint { visibility: visible; }
+.press-hint { visibility: hidden; color: #b06000; font-size: 13px; font-weight: bold; }
+
+.toggle-row { display: flex; gap: 14px; align-items: center; }
+.toggle-btn { background: #e8f0fe; color: #1a56c4; border: 1px solid #cddaff; border-radius: 8px; padding: 8px 16px; font-weight: bold; }
+.panel { flex-grow: 1; padding: 12px 16px; border-radius: 8px; background: #fff8e1; border: 1px solid #ffe08a; color: #7a5200; font-size: 14px; }
+.panel.hidden { display: none; }
+
+.attritem { margin: 4px 0; color: #24272e; font-size: 14px; }
+.attritem::before { content: attr(data-tag) " -- "; color: #6a5cff; font-weight: bold; font-size: 12px; }
+.attrlink { display: block; margin: 4px 0; color: #1a66e6; }
+.attrlink::after { content: "  (" attr(href) ")"; color: #8a8f9c; font-size: 12px; }
+
+.chips { display: flex; gap: 8px; margin: 4px 0; }
+.chip { padding: 4px 12px; border-radius: 12px; background: #eceff1; color: #37474f; font-size: 13px; }
+.chip:nth-of-type(odd) { background: hsl(210, 65%, 90%); color: hsl(210, 65%, 30%); }
+.chip:nth-of-type(3)   { background: hsl(150, 55%, 88%); color: hsl(150, 55%, 26%); }
+.btnrow { display: flex; gap: 10px; margin: 8px 0; }
+.act { padding: 6px 14px; border-radius: 6px; background: hsl(210, 70%, 52%); color: #fff; font-size: 13px; }
+.act:disabled { background: #e8eaed; color: #9aa0a6; }
+.optlist { margin: 4px 0; }
+.opt { padding: 6px 12px; border-radius: 6px; margin: 3px 0; background: #f5f5f5; color: #5f6368; font-size: 13px; }
+.opt:checked { background: hsl(140, 55%, 90%); color: hsl(140, 60%, 24%); font-weight: bold; }
+
+/* =============================================================
+   10 · Colors & Units
+   ============================================================= */
+.swatches { display: flex; gap: 8px; }
+.sw { width: 72px; height: 48px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 12px; font-weight: bold; border-radius: 6px; }
+.calcrow { display: flex; gap: 8px; }
+.calcbox { height: calc(20px + 18px); color: #fff; font-size: 12px; display: flex; align-items: center; justify-content: center; border-radius: 4px; }
+.calcbox.a { width: calc(180px + 120px); background: hsl(210, 65%, 52%); }
+.calcbox.b { width: calc(60px * 3);      background: hsl(150, 55%, 42%); }
+.calcbox.c { width: calc(400px - 280px); background: hsl(280, 50%, 58%); }
+
+.pctdemo { border: 1px dashed #c8cdd6; padding: 8px; }
+.pctbar { height: 26px; margin: 6px 0; border-radius: 6px; color: white; font-size: 13px; padding: 4px 10px; }
+.w50 { width: 50%; background: steelblue; }
+.w75 { width: 75%; background: mediumseagreen; }
+.centered  { width: 50%; margin: 6px auto; background: slateblue; }
+.pushright { width: 40%; margin-left: auto; background: indianred; }
+
+.namedcolors { display: flex; flex-wrap: wrap; gap: 8px; }
+.nc { color: white; font-size: 12px; padding: 6px 10px; border-radius: 6px; }
+.ciflag { color: #24272e; }
+[data-kind="alert" i] { color: crimson; font-weight: bold; }
+
+/* =============================================================
+   11 · Forms & Controls
+   ============================================================= */
+.form { display: flex; gap: 12px; font-size: 15px; align-items: center; }
+.plans { display: flex; gap: 16px; align-items: center; margin: 10px 0 4px 0; }
+.plans-label { color: #4a4f60; font-weight: bold; font-size: 14px; }
+
+.signup { display: flex; flex-direction: column; gap: 10px; max-width: 460px; }
+.signup .agree { display: flex; gap: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid #dfe3ec; background: #ffffff; }
+.signup .agree:has(:checked) { background: #ecfdf5; border-color: #34d399; color: #047857; }
+.planrow { display: flex; gap: 18px; }
+.submit-btn { align-self: flex-start; padding: 8px 18px; border-radius: 8px; background: #6a5cff; color: #ffffff; font-weight: bold; }
+.reset-btn { align-self: flex-start; padding: 8px 18px; border-radius: 8px; background: #eceef4; color: #3c4043; font-weight: bold; }
+.form-status { margin-top: 8px; padding: 10px 12px; border-radius: 8px; background: #f4f6fb; color: #5f6368; font-size: 13px; }
+
+.fs { max-width: 420px; }
+.fs .frow { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+.fs label { color: #3c4043; font-size: 13px; min-width: 80px; }
+
+.pickers { display: flex; flex-direction: column; gap: 10px; }
+.pickrow { display: flex; align-items: center; gap: 10px; font-size: 14px; color: #24272e; }
+
+.dark-panel { display: flex; flex-direction: column; gap: 12px; margin-top: 8px;
+  background: #1c1f26; border: 1px solid #2e333d; border-radius: 10px; padding: 16px;
+  color: #e6e8ec; accent-color: #2dd4bf; }
+.dark-panel input[type="text"] { background: #12151b; border: 1px solid #3a4150; color: #e6e8ec; }
+.drow { display: flex; align-items: center; gap: 16px; }
+
+/* =============================================================
+   12 · Canvas (widget 自绘)
+   ============================================================= */
+.canvas-grid { display: flex; flex-wrap: wrap; gap: 20px; margin-top: 12px; }
+.canvas-grid .demo { margin: 0; }
+.cv {
+  display: block;
+  width: 320px;
+  height: 160px;
+  border: 1px solid #d4d8e2;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: inset 0 1px 3px rgba(20, 22, 31, 0.05);
+}
+.cv.small { width: 220px; height: 120px; }
+
+/* =============================================================
+   13 · Composites — Google-Sheets-style toolbar
+   ============================================================= */
+.gsheet { background: #ffffff; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
+.menubar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; }
+.logo { width: 22px; height: 22px; background: #0f9d58; border-radius: 4px; }
+.doctitle { font-size: 16px; color: #202124; }
+.star { color: #9aa0a6; font-size: 15px; }
+.menus { display: flex; gap: 12px; }
+.menus a { color: #444746; text-decoration: none; font-size: 13px; }
+.spacer { flex-grow: 1; }
+.share { background: #c2e7ff; color: #041e49; border-radius: 16px; padding: 6px 16px; font-size: 14px; }
+
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; padding: 4px 8px; margin: 0 8px; background: #edf2fa; border-radius: 18px; }
+.toolbar button { background: transparent; color: #3c4043; padding: 4px 7px; border-radius: 4px; font-size: 13px; }
+.toolbar .wide { padding: 4px 9px; }
+.sep { width: 1px; height: 18px; background: #dadce0; margin: 0 5px; }
+.fbox { width: 30px; min-width: 30px; height: 22px; border: 1px solid #dadce0; border-radius: 3px; text-align: center; color: #3c4043; }
+.collapse { color: #5f6368; }
+
+.ib { padding: 4px 6px; border-radius: 4px; }
+.ib:hover { background: #dde3ee; }
+.ib img { width: 18px; height: 18px; color: #3c4043; }
+
+.formulabar { display: flex; align-items: center; gap: 10px; padding: 5px 12px; }
+.cellref { width: 66px; height: 22px; border: 1px solid #dadce0; border-radius: 3px; text-align: center; color: #3c4043; }
+.fxlabel { color: #5f6368; font-style: italic; }
+.finput { flex-grow: 1; height: 22px; }
+
+/* --- 13 · Pointer & Selection (cursor / user-select / pointer-events) --- */
+.ptr-grid { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0; }
+.ptr-card {
+  width: 210px; padding: 10px 12px; font-size: 13px; color: var(--ink);
+  background: #f6f8fc; border: 1px solid var(--line); border-radius: 8px;
+}
+.ptr-card .hint { display: block; color: var(--muted); font-size: 11px; margin: 4px 0 0; }
+
+/* cursor — 声明在卡片上，继承给里面的文字 */
+.cur-pointer    { cursor: pointer; }
+.cur-text       { cursor: text; }
+.cur-crosshair  { cursor: crosshair; }
+.cur-colresize  { cursor: col-resize; }
+.cur-notallowed { cursor: not-allowed; }
+/* auto 把决定权交还给 widget 内建形状（可选文字 → I 形） */
+.cur-auto { cursor: auto; margin: 6px 0 0; padding: 4px 6px; background: #fff;
+            border: 1px dashed var(--line); border-radius: 4px; }
+
+/* user-select — none 继承给子孙，后代可用 text 重新打开 */
+.noselect  { user-select: none; }
+.reselect  { display: block; margin: 6px 0 0; user-select: text; color: #0b57d0; }
+
+/* pointer-events — 半透明遮罩盖住按钮 */
+.ptr-card.stack { position: relative; height: 84px; }
+.scrim {
+  position: absolute; top: 0; left: 0; width: 210px; height: 84px;
+  background: rgba(11, 87, 208, 0.12); border-radius: 8px;
+  pointer-events: none;           /* 点击穿透到按钮 */
+}
+.scrim.solid { background: rgba(217, 48, 37, 0.12); pointer-events: auto; }

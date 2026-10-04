@@ -1,0 +1,23 @@
+{
+  "@meta": {"locale": "de", "source": "en.json"},
+
+  "demo.title": "Internationalisierung",
+  "demo.subtitle": "Ein Baum, sieben Sprachen, kein Neuaufbau.",
+  "demo.section.plurals": "Pluralformen",
+  "demo.section.formats": "Formatierung",
+  "demo.section.text": "Textdarstellung",
+  "demo.inc": "Eins hinzufügen",
+  "demo.dec": "Eins entfernen",
+  "demo.items": {"one": "{n} Artikel im Warenkorb", "other": "{n} Artikel im Warenkorb"},
+  "demo.label.number": "Zahl",
+  "demo.label.percent": "Prozent",
+  "demo.label.currency": "Währung",
+  "demo.label.date": "Datum",
+  "demo.label.relative": "Relative Zeit",
+  "demo.label.list": "Liste",
+  "demo.fruit.apple": "Äpfel",
+  "demo.fruit.pear": "Birnen",
+  "demo.fruit.plum": "Pflaumen",
+  "demo.hanNote": "Shaping ist sprachmarkiert; regionale Formen brauchen eine Schrift mit locl.",
+  "demo.sample": "Falsches Üben von Xylophonmusik quält jeden größeren Zwerg."
+}

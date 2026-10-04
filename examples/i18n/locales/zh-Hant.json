@@ -1,0 +1,23 @@
+{
+  "@meta": {"locale": "zh-Hant", "source": "en.json"},
+
+  "demo.title": "國際化",
+  "demo.subtitle": "一棵樹，七種語言，無需重建。",
+  "demo.section.plurals": "複數",
+  "demo.section.formats": "格式化",
+  "demo.section.text": "文字算繪",
+  "demo.inc": "增加一個",
+  "demo.dec": "減少一個",
+  "demo.items": {"other": "購物籃中有 {n} 件商品"},
+  "demo.label.number": "數字",
+  "demo.label.percent": "百分比",
+  "demo.label.currency": "貨幣",
+  "demo.label.date": "日期",
+  "demo.label.relative": "相對時間",
+  "demo.label.list": "列表",
+  "demo.fruit.apple": "蘋果",
+  "demo.fruit.pear": "梨",
+  "demo.fruit.plum": "李子",
+  "demo.hanNote": "整形已帶上語言標記；地區字形還需要字型提供 locl 特性。",
+  "demo.sample": "天地玄黃，宇宙洪荒。日月盈昃，辰宿列張。"
+}

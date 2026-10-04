@@ -1,0 +1,23 @@
+{
+  "@meta": {"locale": "ru", "source": "en.json"},
+
+  "demo.title": "Интернационализация",
+  "demo.subtitle": "Одно дерево, семь языков, без пересборки.",
+  "demo.section.plurals": "Множественное число",
+  "demo.section.formats": "Форматирование",
+  "demo.section.text": "Отрисовка текста",
+  "demo.inc": "Добавить один",
+  "demo.dec": "Убрать один",
+  "demo.items": {"one": "{n} товар в корзине", "few": "{n} товара в корзине", "many": "{n} товаров в корзине", "other": "{n} товара в корзине"},
+  "demo.label.number": "Число",
+  "demo.label.percent": "Проценты",
+  "demo.label.currency": "Валюта",
+  "demo.label.date": "Дата",
+  "demo.label.relative": "Относительное время",
+  "demo.label.list": "Список",
+  "demo.fruit.apple": "яблоки",
+  "demo.fruit.pear": "груши",
+  "demo.fruit.plum": "сливы",
+  "demo.hanNote": "Шейпинг помечен языком; региональные начертания требуют шрифта с locl.",
+  "demo.sample": "Съешь же ещё этих мягких французских булок да выпей чаю."
+}

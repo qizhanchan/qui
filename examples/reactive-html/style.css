@@ -1,0 +1,496 @@
+/* Theme tokens live on .app and are re-scoped by .app.dark — toggling the
+   root class flips every var() that descendants resolve against. */
+.app {
+  --bg: #f2f2f8;
+  --surface: #ffffff;
+  --surface-2: #f4f2fb;
+  --fg: #1a1a2e;
+  --muted: #6b7280;
+  --primary: #6750a4;
+  --primary-ink: #ffffff;
+  --border: #e3e1ef;
+  --card-a: #efeafc;
+  --card-b: #e4f0ff;
+  --chip: #ece9f6;
+  --chip-ink: #4a3f77;
+
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 24px;
+  overflow-y: auto;
+  background: var(--bg);
+  font-family: sans-serif;
+}
+
+.app.dark {
+  --bg: #14141f;
+  --surface: #1e1e2d;
+  --surface-2: #262636;
+  --fg: #ecebf4;
+  --muted: #9aa0b4;
+  --primary: #b8a6f0;
+  --primary-ink: #1a1330;
+  --border: #34324a;
+  --card-a: #2a2540;
+  --card-b: #223047;
+  --chip: #2c2a40;
+  --chip-ink: #cfc7ee;
+}
+
+.topbar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.title {
+  flex-grow: 1;
+  font-size: 26px;
+  font-weight: bold;
+  color: var(--fg);
+}
+
+.sub {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.clock {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--primary);
+}
+
+/* --- feature cards: grid + gradient + shadow + hover transform --- */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: linear-gradient(135deg, var(--card-a), var(--card-b));
+  box-shadow: 0 4px 14px rgba(30, 20, 60, 0.10);
+}
+
+.card:hover {
+  transform: translateY(-3px) scale(1.02);
+  box-shadow: 0 10px 26px rgba(30, 20, 60, 0.18);
+}
+
+.card-icon {
+  width: 28px;
+  height: 28px;
+  color: var(--primary);
+}
+
+.card-title {
+  font-size: 15px;
+  font-weight: bold;
+  color: var(--fg);
+}
+
+.card-desc {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* --- file drop zone + dropped-file list --- */
+.drop-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dropzone {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  padding: 18px;
+  border: 2px dashed var(--border);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+
+.drop-icon {
+  width: 34px;
+  height: 34px;
+  color: var(--primary);
+}
+
+.drop-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.droplist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.drop-file {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.drop-file-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--muted);
+}
+
+.drop-file-text {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  gap: 1px;
+}
+
+.drop-file-name {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--fg);
+}
+
+.drop-file-path {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.drop-file-badge {
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: bold;
+  background: #e7f0ff;
+  color: #2555b0;
+}
+
+/* --- rows / generic controls --- */
+.row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.composer {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.field {
+  flex-grow: 1;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font-size: 14px;
+  background: var(--surface);
+  color: var(--fg);
+}
+
+.form-label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* --- buttons --- */
+.btn {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 15px;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: bold;
+  background: var(--primary);
+  color: var(--primary-ink);
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.btn-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--primary-ink);
+}
+
+.primary {
+  background: var(--primary);
+  color: var(--primary-ink);
+}
+
+.ghost {
+  background: var(--chip);
+  color: var(--chip-ink);
+}
+
+.toggle .btn-icon {
+  color: var(--chip-ink);
+}
+
+.danger {
+  background: #ef4d4d;
+  color: #ffffff;
+}
+
+.danger:hover {
+  background: #d63a3a;
+}
+
+/* --- filter chips (class bound to a signal) --- */
+.chip {
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: bold;
+  background: var(--chip);
+  color: var(--chip-ink);
+}
+
+.chip:hover {
+  transform: translateY(-1px);
+}
+
+.chip-active {
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: bold;
+  background: var(--primary);
+  color: var(--primary-ink);
+}
+
+.filter-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+}
+
+/* --- todo list --- */
+.todos {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+/* Item wrapper: a vertical stack of [drop-line bar, row] so the bar can
+   appear above the row as an insertion indicator. */
+.item {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Drop line — collapsed by default, a bright bar when this row is the
+   current drop target (concrete color: For rows are separate restyle roots
+   and don't inherit the app's scoped vars). */
+.drop-bar {
+  height: 0px;
+}
+
+.drop-bar-on {
+  height: 3px;
+  margin: 2px 0;
+  background: #7c4dff;
+  border-radius: 2px;
+}
+
+.todo {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--surface-2);
+  border-radius: 10px;
+  color: var(--fg);
+}
+
+/* Rows are separate restyle roots (owned by For's container), so their
+   dark palette is opted in with a second class rather than inheriting the
+   root's scoped vars. */
+.todo-dark {
+  background: #2b2940;
+  color: #ecebf4;
+}
+
+.grip {
+  font-size: 15px;
+  color: var(--muted);
+}
+
+.todo-dark .grip {
+  color: #8b8fa8;
+}
+
+.todo-text {
+  flex-grow: 1;
+  font-size: 14px;
+}
+
+.prio {
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: bold;
+  background: #e7f0ff;
+  color: #2555b0;
+}
+
+.prio-2 {
+  background: #ffe3e3;
+  color: #b02525;
+}
+
+.prio-0 {
+  background: #e3f6e8;
+  color: #1f7a44;
+}
+
+.tag {
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: bold;
+  background: #ffedd0;
+  color: #9a5b16;
+}
+
+/* Hidden at rest, revealed while the ROW is hovered (ancestor-:hover). The
+   layout box stays reserved (visibility, not display) so rows don't reflow. */
+.del {
+  display: flex;
+  align-items: center;
+  padding: 5px;
+  border-radius: 7px;
+  background: #ef4d4d;
+  color: #ffffff;
+  visibility: hidden;
+}
+
+.todo:hover .del {
+  visibility: visible;
+}
+
+.del:hover {
+  background: #d63a3a;
+}
+
+.empty {
+  padding: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* --- cross-package components --- */
+.badge {
+  padding: 4px 10px;
+  background: #e7f0ff;
+  color: #2555b0;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.stepper {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.stepper-label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.stepper-val {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--fg);
+}
+
+.step {
+  padding: 2px 10px;
+  background: var(--chip);
+  color: var(--chip-ink);
+  border-radius: 6px;
+  font-weight: bold;
+}
+
+.step:hover {
+  background: var(--primary);
+  color: var(--primary-ink);
+}
+
+/* --- dialog ---
+   The dialog is a portal root (no parent in the node mirror), so it can't
+   resolve the root's scoped vars; it uses concrete colors. */
+.dialog {
+  --primary: #6750a4;
+  --primary-ink: #ffffff;
+  --chip: #ece9f6;
+  --chip-ink: #4a3f77;
+
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 340px;
+  padding: 22px;
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.30);
+}
+
+.dialog-title {
+  font-size: 18px;
+  font-weight: bold;
+  color: #1a1a2e;
+}
+
+.dialog-body {
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.dialog-actions {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  gap: 10px;
+}

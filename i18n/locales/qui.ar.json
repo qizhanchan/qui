@@ -1,0 +1,108 @@
+{
+  "@meta": {
+    "locale": "ar",
+    "source": "qui.en.json",
+    "note": "Arabic has all six CLDR plural categories. The relative-time entries below exercise every one of them, which makes this file the framework's plural-selection test fixture as well as a translation."
+  },
+
+  "qui.ok": "موافق",
+  "qui.cancel": "إلغاء",
+  "qui.yes": "نعم",
+  "qui.no": "لا",
+  "qui.close": "إغلاق",
+  "qui.done": "تم",
+  "qui.apply": "تطبيق",
+  "qui.save": "حفظ",
+  "qui.open": "فتح",
+  "qui.delete": "حذف",
+  "qui.remove": "إزالة",
+  "qui.discard": "تجاهل",
+  "qui.retry": "إعادة المحاولة",
+  "qui.back": "رجوع",
+  "qui.next": "التالي",
+  "qui.previous": "السابق",
+  "qui.submit": "إرسال",
+  "qui.reset": "إعادة تعيين",
+  "qui.browse": "استعراض…",
+  "qui.more": "المزيد",
+
+  "qui.edit.undo": "تراجع",
+  "qui.edit.redo": "إعادة",
+  "qui.edit.cut": "قص",
+  "qui.edit.copy": "نسخ",
+  "qui.edit.paste": "لصق",
+  "qui.edit.selectAll": "تحديد الكل",
+
+  "qui.select.placeholder": "اختر…",
+  "qui.select.noResults": "لا توجد نتائج",
+  "qui.search.placeholder": "بحث…",
+  "qui.list.empty": "لا يوجد شيء هنا",
+  "qui.loading": "جارٍ التحميل…",
+  "qui.error": "حدث خطأ ما",
+
+  "qui.relative.now": "الآن",
+  "qui.relative.past.second": {
+    "zero": "منذ {n} ثانية",
+    "one": "منذ ثانية واحدة",
+    "two": "منذ ثانيتين",
+    "few": "منذ {n} ثوانٍ",
+    "many": "منذ {n} ثانية",
+    "other": "منذ {n} ثانية"
+  },
+  "qui.relative.past.minute": {
+    "zero": "منذ {n} دقيقة",
+    "one": "منذ دقيقة واحدة",
+    "two": "منذ دقيقتين",
+    "few": "منذ {n} دقائق",
+    "many": "منذ {n} دقيقة",
+    "other": "منذ {n} دقيقة"
+  },
+  "qui.relative.past.hour": {
+    "zero": "منذ {n} ساعة",
+    "one": "منذ ساعة واحدة",
+    "two": "منذ ساعتين",
+    "few": "منذ {n} ساعات",
+    "many": "منذ {n} ساعة",
+    "other": "منذ {n} ساعة"
+  },
+  "qui.relative.past.day": {
+    "zero": "منذ {n} يوم",
+    "one": "منذ يوم واحد",
+    "two": "منذ يومين",
+    "few": "منذ {n} أيام",
+    "many": "منذ {n} يومًا",
+    "other": "منذ {n} يوم"
+  },
+  "qui.relative.past.month": {
+    "zero": "منذ {n} شهر",
+    "one": "منذ شهر واحد",
+    "two": "منذ شهرين",
+    "few": "منذ {n} أشهر",
+    "many": "منذ {n} شهرًا",
+    "other": "منذ {n} شهر"
+  },
+  "qui.relative.past.year": {
+    "zero": "منذ {n} سنة",
+    "one": "منذ سنة واحدة",
+    "two": "منذ سنتين",
+    "few": "منذ {n} سنوات",
+    "many": "منذ {n} سنة",
+    "other": "منذ {n} سنة"
+  },
+  "qui.relative.future.second": { "one": "خلال ثانية واحدة", "two": "خلال ثانيتين", "few": "خلال {n} ثوانٍ", "other": "خلال {n} ثانية" },
+  "qui.relative.future.minute": { "one": "خلال دقيقة واحدة", "two": "خلال دقيقتين", "few": "خلال {n} دقائق", "other": "خلال {n} دقيقة" },
+  "qui.relative.future.hour": { "one": "خلال ساعة واحدة", "two": "خلال ساعتين", "few": "خلال {n} ساعات", "other": "خلال {n} ساعة" },
+  "qui.relative.future.day": { "one": "خلال يوم واحد", "two": "خلال يومين", "few": "خلال {n} أيام", "other": "خلال {n} يوم" },
+  "qui.relative.future.month": { "one": "خلال شهر واحد", "two": "خلال شهرين", "few": "خلال {n} أشهر", "other": "خلال {n} شهر" },
+  "qui.relative.future.year": { "one": "خلال سنة واحدة", "two": "خلال سنتين", "few": "خلال {n} سنوات", "other": "خلال {n} سنة" },
+
+  "qui.list.and.sep": "، ",
+  "qui.list.and.two": " و",
+  "qui.list.and.last": "، و",
+  "qui.list.or.sep": "، ",
+  "qui.list.or.two": " أو ",
+  "qui.list.or.last": "، أو ",
+  "qui.list.unit.sep": "، ",
+  "qui.list.unit.two": "، ",
+  "qui.list.unit.last": "، "
+}
