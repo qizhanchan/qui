@@ -23,6 +23,11 @@ type Popup struct {
 	// against its (moved) trigger. Set via SetResizeHandler.
 	onResize func(newSize Size)
 
+	// natural records that ShowAt sized the popup from its content's own
+	// measure (rather than a caller-supplied size), so a relayout after a
+	// content change re-measures instead of keeping the show-time size.
+	natural bool
+
 	window *Window
 }
 
@@ -57,12 +62,14 @@ func (p *Popup) ShowAt(w *Window, x, y float32) {
 	}
 	size := MeasureConstrained(p.Content, w.Size())
 	p.showAtSize(w, x, y, size)
+	p.natural = true
 }
 
 func (p *Popup) showAtSize(w *Window, x, y float32, size Size) {
 	if w == nil || p.Content == nil || p.window != nil {
 		return
 	}
+	p.natural = false
 	contentRect := Rect{X: x, Y: y, W: size.W, H: size.H}
 	p.Layout(contentRect)
 	p.Content.SetParent(p)
@@ -162,6 +169,33 @@ func (p *Popup) RelayoutAt(x, y float32, size Size) {
 		p.window.InvalidateRect(r)
 	}
 	p.window.InvalidateRect(p.Bounds())
+}
+
+// RelayoutOverlay re-lays the content out after it invalidated layout
+// while shown (satisfies OverlayLayouter). The position is kept; a popup
+// shown at its content's natural size (ShowAt) re-measures, while one
+// given an explicit size (anchored menus) keeps it.
+func (p *Popup) RelayoutOverlay(winSize Size) {
+	if p.window == nil || p.Content == nil {
+		return
+	}
+	b := p.Bounds()
+	size := Size{W: b.W, H: b.H}
+	if p.natural {
+		size = MeasureConstrained(p.Content, winSize)
+	}
+	p.RelayoutAt(b.X, b.Y, size)
+}
+
+// PaintBounds covers the content's elevation halo too, so the window's
+// overlay paint pass doesn't skip the popup when only its shadow lies in
+// the dirty region.
+func (p *Popup) PaintBounds() Rect {
+	b := p.Bounds()
+	if r, ok := overlayHaloRect(p.Content); ok {
+		b = b.Union(r)
+	}
+	return b
 }
 
 // ChildList exposes Content for focus traversal / tick / etc.

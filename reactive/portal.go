@@ -186,7 +186,11 @@ func (h *portalHost) Handle(event qui.Event) bool {
 			return true
 		}
 	}
-	if ke, ok := event.(qui.KeyEvent); ok &&
+	// Escape dismisses on the way back up, not on the way down: during
+	// capture the host is an ancestor of the focused element, and acting
+	// there would take the key from content that handles Escape itself
+	// (an inline editor cancelling, an autocomplete list closing).
+	if ke, ok := event.(qui.KeyEvent); ok && ke.Phase() != qui.PhaseCapture &&
 		ke.Type() == qui.EventKeyDown && ke.Key == qui.KeyEscape && h.opts.OnEscape != nil {
 		h.opts.OnEscape()
 		return true

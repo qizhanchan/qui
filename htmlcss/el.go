@@ -3605,6 +3605,14 @@ func (e *El) Handle(event qui.Event) bool {
 		if !e.Enabled() {
 			return handled
 		}
+		// Author key handlers act on target / bubble only — DOM semantics,
+		// as for clicks below. Run during capture, an ancestor's handler
+		// would beat the focused element to its own keys: a dialog's
+		// Enter-to-confirm firing before the focused <textarea> inserts
+		// its newline.
+		if ke.Phase() == qui.PhaseCapture {
+			return handled
+		}
 		switch ke.Type() {
 		case qui.EventKeyDown:
 			if e.onKeyDown != nil && e.onKeyDown(ke) {

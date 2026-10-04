@@ -416,6 +416,38 @@ type OverlayResizer interface {
 	OnWindowResize(newSize Size)
 }
 
+// OverlayLayouter is the optional interface an overlay implements to
+// re-lay itself out after its subtree invalidated layout while shown —
+// content that grew (a validation message, rows loaded asynchronously),
+// or text re-measured by a theme / locale switch. The frame loop skips
+// overlays in its layout pass (their geometry is caller-driven), so
+// without this hook such a change keeps the stale show-time geometry.
+// Step calls RelayoutOverlay with the current logical window size once
+// per frame for each layout-dirty overlay, then clears the flag.
+// Overlays that don't implement it just have the flag cleared.
+type OverlayLayouter interface {
+	RelayoutOverlay(winSize Size)
+}
+
+// relayoutDirtyOverlays runs OverlayLayouter for every layout-dirty
+// overlay. Snapshotted like notifyOverlaysResize: a relayout may close
+// its own overlay.
+func (w *Window) relayoutDirtyOverlays() {
+	if len(w.overlays) == 0 {
+		return
+	}
+	snapshot := append([]Widget(nil), w.overlays...)
+	for _, ov := range snapshot {
+		if !ov.IsLayoutDirty() {
+			continue
+		}
+		if l, ok := ov.(OverlayLayouter); ok {
+			l.RelayoutOverlay(w.lastSize)
+		}
+		ov.ClearLayoutDirty()
+	}
+}
+
 // notifyOverlaysResize fans a logical size change out to overlays that
 // implement OverlayResizer. It snapshots the stack first because a handler
 // may Close()/RemoveOverlay itself (a dismissing popup) and mutate the
@@ -1123,6 +1155,34 @@ func (w *Window) closeTooltip() {
 // full-window HitTest achieves the same effect via geometry, but
 // partial-geometry modals (a menu that doesn't cover the whole
 // window yet still wants to swallow outside clicks) rely on this.
+// topModalIndex returns the overlay-stack index of the topmost modal
+// overlay, or -1 when none is shown.
+func (w *Window) topModalIndex() int {
+	for i := len(w.overlays) - 1; i >= 0; i-- {
+		if m, ok := w.overlays[i].(modalOverlay); ok && m.Modal() {
+			return i
+		}
+	}
+	return -1
+}
+
+// keyTargetBehindModal reports whether target lies beneath the topmost
+// modal overlay — in the main tree or a lower overlay — and so must not
+// receive keyboard input. Overlays above the modal (a select dropdown
+// opened from inside a dialog) are reachable.
+func (w *Window) keyTargetBehindModal(target Widget) bool {
+	m := w.topModalIndex()
+	if m < 0 {
+		return false
+	}
+	for _, ov := range w.overlays[m:] {
+		if widgetInSubtree(ov, target) {
+			return false
+		}
+	}
+	return true
+}
+
 func (w *Window) hitTestAll(p Point) Widget {
 	for i := len(w.overlays) - 1; i >= 0; i-- {
 		if isWidgetHidden(w.overlays[i]) {
@@ -1198,6 +1258,11 @@ func (w *Window) InvalidateLayout() {
 		return
 	}
 	w.assertUIThread("Window.InvalidateLayout")
+	// Overlays too: a theme or locale switch re-measures their text, and
+	// relayoutDirtyOverlays only revisits overlays flagged dirty.
+	for _, ov := range w.overlays {
+		ov.InvalidateLayout()
+	}
 	if w.root == nil {
 		return
 	}
@@ -1502,19 +1567,15 @@ func (w *Window) Step() {
 		w.overlayResizePending = false
 		w.notifyOverlaysResize(w.lastSize)
 	}
+	// Overlays are pre-positioned by their caller, so the layout pass
+	// above skips them; one whose subtree invalidated layout re-lays
+	// itself out here (OverlayLayouter). Its relayout dirties its own
+	// rects, so this too must precede the early return.
+	w.relayoutDirtyOverlays()
 	if w.dirtyRegion.IsEmpty() {
 		return
 	}
 	fbWidth, fbHeight := w.plat.framebufferSize()
-	// Overlays are pre-positioned by the caller via Layout before
-	// PushOverlay. We don't re-layout them here — their geometry is
-	// caller-driven. Just clear any stale dirty flags so they don't
-	// accumulate.
-	for _, ov := range w.overlays {
-		if ov.IsLayoutDirty() {
-			ov.ClearLayoutDirty()
-		}
-	}
 
 	// Clamp dirty region to current window bounds (a widget could return
 	// a Rect that extends past a resized window).
@@ -1592,7 +1653,7 @@ func (w *Window) Step() {
 		// a later-pushed overlay sits on top. They share the same clip
 		// so they're dirty-region-aware too.
 		for _, ov := range w.overlays {
-			if ov.Bounds().Intersects(clip) {
+			if PaintBoundsOf(ov).Intersects(clip) {
 				ov.Draw(drawCanvas)
 			}
 		}
@@ -1727,6 +1788,15 @@ func (w *Window) dispatch(event Event) {
 	target := w.eventTarget(event)
 	if target == nil {
 		target = w.root
+	}
+	// The keyboard counterpart of hitTestAll's modal guard: with nothing
+	// focused the key would fall back to the main root, and focus can be
+	// set programmatically behind a modal. Either way the modal takes it.
+	switch event.(type) {
+	case KeyEvent, CharEvent:
+		if w.keyTargetBehindModal(target) {
+			target = w.overlays[w.topModalIndex()]
+		}
 	}
 
 	// Recording fan-out — publish the event before widget handlers
@@ -1871,7 +1941,12 @@ func (w *Window) dispatch(event Event) {
 		if w.handleDebugOverlayShortcut(ke) {
 			return
 		}
-		w.accels.Match(ke)
+		// App shortcuts act on the content behind a modal (Cmd+S saving
+		// the document under a confirm dialog), so they wait for it to
+		// close. The view shortcuts above stay live.
+		if w.topModalIndex() < 0 {
+			w.accels.Match(ke)
+		}
 	}
 	if ke, ok := event.(KeyEvent); ok && ke.eventType == EventKeyDown && w.accels == nil {
 		if w.handleZoomShortcut(ke) {

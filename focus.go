@@ -90,11 +90,9 @@ func (w *Window) CollectFocusables() []Widget {
 	}
 	// Walk top-down looking for a modal. If found, walk only that
 	// overlay and return — focus is trapped within it.
-	for i := len(w.overlays) - 1; i >= 0; i-- {
-		if m, ok := w.overlays[i].(modalOverlay); ok && m.Modal() {
-			walk(w.overlays[i])
-			return result
-		}
+	if m := w.topModalIndex(); m >= 0 {
+		walk(w.overlays[m])
+		return result
 	}
 	// No modal: main tree then all overlays in stack order.
 	walk(w.root)

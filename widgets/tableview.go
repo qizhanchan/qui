@@ -616,9 +616,7 @@ func (tv *TableView) Tick(now time.Time) Rect {
 			continue
 		}
 		row.Layout(tv.rowRect(i, contentW))
-		if t, ok := row.(Tickable); ok {
-			dirty = dirty.Union(t.Tick(now))
-		}
+		dirty = dirty.Union(TickWidget(row, now))
 	}
 	return dirty
 }

@@ -457,9 +457,7 @@ func (lv *ListView) Tick(now time.Time) Rect {
 			continue
 		}
 		row.Layout(lv.rowRect(i, contentW))
-		if t, ok := row.(Tickable); ok {
-			dirty = dirty.Union(t.Tick(now))
-		}
+		dirty = dirty.Union(TickWidget(row, now))
 	}
 	return dirty
 }

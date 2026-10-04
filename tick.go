@@ -13,7 +13,7 @@ type Tickable interface {
 	Tick(now time.Time) Rect
 }
 
-// tickWidget invokes Tick on a widget. If the widget implements
+// TickWidget invokes Tick on a widget. If the widget implements
 // Tickable it is responsible for its own subtree (Container does this).
 // Otherwise we walk ChildList() and recurse — that way any
 // container-like widget (ScrollView, Frame, TabView, Dialog body, etc.)
@@ -22,6 +22,14 @@ type Tickable interface {
 //
 // Returns the union of dirty rects reported by the widget (or its
 // children, in the fallback path). Zero Rect means nothing to repaint.
+//
+// A container that implements Tickable for its own animation owns its
+// subtree's ticks, and should forward to each child through TickWidget
+// rather than a bare Tickable assertion — the assertion skips a child
+// that isn't Tickable itself (a ScrollView, a third-party container)
+// along with everything under it.
+func TickWidget(w Widget, now time.Time) Rect { return tickWidget(w, now) }
+
 func tickWidget(w Widget, now time.Time) Rect {
 	if w == nil {
 		return Rect{}
