@@ -298,3 +298,18 @@ func TestScrollViewContentFocusablesViaChildList(t *testing.T) {
 		t.Errorf("focusable inside ScrollView should appear in focus list; got %+v", list)
 	}
 }
+
+// TestScrollViewTransparentViewportPaintsNothing is the regression guard for
+// the dark-card bug: the default (transparent) viewport must not fall back to
+// the theme Surface, so a nested scroll host reveals its parent's background.
+// Only an explicitly opaque background is painted.
+func TestScrollViewTransparentViewportPaintsNothing(t *testing.T) {
+	sv := NewScrollView()
+	if _, ok := sv.viewportFill(); ok {
+		t.Error("default transparent viewport must not paint a fill")
+	}
+	sv.Style().Background = Color{R: 0.97, G: 0.97, B: 0.97, A: 1}
+	if _, ok := sv.viewportFill(); !ok {
+		t.Error("explicit opaque viewport should paint a fill")
+	}
+}

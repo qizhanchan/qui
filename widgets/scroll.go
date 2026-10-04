@@ -276,19 +276,31 @@ func (s *ScrollView) ChildPaintTransform() Matrix {
 // pixels now.
 func (s *ScrollView) PaintClip() Rect { return s.viewportRect() }
 
+// viewportFill returns the color to paint behind the viewport and whether to
+// paint at all. A transparent Style().Background — the NewScrollView default —
+// yields ok=false so a nested scroll host stays transparent and reveals
+// whatever its parent already painted. The window clears to the theme page
+// color each frame, so a root scroll view needs no fill.
+func (s *ScrollView) viewportFill() (Color, bool) {
+	bg := s.Style().Background
+	if bg.A == 0 {
+		return Color{}, false
+	}
+	return bg, true
+}
+
 func (s *ScrollView) Draw(canvas Canvas) {
 	b := s.Bounds()
 
-	// Viewport background. Default to the theme Surface (the page
-	// background) when the caller hasn't set an opaque one, so a top-level
-	// scroll view's scrollbar gutter doesn't reveal the window clear color
-	// behind it. Follows a retinted theme; callers set Style().Background
-	// for a custom viewport fill.
-	bg := s.Style().Background
-	if bg.A == 0 {
-		bg = CurrentTheme().Surface
+	// Paint the viewport only when the caller set an opaque background (see
+	// viewportFill). Transparent is the default and must remain transparent so
+	// a NESTED scroll host shows what its parent already drew — the CSS
+	// overflow-box contract. Substituting the theme Surface here (the old
+	// behavior) repainted an opaque card over the ancestor background, which
+	// broke light UIs running on a dark theme.
+	if bg, ok := s.viewportFill(); ok {
+		canvas.FillRect(b, bg)
 	}
-	canvas.FillRect(b, bg)
 
 	// Clip content drawing to the viewport (minus the bar slot, so the
 	// content area never paints under the bar), then translate by the
