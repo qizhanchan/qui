@@ -2,6 +2,22 @@ package widgets
 
 import . "github.com/qizhanchan/qui"
 
+// PopupCloseReason says why a popup is closing.
+type PopupCloseReason int
+
+const (
+	// PopupCloseProgrammatic is Close() from app code (or a menu row
+	// picked). Not vetoable.
+	PopupCloseProgrammatic PopupCloseReason = iota
+	// PopupCloseOutsideClick is a press outside the popup.
+	PopupCloseOutsideClick
+	// PopupCloseEscape is the Escape key.
+	PopupCloseEscape
+	// PopupCloseResize is a window resize on a popup without a resize
+	// handler.
+	PopupCloseResize
+)
+
 // Popup is a lightweight overlay for dropdowns, context menus, and
 // tooltips. It sits above the main tree (via Window overlay stack) but
 // is NOT modal — events outside the content either dismiss the popup
@@ -16,7 +32,27 @@ type Popup struct {
 	BaseWidget
 	Content               Widget
 	DismissOnOutsideClick bool
-	OnClose               func()
+	// ClickThrough lets the press that dismisses the popup also reach
+	// whatever is under it — clicking another toolbar button while a
+	// dropdown is open both closes the dropdown and presses the button.
+	// Without it the dismissing press is swallowed (the menu convention).
+	ClickThrough bool
+	// AutoFocus moves keyboard focus into the content when the popup is
+	// shown: to Content itself when it is focusable, otherwise to its first
+	// focusable descendant. Focus returns where it was on close. Leave it
+	// off for a popup that must not take focus from a field (autocomplete).
+	AutoFocus bool
+	// NoClamp keeps ShowAt's position verbatim; by default the popup is
+	// shifted to stay inside the window.
+	NoClamp bool
+	// OnClose runs after the popup closed, for any reason.
+	OnClose func()
+	// OnCloseReason runs after the popup closed, with the reason.
+	OnCloseReason func(PopupCloseReason)
+	// CanClose may veto a user-driven close (outside click, Escape,
+	// resize) by returning false — a popover holding an unsaved edit.
+	// Programmatic Close is never vetoed.
+	CanClose func(PopupCloseReason) bool
 
 	// onResize, when set, runs on a window resize instead of the default
 	// dismiss — anchored menus install a closure that re-places the popup
@@ -28,7 +64,8 @@ type Popup struct {
 	// content change re-measures instead of keeping the show-time size.
 	natural bool
 
-	window *Window
+	window       *Window
+	removeFilter func()
 }
 
 // SetResizeHandler installs a window-resize handler. When set, a window
@@ -39,16 +76,22 @@ func (p *Popup) SetResizeHandler(fn func(newSize Size)) { p.onResize = fn }
 // NewPopup creates a popup wrapping the given content widget.
 // DismissOnOutsideClick defaults to true — the common dropdown pattern.
 func NewPopup(content Widget) *Popup {
-	return &Popup{
+	p := &Popup{
 		BaseWidget:            NewBaseWidget(),
 		Content:               content,
 		DismissOnOutsideClick: true,
 	}
+	p.SetSelf(p)
+	return p
 }
+
+// IsShown reports whether the popup is on a window's overlay stack.
+func (p *Popup) IsShown() bool { return p.window != nil }
 
 // ShowAt measures the content at the window's current size, lays it out
 // at (x, y), then pushes the popup onto the window's overlay stack.
-// Calling ShowAt on an already-shown popup is a no-op.
+// Calling ShowAt on an already-shown popup is a no-op. Unless NoClamp is
+// set, the position is shifted so the popup stays inside the window.
 //
 // The measure goes through MeasureConstrained, not Content.Measure: a
 // popup positions its content itself instead of handing it to a layout
@@ -61,8 +104,23 @@ func (p *Popup) ShowAt(w *Window, x, y float32) {
 		return
 	}
 	size := MeasureConstrained(p.Content, w.Size())
+	if !p.NoClamp {
+		x, y = clampPopup(w.Size(), x, y, size)
+	}
 	p.showAtSize(w, x, y, size)
 	p.natural = true
+}
+
+// clampPopup shifts (x, y) so a popup of size stays inside win, preferring
+// to keep the top-left edge visible when it can't fit at all.
+func clampPopup(win Size, x, y float32, size Size) (float32, float32) {
+	if x+size.W > win.W {
+		x = win.W - size.W
+	}
+	if y+size.H > win.H {
+		y = win.H - size.H
+	}
+	return max(x, 0), max(y, 0)
 }
 
 func (p *Popup) showAtSize(w *Window, x, y float32, size Size) {
@@ -86,13 +144,72 @@ func (p *Popup) showAtSize(w *Window, x, y float32, size Size) {
 	if r, ok := overlayHaloRect(p.Content); ok {
 		w.InvalidateRect(r)
 	}
+	if p.ClickThrough && p.DismissOnOutsideClick {
+		p.removeFilter = w.AddEventFilter(p.clickThroughFilter)
+	}
+	if p.AutoFocus {
+		if target := firstFocusable(p.Content); target != nil {
+			w.SetFocus(target)
+		}
+	}
+}
+
+// clickThroughFilter dismisses on a press that lands in the main tree and
+// lets the press continue there. Presses on this popup, or on overlays
+// above it (a submenu), are left alone.
+func (p *Popup) clickThroughFilter(e Event) bool {
+	me, ok := e.(MouseEvent)
+	if !ok || me.Type() != EventMouseDown || p.window == nil {
+		return false
+	}
+	hit := p.window.WidgetAt(Point{X: me.X, Y: me.Y})
+	top := hit
+	for top != nil && top.Parent() != nil {
+		top = top.Parent()
+	}
+	if top == nil || top == p.window.Root() {
+		p.closeFor(PopupCloseOutsideClick)
+	}
+	return false
+}
+
+func firstFocusable(w Widget) Widget {
+	if w == nil {
+		return nil
+	}
+	if f, ok := w.(interface{ Focusable() bool }); ok && f.Focusable() {
+		return w
+	}
+	if cl, ok := w.(ChildLister); ok {
+		for _, c := range cl.ChildList() {
+			if t := firstFocusable(c); t != nil {
+				return t
+			}
+		}
+	}
+	return nil
 }
 
 // Close removes the popup from its window's overlay stack and fires
-// OnClose. Safe to call multiple times.
-func (p *Popup) Close() {
+// OnClose / OnCloseReason. Safe to call multiple times.
+func (p *Popup) Close() { p.close(PopupCloseProgrammatic) }
+
+// closeFor is a user-driven close, which CanClose may veto.
+func (p *Popup) closeFor(reason PopupCloseReason) bool {
+	if p.CanClose != nil && !p.CanClose(reason) {
+		return false
+	}
+	p.close(reason)
+	return true
+}
+
+func (p *Popup) close(reason PopupCloseReason) {
 	if p.window == nil {
 		return
+	}
+	if p.removeFilter != nil {
+		p.removeFilter()
+		p.removeFilter = nil
 	}
 	// Invalidate the inflated content halo BEFORE RemoveOverlay so the
 	// area covered by the elevation shadow gets repainted with whatever
@@ -110,6 +227,9 @@ func (p *Popup) Close() {
 	p.window = nil
 	if p.OnClose != nil {
 		p.OnClose()
+	}
+	if p.OnCloseReason != nil {
+		p.OnCloseReason(reason)
 	}
 }
 
@@ -145,7 +265,12 @@ func (p *Popup) OnWindowResize(newSize Size) {
 		p.onResize(newSize)
 		return
 	}
-	p.Close()
+	if !p.closeFor(PopupCloseResize) {
+		// Vetoed: keep it on screen.
+		b := p.Bounds()
+		x, y := clampPopup(newSize, b.X, b.Y, Size{W: b.W, H: b.H})
+		p.RelayoutAt(x, y, Size{W: b.W, H: b.H})
+	}
 }
 
 // RelayoutAt moves an already-shown popup to a new position/size,
@@ -218,14 +343,14 @@ func (p *Popup) Handle(event Event) bool {
 		if e.Type() == EventMouseDown {
 			if !p.Bounds().Contains(Point{X: e.X, Y: e.Y}) {
 				if p.DismissOnOutsideClick {
-					p.Close()
+					p.closeFor(PopupCloseOutsideClick)
 				}
 				return true // consume so main tree doesn't also see it
 			}
 		}
 	case KeyEvent:
 		if e.Type() == EventKeyDown && e.Key == KeyEscape {
-			p.Close()
+			p.closeFor(PopupCloseEscape)
 			return true
 		}
 	}
@@ -233,9 +358,9 @@ func (p *Popup) Handle(event Event) bool {
 }
 
 // HitTest routes clicks inside the popup to its content. If
-// DismissOnOutsideClick is set, the popup claims outside clicks too
-// (so Handle can dismiss them). Otherwise outside clicks fall through
-// to whatever's underneath.
+// DismissOnOutsideClick is set (and ClickThrough isn't), the popup claims
+// outside clicks too so Handle can dismiss them. Otherwise outside clicks
+// fall through to whatever's underneath.
 func (p *Popup) HitTest(point Point) Widget {
 	if p.Content != nil {
 		if p.Bounds().Contains(point) {
@@ -245,7 +370,7 @@ func (p *Popup) HitTest(point Point) Widget {
 			return p
 		}
 	}
-	if p.DismissOnOutsideClick {
+	if p.DismissOnOutsideClick && !p.ClickThrough {
 		return p
 	}
 	return nil

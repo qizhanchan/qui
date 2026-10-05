@@ -35,9 +35,13 @@ const (
 // the shared menu look (raised surface, level-2 elevation, small
 // corner radius, 48 px row height).
 //
-// Requires a Window at construction time because the dropdown is a
-// Popup pushed onto the window's overlay stack — same pragmatic choice
-// MenuBar makes. Pass nil to disable the dropdown (toggle is a no-op).
+// The dropdown is a Popup pushed onto a window's overlay stack: the
+// window passed to the constructor, or — when that is nil, as when the tree
+// is built before it is mounted — the window the Select is attached to.
+//
+// Options: Items is the list of displayed labels. SetOptions supplies a
+// richer model — a value distinct from the label, a catalog key, an icon,
+// a group heading, a disabled flag — and keeps Items in sync with it.
 //
 // Usage:
 //
@@ -90,6 +94,18 @@ type Select struct {
 	// OnSurface text, SecondaryContainer selected row — see openDropdown).
 	DropdownColors MenuColors
 
+	// OnOptionChange fires alongside OnChange with the full option (value
+	// and label) when SetOptions is in use.
+	OnOptionChange func(idx int, opt SelectOption)
+	// RenderOption, when set, builds each dropdown row's content (an icon
+	// plus two lines, a color swatch...). Rows keep normal behavior: hover,
+	// keyboard highlight, click / Enter to pick.
+	RenderOption func(opt SelectOption, selected bool) Widget
+	// OnOpen / OnClose fire when the dropdown opens and closes.
+	OnOpen  func()
+	OnClose func()
+
+	options  []SelectOption
 	window   *Window
 	hovering bool
 	focused  bool
@@ -101,6 +117,134 @@ type Select struct {
 	typeBuf string
 	typeAt  time.Time
 }
+
+// SelectOption is one choice of a Select in the rich model (SetOptions).
+type SelectOption struct {
+	// Value identifies the option to the app; it never changes with the
+	// language. Empty means "same as Label".
+	Value string
+	// Label is shown; LabelKey, when set, resolves it from the catalog
+	// with Label as the fallback.
+	Label    string
+	LabelKey string
+	// Icon is drawn before the label in the dropdown.
+	Icon VectorSource
+	// Group is a heading: consecutive options with the same non-empty Group
+	// are listed under one non-selectable heading row (an <optgroup>).
+	Group    string
+	Disabled bool
+}
+
+// DisplayLabel is the option's shown label.
+func (o SelectOption) DisplayLabel() string {
+	if o.LabelKey == "" {
+		return o.Label
+	}
+	return TranslateOr("", o.LabelKey, o.Label, nil)
+}
+
+// ValueOrLabel is Value, or Label when Value is empty.
+func (o SelectOption) ValueOrLabel() string {
+	if o.Value != "" {
+		return o.Value
+	}
+	return o.Label
+}
+
+// SetOptions installs the rich option model. Items and ItemDisabled are
+// rebuilt from it (labels resolved now and again on every open / locale
+// change), and the selection is kept when its value is still present.
+func (cb *Select) SetOptions(opts []SelectOption) {
+	prev := cb.SelectedOptionValue()
+	cb.options = append([]SelectOption(nil), opts...)
+	cb.syncItemsFromOptions()
+	cb.SelectedIdx = cb.indexForValue(prev)
+	if cb.isOpen {
+		cb.closeDropdown()
+	}
+	cb.InvalidateLayout()
+}
+
+// Options returns the rich option model (nil when only Items is used).
+func (cb *Select) Options() []SelectOption { return cb.options }
+
+func (cb *Select) syncItemsFromOptions() {
+	if cb.options == nil {
+		return
+	}
+	items := make([]string, len(cb.options))
+	disabled := make([]bool, len(cb.options))
+	for i, o := range cb.options {
+		items[i] = o.DisplayLabel()
+		disabled[i] = o.Disabled
+	}
+	cb.Items, cb.ItemDisabled = items, disabled
+}
+
+// option returns option i in the rich model, or a label-only option built
+// from Items.
+func (cb *Select) option(i int) SelectOption {
+	if i >= 0 && i < len(cb.options) {
+		return cb.options[i]
+	}
+	if i >= 0 && i < len(cb.Items) {
+		return SelectOption{Label: cb.Items[i], Disabled: !cb.itemEnabled(i)}
+	}
+	return SelectOption{}
+}
+
+// SelectedOption returns the selected option, ok false when none.
+func (cb *Select) SelectedOption() (SelectOption, bool) {
+	if cb.SelectedIdx < 0 || cb.SelectedIdx >= len(cb.Items) {
+		return SelectOption{}, false
+	}
+	return cb.option(cb.SelectedIdx), true
+}
+
+// SelectedOptionValue returns the selected option's value (its label when
+// it has none), or "".
+func (cb *Select) SelectedOptionValue() string {
+	o, ok := cb.SelectedOption()
+	if !ok {
+		return ""
+	}
+	return o.ValueOrLabel()
+}
+
+// SetValue selects the option whose value (or, failing that, label) is
+// value, firing OnChange. Unknown values leave the selection unchanged
+// and return false.
+func (cb *Select) SetValue(value string) bool {
+	idx := cb.indexForValue(value)
+	if idx < 0 {
+		return false
+	}
+	cb.selectIndex(idx)
+	return true
+}
+
+func (cb *Select) indexForValue(value string) int {
+	if value == "" {
+		return -1
+	}
+	for i := range cb.Items {
+		if cb.option(i).ValueOrLabel() == value {
+			return i
+		}
+	}
+	return -1
+}
+
+// win is the window the dropdown opens in.
+func (cb *Select) win() *Window {
+	if cb.window != nil {
+		return cb.window
+	}
+	return cb.Window()
+}
+
+// IsOpen reports whether the dropdown is showing.
+func (cb *Select) IsOpen() bool { return cb.isOpen }
 
 // NewSelect creates a plain, unstyled Select — Outlined variant
 // with thin gray border, dark text, transparent container. For a
@@ -226,9 +370,10 @@ func (cb *Select) native() bool {
 // were captured in the old item-widgets). If the current selection
 // lands out of range it resets to -1.
 func (cb *Select) SetItems(items []string) bool {
-	if sameStrings(cb.Items, items) {
+	if sameStrings(cb.Items, items) && cb.options == nil {
 		return false
 	}
+	cb.options = nil
 	cb.Items = items
 	if cb.SelectedIdx >= len(items) {
 		cb.SelectedIdx = -1
@@ -836,9 +981,11 @@ func (cb *Select) toggleDropdown() {
 //     which is what the web reference renders and what the pixel diff
 //     against it is calibrated to.
 func (cb *Select) openDropdown() {
-	if cb.window == nil || cb.isOpen {
+	w := cb.win()
+	if w == nil || cb.isOpen {
 		return
 	}
+	cb.syncItemsFromOptions() // pick up a locale change
 	st := defaultMenuStyle()
 	// Match the trigger's actual leading inset so the dropdown text X
 	// aligns with the selected-value text X — this follows the compact
@@ -859,11 +1006,20 @@ func (cb *Select) openDropdown() {
 	st.ApplyColors(themedMenuColors())
 	st.ApplyColors(cb.DropdownColors)
 
-	items := make([]*MenuItem, len(cb.Items))
+	items := make([]*MenuItem, 0, len(cb.Items))
+	group := ""
 	for i, val := range cb.Items {
 		idx := i
-		items[i] = &MenuItem{
+		opt := cb.option(idx)
+		if opt.Group != group {
+			group = opt.Group
+			if group != "" {
+				items = append(items, &MenuItem{Label: group, Disabled: true})
+			}
+		}
+		item := &MenuItem{
 			Label:    val,
+			Icon:     opt.Icon,
 			Selected: idx == cb.SelectedIdx,
 			Disabled: !cb.itemEnabled(idx),
 			OnClick: func() {
@@ -871,17 +1027,22 @@ func (cb *Select) openDropdown() {
 				cb.closeDropdown()
 			},
 		}
+		if cb.RenderOption != nil {
+			selected := idx == cb.SelectedIdx
+			item.Content = func() Widget { return cb.RenderOption(opt, selected) }
+		}
+		items = append(items, item)
 	}
 
-	popup, list := buildMenuPopupStyled(cb.window, nil, nil, items, st)
+	popup, list := buildMenuPopupStyled(w, nil, nil, items, st)
 	if popup == nil {
 		return
 	}
 	cb.popup = popup
 	// Measure against the window width so rows report their intrinsic text
 	// width (rather than being constrained — and clipped — to the trigger).
-	winW := cb.window.Size().W
-	size := list.Measure(Size{W: winW, H: cb.window.Size().H})
+	winW := w.Size().W
+	size := list.Measure(Size{W: winW, H: w.Size().H})
 	if cb.native() {
 		// Raw-HTML <select>: widen the dropdown to fit the widest option
 		// (e.g. full font names like "Times New Roman") like a browser does,
@@ -900,20 +1061,27 @@ func (cb *Select) openDropdown() {
 	// has scroll-independent (content-space) bounds, while the popup is a
 	// window-level overlay. Re-evaluated on every re-place, so the menu
 	// follows the field as the window resizes.
-	cb.popup = showAnchoredPopup(cb.window, cb.popup, list, func() Rect { return InteractionBoundsOf(cb) }, size)
-	if cb.popup != nil {
-		prevOnClose := cb.popup.OnClose
-		cb.popup.OnClose = func() {
-			if prevOnClose != nil {
-				prevOnClose()
-			}
-			cb.isOpen = false
-			cb.popup = nil
-			cb.Invalidate()
+	cb.popup = showAnchoredPopup(w, cb.popup, list, func() Rect { return InteractionBoundsOf(cb) }, size)
+	if cb.popup == nil {
+		return
+	}
+	prevOnClose := cb.popup.OnClose
+	cb.popup.OnClose = func() {
+		if prevOnClose != nil {
+			prevOnClose()
+		}
+		cb.isOpen = false
+		cb.popup = nil
+		cb.Invalidate()
+		if cb.OnClose != nil {
+			cb.OnClose()
 		}
 	}
 	cb.isOpen = true
 	cb.Invalidate()
+	if cb.OnOpen != nil {
+		cb.OnOpen()
+	}
 }
 
 func (cb *Select) closeDropdown() {
@@ -924,7 +1092,8 @@ func (cb *Select) closeDropdown() {
 }
 
 // SetText implements qui.TextSink so the agent Type action can pick an
-// option in one call — `type` the option's label instead of opening the
+// option in one call. An option's value or catalog key matches first, so
+// a script written against values keeps working in every language — `type` the option's label instead of opening the
 // popup and clicking a row (which is flaky to drive: the trigger toggles
 // on mouse-down and arrow-key nav needs the trigger focused first).
 // Matching is forgiving: exact label first, then a whitespace-trimmed
@@ -946,6 +1115,13 @@ func (cb *Select) SetText(value string) {
 // indexForLabel resolves a label to its item index using the tiered match
 // described on SetText. Returns -1 when nothing matches.
 func (cb *Select) indexForLabel(value string) int {
+	for i := range cb.options {
+		if o := cb.options[i]; (o.Value != "" && o.Value == value) || (o.LabelKey != "" && o.LabelKey == value) {
+			if i < len(cb.Items) {
+				return i
+			}
+		}
+	}
 	for i, it := range cb.Items {
 		if it == value {
 			return i
@@ -981,5 +1157,8 @@ func (cb *Select) selectIndex(idx int) {
 	cb.Invalidate()
 	if cb.OnChange != nil && idx >= 0 {
 		cb.OnChange(idx, cb.Items[idx])
+	}
+	if cb.OnOptionChange != nil && idx >= 0 {
+		cb.OnOptionChange(idx, cb.option(idx))
 	}
 }

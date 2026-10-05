@@ -53,6 +53,44 @@ type MenuItem struct {
 	// means "not part of a group". The caller must coordinate the
 	// Checked fields — this package only reflects the current state.
 	RadioGroup int
+	// ID is a stable identifier for the row widget (qui-agent `#id`
+	// selectors, tests); it doesn't change with the language.
+	ID string
+	// LabelKey makes the label come from the message catalog, resolved
+	// each time the row is measured / drawn; Label is the fallback.
+	LabelKey string
+	// Icon is drawn in a leading icon column (reserved for the whole menu
+	// when any row has one), tinted with the row's text color.
+	Icon VectorSource
+	// Content replaces the label/shortcut with caller-built content while
+	// keeping normal row behavior — hover and keyboard highlight, click
+	// and Enter to pick, OnClick then close. (Panel, by contrast, hands the
+	// row over entirely.)
+	Content func() Widget
+}
+
+// DisplayLabel is the label the row shows: LabelKey resolved through the
+// catalog, falling back to Label.
+func (it *MenuItem) DisplayLabel() string {
+	if it.LabelKey == "" {
+		return it.Label
+	}
+	return TranslateOr("", it.LabelKey, it.Label, nil)
+}
+
+// MenuActivatable is implemented by a menu row the keyboard can pick: when
+// it is highlighted, Enter / Space calls ActivateMenuRow. Built-in rows
+// implement it; so can the widget a MenuItem.Panel returns, which then
+// joins arrow-key navigation instead of being skipped.
+type MenuActivatable interface {
+	ActivateMenuRow()
+}
+
+// MenuHighlighter is implemented by a row that paints the keyboard
+// highlight itself. Panel content implementing MenuActivatable usually
+// wants it too.
+type MenuHighlighter interface {
+	SetMenuHighlighted(bool)
 }
 
 // menuMinWidth is the 112 px floor every menu-item's Measure reports,
@@ -143,6 +181,12 @@ type menuStyle struct {
 	shortcutGap   float32
 	radius        float32
 	elevation     int // Theme.Elevation index for the popup shadow; 0 = flat
+	iconW         float32
+
+	// navigate, set by a MenuBar, switches to the previous (-1) or next
+	// (+1) top-level menu: Left in a top-level dropdown, Right on a row
+	// without a submenu. Inherited by submenus.
+	navigate func(dir int)
 
 	// colorsPinned = true skips refreshColors so a caller-supplied or
 	// theme-derived palette (Select dropdown, themedMenuStyle) survives a
@@ -566,10 +610,20 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 	if !hasCheck {
 		st.gutterW = 0
 	}
+	st.iconW = 0
+	for _, it := range items {
+		if it.Icon != nil {
+			st.iconW = 24
+			break
+		}
+	}
 
 	var popup *Popup
 	var list *menuListView
 	var itemWidgets []Widget
+	// rows parallels items: the widget keyboard navigation drives (the
+	// panel's own content for a Panel row).
+	rows := make([]Widget, 0, len(items))
 
 	// closeChain dismisses this popup AND everything it was opened from.
 	// It walks the chain through the parent's own closeChain rather than
@@ -591,18 +645,21 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 		it := item // capture
 		idx := i
 		if it.Separator {
-			itemWidgets = append(itemWidgets, newMenuSeparator(st))
+			sep := newMenuSeparator(st)
+			itemWidgets = append(itemWidgets, sep)
+			rows = append(rows, sep)
 			continue
 		}
 		if it.Panel != nil {
-			// Exactly one widget per item, always: menuListView.activate
-			// reaches a row by its ITEM index (content.ChildAt(focused)), so a
-			// row that appended nothing — or two — would misdirect every
-			// keyboard activation below it.
-			itemWidgets = append(itemWidgets, newMenuPanelRow(it.Panel(closeChain), st))
+			// Exactly one widget per item, always: rows / itemWidgets are
+			// indexed by ITEM index, so a row that appended nothing — or two
+			// — would misdirect every keyboard activation below it.
+			child := it.Panel(closeChain)
+			itemWidgets = append(itemWidgets, newMenuPanelRow(child, st))
+			rows = append(rows, child)
 			continue
 		}
-		itemWidgets = append(itemWidgets, newMenuItemWidget(it, st, func() {
+		onSelect := func() {
 			if it.Submenu != nil {
 				// Open submenu anchored to this row's right edge.
 				row := itemWidgets[idx].Bounds()
@@ -616,7 +673,15 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 				it.OnClick()
 			}
 			closeChain()
-		}))
+		}
+		var row Widget
+		if it.Content != nil {
+			row = newMenuContentRow(it, st, onSelect)
+		} else {
+			row = newMenuItemWidget(it, st, onSelect)
+		}
+		itemWidgets = append(itemWidgets, row)
+		rows = append(rows, row)
 	}
 
 	content := NewContainer(
@@ -631,7 +696,14 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 	content.Style().Radius = st.radius
 
 	list = newMenuListView(content, items, closeChain, st)
+	list.rows = rows
+	list.focused = list.moveFrom(-1, +1)
+	if list.focused >= 0 && !list.selectable(list.focused) {
+		list.focused = -1
+	}
+	list.isSub = parent != nil
 	popup = NewPopup(list)
+	list.closeSelf = popup.Close
 	return popup, list
 }
 
@@ -666,11 +738,12 @@ func newMenuItemWidget(item *MenuItem, st menuStyle, onSelect func()) *menuItemV
 // to disabled-label-text-opacity (0.38).
 type menuItemView struct {
 	BaseWidget
-	item     *MenuItem
-	style    menuStyle
-	hovering bool
-	pressed  bool
-	onSelect func()
+	item        *MenuItem
+	style       menuStyle
+	hovering    bool
+	highlighted bool // keyboard highlight
+	pressed     bool
+	onSelect    func()
 }
 
 func newMenuItemView(item *MenuItem, st menuStyle, onSelect func()) *menuItemView {
@@ -682,15 +755,29 @@ func newMenuItemView(item *MenuItem, st menuStyle, onSelect func()) *menuItemVie
 	}
 	v.SetSelf(v)
 	v.SetEnabled(!item.Disabled)
+	if item.ID != "" {
+		v.SetID(item.ID)
+	}
 	return v
 }
+
+// SetMenuHighlighted paints (or clears) the keyboard highlight.
+func (v *menuItemView) SetMenuHighlighted(on bool) {
+	if v.highlighted != on {
+		v.highlighted = on
+		v.Invalidate()
+	}
+}
+
+// ActivateMenuRow picks the row, exactly like a click.
+func (v *menuItemView) ActivateMenuRow() { v.activate() }
 
 func (v *menuItemView) labelFont() Font    { return ThemeFont(v.style.labelRole) }
 func (v *menuItemView) shortcutFont() Font { return ThemeFont(v.style.shortcutRole) }
 
 func (v *menuItemView) Measure(available Size) Size {
-	labelW, _ := TextMetrics(v.item.Label, v.labelFont())
-	w := v.style.leadingSpace + v.style.gutterW + labelW + v.style.trailingSpace
+	labelW, _ := TextMetrics(v.item.DisplayLabel(), v.labelFont())
+	w := v.style.leadingSpace + v.style.gutterW + v.style.iconW + labelW + v.style.trailingSpace
 	if v.item.Shortcut != "" {
 		sw, _ := TextMetrics(v.item.Shortcut, v.shortcutFont())
 		w += v.style.shortcutGap + sw
@@ -787,7 +874,7 @@ func (v *menuItemView) Draw(canvas Canvas) {
 	if v.Enabled() {
 		if v.pressed {
 			DrawStateLayer(canvas, b, 0, st.stateColor, CurrentTheme().PressedOpacity)
-		} else if v.hovering {
+		} else if v.hovering || v.highlighted {
 			DrawStateLayer(canvas, b, 0, st.stateColor, CurrentTheme().HoverOpacity)
 		}
 	}
@@ -828,16 +915,24 @@ func (v *menuItemView) Draw(canvas Canvas) {
 		}
 		cursor += st.gutterW
 	}
+	if st.iconW > 0 {
+		if v.item.Icon != nil {
+			const iconSize = 18
+			canvas.DrawVector(v.item.Icon, Rect{X: cursor + (st.iconW-iconSize)/2 - 3, Y: b.Y + (b.H-iconSize)/2, W: iconSize, H: iconSize}, labelColor)
+		}
+		cursor += st.iconW
+	}
 
 	font := v.labelFont()
-	_, textH := TextMetrics(v.item.Label, font)
+	label := v.item.DisplayLabel()
+	_, textH := TextMetrics(label, font)
 	labelRect := Rect{
 		X: cursor,
 		Y: b.Y + (b.H-textH)/2,
 		W: b.W, // overruns are clipped by the popup's outer clip
 		H: textH,
 	}
-	canvas.DrawText(v.item.Label, labelRect, labelColor, font)
+	canvas.DrawText(label, labelRect, labelColor, font)
 
 	if v.item.Shortcut != "" || v.item.Submenu != nil {
 		// Right-align trailing content (shortcut text first, then chevron).
@@ -918,6 +1013,88 @@ func newMenuPanelRow(child Widget, st menuStyle) Widget {
 	return row
 }
 
+// menuContentRow hosts MenuItem.Content: caller-built content with the
+// full row behavior (hover / keyboard highlight, click and Enter pick it).
+type menuContentRow struct {
+	Container
+	item        *MenuItem
+	style       menuStyle
+	hovering    bool
+	highlighted bool
+	onSelect    func()
+}
+
+func newMenuContentRow(item *MenuItem, st menuStyle, onSelect func()) *menuContentRow {
+	r := &menuContentRow{item: item, style: st, onSelect: onSelect}
+	r.BaseWidget = NewBaseWidget()
+	r.LayoutEngine = FlexLayout{Direction: Horizontal, AlignItems: AlignCenter}
+	r.SetSelf(r)
+	r.SetEnabled(!item.Disabled)
+	r.Style().Padding = Insets{Left: st.leadingSpace + st.gutterW + st.iconW, Right: st.trailingSpace}
+	r.SetMinSize(menuMinWidth, st.itemHeight)
+	if item.ID != "" {
+		r.SetID(item.ID)
+	}
+	if c := item.Content(); c != nil {
+		r.AddChild(c)
+	}
+	return r
+}
+
+func (r *menuContentRow) SetMenuHighlighted(on bool) {
+	if r.highlighted != on {
+		r.highlighted = on
+		r.Invalidate()
+	}
+}
+
+func (r *menuContentRow) ActivateMenuRow() {
+	if r.Enabled() && r.onSelect != nil {
+		r.onSelect()
+	}
+}
+
+// HitTest keeps the whole row one target so a click on the content picks
+// the row, like a label row.
+func (r *menuContentRow) HitTest(p Point) Widget {
+	if r.Bounds().Contains(p) {
+		return r
+	}
+	return nil
+}
+
+func (r *menuContentRow) Handle(event Event) bool {
+	e, ok := event.(MouseEvent)
+	if !ok || !r.Enabled() {
+		return false
+	}
+	switch e.Type() {
+	case EventMouseEnter:
+		r.hovering = true
+		r.Invalidate()
+	case EventMouseLeave:
+		r.hovering = false
+		r.Invalidate()
+	case EventMouseDown:
+		if e.Button == MouseButtonLeft {
+			r.ActivateMenuRow()
+			return true
+		}
+	}
+	return false
+}
+
+func (r *menuContentRow) Draw(canvas Canvas) {
+	r.style.refreshColors()
+	if r.item.Selected {
+		canvas.FillRect(r.Bounds(), r.style.selectedBg)
+	}
+	if r.Enabled() && (r.hovering || r.highlighted) {
+		DrawStateLayer(canvas, r.Bounds(), 0, r.style.stateColor, CurrentTheme().HoverOpacity)
+	}
+	r.Container.Draw(canvas)
+}
+
 // newMenuSeparator returns a thin horizontal divider widget that does
 // not participate in focus or click handling. Drawn at 1 px in
 // the divider color with a 12-px horizontal inset. The row reserves a
@@ -978,8 +1155,11 @@ type menuListView struct {
 	content    *Container
 	scroll     *ScrollView // non-nil when the list is taller than the window
 	items      []*MenuItem
+	rows       []Widget // parallel to items; see buildMenuPopupStyled
 	focused    int
 	closeChain func()
+	closeSelf  func()
+	isSub      bool
 	style      menuStyle
 }
 
@@ -1003,8 +1183,8 @@ func newMenuListView(content *Container, items []*MenuItem, closeChain func(), s
 
 // firstSelectable picks the first non-separator, non-disabled item so
 // keyboard focus lands somewhere reasonable when the menu opens. Panel
-// rows are skipped like separators: their content handles its own input,
-// so "activating the row" means nothing.
+// rows are skipped like separators (newMenuListView's caller re-checks
+// them once rows are known — see selectable).
 func firstSelectable(items []*MenuItem) int {
 	for i, it := range items {
 		if it.Separator || it.Disabled || it.Panel != nil {
@@ -1013,6 +1193,56 @@ func firstSelectable(items []*MenuItem) int {
 		return i
 	}
 	return -1
+}
+
+// selectable reports whether keyboard navigation may land on item i: not a
+// separator or disabled, and a Panel row only when its content is
+// MenuActivatable.
+func (lv *menuListView) selectable(i int) bool {
+	it := lv.items[i]
+	if it.Separator || it.Disabled {
+		return false
+	}
+	if it.Panel != nil {
+		if i >= len(lv.rows) {
+			return false
+		}
+		_, ok := lv.rows[i].(MenuActivatable)
+		return ok
+	}
+	return true
+}
+
+// setFocused moves the keyboard highlight to i and scrolls it into view.
+func (lv *menuListView) setFocused(i int) {
+	if i == lv.focused && lv.highlightShown(i) {
+		return
+	}
+	if old := lv.focused; old >= 0 && old < len(lv.rows) {
+		if h, ok := lv.rows[old].(MenuHighlighter); ok {
+			h.SetMenuHighlighted(false)
+		}
+	}
+	lv.focused = i
+	if i < 0 || i >= len(lv.rows) {
+		return
+	}
+	if h, ok := lv.rows[i].(MenuHighlighter); ok {
+		h.SetMenuHighlighted(true)
+	}
+	if lv.scroll != nil {
+		lv.scroll.ScrollChildIntoView(lv.rows[i])
+	}
+}
+
+func (lv *menuListView) highlightShown(i int) bool {
+	if i < 0 || i >= len(lv.rows) {
+		return false
+	}
+	if v, ok := lv.rows[i].(*menuItemView); ok {
+		return v.highlighted
+	}
+	return false
 }
 
 func (lv *menuListView) Focusable() bool   { return true }
@@ -1159,10 +1389,16 @@ func (lv *menuListView) Handle(event Event) bool {
 	}
 	switch ke.Key {
 	case KeyUp:
-		lv.focused = lv.move(-1)
+		lv.setFocused(lv.move(-1))
 		return true
 	case KeyDown:
-		lv.focused = lv.move(+1)
+		lv.setFocused(lv.move(+1))
+		return true
+	case KeyHome:
+		lv.setFocused(lv.moveFrom(-1, +1))
+		return true
+	case KeyEnd:
+		lv.setFocused(lv.moveFrom(len(lv.items), -1))
 		return true
 	case KeyEnter, KeySpace:
 		lv.activate()
@@ -1180,17 +1416,21 @@ func (lv *menuListView) Handle(event Event) bool {
 				return true
 			}
 		}
+		if lv.style.navigate != nil {
+			lv.style.navigate(+1)
+			return true
+		}
 	case KeyLeft:
-		// For submenus, closing the chain should close this submenu but
-		// leave the parent open. The closeChain callback bound in
-		// showMenuPopup also walks up to close ancestors — submenu
-		// close should happen through Popup.Close instead. Close the
-		// immediate popup by calling its Close directly; the chain
-		// resolves to closeChain which clears everything. For now this
-		// also clears parents; refinement can wire a "close-self-only"
-		// callback later if multi-level submenus become common.
-		if lv.closeChain != nil {
-			lv.closeChain()
+		// A submenu closes alone and focus returns to the row that
+		// opened it; a top-level dropdown in a menu bar moves to the
+		// previous menu instead.
+		if lv.isSub && lv.closeSelf != nil {
+			lv.closeSelf()
+			return true
+		}
+		if lv.style.navigate != nil {
+			lv.style.navigate(-1)
+			return true
 		}
 		return true
 	}
@@ -1204,25 +1444,16 @@ func (lv *menuListView) activate() {
 	if lv.focused < 0 || lv.focused >= len(lv.items) {
 		return
 	}
-	if lv.focused >= lv.content.ChildCount() {
+	if lv.focused >= len(lv.rows) {
 		return
 	}
-	child := lv.content.ChildAt(lv.focused)
-	if item, ok := child.(menuActivatable); ok {
-		item.activate()
-		return
-	}
-	if btn, ok := child.(*Button); ok && btn.OnClick != nil {
-		btn.OnClick()
+	if row, ok := lv.rows[lv.focused].(MenuActivatable); ok {
+		row.ActivateMenuRow()
 	}
 }
 
-type menuActivatable interface {
-	activate()
-}
-
-// move steps the focused index by delta, skipping separators, panel rows
-// and disabled entries. Wraps around at the ends.
+// move steps the focused index by delta, skipping rows that can't be
+// selected (see selectable). Wraps around at the ends.
 func (lv *menuListView) move(delta int) int {
 	if len(lv.items) == 0 {
 		return -1
@@ -1234,11 +1465,20 @@ func (lv *menuListView) move(delta int) int {
 	n := len(lv.items)
 	for k := 0; k < n; k++ {
 		cur = (cur + delta + n) % n
-		it := lv.items[cur]
-		if it.Separator || it.Disabled || it.Panel != nil {
-			continue
+		if lv.selectable(cur) {
+			return cur
 		}
-		return cur
+	}
+	return lv.focused
+}
+
+// moveFrom scans from start (exclusive) in direction step without
+// wrapping — Home / End.
+func (lv *menuListView) moveFrom(start, step int) int {
+	for i := start + step; i >= 0 && i < len(lv.items); i += step {
+		if lv.selectable(i) {
+			return i
+		}
 	}
 	return lv.focused
 }
@@ -1248,38 +1488,53 @@ func (lv *menuListView) move(delta int) int {
 
 // MenuBar is the horizontal strip of top-level menu triggers typically
 // rendered at the top of a main window ("File", "Edit", "View", ...).
-// Each trigger opens a ContextMenu dropdown when clicked.
+// Each trigger opens a ContextMenu dropdown when clicked. With a dropdown
+// open, Left / Right move to the neighboring menu.
 //
 // Usage:
 //
 //	mb := widgets.NewMenuBar(window)
 //	mb.AddMenu("File", []*widgets.MenuItem{
-//	    {Label: "New",  Shortcut: "Cmd+N", OnClick: newFile},
-//	    {Label: "Open", Shortcut: "Cmd+O", OnClick: openFile},
+//	    {Label: "New",  Shortcut: "CmdOrCtrl+N", OnClick: newFile},
+//	    {Label: "Open", Shortcut: "CmdOrCtrl+O", OnClick: openFile},
 //	})
 //	mb.AddMenu("Edit", ...)
 //	window.SetAcceleratorRegistry(mb.AcceleratorRegistry())
+//
+// The window argument may be nil when the bar is built before it is
+// mounted: the bar then uses the window it is attached to.
 type MenuBar struct {
 	Container
-	window *Window
-	menus  []menuEntry
+	// TriggerStyle, when its Base is set (non-zero Foreground), styles every
+	// trigger button; otherwise triggers are flat buttons in the bar's own
+	// Background / Foreground. Read at draw time, so changing it (or the
+	// bar's Style) restyles existing triggers.
+	TriggerStyle StateStyle
+	// DropdownColors / DropdownElevation style the dropdowns (zero = theme).
+	DropdownColors    MenuColors
+	DropdownElevation int
+
+	window  *Window
+	menus   []menuEntry
+	openIdx int
+	open    *Popup
 }
 
 type menuEntry struct {
-	Label string
-	Items []*MenuItem
+	Label    string
+	LabelKey string
+	Items    []*MenuItem
 	// trigger is the Button that opens this menu's dropdown.
 	trigger *Button
 }
 
-// NewMenuBar creates an empty menu bar attached to the given window.
-// The window reference is needed to push dropdown popups onto its
-// overlay stack when a menu trigger is clicked. Plain surface + text
-// colors — apps that want a specific palette set mb.Style() after
-// construction. The dropdown it opens follows the current theme (see
-// ShowContextMenu).
+// NewMenuBar creates an empty menu bar. window is where dropdowns are
+// pushed; pass nil to use the window the bar is attached to. Plain surface
+// + text colors — apps that want a specific palette set mb.Style() or
+// mb.TriggerStyle. The dropdown it opens follows the current theme (see
+// ShowContextMenu) unless DropdownColors is set.
 func NewMenuBar(window *Window) *MenuBar {
-	mb := &MenuBar{window: window}
+	mb := &MenuBar{window: window, openIdx: -1}
 	mb.BaseWidget = NewBaseWidget()
 	mb.LayoutEngine = FlexLayout{Direction: Horizontal, Gap: 2}
 	mb.SetSelf(mb)
@@ -1289,38 +1544,132 @@ func NewMenuBar(window *Window) *MenuBar {
 	return mb
 }
 
-// AddMenu appends a top-level menu. The caller-supplied items drive
-// the dropdown shown when the menu's trigger is clicked. The trigger
-// button is a plain widgets.NewButton — retint via
-// mb.Menus()[i].Trigger().States for a designed look.
+// win is the window dropdowns open in: the constructor's, else the one
+// the bar is attached to.
+func (mb *MenuBar) win() *Window {
+	if mb.window != nil {
+		return mb.window
+	}
+	return mb.Window()
+}
+
+// AddMenu appends a top-level menu. The caller-supplied items drive the
+// dropdown shown when the menu's trigger is clicked.
 func (mb *MenuBar) AddMenu(label string, items []*MenuItem) {
-	entry := menuEntry{Label: label, Items: items}
+	mb.AddMenuKey("", label, items)
+}
+
+// AddMenuKey is AddMenu with a catalog key for the trigger's caption
+// (label is the fallback).
+func (mb *MenuBar) AddMenuKey(key, label string, items []*MenuItem) {
+	entry := menuEntry{Label: label, LabelKey: key, Items: items}
 	idx := len(mb.menus)
 	entry.trigger = NewButton(label, func() {
-		mb.showDropdown(idx)
+		if mb.openIdx == idx && mb.open != nil {
+			mb.CloseMenu()
+			return
+		}
+		mb.OpenMenu(idx)
 	})
-	// Flatten the trigger so it reads as a menu-bar entry (no border,
-	// tight padding). Colors inherit mb.Style().
-	entry.trigger.States.Base.BorderSize = 0
-	entry.trigger.States.Base.Radius = 2
-	entry.trigger.States.Base.Padding = Insets{Top: 4, Right: 10, Bottom: 4, Left: 10}
-	entry.trigger.States.Base.Background = mb.Style().Background
-	entry.trigger.States.Base.Foreground = mb.Style().Foreground
-
+	if key != "" {
+		entry.trigger.SetTextKey(key)
+	}
+	mb.styleTrigger(entry.trigger)
 	mb.menus = append(mb.menus, entry)
 	mb.AddChild(entry.trigger)
 }
 
-// showDropdown opens the submenu for the menu at the given index,
-// anchored just below the trigger button.
-func (mb *MenuBar) showDropdown(idx int) {
-	if mb.window == nil || idx < 0 || idx >= len(mb.menus) {
+// Menus returns the top-level captions, in order.
+func (mb *MenuBar) Menus() []string {
+	out := make([]string, len(mb.menus))
+	for i, m := range mb.menus {
+		out[i] = m.trigger.DisplayText()
+	}
+	return out
+}
+
+// Trigger returns the button that opens menu i (nil when out of range).
+// Its States are re-derived from TriggerStyle every frame; set that to
+// restyle triggers. Use the button for IDs, tooltips and layout.
+func (mb *MenuBar) Trigger(i int) *Button {
+	if i < 0 || i >= len(mb.menus) {
+		return nil
+	}
+	return mb.menus[i].trigger
+}
+
+// SetMenuItems replaces menu i's items (takes effect the next time it
+// opens).
+func (mb *MenuBar) SetMenuItems(i int, items []*MenuItem) {
+	if i >= 0 && i < len(mb.menus) {
+		mb.menus[i].Items = items
+	}
+}
+
+// styleTrigger applies TriggerStyle, or the flat look derived from the
+// bar's style.
+func (mb *MenuBar) styleTrigger(b *Button) {
+	if mb.TriggerStyle.Base.Foreground.A > 0 {
+		b.States = mb.TriggerStyle
 		return
 	}
-	entry := mb.menus[idx]
-	anchor := InteractionBoundsOf(entry.trigger)
-	ShowContextMenu(mb.window, anchor.X, anchor.Y+anchor.H+2, entry.Items)
+	b.States.Base.BorderSize = 0
+	b.States.Base.Radius = 2
+	b.States.Base.Padding = Insets{Top: 4, Right: 10, Bottom: 4, Left: 10}
+	b.States.Base.Background = mb.Style().Background
+	b.States.Base.Foreground = mb.Style().Foreground
 }
+
+func (mb *MenuBar) Draw(canvas Canvas) {
+	for _, m := range mb.menus {
+		mb.styleTrigger(m.trigger)
+	}
+	mb.Container.Draw(canvas)
+}
+
+// OpenMenu opens top-level menu idx (closing any other) and focuses it.
+func (mb *MenuBar) OpenMenu(idx int) {
+	w := mb.win()
+	if w == nil || idx < 0 || idx >= len(mb.menus) {
+		return
+	}
+	mb.CloseMenu()
+	entry := mb.menus[idx]
+	st := themedMenuStyle()
+	st.ApplyColors(mb.DropdownColors)
+	if mb.DropdownElevation > 0 {
+		st.elevation = mb.DropdownElevation
+	}
+	n := len(mb.menus)
+	st.navigate = func(dir int) { mb.OpenMenu((idx + dir + n) % n) }
+	anchor := InteractionBoundsOf(entry.trigger)
+	popup := showContextMenuStyled(w, anchor.X, anchor.Y+anchor.H+2, entry.Items, st)
+	if popup == nil {
+		return
+	}
+	mb.open, mb.openIdx = popup, idx
+	prev := popup.OnClose
+	popup.OnClose = func() {
+		if prev != nil {
+			prev()
+		}
+		if mb.open == popup {
+			mb.open, mb.openIdx = nil, -1
+		}
+	}
+}
+
+// CloseMenu closes the open dropdown, if any.
+func (mb *MenuBar) CloseMenu() {
+	if mb.open != nil {
+		p := mb.open
+		mb.open, mb.openIdx = nil, -1
+		p.Close()
+	}
+}
+
+// OpenIndex reports which top-level menu is open (-1 for none).
+func (mb *MenuBar) OpenIndex() int { return mb.openIdx }
 
 // AcceleratorRegistry walks every menu item (including submenus) and
 // builds a fresh registry binding each item's Shortcut to its OnClick.

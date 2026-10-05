@@ -863,6 +863,17 @@ func (w *Window) Focused() Widget {
 	return w.focused
 }
 
+// WidgetAt returns the widget that would receive a click at p (window
+// coordinates): the topmost overlay hit, a modal's guard, or the main
+// tree's hit. Nil when nothing is there.
+func (w *Window) WidgetAt(p Point) Widget {
+	if w == nil {
+		return nil
+	}
+	w.assertUIThread("Window.WidgetAt")
+	return w.hitTestAll(p)
+}
+
 // PushOverlay adds a widget on top of the overlay stack (within
 // OverlayLayerDefault — see PushOverlayLayer). The caller is responsible
 // for pre-laying out the widget (call widget.Layout(rect) before pushing)

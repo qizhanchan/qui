@@ -33,10 +33,10 @@ func TestContextMenuItemSelectionClosesPopup(t *testing.T) {
 	popup := ShowContextMenu(w, 50, 50, items)
 
 	// Find the first menu-item widget inside the popup's content and
-	// trigger activation through the menuActivatable interface — the
+	// trigger activation through the MenuActivatable interface — the
 	// concrete type (now *menuItemView) is intentionally unexported.
 	container := popup.Content.(*menuListView).content
-	container.ChildAt(0).(menuActivatable).activate()
+	container.ChildAt(0).(MenuActivatable).ActivateMenuRow()
 
 	if !clicked {
 		t.Error("menu item OnClick did not fire")
@@ -109,7 +109,7 @@ func TestMenuBarShowDropdownOpensPopup(t *testing.T) {
 	mb.Layout(Rect{X: 0, Y: 0, W: 300, H: 30})
 	mb.menus[0].trigger.Layout(Rect{X: 0, Y: 0, W: 60, H: 26})
 
-	mb.showDropdown(0)
+	mb.OpenMenu(0)
 	// Dropdown uses ShowContextMenu which pushes an overlay.
 	if len(w.Overlays()) != 1 {
 		t.Errorf("dropdown did not push overlay; overlays=%d", len(w.Overlays()))
@@ -275,7 +275,7 @@ func TestContextMenuSeparatorRendersDivider(t *testing.T) {
 	if list.content.ChildCount() != 3 {
 		t.Fatalf("got %d children, want 3", list.content.ChildCount())
 	}
-	if _, isItem := list.content.ChildAt(1).(menuActivatable); isItem {
+	if _, isItem := list.content.ChildAt(1).(MenuActivatable); isItem {
 		t.Error("separator rendered as a menu item, expected a divider widget")
 	}
 }
@@ -285,14 +285,14 @@ func TestContextMenuCheckableTogglesChecked(t *testing.T) {
 	item := &MenuItem{Label: "Show gridlines", Checkable: true, Checked: false, OnClick: func() {}}
 	popup := ShowContextMenu(w, 0, 0, []*MenuItem{item})
 	list := popup.Content.(*menuListView)
-	list.content.ChildAt(0).(menuActivatable).activate()
+	list.content.ChildAt(0).(MenuActivatable).ActivateMenuRow()
 	if !item.Checked {
 		t.Error("expected Checked=true after first click")
 	}
 	// ShowContextMenu closes the popup on select; reopen for a second click.
 	popup = ShowContextMenu(w, 0, 0, []*MenuItem{item})
 	list = popup.Content.(*menuListView)
-	list.content.ChildAt(0).(menuActivatable).activate()
+	list.content.ChildAt(0).(MenuActivatable).ActivateMenuRow()
 	if item.Checked {
 		t.Error("expected Checked=false after second click")
 	}
@@ -311,7 +311,7 @@ func TestContextMenuSubmenuOpensChildPopup(t *testing.T) {
 		t.Fatalf("parent popup overlay count = %d, want 1", len(w.Overlays()))
 	}
 	list := popup.Content.(*menuListView)
-	list.content.ChildAt(0).(menuActivatable).activate()
+	list.content.ChildAt(0).(MenuActivatable).ActivateMenuRow()
 	if len(w.Overlays()) != 2 {
 		t.Errorf("submenu should push a second overlay; got %d", len(w.Overlays()))
 	}
@@ -464,7 +464,7 @@ func TestSubmenuLeafClickClosesTheWholeChain(t *testing.T) {
 
 			list := popup.Content.(*menuListView)
 			for i := 0; i < depth; i++ {
-				list.content.ChildAt(0).(menuActivatable).activate()
+				list.content.ChildAt(0).(MenuActivatable).ActivateMenuRow()
 				if i == depth-1 {
 					break
 				}
@@ -496,9 +496,9 @@ func TestSubmenuEscapeClosesTheWholeChain(t *testing.T) {
 	}}}
 	popup := ShowContextMenu(w, 0, 0, items)
 	list := popup.Content.(*menuListView)
-	list.content.ChildAt(0).(menuActivatable).activate()
+	list.content.ChildAt(0).(MenuActivatable).ActivateMenuRow()
 	sub := w.Overlays()[1].(*Popup)
-	sub.Content.(*menuListView).content.ChildAt(0).(menuActivatable).activate()
+	sub.Content.(*menuListView).content.ChildAt(0).(MenuActivatable).ActivateMenuRow()
 	deep := w.Overlays()[2].(*Popup).Content.(*menuListView)
 	deep.Handle(NewKeyEvent(EventKeyDown, KeyEscape, 0))
 	if n := len(w.Overlays()); n != 0 {
@@ -599,7 +599,7 @@ func TestMenuPanelRowHostsCallerContent(t *testing.T) {
 	if got := lv.content.ChildCount(); got != len(items) {
 		t.Fatalf("row count = %d, want %d", got, len(items))
 	}
-	if _, isItem := lv.content.ChildAt(0).(menuActivatable); isItem {
+	if _, isItem := lv.content.ChildAt(0).(MenuActivatable); isItem {
 		t.Error("the panel row is activatable; its content owns the pointer")
 	}
 	found := false

@@ -95,8 +95,8 @@ func TestSelectItemSelectionFiresOnChange(t *testing.T) {
 	// Find the second item's button in the dropdown popup and click it.
 	// The popup's Content is a menuListView wrapping the real item container.
 	content := cb.popup.Content.(*menuListView).content
-	secondItem := content.ChildAt(1).(menuActivatable)
-	secondItem.activate()
+	secondItem := content.ChildAt(1).(MenuActivatable)
+	secondItem.ActivateMenuRow()
 
 	if gotIdx != 1 || gotVal != "Y" {
 		t.Errorf("OnChange got (%d, %q), want (1, Y)", gotIdx, gotVal)
@@ -113,7 +113,7 @@ func TestSelectItemSelectionClosesDropdown(t *testing.T) {
 
 	cb.openDropdown()
 	content := cb.popup.Content.(*menuListView).content
-	content.ChildAt(0).(menuActivatable).activate()
+	content.ChildAt(0).(MenuActivatable).ActivateMenuRow()
 
 	if cb.isOpen {
 		t.Error("selecting item should close dropdown")
