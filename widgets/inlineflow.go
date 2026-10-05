@@ -298,6 +298,10 @@ func (b *InlineBox) Draw(canvas Canvas) {
 // widget, and window-level Cmd/Ctrl+A/C route sensibly.
 func (b *InlineBox) Focusable() bool { return b.Enabled() && b.Selectable && b.SelectableLength() > 0 }
 
+// TabStop: like Label, selectable inline text is click-focusable but not a
+// keyboard stop. Satisfies qui.TabStopper.
+func (b *InlineBox) TabStop() bool { return false }
+
 // SetFocused records keyboard focus.
 func (b *InlineBox) SetFocused(f bool) {
 	if b.focused == f {

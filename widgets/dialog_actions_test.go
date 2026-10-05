@@ -237,3 +237,30 @@ func TestDialogEnterAndEscapeFromFocusedInput(t *testing.T) {
 		t.Error("Escape in a focused Input (no selection) did not close the dialog")
 	}
 }
+
+func TestTabSkipsSelectableTextButClickStillFocusesIt(t *testing.T) {
+	text := NewLabel("Selectable heading")
+	text.Selectable = true
+	a, b := NewButton("A", nil), NewButton("B", nil)
+	root := NewContainer(FlexLayout{Direction: Vertical}, a, text, b)
+	w := windowWithRoot(Size{W: 400, H: 300}, root)
+	root.Measure(Size{W: 400, H: 300})
+	root.Layout(Rect{W: 400, H: 300})
+
+	for _, f := range w.CollectFocusables() {
+		if f == Widget(text) {
+			t.Fatal("selectable label is in the Tab order")
+		}
+	}
+	w.SetFocus(a)
+	w.DispatchTestEvent(newKeyDown(KeyTab))
+	if w.Focused() != Widget(b) {
+		t.Errorf("Tab from A focused %v, want B (skipping the text)", w.Focused())
+	}
+	// Click focus still lands on the text, so Cmd+C copies its selection.
+	tb := text.Bounds()
+	w.DispatchTestEvent(NewMouseEvent(EventMouseDown, tb.X+2, tb.Y+tb.H/2, MouseButtonLeft, 0))
+	if w.Focused() != Widget(text) {
+		t.Errorf("click on selectable text focused %v, want the label", w.Focused())
+	}
+}

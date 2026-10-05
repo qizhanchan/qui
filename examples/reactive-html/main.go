@@ -308,7 +308,7 @@ func App(window *qui.Window) h.Node {
 			rowKids = append(rowKids, h.Span("urgent").Class("tag"))
 		}
 		rowKids = append(rowKids,
-			h.Button("").Icon(icons.Delete).Class("del").OnClick(func() { deleteID(id) }))
+			h.Button("").Icon(icons.Delete).Class("del").OnClick(func() { setConfirmID(id) }))
 
 		return h.Div(
 			h.Div().Class("drop-bar").BindClass(bars.top),
@@ -341,20 +341,25 @@ func App(window *qui.Window) h.Node {
 			}
 		}
 		if text != "" {
-			dialog = h.ModalPortal(
-				func() { setConfirmID(-1) },
-				h.Div(
-					h.H2("Delete this todo?").Class("dialog-title"),
-					h.P(text).Class("dialog-body"),
-					h.Div(
-						h.Button("Cancel").Class("btn ghost").OnClick(func() { setConfirmID(-1) }),
-						h.Button("Delete").Class("btn danger").OnClick(func() {
-							deleteID(id)
-							setConfirmID(-1)
-						}),
-					).Class("dialog-actions"),
-				).Class("dialog").ID("confirm-dialog"),
-			)
+			cancel := func() { setConfirmID(-1) }
+			del := func() {
+				deleteID(id)
+				setConfirmID(-1)
+			}
+			// The h.Dialog shell: header / body / action row with stable
+			// classes, Enter = Delete, Esc / backdrop / ✕ = cancel.
+			dialog = h.Dialog(h.DialogProps{
+				Title: "Delete this todo?",
+				Body:  h.P(text),
+				Actions: []h.Node{
+					h.Button("Cancel").Class("btn ghost").OnClick(cancel),
+					h.Button("Delete").Class("btn danger").OnClick(del),
+				},
+				OnDismiss:   cancel,
+				OnConfirm:   del,
+				CloseButton: true,
+				Class:       "confirm",
+			})
 		}
 	}
 

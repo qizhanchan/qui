@@ -116,6 +116,10 @@ func (l *Label) SetSpans(spans []TextSpan) {
 
 func (l *Label) Focusable() bool { return l.Enabled() && l.Selectable }
 
+// TabStop: selectable text takes focus from a click (so Cmd+C copies its
+// selection) but is not a keyboard stop. Satisfies qui.TabStopper.
+func (l *Label) TabStop() bool { return false }
+
 func (l *Label) SetFocused(focused bool) {
 	if l.focused == focused {
 		return

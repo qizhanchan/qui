@@ -23,6 +23,29 @@ type focusVisibleAware interface {
 	SetFocusVisible(bool)
 }
 
+// ClickFocusPolicy is optional for focusable widgets. One whose
+// FocusOnClick returns false is reached by Tab but a click on it — or on
+// anything inside it, such as its caption — leaves focus where it was — the macOS push-button convention, which keeps a
+// text field or editor focused while a toolbar button acts on it.
+type ClickFocusPolicy interface {
+	FocusOnClick() bool
+}
+
+// TabStopper is optional for focusable widgets. One whose TabStop returns
+// false still takes focus from a click — selectable text does, so Cmd+C
+// copies its selection — but Tab / Shift+Tab skip it: text is not a
+// keyboard stop, as in a browser.
+type TabStopper interface {
+	TabStop() bool
+}
+
+func isTabStop(w Widget) bool {
+	if t, ok := w.(TabStopper); ok {
+		return t.TabStop()
+	}
+	return true
+}
+
 // modalOverlay is implemented by overlays that should trap focus —
 // while one is on the stack, Tab cycles only within that overlay,
 // skipping the main tree and any non-modal overlays below. Used for
@@ -59,9 +82,10 @@ func (w *Window) tabConsumedByFocus(shift bool) bool {
 	return false
 }
 
-// collectFocusables walks the widget tree depth-first and returns every
+// CollectFocusables walks the widget tree depth-first and returns every
 // widget that implements Focusable() bool with a true return, is
-// enabled, and has a parent chain ending at root. Also walks overlays
+// enabled, is a Tab stop (TabStopper), and has a parent chain ending at
+// root. Also walks overlays
 // (so focusables inside a Dialog / Popup are Tab-reachable). Preserves
 // tree order so Tab navigates predictably.
 //
@@ -79,7 +103,7 @@ func (w *Window) CollectFocusables() []Widget {
 		if widget == nil || isWidgetHidden(widget) {
 			return
 		}
-		if f, ok := widget.(registerFocusable); ok && f.Focusable() && widget.Enabled() {
+		if f, ok := widget.(registerFocusable); ok && f.Focusable() && widget.Enabled() && isTabStop(widget) {
 			result = append(result, widget)
 		}
 		if h, ok := widget.(childLister); ok {

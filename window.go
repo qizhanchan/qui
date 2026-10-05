@@ -1996,6 +1996,13 @@ func (w *Window) updateFocusFromMouse(me MouseEvent) {
 	// click on non-focusable content (e.g. plain text inside an interactive
 	// container) focuses that container — matching how a browser focuses the
 	// innermost focusable element under the pointer.
+	// A click anywhere inside a widget that opts out of click focus (a push
+	// button — its caption label included) leaves focus where it was.
+	for cur := target; cur != nil; cur = cur.Parent() {
+		if p, ok := cur.(ClickFocusPolicy); ok && !p.FocusOnClick() {
+			return
+		}
+	}
 	for cur := target; cur != nil; cur = cur.Parent() {
 		if f, ok := cur.(registerFocusable); ok && f.Focusable() {
 			w.focusVisible = false

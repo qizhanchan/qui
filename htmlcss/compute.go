@@ -469,6 +469,8 @@ func mergedDecls(n *Node, sheet *Stylesheet, st selectorState) map[string]string
 		}
 		decls = append(decls, matchedDecl{decl: d, tier: 0})
 	}
+	// Still tier 0: framework component defaults (RegisterFrameworkCSS).
+	decls = append(decls, frameworkDecls(n, st)...)
 
 	// Tier 1: author rules that match.
 	order := 0

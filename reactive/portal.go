@@ -59,6 +59,18 @@ type PortalOptions struct {
 	// keyboard dismiss gesture. The host grabs focus on mount so the key
 	// reaches it without a focusable child in the content.
 	OnEscape func()
+
+	// OnEnter fires when Enter reaches the portal unconsumed — the
+	// dialog's default action. Handled on the way back up, so the
+	// focused content gets first say (a <textarea> newline, a focused
+	// button pressing itself, an autocomplete list picking a row).
+	OnEnter func()
+
+	// Role / Label describe the overlay to the accessibility tree and
+	// the agent. Role defaults to "dialog" for a modal portal and
+	// "portal" otherwise; Label is its accessible name (a dialog title).
+	Role  string
+	Label string
 }
 
 const portalKind = "#portal"
@@ -101,7 +113,18 @@ func (h *portalHost) applyOpts(opts PortalOptions) {
 	h.Style().Padding = qui.Insets{}
 }
 
-func (h *portalHost) Role() string { return "portal" }
+func (h *portalHost) Role() string {
+	switch {
+	case h.opts.Role != "":
+		return h.opts.Role
+	case h.opts.Modal:
+		return qui.RoleDialog
+	}
+	return "portal"
+}
+
+// AccessibleName is PortalOptions.Label.
+func (h *portalHost) AccessibleName() string { return h.opts.Label }
 
 // Modal satisfies qui's modalOverlay contract.
 func (h *portalHost) Modal() bool { return h.opts.Modal }
@@ -125,6 +148,16 @@ func (h *portalHost) Layout(rect qui.Rect) {
 				Y: rect.Y + (rect.H-sz.H)/2,
 				W: sz.W,
 				H: sz.H,
+			}
+			// Content taller (wider) than the window keeps its top (left)
+			// edge on screen — a dialog's title and close button stay
+			// reachable; the overflow runs off the bottom. Author
+			// `max-height: 90%; overflow-y: auto` makes it scroll instead.
+			if r.Y < rect.Y {
+				r.Y = rect.Y
+			}
+			if r.X < rect.X {
+				r.X = rect.X
 			}
 		}
 		child.Layout(r)
@@ -195,12 +228,21 @@ func (h *portalHost) Handle(event qui.Event) bool {
 		h.opts.OnEscape()
 		return true
 	}
+	if ke, ok := event.(qui.KeyEvent); ok && ke.Phase() != qui.PhaseCapture &&
+		ke.Type() == qui.EventKeyDown && ke.Key == qui.KeyEnter && h.opts.OnEnter != nil {
+		h.opts.OnEnter()
+		return true
+	}
 	return h.Container.Handle(event)
 }
 
-// Focusable lets the host receive key events (for OnEscape) when the
-// content has no focusable child of its own.
-func (h *portalHost) Focusable() bool { return h.opts.OnEscape != nil }
+// Focusable lets the host receive key events (for OnEscape / OnEnter)
+// when the content has no focusable child of its own.
+func (h *portalHost) Focusable() bool { return h.opts.OnEscape != nil || h.opts.OnEnter != nil }
+
+// TabStop: the host takes focus only as the fallback key receiver on
+// mount; Tab cycles the content's own controls (qui.TabStopper).
+func (h *portalHost) TabStop() bool { return false }
 
 // SetFocused is a no-op: the host has no focus-visible chrome of its own.
 func (h *portalHost) SetFocused(bool) {}

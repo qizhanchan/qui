@@ -4,6 +4,57 @@ package htmlcss
 // defaults that make unstyled HTML look like HTML. Author CSS overrides
 // all of these via the normal cascade (UA is tier 0).
 
+import "sync"
+
+// Framework stylesheet: class-keyed defaults for components a framework
+// layer assembles from plain elements (reactive/html's Dialog shell). It
+// joins the UA origin (tier 0), so ANY author rule overrides it whatever
+// its specificity — a bare `h2 { … }` in the app beats the shell's
+// `.q-dialog-title` — while among themselves its rules cascade normally
+// over the tag defaults. Interactive-state pseudos (:hover …) are not
+// supported here: whether state variants are computed at all is decided
+// by the author sheet.
+var frameworkCSS struct {
+	mu    sync.RWMutex
+	rules []Rule
+}
+
+// RegisterFrameworkCSS appends css to the framework stylesheet. Call it
+// from a package init: rules registered after an engine has styled its
+// tree only take effect on the next restyle.
+func RegisterFrameworkCSS(css string) {
+	sheet := ParseCSS(css)
+	frameworkCSS.mu.Lock()
+	frameworkCSS.rules = append(frameworkCSS.rules, sheet.Rules...)
+	frameworkCSS.mu.Unlock()
+}
+
+// frameworkDecls returns the framework rules' declarations matching n,
+// with their specificity, for the tier-0 cascade.
+func frameworkDecls(n *Node, st selectorState) []matchedDecl {
+	frameworkCSS.mu.RLock()
+	defer frameworkCSS.mu.RUnlock()
+	var out []matchedDecl
+	for _, rule := range frameworkCSS.rules {
+		best := -1
+		var ba, bb, bc int
+		for _, sel := range rule.Selectors {
+			if sel.matches(n, st) {
+				a, b, c := sel.specificity()
+				if score := a*10000 + b*100 + c; score > best {
+					best, ba, bb, bc = score, a, b, c
+				}
+			}
+		}
+		if best >= 0 {
+			for _, d := range rule.Declarations {
+				out = append(out, matchedDecl{decl: d, a: ba, b: bb, c: bc, tier: 0})
+			}
+		}
+	}
+	return out
+}
+
 // inlineTags are the elements whose default `display` is inline.
 var inlineTags = map[string]bool{
 	"a": true, "span": true, "strong": true, "b": true, "em": true,

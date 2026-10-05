@@ -282,6 +282,11 @@ func fmtNum(v float64) string { return strconv.FormatFloat(v, 'g', -1, 64) }
 // Title sets the HTML title attribute — shown as a hover tooltip.
 func (b *Builder) Title(t string) *Builder { return b.Attr("title", t) }
 
+// Autofocus sets the `autofocus` attribute: the element takes keyboard
+// focus once, when it first mounts — the field a dialog opens on. For a
+// form control focus lands on its editing control.
+func (b *Builder) Autofocus() *Builder { return b.Attr("autofocus", "") }
+
 // OnSubmit installs an <input> Enter handler.
 func (b *Builder) OnSubmit(fn func(string)) *Builder { b.onSubmit = fn; return b }
 
@@ -712,14 +717,10 @@ func Portal(child Node) Node {
 // ModalPortal shows child centered above a translucent scrim that blocks
 // input to everything underneath — the dialog shell. onDismiss fires on
 // both a backdrop click and Escape.
+// For a ready-made header / body / action row use Dialog; for other
+// gestures (Enter, a backdrop that doesn't dismiss) ModalPortalWith.
 func ModalPortal(onDismiss func(), child Node) Node {
-	return rawNode{reactive.PortalWith(reactive.PortalOptions{
-		Align:           reactive.PortalCenter,
-		Modal:           true,
-		Backdrop:        qui.Color{R: 0, G: 0, B: 0, A: 0.4},
-		OnBackdropClick: onDismiss,
-		OnEscape:        onDismiss,
-	}, child.Build())}
+	return ModalPortalWith(ModalOptions{OnBackdropClick: onDismiss, OnEscape: onDismiss}, child)
 }
 
 // ModalSheet is a full-window modal overlay: the child stretches to the

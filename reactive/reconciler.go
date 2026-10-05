@@ -746,9 +746,14 @@ func mountPortal(elem Element, pass *reconcilePass) (*instance, Flags) {
 
 	layoutPortal(host, window)
 	window.PushOverlay(host)
-	// Grab focus so Escape reaches the host even when the content has no
-	// focusable child (El buttons are click divs, not focusables).
-	if elem.portal.OnEscape != nil {
+	// Lay out once more now that the content can reach the window: the
+	// first pass ran detached, and mount-time work keyed on attachment
+	// (an `autofocus` element posting its focus move) needs a window.
+	layoutPortal(host, window)
+	// Grab focus so Escape / Enter reach the host even when the content
+	// has no focusable child. An `autofocus` element inside the content
+	// moves focus on from here (its focus job runs after this).
+	if elem.portal.OnEscape != nil || elem.portal.OnEnter != nil {
 		window.SetFocus(host)
 	}
 	return node, FlagNone

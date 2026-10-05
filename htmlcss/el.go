@@ -225,6 +225,9 @@ type El struct {
 	onKeyUp   func(qui.KeyEvent) bool
 	onFocus   func()
 	onBlur    func()
+	// autofocused latches the one-shot `autofocus` attribute: the first
+	// layout with a window posts the focus move, later layouts don't.
+	autofocused bool
 	// lastClickAt times the previous left release for double-click
 	// synthesis (root reports no click count).
 	lastClickAt time.Time
@@ -615,11 +618,45 @@ func (e *El) SetOnBlur(fn func()) { e.onBlur = fn }
 // Box's rule (a `:focus` style opts in) an element with a key handler is
 // focusable — otherwise installing SetOnKeyDown on a div would silently
 // never fire.
+//
+// A push button (<button>, <input type=submit|reset|button>) is always
+// focusable, so a keyboard user can Tab to it and press it with Enter or
+// Space — but see FocusOnClick.
 func (e *El) Focusable() bool {
-	if e.onKeyDown != nil || e.onKeyUp != nil {
+	if e.onKeyDown != nil || e.onKeyUp != nil || e.isPushButton() {
 		return e.Enabled()
 	}
 	return e.Box.Focusable()
+}
+
+// FocusOnClick implements qui.ClickFocusPolicy. A push button without an
+// author `:focus` rule is Tab-reachable but a click leaves focus where it
+// was — the platform button convention, which keeps a text field focused
+// while a toolbar button acts on it. An author `:focus` rule opts back
+// into click focus.
+func (e *El) FocusOnClick() bool {
+	return !e.isPushButton() || e.Box.Focus != nil
+}
+
+// isPushButton reports a <button> or a push-button <input>.
+func (e *El) isPushButton() bool { return e.tag == "button" || e.isButtonInput() }
+
+// RequestFocus is the DOM's focus(), named to stay clear of the embedded
+// Box.Focus style field. It moves keyboard focus to the control that owns
+// the editing for a form element (input, textarea, select, checkbox,
+// range), otherwise to the element itself, and reports whether focus
+// landed — false when the element is detached or not focusable.
+func (e *El) RequestFocus() bool {
+	win := e.Window()
+	if win == nil {
+		return false
+	}
+	var target qui.Widget = e
+	if f, ok := e.backing.(interface{ Focusable() bool }); ok && f.Focusable() {
+		target = e.backing
+	}
+	win.SetFocus(target)
+	return win.Focused() == target
 }
 
 // SetFocused fires the focus / blur callbacks around Box's bookkeeping.
@@ -3441,6 +3478,26 @@ func (e *El) Layout(rect qui.Rect) {
 		e.updateScrollContentAt(rect.W - e.Style().Padding.Horizontal())
 	}
 	e.Box.Layout(rect)
+	e.maybeAutofocus()
+}
+
+// maybeAutofocus honors the `autofocus` attribute once: the first layout
+// with a window (the element is mounted — in a portal that is the mount
+// itself) posts the focus move, so it runs after the mount's own focus
+// handling instead of fighting it mid-layout.
+func (e *El) maybeAutofocus() {
+	if e.autofocused {
+		return
+	}
+	if _, ok := e.Attr("autofocus"); !ok {
+		return
+	}
+	win := e.Window()
+	if win == nil {
+		return
+	}
+	e.autofocused = true
+	win.PostJob(func() { e.RequestFocus() })
 }
 
 // beginDrag lifts the element: it dims and starts following the cursor, and
@@ -3617,6 +3674,12 @@ func (e *El) Handle(event qui.Event) bool {
 		case qui.EventKeyDown:
 			if e.onKeyDown != nil && e.onKeyDown(ke) {
 				return true
+			}
+			// A focused push button presses on Enter / Space, after the
+			// author's keydown handler had its chance (DOM order).
+			if (ke.Key == qui.KeyEnter || ke.Key == qui.KeySpace) &&
+				e.isPushButton() && ke.Target() == qui.Widget(e) {
+				return e.pressFromKeyboard(ke.Mods)
 			}
 		case qui.EventKeyUp:
 			if e.onKeyUp != nil && e.onKeyUp(ke) {
@@ -3922,6 +3985,25 @@ func (e *El) findByID(id string) *El {
 
 // activateFromLabel is invoked when an associated <label> is clicked: it
 // toggles a checkbox, selects a radio, or focuses a text control.
+// pressFromKeyboard runs a push button's click behavior for an Enter /
+// Space press: the author handlers, then the built-in form behavior —
+// what a mouse click on it runs. Reports whether anything acted.
+func (e *El) pressFromKeyboard(mods qui.Modifiers) bool {
+	acted := false
+	if e.onClick != nil {
+		e.onClick()
+		acted = true
+	}
+	if e.onClickMods != nil {
+		e.onClickMods(mods)
+		acted = true
+	}
+	if e.runBuiltinClick() {
+		acted = true
+	}
+	return acted
+}
+
 // runBuiltinClick performs the built-in click behavior of a form control —
 // opening the color palette, opening the file dialog, or submitting/resetting
 // the enclosing form — and reports whether it acted. It is invoked DIRECTLY
