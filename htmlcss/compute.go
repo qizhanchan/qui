@@ -29,12 +29,12 @@ type ComputedStyle struct {
 	// ScrollbarThumb / ScrollbarTrack are CSS `scrollbar-color` (inherited).
 	ScrollbarThumb, ScrollbarTrack qui.Color
 	HasScrollbarColor              bool
-	FontSize       float32
-	FontWeight     qui.FontWeight
-	Italic         bool
-	FontFamily     string
-	LineHeight     float32 // multiplier over font size
-	TextAlign      qui.TextAlign
+	FontSize                       float32
+	FontWeight                     qui.FontWeight
+	Italic                         bool
+	FontFamily                     string
+	LineHeight                     float32 // multiplier over font size
+	TextAlign                      qui.TextAlign
 	// LetterSpacing / WordSpacing (px) are CSS tracking, inherited; they flow
 	// into qui.Font so the root text engine measures + paints them.
 	LetterSpacing float32
