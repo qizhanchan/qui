@@ -91,10 +91,11 @@ func (f *fakePlatformWindow) setTitle(t string) { f.title = t }
 func (f *fakePlatformWindow) setSizeLimits(a, b, c, d int) {
 	f.sizeLimits = [4]int{a, b, c, d}
 }
-func (f *fakePlatformWindow) iconify()  { f.iconified = true }
-func (f *fakePlatformWindow) maximize() { f.maximized = true }
-func (f *fakePlatformWindow) restore()  { f.restored = true }
-func (f *fakePlatformWindow) focus()    { f.focused = true }
+func (f *fakePlatformWindow) iconify()          { f.iconified = true }
+func (f *fakePlatformWindow) isIconified() bool { return f.iconified }
+func (f *fakePlatformWindow) maximize()         { f.maximized = true }
+func (f *fakePlatformWindow) restore()          { f.restored = true }
+func (f *fakePlatformWindow) focus()            { f.focused = true }
 
 func (f *fakePlatformWindow) setFullscreen(m platformMonitor, _, _, _, _, _ int) {
 	f.fullscreenTo = m
