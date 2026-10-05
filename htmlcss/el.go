@@ -63,6 +63,14 @@ type El struct {
 	// InlineBox / scroll inner box, not the parent El. The engine's
 	// scoped restyle resolves each dirty element's impact scope from it.
 	elParent *El
+	// styleParent is the element a top-level (portal) element inherits
+	// from and matches ancestor selectors through — set by SetStyleParent;
+	// styleKids is the reverse set, restyled along with this element.
+	styleParent *El
+	styleKids   map[*El]bool
+	// styledPass is the StyleEngine pass that last styled this element
+	// (Restyle uses it to find style-linked roots no walk reached).
+	styledPass int
 
 	elementKids []qui.Widget // element children set by the reactive layer
 	textLabel   *widgets.Label
@@ -818,6 +826,7 @@ func (e *El) DragKey() string { return e.dragKey }
 // calls this so a removed portal/dialog root stops being walked and a
 // removed child stops resolving a restyle scope through a stale parent.
 func (e *El) Unmount() {
+	e.unlinkStyleParent()
 	if e.engine != nil {
 		e.engine.unregister(e)
 		// Drop state-dependency links in both roles: as a dependent (its
@@ -828,6 +837,63 @@ func (e *El) Unmount() {
 		delete(e.engine.stateDeps, e)
 	}
 	e.elParent = nil
+}
+
+// SetStyleParent makes this top-level element — a portal's content,
+// mounted into the overlay stack outside the tree — inherit from, and
+// match ancestor selectors through, the nearest element at or above w:
+// `.app.dark .q-dialog` reaches a dialog opened inside .app, and the
+// dialog inherits .app's custom properties, color and font. Sibling
+// selectors still see it as an only child. The reactive reconciler calls
+// it with the host the portal was declared under. Nil, or an element of
+// another style engine, unlinks. No-op for an element with a real parent.
+func (e *El) SetStyleParent(w qui.Widget) {
+	var p *El
+	for cur := w; cur != nil; cur = cur.Parent() {
+		if el, ok := cur.(*El); ok {
+			p = el
+			break
+		}
+	}
+	if p == e || (p != nil && p.engine != e.engine) {
+		p = nil
+	}
+	if p == e.styleParent || e.elParent != nil {
+		return
+	}
+	e.unlinkStyleParent()
+	if p != nil {
+		e.styleParent = p
+		e.node.Parent = p.node
+		e.node.StyleOnlyParent = true
+		if p.styleKids == nil {
+			p.styleKids = map[*El]bool{}
+		}
+		p.styleKids[e] = true
+	}
+	e.markDirty()
+}
+
+// unlinkStyleParent drops the SetStyleParent link in both directions.
+func (e *El) unlinkStyleParent() {
+	if e.styleParent == nil {
+		return
+	}
+	delete(e.styleParent.styleKids, e)
+	e.styleParent = nil
+	if e.node.StyleOnlyParent {
+		e.node.Parent = nil
+		e.node.StyleOnlyParent = false
+	}
+}
+
+// inheritParent is the element this one inherits computed style from: its
+// tree parent, or for a portal root its style parent.
+func (e *El) inheritParent() *El {
+	if e.elParent != nil {
+		return e.elParent
+	}
+	return e.styleParent
 }
 
 // restyleScope resolves the subtree root a change to this element can

@@ -137,7 +137,9 @@ func Dialog(p DialogProps) Node {
 	}
 	var closeBtn Node
 	if p.CloseButton && p.OnDismiss != nil {
-		closeBtn = Button("✕").Class("q-dialog-close").
+		// × (U+00D7) is in every text face and takes the text color; ✕
+		// (U+2715) can fall back to a color-emoji face that ignores it.
+		closeBtn = Button("×").Class("q-dialog-close").
 			Title(qui.TOr("qui.close", "Close")).OnClick(p.OnDismiss)
 	}
 	var header Node
@@ -185,7 +187,7 @@ const dialogCSS = `
 	padding: 20px 24px 0 24px;
 }
 .q-dialog-title { flex: 1; margin: 0; font-size: 20px; font-weight: bold; }
-.q-dialog-close { padding: 2px 8px; }
+.q-dialog-close { padding: 0 8px; font-size: 22px; }
 .q-dialog-body { padding: 16px 24px; }
 .q-dialog-actions {
 	display: flex; flex-direction: row; justify-content: flex-end; gap: 8px;

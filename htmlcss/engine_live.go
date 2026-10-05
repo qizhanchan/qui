@@ -35,6 +35,9 @@ type StyleEngine struct {
 	// styled counts applyComputed calls across the engine's lifetime.
 	// Test-only observability for asserting restyle scope; no runtime use.
 	styled int
+	// pass counts restyle walks; El.styledPass records the last one that
+	// reached an element.
+	pass int
 
 	// stateDeps maps a TRIGGER element to the elements whose ancestor-state
 	// styling (`.row:hover .del`, `.a:active ~ .b`) its interactive state
@@ -312,7 +315,7 @@ func (eng *StyleEngine) flush() {
 	// whole new subtree (every new element dirty) collapses to the one
 	// scope around the adoption point.
 	for s := range scopes {
-		for p := s.elParent; p != nil; p = p.elParent {
+		for p := s.inheritParent(); p != nil; p = p.inheritParent() {
 			if scopes[p] {
 				delete(scopes, s)
 				break
@@ -320,17 +323,18 @@ func (eng *StyleEngine) flush() {
 		}
 	}
 	for s := range scopes {
-		if s.elParent != nil && s.elParent.lastCS == nil {
+		if p := s.inheritParent(); p != nil && p.lastCS == nil {
 			// The scope's inheritance source hasn't been computed yet —
 			// only before the first full pass reaches it. Play safe.
 			eng.Restyle()
 			return
 		}
 	}
+	eng.pass++
 	for s := range scopes {
 		var parentCS *ComputedStyle
-		if s.elParent != nil {
-			parentCS = s.elParent.lastCS
+		if p := s.inheritParent(); p != nil {
+			parentCS = p.lastCS
 		}
 		eng.restyleWalk(s, parentCS)
 	}
@@ -348,26 +352,42 @@ func (eng *StyleEngine) restyleWalk(e *El, parent *ComputedStyle) {
 		cs = computeNode(e.node, eng.sheet, parent)
 	}
 	eng.styled++
+	e.styledPass = eng.pass
 	e.applyComputed(cs)
 	for _, kid := range e.elementKids {
 		if ke, ok := kid.(*El); ok {
 			eng.restyleWalk(ke, cs)
 		}
 	}
+	// Portal content declared under this element inherits from it.
+	for k := range e.styleKids {
+		eng.restyleWalk(k, cs)
+	}
 }
 
 // Restyle recomputes and re-applies CSS for EVERY element in the tree.
 // Every top-level element is its own restyle root: the main body plus any
 // portal/dialog subtree mounted into the overlay stack (which the body
-// walk can't reach). Each starts a fresh inheritance chain (nil parent) —
-// a dialog styles from CSS, not from the body it floats over.
+// walk can't reach). A portal root linked with SetStyleParent is styled
+// by its style parent's walk, inheriting from it; any other root starts
+// a fresh inheritance chain (nil parent).
 //
 // h.Mount calls this once after attach; incremental updates go through
 // the scoped flush instead.
 func (eng *StyleEngine) Restyle() {
 	eng.dirty = nil // a full pass satisfies any pending scoped work
+	eng.pass++
 	for r := range eng.roots {
-		eng.restyleWalk(r, nil)
+		if r.styleParent == nil {
+			eng.restyleWalk(r, nil)
+		}
+	}
+	// A style-linked root whose parent no walk reached (its declaring
+	// subtree detached) still gets styled, from the parent's last style.
+	for r := range eng.roots {
+		if r.styleParent != nil && r.styledPass != eng.pass {
+			eng.restyleWalk(r, r.styleParent.lastCS)
+		}
 	}
 	if eng.root != nil {
 		if win := eng.root.Window(); win != nil {

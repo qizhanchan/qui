@@ -1063,13 +1063,12 @@ func clearAutoFallbacksUnlocked() {
 }
 
 func selectPrimaryFontUnlocked(spec Font) *opentype.Font {
-	family := strings.TrimSpace(spec.Family)
-	if family == "" {
-		// No family + non-normal weight: consult the bundled-weight table
-		// so MD3 Label/Title typescales (weight 500) actually pick up
-		// gomedium instead of falling through to the regular default.
-		// goregular's "Weight" axis doesn't exist, so without this we
-		// silently lose the visual weight distinction.
+	// No family + non-normal weight: consult the bundled-weight table so
+	// MD3 Label/Title typescales (weight 500) actually pick up gomedium
+	// instead of falling through to the regular default. goregular's
+	// "Weight" axis doesn't exist, so without this we silently lose the
+	// visual weight distinction.
+	defaultFace := func() *opentype.Font {
 		if w := spec.effectiveWeight(); w != FontWeightNormal {
 			if f, ok := defaultWeightFonts[w]; ok && f != nil {
 				return f
@@ -1077,8 +1076,9 @@ func selectPrimaryFontUnlocked(spec Font) *opentype.Font {
 		}
 		return fontParsed
 	}
-	if len(fontVariants) == 0 {
-		return fontParsed
+	family := strings.TrimSpace(spec.Family)
+	if family == "" {
+		return defaultFace()
 	}
 	want := fontVariantKey{
 		family: strings.ToLower(family),
@@ -1089,7 +1089,10 @@ func selectPrimaryFontUnlocked(spec Font) *opentype.Font {
 		return f
 	}
 	// Nearest fallback: same family and closest weight, prefer exact italic.
-	best := fontParsed
+	// A family with no registered faces at all (a CSS generic like
+	// sans-serif, a font the app never loaded) is the default family, so
+	// it keeps the requested weight rather than collapsing to regular.
+	best := defaultFace()
 	bestScore := int(^uint(0) >> 1)
 	for k, f := range fontVariants {
 		if f == nil || k.family != want.family {

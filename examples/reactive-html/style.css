@@ -460,27 +460,22 @@
 
 /* --- dialog ---
    h.Dialog renders .q-dialog / .q-dialog-header / .q-dialog-title /
-   .q-dialog-body / .q-dialog-actions with a built-in look; these rules
-   restyle it. The dialog is a portal root (no parent in the node mirror),
-   so it can't resolve the root's scoped vars; it uses concrete colors. */
+   .q-dialog-body / .q-dialog-actions with a built-in look. The dialog is
+   declared inside .app, so although it lives in the overlay stack it
+   inherits .app's tokens — and .app.dark re-themes it like the page. */
 .confirm {
-  --primary: #6750a4;
-  --primary-ink: #ffffff;
-  --chip: #ece9f6;
-  --chip-ink: #4a3f77;
-
   width: 340px;
-  background: #ffffff;
+  background: var(--surface);
+  color: var(--fg);
   border-radius: 16px;
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.30);
 }
 
 .confirm .q-dialog-title {
   font-size: 18px;
-  color: #1a1a2e;
 }
 
 .confirm .q-dialog-body {
   font-size: 14px;
-  color: #6b7280;
+  color: var(--muted);
 }

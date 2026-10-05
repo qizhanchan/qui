@@ -506,3 +506,21 @@ func TestFontRegistryGenerationChanges(t *testing.T) {
 		t.Error("generation did not change on the second swap either")
 	}
 }
+
+// An unregistered family (a CSS generic like sans-serif) is the default
+// family: it must keep the requested weight, not collapse to regular.
+func TestUnknownFamilyKeepsWeight(t *testing.T) {
+	GetFontFaceFor(Font{Size: 14}) // initialize the default faces
+	fontCacheMu.Lock()
+	defer fontCacheMu.Unlock()
+	bold := selectPrimaryFontUnlocked(Font{Weight: FontWeightBold})
+	if bold == fontParsed {
+		t.Skip("no distinct bold default face loaded")
+	}
+	if got := selectPrimaryFontUnlocked(Font{Family: "sans-serif", Weight: FontWeightBold}); got != bold {
+		t.Error("bold sans-serif resolved to a different face than default bold")
+	}
+	if got := selectPrimaryFontUnlocked(Font{Family: "sans-serif"}); got != fontParsed {
+		t.Error("regular sans-serif should resolve to the default regular face")
+	}
+}

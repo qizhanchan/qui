@@ -31,6 +31,22 @@ type Node struct {
 	Text     string // text content for TextNode
 	Children []*Node
 	Parent   *Node
+	// StyleOnlyParent marks a Parent link that exists for the cascade only:
+	// n is NOT among Parent.Children. A portal's content (mounted into the
+	// overlay stack, outside the tree) links to the element that declared
+	// it this way, so it inherits from it and matches ancestor selectors
+	// (`.app.dark .q-dialog`) through it, while having no siblings — it
+	// is the only child for :first-child / `+` / `~` purposes.
+	StyleOnlyParent bool
+}
+
+// siblingParent is the parent whose Children hold n's siblings — nil for
+// a root, and for a style-only link (see StyleOnlyParent).
+func siblingParent(n *Node) *Node {
+	if n == nil || n.StyleOnlyParent {
+		return nil
+	}
+	return n.Parent
 }
 
 // Attr returns the attribute value and whether it was present.
@@ -80,6 +96,7 @@ func (n *Node) isElement(tag string) bool {
 // appendChild links a child and sets its parent pointer.
 func (n *Node) appendChild(c *Node) {
 	c.Parent = n
+	c.StyleOnlyParent = false
 	n.Children = append(n.Children, c)
 }
 
@@ -87,10 +104,11 @@ func (n *Node) appendChild(c *Node) {
 // element (text nodes are skipped, matching CSS sibling combinators
 // `+`/`~`). Returns nil when n has no parent or no element precedes it.
 func prevElementSibling(n *Node) *Node {
-	if n == nil || n.Parent == nil {
+	p := siblingParent(n)
+	if p == nil {
 		return nil
 	}
-	sibs := n.Parent.Children
+	sibs := p.Children
 	idx := -1
 	for i, c := range sibs {
 		if c == n {
@@ -110,11 +128,12 @@ func prevElementSibling(n *Node) *Node {
 // (text nodes don't count), or 0 when it has no parent. Used by
 // :first-child / :nth-child evaluation.
 func elementIndex(n *Node) int {
-	if n == nil || n.Parent == nil {
+	p := siblingParent(n)
+	if p == nil {
 		return 0
 	}
 	idx := 0
-	for _, c := range n.Parent.Children {
+	for _, c := range p.Children {
 		if c.Type != ElementNode {
 			continue
 		}
@@ -130,11 +149,12 @@ func elementIndex(n *Node) int {
 // that share its tag (text nodes and other tags don't count), or 0 when it
 // has no parent. Used by :nth-of-type evaluation.
 func elementIndexOfType(n *Node) int {
-	if n == nil || n.Parent == nil {
+	p := siblingParent(n)
+	if p == nil {
 		return 0
 	}
 	idx := 0
-	for _, c := range n.Parent.Children {
+	for _, c := range p.Children {
 		if c.Type != ElementNode || c.Tag != n.Tag {
 			continue
 		}
@@ -149,11 +169,12 @@ func elementIndexOfType(n *Node) int {
 // elementIndexFromEnd returns n's 0-based position among its element siblings
 // counting from the last (used by :nth-last-child).
 func elementIndexFromEnd(n *Node) int {
-	if n == nil || n.Parent == nil {
+	p := siblingParent(n)
+	if p == nil {
 		return 0
 	}
 	idx := 0
-	sibs := n.Parent.Children
+	sibs := p.Children
 	for i := len(sibs) - 1; i >= 0; i-- {
 		if sibs[i].Type != ElementNode {
 			continue
@@ -268,10 +289,11 @@ func isRootElement(n *Node) bool {
 // parent (trailing text/whitespace nodes don't count). True for an
 // orphan node (no parent).
 func isLastElementChild(n *Node) bool {
-	if n == nil || n.Parent == nil {
+	p := siblingParent(n)
+	if p == nil {
 		return true
 	}
-	sibs := n.Parent.Children
+	sibs := p.Children
 	for i := len(sibs) - 1; i >= 0; i-- {
 		if sibs[i].Type == ElementNode {
 			return sibs[i] == n

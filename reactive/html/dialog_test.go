@@ -6,6 +6,7 @@ import (
 
 	"github.com/qizhanchan/qui"
 	"github.com/qizhanchan/qui/htmlcss"
+	"github.com/qizhanchan/qui/reactive"
 	h "github.com/qizhanchan/qui/reactive/html"
 )
 
@@ -166,5 +167,50 @@ func TestButtonKeyboardFocusAndPress(t *testing.T) {
 	}
 	if win.Focused() != field.TextTarget() {
 		t.Errorf("clicking the button moved focus to %v; want it to stay in the field", win.Focused())
+	}
+}
+
+func TestDialogInheritsFromDeclaringTree(t *testing.T) {
+	win := qui.NewTestWindow(qui.Size{W: 800, H: 600})
+	css := `
+		:root { padding: 40px; }
+		.app { --ink: #ff0000; color: var(--ink); }
+		.app.dark .q-dialog { background: #000000; }
+		.probe { color: var(--ink); }
+	`
+	var setDark func(bool)
+	rt := h.Mount(win, css, func() h.Node {
+		dark, set := reactive.UseState(true)
+		setDark = set
+		cls := "app"
+		if dark {
+			cls = "app dark"
+		}
+		return h.Div(
+			h.P("page"),
+			h.Dialog(h.DialogProps{Title: "T", Body: h.P("x").Class("probe"), OnDismiss: func() {}}),
+		).Class(cls)
+	})
+	host := win.Overlays()[0]
+	box := findClass(host, "q-dialog")
+	if got := box.Style().Background; got != (qui.Color{A: 1}) {
+		t.Errorf(".app.dark .q-dialog background = %+v, want black", got)
+	}
+	// Custom properties declared on .app resolve inside the dialog.
+	red := qui.Color{R: 1, A: 1}
+	probe := findClass(host, "probe")
+	if got := probe.ChildList()[0].Style().Foreground; got != red {
+		t.Errorf("var(--ink) from .app inside the dialog = %+v, want red", got)
+	}
+	// :root is the document root only — not every portal root.
+	if got := box.Style().Padding.Top; got == 40 {
+		t.Error(":root rule matched the dialog box")
+	}
+
+	// Toggling the ancestor class restyles the open dialog.
+	setDark(false)
+	rt.Flush()
+	if got := findClass(win.Overlays()[0], "q-dialog").Style().Background; got == (qui.Color{A: 1}) {
+		t.Error("dialog kept the dark background after .dark was removed")
 	}
 }
