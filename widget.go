@@ -257,7 +257,7 @@ type BaseWidget struct {
 	// time it is shown (tooltip is the fallback).
 	tooltipKey string
 	// axName overrides the widget's accessible name (SetAccessibleName).
-	axName string
+	axName    string
 	cursor    CursorShape // declared pointer shape (CSS `cursor`); see cursor.go
 	hasCursor bool        // whether cursor was declared at all
 	// pointerThrough declines pointer targeting so events reach whatever is
@@ -266,10 +266,10 @@ type BaseWidget struct {
 	flex           FlexItem
 	grid           GridItem
 	absolute       AbsolutePosition
-	outOfFlow      bool // taken out of normal flow (CSS position:absolute/fixed)
-	absCB          bool // establishes a containing block for out-of-flow descendants
-	collapsed      bool // removed from layout AND paint entirely (CSS display:none)
-	layoutDirty    bool // only the root's flag is consulted; set via InvalidateLayout
+	outOfFlow      bool         // taken out of normal flow (CSS position:absolute/fixed)
+	absCB          bool         // establishes a containing block for out-of-flow descendants
+	collapsed      bool         // removed from layout AND paint entirely (CSS display:none)
+	layoutDirty    bool         // only the root's flag is consulted; set via InvalidateLayout
 	hooks          *widgetHooks // OnFocus / OnBlur / OnKeyDown; see widget_hooks.go
 }
 

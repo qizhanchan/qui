@@ -140,6 +140,8 @@ type Window struct {
 	// overlayLayers records each shown overlay's layer; overlays stays
 	// sorted by it (PushOverlayLayer).
 	overlayLayers map[Widget]OverlayLayer
+	// afterLayout holds AfterLayout callbacks for the next layout pass.
+	afterLayout []func()
 	// exitingOverlays were removed from the stack but are still painting
 	// an exit animation (OverlayExiter). They take no input.
 	exitingOverlays []Widget
@@ -1656,33 +1658,7 @@ func (w *Window) Step() {
 	// nothing (text tick measuring to the same size) keeps the paint
 	// clipped to the mutated widget's rect.
 	w.lastSize = viewport
-	if w.root != nil && w.root.IsLayoutDirty() {
-		w.inLayoutPass = true
-		w.boundsChanged = false
-		w.root.Measure(w.lastSize)
-		w.root.Layout(Rect{X: 0, Y: 0, W: w.lastSize.W, H: w.lastSize.H})
-		w.root.ClearLayoutDirty()
-		w.inLayoutPass = false
-		if widgetDebugEnabled {
-			debugCheckTree(w.root)
-		}
-		if w.boundsChanged {
-			w.Invalidate()
-		}
-	}
-	// Overlay resize handling runs AFTER the layout pass so anchored
-	// overlays (dropdowns pinned to a main-tree trigger) re-place against
-	// the trigger's freshly-laid-out bounds. Their reposition dirties its
-	// own rects, so this must precede the empty-dirty-region early return.
-	if w.overlayResizePending {
-		w.overlayResizePending = false
-		w.notifyOverlaysResize(w.lastSize)
-	}
-	// Overlays are pre-positioned by their caller, so the layout pass
-	// above skips them; one whose subtree invalidated layout re-lays
-	// itself out here (OverlayLayouter). Its relayout dirties its own
-	// rects, so this too must precede the early return.
-	w.relayoutDirtyOverlays()
+	w.layoutPass()
 	if w.dirtyRegion.IsEmpty() {
 		return
 	}
@@ -2255,4 +2231,79 @@ func (w *Window) EnsureRoot() error {
 		return errors.New("window root is nil")
 	}
 	return nil
+}
+
+// layoutPass runs the frame's layout work: the main tree when it is
+// layout-dirty, overlay resize notification and overlay relayout — then the
+// AfterLayout callbacks, which see final geometry. A callback that dirties
+// layout again (a popover positioning itself against what it just measured)
+// gets one more pass before paint, up to a small bound.
+func (w *Window) layoutPass() {
+	for pass := 0; pass < 4; pass++ {
+		if w.root != nil && w.root.IsLayoutDirty() {
+			w.inLayoutPass = true
+			w.boundsChanged = false
+			w.root.Measure(w.lastSize)
+			w.root.Layout(Rect{X: 0, Y: 0, W: w.lastSize.W, H: w.lastSize.H})
+			w.root.ClearLayoutDirty()
+			w.inLayoutPass = false
+			if widgetDebugEnabled {
+				debugCheckTree(w.root)
+			}
+			if w.boundsChanged {
+				w.Invalidate()
+			}
+		}
+		// Overlay resize handling runs AFTER the layout pass so anchored
+		// overlays (dropdowns pinned to a main-tree trigger) re-place against
+		// the trigger's freshly-laid-out bounds. Their reposition dirties its
+		// own rects, so this must precede the empty-dirty-region early return.
+		if w.overlayResizePending {
+			w.overlayResizePending = false
+			w.notifyOverlaysResize(w.lastSize)
+		}
+		// Overlays are pre-positioned by their caller, so the layout pass
+		// above skips them; one whose subtree invalidated layout re-lays
+		// itself out here (OverlayLayouter). Its relayout dirties its own
+		// rects, so this too must precede the early return.
+		w.relayoutDirtyOverlays()
+		if len(w.afterLayout) == 0 {
+			return
+		}
+		fns := w.afterLayout
+		w.afterLayout = nil
+		for _, fn := range fns {
+			fn()
+		}
+		if (w.root == nil || !w.root.IsLayoutDirty()) && len(w.afterLayout) == 0 {
+			return
+		}
+	}
+}
+
+// AfterLayout schedules fn to run once, right after the next layout pass
+// and before that frame paints: every widget's Bounds() is final, so fn can
+// measure, scroll a new row into view, or place a popover against its
+// anchor. If fn invalidates layout, the window lays out again before
+// painting. Runs on the UI thread; a headless test window runs it from
+// LayoutForTest.
+func (w *Window) AfterLayout(fn func()) {
+	if w == nil || fn == nil {
+		return
+	}
+	w.assertUIThread("Window.AfterLayout")
+	w.afterLayout = append(w.afterLayout, fn)
+}
+
+// LayoutForTest runs the layout pass a frame would (main tree, overlays,
+// AfterLayout callbacks) on a headless window.
+func (w *Window) LayoutForTest() {
+	if w == nil {
+		return
+	}
+	w.assertUIThread("Window.LayoutForTest")
+	if w.root != nil {
+		w.root.InvalidateLayout()
+	}
+	w.layoutPass()
 }

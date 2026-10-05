@@ -37,6 +37,9 @@ type Box struct {
 	Hover  *Style
 	Focus  *Style
 	Active *Style
+	// FocusVisible layers over Focus while focus came from the keyboard
+	// (CSS :focus-visible) — a focus ring that a click doesn't show.
+	FocusVisible *Style
 	// AncestorHover overrides the box decorations while an ANCESTOR (or
 	// preceding sibling) element's interactive state activates them (CSS
 	// `.parent:hover .child`, `.a:active ~ .b`), independent of this box's
@@ -77,6 +80,7 @@ type Box struct {
 	PosOffset Point
 
 	focused         bool // has keyboard focus (only meaningful when Focus != nil)
+	focusVisible    bool // the focus came from the keyboard (see FocusVisible)
 	pressed         bool // mouse button held down inside the box (:active)
 	ancestorHovered bool // an ancestor is hovered (drives AncestorHover overlay)
 }
@@ -110,7 +114,23 @@ func (b *Box) FlowLevel() FlowLevel { return b.Display }
 // Focusable reports whether the box can take focus. A plain <div> is not
 // focusable — only a box carrying a CSS `:focus` style opts in, so the
 // engine doesn't pollute tab order / focus for every container.
-func (b *Box) Focusable() bool { return b.Focus != nil && b.Enabled() }
+func (b *Box) Focusable() bool { return (b.Focus != nil || b.FocusVisible != nil) && b.Enabled() }
+
+// SetFocusVisible records whether the current focus came from the keyboard
+// (FocusVisibleAware). Called by the window's focus machinery.
+func (b *Box) SetFocusVisible(v bool) {
+	if b.focusVisible == v {
+		return
+	}
+	b.focusVisible = v
+	if b.FocusVisible != nil && b.focused {
+		b.Invalidate()
+	}
+}
+
+// FocusVisibleNow reports whether the box has focus that came from the
+// keyboard.
+func (b *Box) FocusVisibleNow() bool { return b.focused && b.focusVisible }
 
 // Focused reports whether the box currently holds keyboard focus, and
 // Pressed whether a mouse button is held inside it (:active). The html-css
@@ -127,7 +147,7 @@ func (b *Box) SetFocused(focused bool) {
 		return
 	}
 	b.focused = focused
-	if b.Focus != nil {
+	if b.Focus != nil || b.FocusVisible != nil {
 		b.Invalidate()
 	}
 }
@@ -434,6 +454,9 @@ func (b *Box) paintDecorations(canvas Canvas, bounds Rect) {
 	}
 	if b.focused {
 		overlay(b.Focus)
+		if b.focusVisible {
+			overlay(b.FocusVisible)
+		}
 	}
 	if b.pressed {
 		overlay(b.Active)

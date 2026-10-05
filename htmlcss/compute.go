@@ -26,6 +26,9 @@ type ComputedStyle struct {
 	// chrome otherwise comes from the light native defaults.
 	AccentColor    qui.Color
 	HasAccentColor bool
+	// ScrollbarThumb / ScrollbarTrack are CSS `scrollbar-color` (inherited).
+	ScrollbarThumb, ScrollbarTrack qui.Color
+	HasScrollbarColor              bool
 	FontSize       float32
 	FontWeight     qui.FontWeight
 	Italic         bool
@@ -200,6 +203,10 @@ type ComputedStyle struct {
 	Hover  *ComputedStyle
 	Focus  *ComputedStyle
 	Active *ComputedStyle
+	// FocusVisible is the variant while the element holds KEYBOARD focus
+	// (:focus-visible rules on top of :focus ones); nil when the sheet has
+	// no :focus-visible rule.
+	FocusVisible *ComputedStyle
 	// AncestorHover / AncestorFocus / AncestorActive are the UNION variants
 	// while an ANCESTOR (or preceding sibling) is hovered / focus-within /
 	// pressed — the `.row:hover .del` case, with ALL such rules for this node
@@ -246,7 +253,7 @@ func (cs *ComputedStyle) isVisualBox() bool {
 // a bare Label must become a Box so the hover/focus/active swap can paint.
 func (cs *ComputedStyle) hasStateBoxVariant() bool {
 	d := func(v *ComputedStyle) bool { return v != nil && boxDecorationsDiffer(cs, v) }
-	return d(cs.Hover) || d(cs.Focus) || d(cs.Active) ||
+	return d(cs.Hover) || d(cs.Focus) || d(cs.Active) || d(cs.FocusVisible) ||
 		d(cs.AncestorHover) || d(cs.AncestorFocus) || d(cs.AncestorActive)
 }
 
@@ -260,7 +267,7 @@ func (cs *ComputedStyle) textStateDiffers() bool {
 		return v != nil && (v.Color != cs.Color ||
 			v.Underline != cs.Underline || v.LineThrough != cs.LineThrough)
 	}
-	return d(cs.Hover) || d(cs.Focus) || d(cs.Active) ||
+	return d(cs.Hover) || d(cs.Focus) || d(cs.Active) || d(cs.FocusVisible) ||
 		d(cs.AncestorHover) || d(cs.AncestorFocus) || d(cs.AncestorActive)
 }
 
@@ -309,6 +316,9 @@ func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedSty
 	}
 	if sheet.HasFocus {
 		base.Focus = interpret(n, mergedDecls(n, sheet, selectorState{focus: true}), parent)
+	}
+	if sheet.HasFocusVisible {
+		base.FocusVisible = interpret(n, mergedDecls(n, sheet, selectorState{focus: true, focusVisible: true}), parent)
 	}
 	if sheet.HasActive {
 		// A pressed element is conventionally also hovered; both states
@@ -531,6 +541,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	// throughout the normal declarations.
 	customProps := buildCustomProps(parent, m)
 	m = resolveMapVars(m, customProps)
+	inheritRegisteredProps(m, parent)
 	expandShorthands(m)
 	cs := &ComputedStyle{raw: m, customProps: customProps}
 
@@ -549,6 +560,9 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		cs.TextIndent = parent.TextIndent
 		cs.AccentColor = parent.AccentColor
 		cs.HasAccentColor = parent.HasAccentColor
+		cs.ScrollbarThumb = parent.ScrollbarThumb
+		cs.ScrollbarTrack = parent.ScrollbarTrack
+		cs.HasScrollbarColor = parent.HasScrollbarColor
 		// white-space is inherited (CSS): a <b> inside a pre keeps
 		// preserving spaces unless it declares its own value.
 		cs.NoWrap = parent.NoWrap
@@ -655,6 +669,20 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 			cs.HasAccentColor = false
 		} else if c, ok := parseColor(v); ok {
 			cs.AccentColor, cs.HasAccentColor = c, true
+		}
+	}
+	// --- scrollbar-color (inherited): "<thumb> <track>" or auto ---
+	if v, ok := m["scrollbar-color"]; ok {
+		parts := splitColorList(v)
+		switch {
+		case strings.EqualFold(strings.TrimSpace(v), "auto"):
+			cs.HasScrollbarColor = false
+		case len(parts) == 2:
+			thumb, ok1 := parseColor(parts[0])
+			track, ok2 := parseColor(parts[1])
+			if ok1 && ok2 {
+				cs.ScrollbarThumb, cs.ScrollbarTrack, cs.HasScrollbarColor = thumb, track, true
+			}
 		}
 	}
 	// --- font-weight / style / family / line-height / text-align ---

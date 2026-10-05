@@ -24,6 +24,11 @@ import (
 // X's parent. A stylesheet containing :has() promotes a dirty element to its
 // top-level root because a descendant mutation can change any ancestor.
 type StyleEngine struct {
+	// linkHandler, when set, decides what a link click does (events.go).
+	linkHandler LinkHandler
+	// tooltipStyled: the stylesheet set the window's tooltip colors.
+	tooltipStyled bool
+
 	sheet     *Stylesheet
 	viewportW float32      // @media evaluation width (0 = default), kept for SetCSS
 	opts      Options      // BaseDir (img resolution) + Window (select backing)

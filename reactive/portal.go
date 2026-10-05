@@ -34,14 +34,40 @@ const (
 	// that manage their own inner layout).
 	PortalFill
 	// PortalAtPosition places content at (X, Y) at its natural size
-	// (context menus, popovers).
+	// (context menus).
 	PortalAtPosition
+	// PortalAnchored places content beside the rect Anchor returns — a
+	// popover: on the Placement side, flipped to the opposite side when it
+	// doesn't fit there, shifted to stay inside the window, and re-placed
+	// whenever the anchor moves (scrolling, window resize, relayout).
+	PortalAnchored
+)
+
+// PortalPlacement is the preferred side of the anchor for PortalAnchored.
+type PortalPlacement int
+
+const (
+	PlaceBelow PortalPlacement = iota
+	PlaceAbove
+	PlaceRight
+	PlaceLeft
 )
 
 // PortalOptions configures overlay behavior.
 type PortalOptions struct {
 	Align PortalAlign
 	X, Y  float32 // used by PortalAtPosition
+
+	// Anchor returns the anchor rect in window coordinates for
+	// PortalAnchored (typically qui.InteractionBoundsOf(trigger)). Placement
+	// picks the side, Offset the gap; AlignEnd lines the content up with
+	// the anchor's end edge instead of its start; MatchAnchorWidth makes a
+	// below/above popover at least as wide as the anchor.
+	Anchor           func() qui.Rect
+	Placement        PortalPlacement
+	Offset           float32
+	AlignEnd         bool
+	MatchAnchorWidth bool
 
 	// Modal blocks pointer input to everything underneath and traps
 	// focus in the portal subtree (qui's modalOverlay contract).
@@ -78,7 +104,7 @@ const portalKind = "#portal"
 // portalGeometry is opts without its callbacks — the part whose change
 // needs a relayout / repaint.
 func portalGeometry(opts PortalOptions) PortalOptions {
-	opts.OnBackdropClick, opts.OnEscape, opts.OnEnter = nil, nil, nil
+	opts.OnBackdropClick, opts.OnEscape, opts.OnEnter, opts.Anchor = nil, nil, nil, nil
 	return opts
 }
 
@@ -105,6 +131,8 @@ func PortalWith(opts PortalOptions, child Element) Element {
 type portalHost struct {
 	*qui.Container
 	opts PortalOptions
+	// lastAnchor is the anchor rect the content was last placed against.
+	lastAnchor qui.Rect
 }
 
 func newPortalHost(opts PortalOptions) *portalHost {
@@ -148,6 +176,14 @@ func (h *portalHost) Layout(rect qui.Rect) {
 		case PortalAtPosition:
 			sz := portalMeasure(child, rect)
 			r = qui.Rect{X: h.opts.X, Y: h.opts.Y, W: sz.W, H: sz.H}
+		case PortalAnchored:
+			sz := portalMeasure(child, rect)
+			var anchor qui.Rect
+			if h.opts.Anchor != nil {
+				anchor = h.opts.Anchor()
+			}
+			h.lastAnchor = anchor
+			r = placeAnchored(rect, anchor, sz, h.opts)
 		default: // PortalCenter
 			sz := portalMeasure(child, rect)
 			r = qui.Rect{
@@ -191,7 +227,8 @@ func (h *portalHost) Tick(now time.Time) qui.Rect {
 	dirty := h.Container.Tick(now)
 	if w := h.Window(); w != nil {
 		sz := w.Size()
-		if h.Bounds().W != sz.W || h.Bounds().H != sz.H || h.IsLayoutDirty() {
+		moved := h.opts.Align == PortalAnchored && h.opts.Anchor != nil && h.opts.Anchor() != h.lastAnchor
+		if h.Bounds().W != sz.W || h.Bounds().H != sz.H || h.IsLayoutDirty() || moved {
 			h.Layout(qui.Rect{W: sz.W, H: sz.H})
 			h.ClearLayoutDirty()
 			dirty = qui.Rect{W: sz.W, H: sz.H}
@@ -263,4 +300,67 @@ func layoutPortal(host *portalHost, window *qui.Window) {
 	sz := window.Size()
 	host.Layout(qui.Rect{X: 0, Y: 0, W: sz.W, H: sz.H})
 	window.InvalidateRect(host.Bounds())
+}
+
+// placeAnchored computes a popover's rect: on the preferred side of
+// anchor, flipped when it would overflow there and fits better on the
+// other side, then clamped into win.
+func placeAnchored(win, anchor qui.Rect, sz qui.Size, o PortalOptions) qui.Rect {
+	gap := o.Offset
+	if (o.Placement == PlaceBelow || o.Placement == PlaceAbove) && o.MatchAnchorWidth && sz.W < anchor.W {
+		sz.W = anchor.W
+	}
+	r := qui.Rect{W: sz.W, H: sz.H}
+	switch o.Placement {
+	case PlaceBelow, PlaceAbove:
+		below := anchor.Y + anchor.H + gap
+		above := anchor.Y - gap - sz.H
+		roomBelow := win.Y + win.H - below
+		roomAbove := anchor.Y - gap - win.Y
+		r.Y = below
+		if o.Placement == PlaceAbove {
+			r.Y = above
+			if roomAbove < sz.H && roomBelow > roomAbove {
+				r.Y = below
+			}
+		} else if roomBelow < sz.H && roomAbove > roomBelow {
+			r.Y = above
+		}
+		r.X = anchor.X
+		if o.AlignEnd {
+			r.X = anchor.X + anchor.W - sz.W
+		}
+	default: // PlaceRight, PlaceLeft
+		right := anchor.X + anchor.W + gap
+		left := anchor.X - gap - sz.W
+		roomRight := win.X + win.W - right
+		roomLeft := anchor.X - gap - win.X
+		r.X = right
+		if o.Placement == PlaceLeft {
+			r.X = left
+			if roomLeft < sz.W && roomRight > roomLeft {
+				r.X = right
+			}
+		} else if roomRight < sz.W && roomLeft > roomRight {
+			r.X = left
+		}
+		r.Y = anchor.Y
+		if o.AlignEnd {
+			r.Y = anchor.Y + anchor.H - sz.H
+		}
+	}
+	// Keep it on screen.
+	if r.X+r.W > win.X+win.W {
+		r.X = win.X + win.W - r.W
+	}
+	if r.Y+r.H > win.Y+win.H {
+		r.Y = win.Y + win.H - r.H
+	}
+	if r.X < win.X {
+		r.X = win.X
+	}
+	if r.Y < win.Y {
+		r.Y = win.Y
+	}
+	return r
 }

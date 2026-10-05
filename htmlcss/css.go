@@ -50,6 +50,7 @@ const (
 	pseudoHover        pseudoKind = iota // :hover        (state variant)
 	pseudoFocus                          // :focus        (state variant)
 	pseudoActive                         // :active       (state variant)
+	pseudoFocusVisible                   // :focus-visible (keyboard focus only)
 	pseudoRoot                           // :root (document root element)
 	pseudoFirstChild                     // :first-child
 	pseudoLastChild                      // :last-child
@@ -132,6 +133,8 @@ type selectorState struct {
 	hover  bool
 	focus  bool
 	active bool
+	// focusVisible narrows focus to keyboard focus (:focus-visible).
+	focusVisible bool
 
 	ancestorHover  bool
 	ancestorFocus  bool
@@ -173,6 +176,9 @@ type Stylesheet struct {
 	HasHover  bool
 	HasFocus  bool
 	HasActive bool
+	// HasFocusVisible is true when a rule's subject is gated on
+	// :focus-visible — gates the FocusVisible variant.
+	HasFocusVisible bool
 	// HasAncestorHover / Focus / Active are true when some selector carries
 	// the state pseudo on a NON-subject compound (`.row:hover .del`) — gates
 	// computing the per-element AncestorHover/Focus/Active union variants.
@@ -257,6 +263,7 @@ func ParseCSSViewport(src string, viewportW float32) *Stylesheet {
 				sheet.Rules = append(sheet.Rules, inner.Rules...)
 				sheet.HasHover = sheet.HasHover || inner.HasHover
 				sheet.HasFocus = sheet.HasFocus || inner.HasFocus
+				sheet.HasFocusVisible = sheet.HasFocusVisible || inner.HasFocusVisible
 				sheet.HasActive = sheet.HasActive || inner.HasActive
 				sheet.HasAncestorHover = sheet.HasAncestorHover || inner.HasAncestorHover
 				sheet.HasAncestorFocus = sheet.HasAncestorFocus || inner.HasAncestorFocus
@@ -285,6 +292,7 @@ func ParseCSSViewport(src string, viewportW float32) *Stylesheet {
 				h, f, a := sel.stateGates()
 				sheet.HasHover = sheet.HasHover || h
 				sheet.HasFocus = sheet.HasFocus || f
+				sheet.HasFocusVisible = sheet.HasFocusVisible || sel.usesFocusVisible()
 				sheet.HasActive = sheet.HasActive || a
 				nh, nf, na, viaSibling := sel.nonSubjectStateGates()
 				if nh || nf || na {
@@ -692,8 +700,10 @@ func classifyPseudo(name, arg string) pseudoSelector {
 	switch name {
 	case "hover":
 		ps.kind = pseudoHover
-	case "focus", "focus-within", "focus-visible":
+	case "focus", "focus-within":
 		ps.kind = pseudoFocus
+	case "focus-visible":
+		ps.kind = pseudoFocusVisible
 	case "active":
 		ps.kind = pseudoActive
 	case "root":
@@ -934,6 +944,9 @@ func (s Selector) matchesElement(n *Node, st selectorState) bool {
 		cs := base
 		cs.hover = base.ancestorHover || nodeIn(base.hoverNodes, cand) || (isAncestor && base.hover)
 		cs.focus = base.ancestorFocus || nodeIn(base.focusNodes, cand) || (isAncestor && base.focus)
+		// On a non-subject compound :focus-visible acts as :focus (focus
+		// within an ancestor carries no keyboard/pointer distinction).
+		cs.focusVisible = cs.focus
 		cs.active = base.ancestorActive || nodeIn(base.activeNodes, cand) || (isAncestor && base.active)
 		return cs
 	}
@@ -997,7 +1010,7 @@ func (s Selector) nonSubjectStateGates() (hover, focus, active, viaSibling bool)
 				switch ps.kind {
 				case pseudoHover:
 					hover = true
-				case pseudoFocus:
+				case pseudoFocus, pseudoFocusVisible:
 					focus = true
 				case pseudoActive:
 					active = true
@@ -1009,6 +1022,20 @@ func (s Selector) nonSubjectStateGates() (hover, focus, active, viaSibling bool)
 		}
 	}
 	return
+}
+
+// usesFocusVisible reports whether the selector's subject compound carries
+// :focus-visible (which needs its own per-element variant).
+func (s Selector) usesFocusVisible() bool {
+	if len(s.parts) == 0 {
+		return false
+	}
+	for _, ps := range s.parts[len(s.parts)-1].sel.pseudos {
+		if ps.kind == pseudoFocusVisible {
+			return true
+		}
+	}
+	return false
 }
 
 // stateGates reports which interactive-state pseudos this selector uses,
@@ -1099,6 +1126,8 @@ func (ps pseudoSelector) matches(n *Node, st selectorState) bool {
 		return st.hover
 	case pseudoFocus:
 		return st.focus
+	case pseudoFocusVisible:
+		return st.focus && st.focusVisible
 	case pseudoActive:
 		return st.active
 	case pseudoRoot:

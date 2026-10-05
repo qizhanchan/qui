@@ -14,6 +14,9 @@ import "sync"
 type hookHost struct {
 	hooks      []hookSlot
 	hookCursor int
+	// dead marks a host whose component unmounted; effects still queued
+	// for it (a layout effect waiting for the next layout) are dropped.
+	dead bool
 }
 
 // begin resets the cursor at the start of a render pass.
@@ -40,6 +43,7 @@ func (h *hookHost) finish() []func() {
 // cleanupAll returns every live effect cleanup — used when the whole host
 // is torn down (component unmount) so effects release their resources.
 func (h *hookHost) cleanupAll() []func() {
+	h.dead = true
 	var cleanups []func()
 	for _, slot := range h.hooks {
 		if slot.kind == hookKindEffect && slot.effect.cleanup != nil {

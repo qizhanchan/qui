@@ -202,6 +202,7 @@ func applyBox(box *widgets.Box, cs *ComputedStyle, forceContainingBlock bool) {
 	box.Hover = stateBoxStyle(cs, cs.Hover)
 	box.AncestorHover = stateBoxStyle(cs, cs.AncestorHover)
 	box.Focus = stateBoxStyle(cs, cs.Focus)
+	box.FocusVisible = stateBoxStyle(cs, cs.FocusVisible)
 	box.Active = stateBoxStyle(cs, cs.Active)
 	// Gradient background + CSS transform are Box-only paint features.
 	if cs.Gradient != nil {
@@ -272,7 +273,7 @@ func applyBox(box *widgets.Box, cs *ComputedStyle, forceContainingBlock bool) {
 	// A focusable box (:focus styling) is an interactive control — make its
 	// text content non-selectable so a click focuses the box itself rather
 	// than being captured by a selectable child Label.
-	if box.Focus != nil {
+	if box.Focus != nil || box.FocusVisible != nil {
 		disableTextSelection(box)
 	}
 }

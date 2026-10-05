@@ -69,7 +69,7 @@ type RadioButton struct {
 	BaseWidget
 	labelKey messageKey
 	Label    string
-	Checked bool
+	Checked  bool
 
 	// Color knobs — same convention as CheckBox. Zero A on any field
 	// falls back to the raw HTML default (see NewRadioButton).

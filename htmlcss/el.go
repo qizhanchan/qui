@@ -122,6 +122,11 @@ type El struct {
 	canvasDraw   func(cv qui.Canvas, bounds qui.Rect)
 	canvasUser   qui.Widget
 	canvasWidget qui.Widget
+	// hostsWidget: any element hosting a widget like a canvas
+	// (SetHostedWidget); onStyle runs after each restyle (SetOnStyle).
+	hostsWidget bool
+	onStyle     func(cs *ComputedStyle)
+	userData    map[string]any
 
 	// Control backing: leaf form tags (input / textarea / checkbox via
 	// <input type=checkbox> / select) render through a real editing widget
@@ -233,6 +238,14 @@ type El struct {
 	onKeyUp   func(qui.KeyEvent) bool
 	onFocus   func()
 	onBlur    func()
+	// Pointer / positional click / file drop / paste handlers (events.go).
+	onPointerDown   func(PointerEvent) bool
+	onPointerMove   func(PointerEvent) bool
+	onPointerUp     func(PointerEvent) bool
+	onClickEvent    func(PointerEvent)
+	onFileDrop      func(paths []string)
+	fileDropRelease func()
+	onPaste         func(text string) bool
 	// autofocused latches the one-shot `autofocus` attribute: the first
 	// layout with a window posts the focus move, later layouts don't.
 	autofocused bool
@@ -816,7 +829,7 @@ func (e *El) Draggable() bool { return e.draggable }
 
 // Droppable reports whether this element accepts drops (qui.Droppable) —
 // true when it has a drop or a drag-over handler.
-func (e *El) Droppable() bool { return e.onDrop != nil || e.onDragOver != nil }
+func (e *El) Droppable() bool { return e.onDrop != nil || e.onDragOver != nil || e.onFileDrop != nil }
 
 // DragKey returns the element's drag identifier.
 func (e *El) DragKey() string { return e.dragKey }
@@ -827,6 +840,10 @@ func (e *El) DragKey() string { return e.dragKey }
 // removed child stops resolving a restyle scope through a stale parent.
 func (e *El) Unmount() {
 	e.unlinkStyleParent()
+	if e.fileDropRelease != nil {
+		e.fileDropRelease()
+		e.fileDropRelease = nil
+	}
 	if e.engine != nil {
 		e.engine.unregister(e)
 		// Drop state-dependency links in both roles: as a dependent (its
@@ -2034,6 +2051,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	if cs == nil {
 		return
 	}
+	defer e.runStyleHooks(cs)
 
 	// Resolve data-i18n / data-i18n-placeholder / … before any branch
 	// below reads e.text or the attribute map, so the whole apply pass
@@ -2131,6 +2149,10 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		applyBox(&e.Box, cs, e.isStyleRoot())
 		e.ensureCanvas(cs)
 		e.LayoutEngine = qui.FlowLayout{}
+		if e.hostsWidget {
+			e.LayoutEngine = hostFillLayout{}
+			e.adoptHostedFlex(cs)
+		}
 		e.syncChildren()
 		return
 	}
@@ -2222,6 +2244,9 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		}
 		if cs.Focus != nil && e.Box.Focus == nil {
 			e.Box.Focus = &qui.Style{}
+		}
+		if cs.FocusVisible != nil && e.Box.FocusVisible == nil {
+			e.Box.FocusVisible = &qui.Style{}
 		}
 		if cs.Active != nil && e.Box.Active == nil {
 			e.Box.Active = &qui.Style{}
@@ -2521,7 +2546,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	// its text must not grab click-focus away from the element itself.
 	// This must run AFTER syncChildren so the label is reachable (applyBox
 	// runs before the child list exists on the live path).
-	if e.Focus != nil {
+	if e.Focus != nil || e.Box.FocusVisible != nil {
 		disableTextSelection(e)
 	}
 }
@@ -2929,7 +2954,13 @@ func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *Compu
 
 // isCanvas reports whether this is a <canvas> element — a replaced leaf
 // whose content is supplied by the caller (SetCanvasDraw / SetCanvas).
-func (e *El) isCanvas() bool { return e.tag == "canvas" }
+func (e *El) isCanvas() bool {
+	if e.tag == "canvas" || e.hostsWidget {
+		return true
+	}
+	_, custom := lookupElement(e.tag)
+	return custom
+}
 
 // canvasSize resolves the canvas region's pixel size from CSS, defaulting
 // to HTML's intrinsic 300×150 canvas geometry when unspecified.
@@ -2949,6 +2980,11 @@ func (e *El) canvasSize(cs *ComputedStyle) (w, h float32) {
 // (SetCanvasDraw), or a light placeholder when neither is wired. Reuses an
 // existing canvasLeaf across restyles so its tree position stays stable.
 func (e *El) ensureCanvas(cs *ComputedStyle) {
+	if e.canvasUser == nil && e.canvasDraw == nil {
+		if def, ok := lookupElement(e.tag); ok && def.Create != nil {
+			e.canvasUser = def.Create(e)
+		}
+	}
 	w, h := e.canvasSize(cs)
 	switch {
 	case e.canvasUser != nil:
@@ -3502,7 +3538,11 @@ func (e *El) applyStateText(av *ancestorVariant) {
 		pick(cs.Hover)
 	}
 	if e.Focused() {
-		pick(cs.Focus)
+		if e.FocusVisibleNow() && cs.FocusVisible != nil {
+			pick(cs.FocusVisible)
+		} else {
+			pick(cs.Focus)
+		}
 	}
 	if e.Pressed() {
 		pick(cs.Active)
@@ -3545,6 +3585,9 @@ func (e *El) Layout(rect qui.Rect) {
 	}
 	e.Box.Layout(rect)
 	e.maybeAutofocus()
+	if e.onFileDrop != nil && e.fileDropRelease == nil {
+		e.syncFileDropRetain()
+	}
 }
 
 // maybeAutofocus honors the `autofocus` attribute once: the first layout
@@ -3707,6 +3750,13 @@ func (e *El) Handle(event qui.Event) bool {
 			e.endDrag()
 			return true
 		case qui.EventDrop:
+			if de.Data != nil && len(de.Data.Files) > 0 {
+				if e.onFileDrop != nil {
+					e.onFileDrop(append([]string(nil), de.Data.Files...))
+					return true
+				}
+				return false
+			}
 			if e.onDrop != nil {
 				e.onDrop(dragSourceKey(de))
 				return true
@@ -3716,6 +3766,11 @@ func (e *El) Handle(event qui.Event) bool {
 	}
 	handled := e.Box.Handle(event)
 	if ke, ok := event.(qui.KeyEvent); ok {
+		// A paste hook beats the focused field to Cmd/Ctrl+V, so it runs
+		// in the capture phase.
+		if e.Enabled() && e.handlePaste(ke) {
+			return true
+		}
 		// The autocomplete popup gets first refusal — during CAPTURE too, so
 		// an Enter meant for the suggestion list never reaches the field and
 		// becomes a form submit (see El.handleSuggestKey).
@@ -3804,6 +3859,20 @@ func (e *El) Handle(event qui.Event) bool {
 	if me.Phase() == qui.PhaseCapture {
 		return handled
 	}
+	switch me.Type() {
+	case qui.EventMouseDown:
+		if e.onPointerDown != nil && e.onPointerDown(e.pointerEvent(me, nil)) {
+			return true
+		}
+	case qui.EventMouseMove:
+		if e.onPointerMove != nil && e.onPointerMove(e.pointerEvent(me, nil)) {
+			return true
+		}
+	case qui.EventMouseUp:
+		if e.onPointerUp != nil && e.onPointerUp(e.pointerEvent(me, nil)) {
+			return true
+		}
+	}
 	if e.onContextMenu != nil && me.Type() == qui.EventMouseDown && me.Button == qui.MouseButtonRight {
 		// Event coordinates arrive in this element's own space; the handler
 		// anchors a window-level overlay, so map back out (a no-op outside
@@ -3837,6 +3906,11 @@ func (e *El) Handle(event qui.Event) bool {
 		// dispatched AFTER them, because the DOM order is click, click,
 		// dblclick — a handler pair that logs both must see it that way.
 		isDouble := e.isDoubleClick(me)
+		prevented := false
+		if e.onClickEvent != nil {
+			e.onClickEvent(e.pointerEvent(me, &prevented))
+			acted = true
+		}
 		if e.onClick != nil {
 			e.onClick()
 			acted = true
@@ -3850,13 +3924,18 @@ func (e *El) Handle(event qui.Event) bool {
 			acted = true
 		}
 		// Built-in control behavior (color palette / file dialog / form
-		// submit) runs alongside any author handler, and — crucially —
-		// independently of e.onClick, which the reconciler overwrites on
-		// every re-render.
+		// submit) runs alongside any author handler — unless one called
+		// PreventDefault — and, crucially, independently of e.onClick,
+		// which the reconciler overwrites on every re-render.
+		if prevented {
+			return true
+		}
 		if e.runBuiltinClick() {
 			acted = true
 		}
 		if acted {
+			// An author click handler on a link owns the click (the link
+			// doesn't also navigate) — the in-app router pattern.
 			return true
 		}
 	}
@@ -3867,13 +3946,13 @@ func (e *El) Handle(event qui.Event) bool {
 	if me.Type() == qui.EventMouseUp && me.Button == qui.MouseButtonLeft {
 		if e.tag == "a" {
 			if href := e.attrs["href"]; href != "" {
-				_ = qui.OpenURL(href)
+				e.followLink(href)
 				return true
 			}
 		}
 		for _, ib := range e.inlinePool {
 			if href, ok := ib.LinkAt(qui.Point{X: me.X, Y: me.Y}); ok && href != "" {
-				_ = qui.OpenURL(href)
+				e.followLink(href)
 				return true
 			}
 		}

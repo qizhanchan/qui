@@ -137,10 +137,11 @@ func (e *El) showSuggestions() {
 	}
 	e.closeSuggestions()
 
-	theme := qui.CurrentTheme()
+	pal := e.popupPalette()
+	highlight := qui.LerpColor(pal.Surface, pal.Text, 0.08)
 	list := widgets.NewBox(qui.FlowLayout{})
-	list.Style().Background = theme.Surface
-	list.Style().Border = theme.BorderStrong
+	list.Style().Background = pal.Surface
+	list.Style().Border = pal.Border
 	list.Style().BorderSize = 1
 	list.Style().Radius = 4
 	list.Style().Padding = qui.Insets{Top: 4, Bottom: 4}
@@ -174,14 +175,14 @@ func (e *El) showSuggestions() {
 		// States, so setting Style() alone would leave the chrome painted.
 		row := widgets.NewButton(value, func() { e.applySuggestion(value) })
 		flat := qui.Style{
-			Foreground: theme.Text,
+			Foreground: pal.Text,
 			Padding:    qui.Insets{Top: 5, Right: 10, Bottom: 5, Left: 10},
 		}
 		if idx == e.suggestIdx {
-			flat.Background = theme.SurfaceRaised
+			flat.Background = highlight
 		}
 		hover := flat
-		hover.Background = theme.SurfaceRaised
+		hover.Background = highlight
 		row.States = qui.StateStyle{Base: flat, Hover: &hover, Pressed: &hover}
 		row.StateLayerColor = qui.Color{}
 		list.AddChild(row)

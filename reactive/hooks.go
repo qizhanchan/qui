@@ -38,6 +38,7 @@ type memoState struct {
 }
 
 type effectState struct {
+	layout   bool
 	hasDeps  bool
 	deps     []any
 	effect   func() func()
@@ -236,12 +237,14 @@ func UseCallback[F any](fn F, deps ...any) F {
 
 // UseEffect runs a side effect after commit.
 //
-// When deps are omitted, effect runs after every commit.
+// When deps are omitted, effect runs after every commit. The widget tree
+// has been updated but NOT yet laid out, so Bounds() may be stale or zero —
+// use UseLayoutEffect to measure or position things.
 func UseEffect(effect func() func(), deps ...any) {
 	if effect == nil {
 		return
 	}
-	useEffectInternal(effect, len(deps) > 0, deps)
+	useEffectInternal(effect, len(deps) > 0, deps, false)
 }
 
 // UseEffectOnce runs an effect only on initial mount and cleanup on unmount.
@@ -249,10 +252,27 @@ func UseEffectOnce(effect func() func()) {
 	if effect == nil {
 		return
 	}
-	useEffectInternal(effect, true, nil)
+	useEffectInternal(effect, true, nil, false)
 }
 
-func useEffectInternal(effect func() func(), hasDeps bool, deps []any) {
+// UseLayoutEffect is UseEffect timed for geometry: it runs after the
+// window's next layout pass and before that frame paints, so every widget's
+// Bounds() is final. Use it to measure, scroll a freshly added row into
+// view, or place a popover. State set inside it re-renders (and re-lays
+// out) before the frame paints, so the user never sees the intermediate
+// state. Deps behave as in UseEffect.
+//
+// Without a window (or on a headless test window until LayoutForTest) the
+// effect waits for a layout pass; a runtime with no window runs it right
+// after the regular effects.
+func UseLayoutEffect(effect func() func(), deps ...any) {
+	if effect == nil {
+		return
+	}
+	useEffectInternal(effect, len(deps) > 0, deps, true)
+}
+
+func useEffectInternal(effect func() func(), hasDeps bool, deps []any, layout bool) {
 	scope := requireScope()
 	rt := scope.runtime
 	host := scope.host
@@ -272,13 +292,15 @@ func useEffectInternal(effect func() func(), hasDeps bool, deps []any) {
 	slot.effect.effect = effect
 	slot.effect.hasDeps = hasDeps
 	slot.effect.deps = cloneDeps(deps)
+	slot.effect.layout = layout
 	if run {
 		slot.effect.revision++
-		rt.pendingEffects = append(rt.pendingEffects, effectRef{
-			host:     host,
-			index:    idx,
-			revision: slot.effect.revision,
-		})
+		ref := effectRef{host: host, index: idx, revision: slot.effect.revision}
+		if layout {
+			rt.pendingLayoutEffects = append(rt.pendingLayoutEffects, ref)
+		} else {
+			rt.pendingEffects = append(rt.pendingEffects, ref)
+		}
 	}
 	rt.mu.Unlock()
 }
@@ -286,7 +308,15 @@ func useEffectInternal(effect func() func(), hasDeps bool, deps []any) {
 // runPendingEffects drains effects queued during the flush pass, across
 // every component instance that rendered. Cleanups from the previous run
 // fire before the new effect, matching React's effect lifecycle.
-func (r *Runtime) runPendingEffects() {
+func (r *Runtime) runPendingEffects() { r.runEffectQueue(&r.pendingEffects) }
+
+// runLayoutEffects drains the UseLayoutEffect queue.
+func (r *Runtime) runLayoutEffects() { r.runEffectQueue(&r.pendingLayoutEffects) }
+
+// runEffectQueue runs and clears one effect queue. Entries superseded by a
+// newer revision of the same hook, or whose component unmounted, are
+// skipped.
+func (r *Runtime) runEffectQueue(pending *[]effectRef) {
 	type queuedEffect struct {
 		host     *hookHost
 		index    int
@@ -296,20 +326,20 @@ func (r *Runtime) runPendingEffects() {
 	}
 
 	r.mu.Lock()
-	if len(r.pendingEffects) == 0 {
+	if len(*pending) == 0 {
 		r.mu.Unlock()
 		return
 	}
-	refs := append([]effectRef(nil), r.pendingEffects...)
-	r.pendingEffects = r.pendingEffects[:0]
+	refs := append([]effectRef(nil), (*pending)...)
+	*pending = (*pending)[:0]
 	queue := make([]queuedEffect, 0, len(refs))
 	for _, ref := range refs {
 		host := ref.host
-		if host == nil || ref.index < 0 || ref.index >= len(host.hooks) {
+		if host == nil || host.dead || ref.index < 0 || ref.index >= len(host.hooks) {
 			continue
 		}
 		slot := &host.hooks[ref.index]
-		if slot.kind != hookKindEffect || slot.effect.effect == nil {
+		if slot.kind != hookKindEffect || slot.effect.effect == nil || slot.effect.revision != ref.revision {
 			continue
 		}
 		queue = append(queue, queuedEffect{

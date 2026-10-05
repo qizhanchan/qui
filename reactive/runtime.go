@@ -28,6 +28,10 @@ type Runtime struct {
 	// owns its own hookHost (see fiber.go); rootHost is the top-level one.
 	rootHost       hookHost
 	pendingEffects []effectRef
+	// pendingLayoutEffects wait for the window's next layout pass
+	// (UseLayoutEffect); layoutScheduled says an AfterLayout is queued.
+	pendingLayoutEffects []effectRef
+	layoutScheduled      bool
 
 	// hostData carries backend-specific state for the host layer driving
 	// this runtime (e.g. reactive/html stores its *htmlcss.StyleEngine
@@ -320,6 +324,34 @@ func (r *Runtime) flushOnePass() {
 		}
 	}
 	r.runPendingEffects()
+	r.scheduleLayoutEffects()
+}
+
+// scheduleLayoutEffects arranges for queued layout effects to run after
+// the window's next layout pass. State they set is flushed right there, so
+// the re-render (and the relayout it causes) lands before paint.
+func (r *Runtime) scheduleLayoutEffects() {
+	r.mu.Lock()
+	if len(r.pendingLayoutEffects) == 0 || r.layoutScheduled {
+		r.mu.Unlock()
+		return
+	}
+	window := r.window
+	if window != nil {
+		r.layoutScheduled = true
+	}
+	r.mu.Unlock()
+	if window == nil {
+		r.runLayoutEffects()
+		return
+	}
+	window.AfterLayout(func() {
+		r.mu.Lock()
+		r.layoutScheduled = false
+		r.mu.Unlock()
+		r.runLayoutEffects()
+		r.Flush()
+	})
 }
 
 // Bind subscribes a signal and triggers re-render on value changes.

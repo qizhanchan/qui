@@ -109,8 +109,25 @@ type Builder struct {
 	optionDisabled []bool
 	suggestions    []string
 
-	// element ref (fires once at create)
-	ref func(*htmlcss.El)
+	// element ref: called with the element after every render, with nil
+	// on unmount; refTo is the UseRef flavor.
+	ref   func(*htmlcss.El)
+	refTo **htmlcss.El
+
+	// pointer / click / drop / paste / form / canvas / style hooks
+	onPointerDown func(htmlcss.PointerEvent) bool
+	onPointerMove func(htmlcss.PointerEvent) bool
+	onPointerUp   func(htmlcss.PointerEvent) bool
+	onClickEvent  func(htmlcss.PointerEvent)
+	onFileDrop    func([]string)
+	onPaste       func(string) bool
+	onFormSubmit  func(map[string]string)
+	canvasPaint   func(qui.Canvas, htmlcss.CanvasContext)
+	onStyle       func(*htmlcss.ComputedStyle)
+
+	// leaf: a native widget hosted as this element's content (Leaf)
+	leafCreate func() qui.Widget
+	leafUpdate func(qui.Widget) reactive.Flags
 
 	// icon + drag/drop
 	icon       qui.VectorSource
@@ -341,11 +358,76 @@ func (b *Builder) OnDragOver(fn func(sourceKey string, after bool)) *Builder {
 // — the place to clear a drop indicator.
 func (b *Builder) OnDragEnd(fn func()) *Builder { b.onDragEnd = fn; return b }
 
-// Ref captures the backing htmlcss element when it is created — the escape
-// hatch for imperative needs the DSL doesn't cover (anchoring a popup to the
-// element's Bounds(), reading its Window(), …). Fires once per mounted
-// element, during the create pass.
+// Ref hands the backing htmlcss element to fn — the escape hatch for
+// imperative needs the DSL doesn't cover (anchoring a popup to the
+// element's Bounds(), reading its Window(), …). fn runs after every render
+// with the element, so whatever it installs sees the current render's
+// state, and once more with nil when the element unmounts (release
+// anything it set up there).
 func (b *Builder) Ref(fn func(*htmlcss.El)) *Builder { b.ref = fn; return b }
+
+// RefTo stores the element in *ref (typically a reactive.UseRef) while it
+// is mounted, and nil after it unmounts:
+//
+//	anchor := reactive.UseRef[*htmlcss.El](nil)
+//	h.Button("More").RefTo(anchor)
+func (b *Builder) RefTo(ref **htmlcss.El) *Builder { b.refTo = ref; return b }
+
+// OnPointerDown / OnPointerMove / OnPointerUp install raw pointer handlers
+// (position, button, modifiers, click count); return true to consume. A
+// press captures the pointer, so moves and the release keep arriving when
+// it leaves the element — what splitters, custom sliders, marquee
+// selection and drawing need.
+func (b *Builder) OnPointerDown(fn func(htmlcss.PointerEvent) bool) *Builder {
+	b.onPointerDown = fn
+	return b
+}
+
+// OnPointerMove: see OnPointerDown.
+func (b *Builder) OnPointerMove(fn func(htmlcss.PointerEvent) bool) *Builder {
+	b.onPointerMove = fn
+	return b
+}
+
+// OnPointerUp: see OnPointerDown.
+func (b *Builder) OnPointerUp(fn func(htmlcss.PointerEvent) bool) *Builder {
+	b.onPointerUp = fn
+	return b
+}
+
+// OnClickEvent is OnClick with the event: position, button, modifiers,
+// click count, and PreventDefault to stop the built-in behavior (a submit
+// button submitting, a link navigating, a file input opening its dialog).
+func (b *Builder) OnClickEvent(fn func(htmlcss.PointerEvent)) *Builder {
+	b.onClickEvent = fn
+	return b
+}
+
+// OnFileDrop makes the element a drop zone for files dragged in from the
+// OS; fn receives their paths.
+func (b *Builder) OnFileDrop(fn func(paths []string)) *Builder { b.onFileDrop = fn; return b }
+
+// OnPaste intercepts Cmd/Ctrl+V inside the element; fn receives the
+// clipboard text and returns true to take over the paste.
+func (b *Builder) OnPaste(fn func(text string) bool) *Builder { b.onPaste = fn; return b }
+
+// OnFormSubmit installs a <form>'s submit handler (control name → value).
+func (b *Builder) OnFormSubmit(fn func(values map[string]string)) *Builder {
+	b.onFormSubmit = fn
+	return b
+}
+
+// OnDraw paints a <canvas> element (see Canvas) with its computed style at
+// hand: ctx.Color, ctx.Font, ctx.Style.Var("accent").
+func (b *Builder) OnDraw(fn func(cv qui.Canvas, ctx htmlcss.CanvasContext)) *Builder {
+	b.canvasPaint = fn
+	return b
+}
+
+// OnStyle runs after every restyle of the element with its computed
+// style — the hook for feeding CSS (a --var, the text color) into
+// something imperative.
+func (b *Builder) OnStyle(fn func(cs *htmlcss.ComputedStyle)) *Builder { b.onStyle = fn; return b }
 
 // BindText binds the element's text to a signal (updates skip reconcile).
 func (b *Builder) BindText(sig *reactive.Signal[string]) *Builder { b.bindText = sig; return b }
@@ -399,12 +481,41 @@ func (b *Builder) Build() reactive.Element {
 			if bb.bindClass != nil {
 				holder.add(reactive.BindWidget(el, bb.bindClass, el.SetClass))
 			}
-			if bb.ref != nil {
-				bb.ref(el)
+			if bb.leafCreate != nil {
+				el.SetHostedWidget(bb.leafCreate())
 			}
 			return el
 		},
 		func(el *htmlcss.El) reactive.Flags {
+			flags := reactive.FlagNone
+			if bb.leafUpdate != nil {
+				flags = bb.leafUpdate(el.HostedWidget())
+			}
+			el.SetOnPointerDown(bb.onPointerDown)
+			el.SetOnPointerMove(bb.onPointerMove)
+			el.SetOnPointerUp(bb.onPointerUp)
+			el.SetOnClickEvent(bb.onClickEvent)
+			el.SetOnFileDrop(bb.onFileDrop)
+			el.SetOnPaste(bb.onPaste)
+			el.SetOnStyle(bb.onStyle)
+			if bb.onFormSubmit != nil || bb.tag == "form" {
+				el.SetOnFormSubmit(bb.onFormSubmit)
+			}
+			if bb.canvasPaint != nil {
+				el.SetCanvasPaint(bb.canvasPaint)
+			}
+			// The latest ref closures are kept on the element so the
+			// unmount call (wired at mount) reaches the current ones.
+			el.SetUserData(refKey, bb.ref)
+			el.SetUserData(refToKey, bb.refTo)
+			defer func() {
+				if bb.ref != nil {
+					bb.ref(el)
+				}
+				if bb.refTo != nil {
+					*bb.refTo = el
+				}
+			}()
 			el.SetOnClick(bb.onClick)
 			el.SetOnClickMods(bb.onClickMods)
 			el.SetOnContextMenu(bb.onContextMenu)
@@ -467,7 +578,7 @@ func (b *Builder) Build() reactive.Element {
 			}
 			// Style/text mutations trigger the engine's own coalesced
 			// restyle + InvalidateLayout, so no window flag is needed here.
-			return reactive.FlagNone
+			return flags
 		},
 		func(el *htmlcss.El, children []qui.Widget) {
 			el.SetElementChildren(children)
@@ -479,11 +590,22 @@ func (b *Builder) Build() reactive.Element {
 	elem.Destroy = func(w qui.Widget) {
 		holder.release()
 		if el, ok := w.(*htmlcss.El); ok {
+			if ref, _ := el.UserData(refKey).(func(*htmlcss.El)); ref != nil {
+				ref(nil)
+			}
+			if refTo, _ := el.UserData(refToKey).(**htmlcss.El); refTo != nil && *refTo == el {
+				*refTo = nil
+			}
 			el.Unmount()
 		}
 	}
 	return elem
 }
+
+const (
+	refKey   = "h.ref"
+	refToKey = "h.refTo"
+)
 
 // --- node wrappers ---
 
@@ -528,11 +650,37 @@ func Component[P any](name, key string, props P, render func(P) Node) Node {
 	})}
 }
 
-// Leaf hosts a native qui widget as a childless node — the seam for the
-// parts an app draws itself (a canvas, a grid, a ruler) inside an otherwise
-// CSS-styled tree.
-func Leaf[T qui.Widget](kind, key string, create func() T, update func(widget T) reactive.Flags) Node {
-	return rawNode{reactive.Leaf(kind, key, create, update)}
+// Leaf hosts a native qui widget as a childless element — the seam for
+// the parts an app draws itself (a grid, a ruler, a chart) inside an
+// otherwise CSS-styled tree. The element's tag is kind, so it is a real
+// node of the styled tree: `.Class(...)` and CSS margins, sizes and flex /
+// grid placement apply, and it counts for :nth-child and sibling
+// selectors. create builds the widget once; update (optional) runs every
+// render. Size it in CSS, or let the widget's own Measure decide.
+func Leaf[T qui.Widget](kind, key string, create func() T, update func(widget T) reactive.Flags) *Builder {
+	b := &Builder{tag: kind, key: key}
+	b.leafCreate = func() qui.Widget { return create() }
+	if update != nil {
+		b.leafUpdate = func(w qui.Widget) reactive.Flags {
+			t, ok := w.(T)
+			if !ok {
+				return reactive.FlagNone
+			}
+			return update(t)
+		}
+	}
+	return b
+}
+
+// Canvas is a <canvas> element painted by draw each frame, with the
+// element's computed style in ctx (so it follows the stylesheet and a dark
+// mode). Size it with CSS width / height (300×150 otherwise).
+//
+//	h.Canvas(func(cv qui.Canvas, ctx htmlcss.CanvasContext) {
+//		cv.StrokeRect(ctx.Bounds, ctx.Color, 1)
+//	}).Class("sparkline")
+func Canvas(draw func(cv qui.Canvas, ctx htmlcss.CanvasContext), args ...any) *Builder {
+	return tag("canvas", args).OnDraw(draw)
 }
 
 func buildAll(nodes []Node) []reactive.Element {
