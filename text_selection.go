@@ -265,6 +265,37 @@ func (c *selectionClicks) register(anchor TextSelectable, x, y float32, when tim
 	return c.count
 }
 
+// clickCounter derives MouseEvent.Clicks: consecutive presses of one
+// button within 400ms and 4px. Unlike selectionClicks it doesn't wrap, and
+// a release reports the count of the press it ends.
+type clickCounter struct {
+	lastMS int64
+	x, y   float32
+	button MouseButton
+	n      int
+}
+
+func (c *clickCounter) count(me MouseEvent) int {
+	if me.eventType == EventMouseUp {
+		if c.n == 0 || c.button != me.Button {
+			return 1
+		}
+		return c.n
+	}
+	now := me.When.UnixMilli()
+	if me.When.IsZero() {
+		now = time.Now().UnixMilli()
+	}
+	sameSpot := absf32(me.X-c.x) <= 4 && absf32(me.Y-c.y) <= 4
+	if c.n > 0 && now-c.lastMS <= 400 && sameSpot && me.Button == c.button {
+		c.n++
+	} else {
+		c.n = 1
+	}
+	c.lastMS, c.x, c.y, c.button = now, me.X, me.Y, me.Button
+	return c.n
+}
+
 func absf32(v float32) float32 {
 	if v < 0 {
 		return -v

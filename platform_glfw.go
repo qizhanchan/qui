@@ -160,6 +160,10 @@ func (w *glfwWindow) setVisible(visible, activate bool) {
 	w.handle.Hide()
 }
 
+func (w *glfwWindow) isIconified() bool {
+	return w.handle.GetAttrib(glfw.Iconified) == glfw.True
+}
+
 func (w *glfwWindow) isVisible() bool {
 	return w.handle.GetAttrib(glfw.Visible) == glfw.True
 }

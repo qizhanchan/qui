@@ -8,59 +8,185 @@ import (
 
 // AcceleratorRegistry holds window-level keyboard shortcuts. A menu bar
 // typically populates it from its items so pressing Cmd+S fires File >
-// Save without every widget having to intercept the key. Registration
-// order decides match order: the first entry whose (Key, Mods) matches
-// wins. Unregistered entries (nil fn) are a no-op at match time.
+// Save without every widget having to intercept the key.
+//
+// Precedence: an entry scoped to a widget (RegisterScoped) fires only when
+// the key's target — normally the focused widget — lies inside that scope,
+// and a scoped match beats a window-wide one, the deepest scope first.
+// Among entries at the same level the most recent registration wins, so a
+// panel can override an app-wide binding for as long as it is registered
+// and the old binding comes back when it unregisters.
 //
 // Accelerators are consulted by Window.dispatch AFTER normal widget
 // dispatch, and only fire when no widget has consumed the event. This
 // keeps per-widget shortcuts (e.g. Input's Cmd+Z undo) functional
-// while still giving menu actions a global fallback.
+// while still giving menu actions a global fallback. While a modal is
+// shown only entries scoped inside it fire: Cmd+S must not save the
+// document hidden behind a confirm dialog.
 type AcceleratorRegistry struct {
 	entries []acceleratorEntry
+	nextID  int64
 }
 
 type acceleratorEntry struct {
+	id       int64
 	key      Key
 	mods     Modifiers
 	fn       func()
+	scope    Widget // nil = window-wide
 	shortcut string // the string as registered, for introspection
 }
 
 // NewAcceleratorRegistry returns an empty registry.
 func NewAcceleratorRegistry() *AcceleratorRegistry { return &AcceleratorRegistry{} }
 
-// Register parses shortcut (e.g. "Cmd+S", "Ctrl+Shift+Z") and binds fn.
-// An empty shortcut or nil fn is silently ignored so callers can pass
-// menu items through verbatim without filtering.
+// Register parses shortcut (e.g. "Cmd+S", "CmdOrCtrl+Shift+Z") and binds
+// fn window-wide. An empty shortcut or nil fn is silently ignored so
+// callers can pass menu items through verbatim without filtering. Use Bind
+// when the binding has to be removed again.
 func (r *AcceleratorRegistry) Register(shortcut string, fn func()) error {
+	_, err := r.add(shortcut, nil, fn)
+	return err
+}
+
+// Bind is Register returning a function that removes exactly this binding
+// (other bindings of the same shortcut are untouched).
+func (r *AcceleratorRegistry) Bind(shortcut string, fn func()) (remove func(), err error) {
+	return r.add(shortcut, nil, fn)
+}
+
+// RegisterScoped binds fn to shortcut only while the key's target lies
+// inside scope (scope itself or a descendant) — a document pane's Cmd+F,
+// a dialog's Cmd+Enter. The binding beats window-wide ones for the same
+// key, and stays live inside a modal that contains scope. Returns the
+// remover; call it when scope unmounts.
+func (r *AcceleratorRegistry) RegisterScoped(shortcut string, scope Widget, fn func()) (remove func(), err error) {
+	if scope == nil {
+		return func() {}, fmt.Errorf("RegisterScoped %q: nil scope", shortcut)
+	}
+	return r.add(shortcut, scope, fn)
+}
+
+func (r *AcceleratorRegistry) add(shortcut string, scope Widget, fn func()) (func(), error) {
 	if r == nil || shortcut == "" || fn == nil {
-		return nil
+		return func() {}, nil
 	}
 	key, mods, err := ParseShortcut(shortcut)
 	if err != nil {
-		return err
+		return func() {}, err
 	}
-	r.entries = append(r.entries, acceleratorEntry{key: key, mods: mods, fn: fn, shortcut: shortcut})
-	return nil
+	r.nextID++
+	id := r.nextID
+	r.entries = append(r.entries, acceleratorEntry{id: id, key: key, mods: mods, fn: fn, scope: scope, shortcut: shortcut})
+	return func() { r.removeWhere(func(e acceleratorEntry) bool { return e.id == id }) }, nil
 }
 
-// Match runs the first entry whose (Key, Mods) matches evt. Returns
-// true if an accelerator fired, false otherwise. Modifier bits are
-// compared for exact equality — "Cmd+S" does not match "Cmd+Shift+S".
+// Unregister removes every binding of shortcut (window-wide and scoped)
+// and reports how many were removed. "Cmd+S" and "Command+S" name the same
+// binding.
+func (r *AcceleratorRegistry) Unregister(shortcut string) int {
+	if r == nil {
+		return 0
+	}
+	key, mods, err := ParseShortcut(shortcut)
+	if err != nil {
+		return 0
+	}
+	return r.removeWhere(func(e acceleratorEntry) bool { return e.key == key && e.mods == mods })
+}
+
+// UnregisterScope removes every binding scoped to scope.
+func (r *AcceleratorRegistry) UnregisterScope(scope Widget) int {
+	if r == nil || scope == nil {
+		return 0
+	}
+	return r.removeWhere(func(e acceleratorEntry) bool { return e.scope == scope })
+}
+
+func (r *AcceleratorRegistry) removeWhere(drop func(acceleratorEntry) bool) int {
+	kept := r.entries[:0]
+	n := 0
+	for _, e := range r.entries {
+		if drop(e) {
+			n++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	for i := len(kept); i < len(r.entries); i++ {
+		r.entries[i] = acceleratorEntry{}
+	}
+	r.entries = kept
+	return n
+}
+
+// Match runs the window-wide entry matching evt (scoped entries need a
+// target — see MatchFor). Returns true if an accelerator fired. Modifier
+// bits are compared for exact equality — "Cmd+S" does not match
+// "Cmd+Shift+S".
 func (r *AcceleratorRegistry) Match(evt KeyEvent) bool {
+	return r.MatchFor(evt, nil)
+}
+
+// MatchFor runs the best entry for evt aimed at target: the deepest scope
+// containing target, else the newest window-wide binding. Returns true if
+// an accelerator fired.
+func (r *AcceleratorRegistry) MatchFor(evt KeyEvent, target Widget) bool {
+	return r.match(evt, target, false)
+}
+
+func (r *AcceleratorRegistry) match(evt KeyEvent, target Widget, scopedOnly bool) bool {
 	if r == nil || evt.Type() != EventKeyDown {
 		return false
 	}
-	for _, e := range r.entries {
-		if e.key == evt.Key && e.mods == evt.Mods {
-			if e.fn != nil {
-				e.fn()
+	best := -1
+	bestDepth := -1
+	for i := len(r.entries) - 1; i >= 0; i-- {
+		e := r.entries[i]
+		if e.key != evt.Key || e.mods != evt.Mods {
+			continue
+		}
+		depth := 0
+		if e.scope != nil {
+			d, ok := scopeDepth(e.scope, target)
+			if !ok {
+				continue
 			}
-			return true
+			depth = d + 1
+		} else if scopedOnly {
+			continue
+		}
+		if depth > bestDepth {
+			best, bestDepth = i, depth
 		}
 	}
-	return false
+	if best < 0 {
+		return false
+	}
+	if fn := r.entries[best].fn; fn != nil {
+		fn()
+	}
+	return true
+}
+
+// scopeDepth reports whether target lies in scope's subtree, and scope's
+// depth from the tree root (so a nested scope outranks its ancestor).
+func scopeDepth(scope, target Widget) (int, bool) {
+	inside := false
+	for cur := target; cur != nil; cur = cur.Parent() {
+		if cur == scope {
+			inside = true
+			break
+		}
+	}
+	if !inside {
+		return 0, false
+	}
+	depth := 0
+	for cur := scope.Parent(); cur != nil; cur = cur.Parent() {
+		depth++
+	}
+	return depth, true
 }
 
 // Shortcuts returns the registered accelerators as the strings they were
@@ -95,6 +221,7 @@ func (r *AcceleratorRegistry) Len() int {
 //
 // Modifier tokens recognized (case-insensitive):
 //
+//	CmdOrCtrl / CommandOrControl / Mod  → ModSuper on macOS, ModControl elsewhere
 //	Cmd / Command / Super / Meta        → ModSuper
 //	Ctrl / Control                      → ModControl
 //	Shift                               → ModShift
@@ -112,6 +239,8 @@ func ParseShortcut(s string) (Key, Modifiers, error) {
 	}
 	for _, tok := range parts[:len(parts)-1] {
 		switch strings.ToLower(strings.TrimSpace(tok)) {
+		case "cmdorctrl", "commandorcontrol", "cmdorcontrol", "commandorctrl", "mod", "primary":
+			mods |= CommandMod()
 		case "cmd", "command", "super", "meta":
 			mods |= ModSuper
 		case "ctrl", "control":

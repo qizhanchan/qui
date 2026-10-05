@@ -75,6 +75,13 @@ type PortalOptions struct {
 
 const portalKind = "#portal"
 
+// portalGeometry is opts without its callbacks — the part whose change
+// needs a relayout / repaint.
+func portalGeometry(opts PortalOptions) PortalOptions {
+	opts.OnBackdropClick, opts.OnEscape, opts.OnEnter = nil, nil, nil
+	return opts
+}
+
 // Portal shows child centered, non-modal, no backdrop.
 func Portal(child Element) Element {
 	return PortalWith(PortalOptions{}, child)

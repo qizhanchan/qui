@@ -363,7 +363,11 @@ func (w *Window) collectFlexDiagnostics(widget Widget, path string, out *[]Layou
 	}
 	fl, ok := c.LayoutEngine.(FlexLayout)
 	if !ok {
-		return
+		p, isPtr := c.LayoutEngine.(*FlexLayout)
+		if !isPtr || p == nil {
+			return
+		}
+		fl = *p
 	}
 	content := c.Bounds().Inset(c.Style().Padding)
 	mainAvail := content.W

@@ -370,10 +370,10 @@ func establishesAbsCB(w Widget) bool {
 }
 
 // Measure returns the container's natural size, based on its children
-// and LayoutEngine. For FlexLayout we sum child sizes on the main axis
-// and take the max on the cross axis, adding padding. For non-Flex
-// engines (or when empty) we fall back to `available` — the old
-// behavior — because we can't reason about them without more info.
+// and LayoutEngine plus padding. Engines implementing LayoutMeasurer
+// (all the built-in ones, and any custom engine that opts in) report a
+// real intrinsic size; others fall back to `available` because we can't
+// reason about them without more info.
 //
 // This intrinsic-size reporting is what makes Popup / ContextMenu /
 // Select dropdowns size themselves correctly instead of ballooning
@@ -400,177 +400,22 @@ func (c *Container) Measure(available Size) Size {
 	if padded.H < 0 {
 		padded.H = 0
 	}
-	if flow, isFlow := c.LayoutEngine.(FlowLayout); isFlow {
-		// Normal flow: content height is the stacked height of children.
-		content := flow.Measure(children, padded)
+	if m, ok := c.LayoutEngine.(LayoutMeasurer); ok {
+		// Built-in engines (Flex / Grid / Flow, by value or pointer) and any
+		// custom engine implementing LayoutMeasurer report a real intrinsic
+		// content size.
+		content := m.Measure(children, padded)
 		return Size{
 			W: content.W + padding.Horizontal(),
 			H: content.H + padding.Vertical(),
 		}
 	}
-	if grid, isGrid := c.LayoutEngine.(GridLayout); isGrid {
-		// Grid: real intrinsic size (rows × content height + gaps) so a grid
-		// followed by more content doesn't clip its siblings out of a
-		// ScrollView. GridLayout.Measure scales its own gaps.
-		content := grid.Measure(children, padded)
-		return Size{
-			W: content.W + padding.Horizontal(),
-			H: content.H + padding.Vertical(),
-		}
+	// Engines that can't report a size keep the old "take all offered"
+	// behavior.
+	for _, child := range children {
+		child.Measure(padded)
 	}
-	fl, isFlex := c.LayoutEngine.(FlexLayout)
-	if !isFlex {
-		// Grid / custom layouts: keep the old "take all offered" behavior.
-		for _, child := range children {
-			child.Measure(padded)
-		}
-		return available
-	}
-	// Per-child measurement, with main/cross extracted once.
-	type childMeasure struct {
-		main, cross, minMain float32
-	}
-	measures := make([]childMeasure, len(children))
-	for i, child := range children {
-		min := widgetMinSize(child)
-		size := measureWithConstraints(child, padded)
-		// Margin-box: a child's natural footprint includes its own
-		// Style().Margin, matching FlexLayout.measureFlexItems.
-		margin := child.Style().Margin
-		size.W += margin.Horizontal()
-		size.H += margin.Vertical()
-		mainSize := size.W
-		crossSize := size.H
-		minMain := min.W
-		marginMain := margin.Horizontal()
-		if fl.Direction == Vertical {
-			mainSize = size.H
-			crossSize = size.W
-			minMain = min.H
-			marginMain = margin.Vertical()
-		}
-		if basis := widgetFlexItem(child).Basis; basis > 0 {
-			mainSize = basis + marginMain
-			if mainSize < minMain+marginMain {
-				mainSize = minMain + marginMain
-			}
-		}
-		measures[i] = childMeasure{main: mainSize, cross: crossSize, minMain: minMain}
-	}
-
-	// Wrap path: pack into lines, sum line heights for cross axis,
-	// take the widest line for the main axis (caller may have given
-	// us less; the line that overflowed already broke).
-	if fl.Wrap {
-		mainAvail := padded.W
-		if fl.Direction == Vertical {
-			mainAvail = padded.H
-		}
-		var lines [][]int
-		var cur []int
-		var used float32
-		for i, m := range measures {
-			add := m.main
-			if len(cur) > 0 {
-				add += fl.Gap
-			}
-			if len(cur) > 0 && used+add > mainAvail {
-				lines = append(lines, cur)
-				cur = []int{i}
-				used = m.main
-				continue
-			}
-			cur = append(cur, i)
-			used += add
-		}
-		if len(cur) > 0 {
-			lines = append(lines, cur)
-		}
-		var mainMax, crossSum float32
-		for li, line := range lines {
-			var lineMain, lineCross float32
-			for k, idx := range line {
-				lineMain += measures[idx].main
-				if k > 0 {
-					lineMain += fl.Gap
-				}
-				if measures[idx].cross > lineCross {
-					lineCross = measures[idx].cross
-				}
-			}
-			if lineMain > mainMax {
-				mainMax = lineMain
-			}
-			crossSum += lineCross
-			if li < len(lines)-1 {
-				crossSum += fl.CrossGap
-			}
-		}
-		var result Size
-		if fl.Direction == Horizontal {
-			result = Size{W: mainMax, H: crossSum}
-		} else {
-			result = Size{W: crossSum, H: mainMax}
-		}
-		result.W += padding.Horizontal()
-		result.H += padding.Vertical()
-		return result
-	}
-
-	// Single-line path. Resolve the flex main sizes, then re-measure each
-	// child's cross extent at its resolved main size — so a growing item
-	// with wrapping text reports its true (multi-line) height instead of
-	// the 1-line width-of-the-whole-row measure. Otherwise the parent
-	// under-allocates the row and the item's content overflows its box.
-	paddedRect := Rect{W: padded.W, H: padded.H}
-	items := fl.measureFlexItems(children, paddedRect)
-	mainAvail := padded.W
-	if fl.Direction == Vertical {
-		mainAvail = padded.H
-	}
-	// A non-positive main-axis available means "unconstrained" — the caller
-	// (e.g. GridLayout.Measure passing H:0) wants our natural/max-content
-	// main size, not a size shrunk to fit zero. Resolving against the basis
-	// sum keeps grow/shrink off so we report the true content extent; the
-	// parent decides whether to shrink us at Apply time. Without this, a
-	// flex column measured for its intrinsic height collapses its children
-	// toward their (often zero) min-main and reports a too-short height.
-	if mainAvail <= 0 {
-		var basisSum float32
-		for i := range items {
-			if i > 0 {
-				basisSum += fl.Gap
-			}
-			basisSum += items[i].basis
-		}
-		mainAvail = basisSum
-	}
-	fl.resolveMainSizes(items, mainAvail)
-	fl.remeasureCross(items, paddedRect)
-
-	var mainSum, crossMax float32
-	for i := range items {
-		mainSum += items[i].size
-		cross := items[i].natural.H
-		if fl.Direction == Vertical {
-			cross = items[i].natural.W
-		}
-		if cross > crossMax {
-			crossMax = cross
-		}
-		if i > 0 {
-			mainSum += fl.Gap
-		}
-	}
-	var result Size
-	if fl.Direction == Horizontal {
-		result = Size{W: mainSum, H: crossMax}
-	} else {
-		result = Size{W: crossMax, H: mainSum}
-	}
-	result.W += padding.Horizontal()
-	result.H += padding.Vertical()
-	return result
+	return available
 }
 
 func (c *Container) Layout(rect Rect) {

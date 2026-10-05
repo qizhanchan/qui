@@ -130,7 +130,7 @@ func TestTooltipSelectAndCopy(t *testing.T) {
 	SetClipboardProvider(fake)
 	defer SetClipboardProvider(nil)
 
-	tv := newTooltipView("hello world")
+	tv := newTooltipView("hello world", TooltipStyle{})
 	tv.SetWindow(&Window{lastSize: Size{W: 500, H: 500}})
 	tv.Layout(Rect{X: 0, Y: 0, W: 200, H: 40})
 	tv.focused = true

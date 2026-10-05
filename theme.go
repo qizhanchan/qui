@@ -246,8 +246,20 @@ func newLightTheme() Theme {
 // Global theme state.
 var (
 	currentTheme     = LightTheme
-	themeSubscribers []func()
+	themeSubscribers []themeSubscriber
+	themeSubID       int64
+	themeGeneration  uint64
 )
+
+type themeSubscriber struct {
+	id int64
+	fn func()
+}
+
+// ThemeGeneration increments on every SetTheme. Anything that caches values
+// derived from the theme (resolved colors, rasterized chrome) includes it in
+// its cache key, exactly like FontRegistryGeneration and LocaleGeneration.
+func ThemeGeneration() uint64 { return themeGeneration }
 
 // CurrentTheme returns a pointer to the active Theme. Widgets use this
 // at Draw time to pick colors. The pointer is stable across SetTheme
@@ -259,10 +271,9 @@ func CurrentTheme() *Theme { return &currentTheme }
 // don't need to do anything — Draw reads CurrentTheme() afresh.
 func SetTheme(t Theme) {
 	currentTheme = t
-	for _, fn := range themeSubscribers {
-		if fn != nil {
-			fn()
-		}
+	themeGeneration++
+	for _, s := range append([]themeSubscriber(nil), themeSubscribers...) {
+		s.fn()
 	}
 }
 
@@ -270,12 +281,23 @@ func SetTheme(t Theme) {
 // returns a function that removes that subscription. Window.NewWindow
 // hooks itself here so theme changes flow through without widget-level
 // plumbing, then unsubscribes during Destroy.
+//
+// A widget that subscribes should do so while attached and unsubscribe when
+// detached (TreeLifecycle's OnAttach / OnDetach), or use
+// SubscribeThemeWhileAttached, which does exactly that.
 func SubscribeTheme(fn func()) func() {
-	idx := len(themeSubscribers)
-	themeSubscribers = append(themeSubscribers, fn)
+	if fn == nil {
+		return func() {}
+	}
+	themeSubID++
+	id := themeSubID
+	themeSubscribers = append(themeSubscribers, themeSubscriber{id: id, fn: fn})
 	return func() {
-		if idx >= 0 && idx < len(themeSubscribers) {
-			themeSubscribers[idx] = nil
+		for i, s := range themeSubscribers {
+			if s.id == id {
+				themeSubscribers = append(themeSubscribers[:i:i], themeSubscribers[i+1:]...)
+				return
+			}
 		}
 	}
 }

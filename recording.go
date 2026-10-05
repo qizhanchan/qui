@@ -252,6 +252,10 @@ func mouseKindName(t EventType) string {
 		return "DragEnd"
 	case EventDrop:
 		return "Drop"
+	case EventDragEnter:
+		return "DragEnter"
+	case EventDragLeave:
+		return "DragLeave"
 	}
 	return "Mouse"
 }

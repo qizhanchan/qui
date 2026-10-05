@@ -488,6 +488,7 @@ func NewDragEvent(kind EventType, x, y float32, source Widget) DragEvent {
 		eventType: kind,
 		X:         x, Y: y,
 		Source: source,
+		Data:   &DragData{},
 	}
 }
 

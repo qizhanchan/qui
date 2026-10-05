@@ -87,6 +87,7 @@ func (w *Window) onChar(r rune) {
 }
 
 func (w *Window) onFocus(focused bool) {
+	w.noteActivation(focused)
 	w.dispatch(FocusEvent{
 		baseEvent: baseEvent{shared: &eventState{}},
 		When:      time.Now(),
@@ -117,11 +118,16 @@ func (w *Window) onRefresh() {
 }
 
 func (w *Window) onFileDrop(paths []string, x, y float64) {
+	vx, vy := w.toViewport(x, y)
+	if w.routeFileDrop(paths, vx, vy) {
+		w.Invalidate()
+		w.InvalidateLayout()
+		return
+	}
 	fn := w.onDrop
 	if fn == nil {
 		return
 	}
-	vx, vy := w.toViewport(x, y)
 	fn(paths, vx, vy)
 	// File drops usually trigger substantial state changes — a new model
 	// loads, a texture swaps — so force a full repaint to reflect

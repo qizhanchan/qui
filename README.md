@@ -134,7 +134,7 @@ go run ./cmd/qui-agent shot /tmp/ui.png
 # or raw: curl --unix-socket $TMPDIR/qui-agent-*.sock http://./llm.txt
 ```
 
-Useful env vars: `QUI_PLATFORM=glfw|cocoa` (windowing backend — see below), `QUI_GPU_RASTER=1` (GPU raster backend), `QUI_AGENT=1` / `QUI_AGENT_TCP=:port` / `QUI_AGENT_TOKEN` / `QUI_AGENT_SOCK` (agent server), `QUI_DEBUG_LAYOUT=1` (flex overflow logging), `QUI_DEBUG_PAINT=1` (log full-repaint promotions + first moved widget), `QUI_DEBUG_THREAD=1` (fail-fast UI-thread ownership checks), `QUI_DEBUG_GESTURE=1` (log which gesture selectors the macOS bridge installed, incl. whether GLFW's scrollWheel: was preserved), `QUI_I18N_STRICT=1` (render unresolved message keys as ⟦key⟧ and log each once), `QUI_GOLDEN=1` (write golden snapshots), `QUI_HTMLCSS_SNAPSHOT=1` (htmlcss snapshot PNGs).
+Useful env vars: `QUI_PLATFORM=glfw|cocoa` (windowing backend — see below), `QUI_GPU_RASTER=1` (GPU raster backend), `QUI_AGENT=1` / `QUI_AGENT_TCP=:port` / `QUI_AGENT_TOKEN` / `QUI_AGENT_SOCK` (agent server), `QUI_DEBUG_LAYOUT=1` (flex overflow logging), `QUI_DEBUG_PAINT=1` (log full-repaint promotions + first moved widget), `QUI_DEBUG_THREAD=1` (fail-fast UI-thread ownership checks), `QUI_DEBUG_WIDGETS=1` (log children whose Parent() mismatches — a missing `SetSelf`), `QUI_DEBUG_GESTURE=1` (log which gesture selectors the macOS bridge installed, incl. whether GLFW's scrollWheel: was preserved), `QUI_I18N_STRICT=1` (render unresolved message keys as ⟦key⟧ and log each once), `QUI_GOLDEN=1` (write golden snapshots), `QUI_HTMLCSS_SNAPSHOT=1` (htmlcss snapshot PNGs).
 
 **Windowing backends (`QUI_PLATFORM`).** The OS windowing layer sits behind the platform seam (`platform.go`) and more than one implementation is compiled in, selected at *runtime*:
 

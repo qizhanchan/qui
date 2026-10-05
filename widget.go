@@ -953,6 +953,10 @@ func (b *BaseWidget) markLayoutDirty() {
 			m.markLayoutDirty()
 			return
 		}
+		if m, ok := b.parent.(LayoutDirtyMarker); ok {
+			m.MarkLayoutDirty()
+			return
+		}
 		// A parent that doesn't embed BaseWidget (out-of-tree custom
 		// widget): fall back to its InvalidateLayout.
 		b.parent.InvalidateLayout()
@@ -960,6 +964,12 @@ func (b *BaseWidget) markLayoutDirty() {
 	}
 	b.layoutDirty = true
 }
+
+// MarkLayoutDirty records that the tree needs a relayout without
+// repainting anything — the half of InvalidateLayout a custom container
+// wants when its children moved but no pixels of its own changed. See
+// LayoutDirtyMarker.
+func (b *BaseWidget) MarkLayoutDirty() { b.markLayoutDirty() }
 
 // IsLayoutDirty reports whether this widget (as tree root) needs a
 // re-layout. Only meaningful on the tree root — child flags aren't
@@ -976,9 +986,7 @@ func (b *BaseWidget) ClearLayoutDirty() {
 	b.layoutDirty = false
 }
 
-type windowAware interface {
-	SetWindow(*Window)
-}
+type windowAware = WindowAware
 
 // AttachWindowTree binds a whole widget subtree to a window, or unbinds it
 // when w is nil. It intentionally walks through ChildList so custom

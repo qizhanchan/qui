@@ -449,9 +449,14 @@ func reconcileNode(prev *instance, next Element, pass *reconcilePass) (*instance
 			unmountInstance(prev, pass)
 			return mountNode(next, pass)
 		}
-		if !valuesEqual(*prev.portalOpts, *next.portal) {
-			host.applyOpts(*next.portal)
-			prev.portalOpts = next.portal
+		// Callbacks are re-installed on every render: valuesEqual compares
+		// funcs by code pointer, so a re-rendered closure over fresh state
+		// (an OnEnter reading the form) would otherwise keep the first
+		// render's captures. Only a geometry/visual change re-lays out.
+		geometryChanged := !valuesEqual(portalGeometry(*prev.portalOpts), portalGeometry(*next.portal))
+		host.applyOpts(*next.portal)
+		prev.portalOpts = next.portal
+		if geometryChanged {
 			layoutPortal(host, pass.runtime.window)
 		}
 		children, childFlags := reconcileChildren(prev.children, next.Children, pass)

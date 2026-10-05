@@ -40,6 +40,12 @@ const (
 	// and no Scale — the receiver decides what to zoom to (typically
 	// toggling between 100% and a fitted scale).
 	EventGestureSmartMagnify
+	// EventDragEnter fires on a droppable when a drag first moves over it
+	// (and it accepts the payload — see DropAcceptor). EventDragLeave fires
+	// when the drag moves off it, ends elsewhere, or is cancelled. Both
+	// carry DragEvent and pair one-to-one.
+	EventDragEnter
+	EventDragLeave
 )
 
 // EventPhase identifies which dispatch phase currently carries the event.
@@ -171,6 +177,14 @@ type MouseEvent struct {
 	// is not also a click on it. Matches the DOM, which fires no click
 	// after a drag.
 	AfterDrag bool
+
+	// Clicks is the press count for EventMouseDown / EventMouseUp: 1 for a
+	// single click, 2 for the second press of a double-click, and so on
+	// (presses of the same button within 400ms and 4px of each other).
+	// The window fills it in during dispatch, so double-click-to-open is a
+	// `me.Clicks == 2` check rather than a hand-rolled timer. Zero on other
+	// event types.
+	Clicks int
 
 	// ScrollPhase is the scroll gesture's lifecycle stage, for
 	// EventScroll only. GesturePhaseNone on platforms that don't report
@@ -326,7 +340,16 @@ type DragEvent struct {
 	eventType EventType
 	When      time.Time
 	X, Y      float32
-	Source    Widget
+	// Source is the widget being dragged; nil for an OS file drop.
+	Source Widget
+	// Data is the drag payload: what the source's DragDataProvider
+	// supplied, or the dropped Files for an OS file drop. Never nil on
+	// events the window synthesizes.
+	Data *DragData
+	// Accepted, on EventDragEnd, reports whether a drop target took the
+	// drop — a source that moves rather than copies removes its item only
+	// then.
+	Accepted bool
 }
 
 func (e DragEvent) Type() EventType      { return e.eventType }

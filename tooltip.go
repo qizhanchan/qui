@@ -1,6 +1,71 @@
 package qui
 
-import "unicode"
+import (
+	"time"
+	"unicode"
+)
+
+// TooltipStyle configures a window's built-in hover tooltip. Zero fields
+// keep the default: theme colors, the default font, 5/8px padding, a 4px
+// radius, a 360px wrap width, a 6px gap, no show delay and a 250ms grace
+// period. Set it with Window.SetTooltipStyle — per window, so a dark
+// stylesheet can give its tooltips dark chrome.
+type TooltipStyle struct {
+	Padding  Insets
+	Radius   float32
+	Font     Font
+	MaxWidth float32
+	Gap      float32
+	// Background, Text and Border override the theme tokens
+	// (SurfaceOverlay, Text, BorderStrong) when non-zero.
+	Background, Text, Border Color
+	// Delay is how long the pointer must rest on a widget before its
+	// tooltip shows. Moving from one tooltipped widget to the next while a
+	// tooltip is up switches immediately, as in a browser.
+	Delay time.Duration
+	// Grace is how long a tooltip lingers after the pointer leaves, so the
+	// pointer can reach it to select / copy its text.
+	Grace time.Duration
+}
+
+// SetTooltipStyle replaces the window's tooltip style. A tooltip already
+// showing keeps its old look until it is shown again.
+func (w *Window) SetTooltipStyle(s TooltipStyle) {
+	if w == nil {
+		return
+	}
+	w.assertUIThread("Window.SetTooltipStyle")
+	w.tooltipStyle = s
+}
+
+// TooltipStyle returns the style set by SetTooltipStyle (zero = defaults).
+func (w *Window) TooltipStyle() TooltipStyle {
+	if w == nil {
+		return TooltipStyle{}
+	}
+	return w.tooltipStyle
+}
+
+func (s TooltipStyle) grace() time.Duration {
+	if s.Grace > 0 {
+		return s.Grace
+	}
+	return tooltipGracePeriod
+}
+
+func (s TooltipStyle) gap() float32 {
+	if s.Gap > 0 {
+		return s.Gap
+	}
+	return 6
+}
+
+func (s TooltipStyle) maxWidth() float32 {
+	if s.MaxWidth > 0 {
+		return s.MaxWidth
+	}
+	return 360
+}
 
 // TooltipProvider is the optional interface a widget implements to carry
 // its own hover-tooltip text. BaseWidget satisfies it (via SetTooltip /
@@ -51,6 +116,8 @@ type tooltipView struct {
 	BaseWidget
 	text string
 	font Font
+	// override carries the window's TooltipStyle colors (zero = theme).
+	override TooltipStyle
 	// wrapWidth is the max content width (scaled px, padding excluded) the
 	// text may occupy before soft-wrapping. 0 = unbounded (single line).
 	// Set by Window.showTooltip from the window width so long tooltips wrap
@@ -78,16 +145,26 @@ type ttLine struct {
 	start, end int
 }
 
-func newTooltipView(text string) *tooltipView {
+func newTooltipView(text string, st TooltipStyle) *tooltipView {
 	t := &tooltipView{
 		BaseWidget: NewBaseWidget(),
 		text:       text,
 		font:       DefaultStyle().Font,
+		override:   st,
 		selStart:   -1,
 	}
 	// Colors are theme-driven (see colors()); only geometry lives in style.
 	t.style.Padding = Insets{Top: 5, Right: 8, Bottom: 5, Left: 8}
 	t.style.Radius = 4
+	if st.Padding != (Insets{}) {
+		t.style.Padding = st.Padding
+	}
+	if st.Radius > 0 {
+		t.style.Radius = st.Radius
+	}
+	if st.Font.Size > 0 {
+		t.font = st.Font
+	}
 	return t
 }
 
@@ -104,6 +181,15 @@ func (t *tooltipView) colors() (bg, fg, border Color) {
 	fg = th.Text
 	bg = th.SurfaceOverlay
 	border = th.BorderStrong
+	if o := t.override; o.Background != (Color{}) {
+		bg = o.Background
+	}
+	if o := t.override; o.Text != (Color{}) {
+		fg = o.Text
+	}
+	if o := t.override; o.Border != (Color{}) {
+		border = o.Border
+	}
 	return
 }
 

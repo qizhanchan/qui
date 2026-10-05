@@ -158,6 +158,16 @@ func (c platformClipboard) Set(text string) {
 	c.win.setClipboardText(text)
 }
 
+// CommandMod is the platform's primary shortcut modifier: ModSuper (⌘) on
+// macOS, ModControl elsewhere. "CmdOrCtrl+S" in ParseShortcut resolves to
+// it.
+func CommandMod() Modifiers {
+	if runtime.GOOS == "darwin" {
+		return ModSuper
+	}
+	return ModControl
+}
+
 // IsCommandMod reports whether Mods contains the platform's
 // "command" modifier — ModSuper (Cmd) on macOS, ModControl (Ctrl)
 // elsewhere. Lets widgets write one branch for Cmd+C / Ctrl+C.

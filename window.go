@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"os"
+	"slices"
 	"sync"
 	"time"
 )
@@ -63,7 +64,12 @@ type Window struct {
 	// (AddFocusChangeListener). The html-css engine uses this to repaint
 	// elements whose styling depends on an ancestor's :focus — focus can
 	// move without any event reaching that ancestor.
-	focusListeners []func()
+	focusListeners []focusListener
+	// eventFilters run before any dispatch (AddEventFilter), most recently
+	// added first. nextHookID numbers filters and focus listeners so their
+	// removers stay valid as other entries come and go.
+	eventFilters []eventFilterEntry
+	nextHookID   int64
 	// focusVisible mirrors CSS :focus-visible — true when the current
 	// focus was acquired via keyboard (Tab / Shift+Tab) or programmatic
 	// SetFocus, false when via mouse click. Widgets implementing
@@ -73,6 +79,9 @@ type Window struct {
 	dragCandidate Widget
 	dragging      bool
 	dragStart     Point
+	// drag is the in-flight drag's payload, hovered target and drag
+	// image. See drag.go.
+	drag dragSession
 	// mouseCaptured remembers the widget that received MouseDown so that
 	// the matching MouseUp reaches it even if the cursor has since moved
 	// off. Standard "mouse capture" semantics: set on down, cleared on up.
@@ -101,6 +110,8 @@ type Window struct {
 	// here rather than in the backend so the handler can invoke it and
 	// then force the repaint a drop almost always warrants.
 	onDrop func(paths []string, x, y float32)
+	// fileDropRetains counts RetainFileDrops holders (widget drop zones).
+	fileDropRetains int
 	// lastMods is the modifier state from the most recent key or
 	// mouse-button event. Cursor motion doesn't report modifiers, so
 	// moves borrow this rather than polling per pixel.
@@ -112,6 +123,8 @@ type Window struct {
 	// selClicks counts consecutive presses for the selection controller's
 	// multi-click granularity (double = word, triple = line).
 	selClicks selectionClicks
+	// clicks counts consecutive presses for MouseEvent.Clicks.
+	clicks clickCounter
 	// hoverPath is the root→leaf chain of widgets currently under the
 	// cursor. Updated on every MouseMove; diff against a new hit path
 	// drives Enter/Leave synthesis.
@@ -124,6 +137,12 @@ type Window struct {
 	// addition to the main root; the topmost overlay gets first chance
 	// at events within its bounds.
 	overlays []Widget
+	// overlayLayers records each shown overlay's layer; overlays stays
+	// sorted by it (PushOverlayLayer).
+	overlayLayers map[Widget]OverlayLayer
+	// exitingOverlays were removed from the stack but are still painting
+	// an exit animation (OverlayExiter). They take no input.
+	exitingOverlays []Widget
 	// overlayResizePending is set by resizeTo when the logical window
 	// size changed, and consumed after the frame's layout pass to notify
 	// OverlayResizer overlays (see notifyOverlaysResize). Deferring past
@@ -150,6 +169,11 @@ type Window struct {
 	// onto the tooltip clears the deadline; the deadline firing (checked
 	// in Step via tickTooltip) closes it. Zero = no pending close.
 	tooltipCloseAt time.Time
+	// tooltipStyle is SetTooltipStyle's value; tooltipShowAt / tooltipText
+	// hold a tooltip waiting out TooltipStyle.Delay.
+	tooltipStyle  TooltipStyle
+	tooltipShowAt time.Time
+	tooltipText   string
 	// dirtyRegion is the union of rectangles that need to be re-rasterized
 	// on the next Step. An empty Rect means "nothing to redraw" and
 	// causes Step to skip the entire paint pass. Invalidate() fills it
@@ -214,6 +238,9 @@ type Window struct {
 	// not caught — handlers should be defensive on their own. Cleared
 	// after firing so re-entry doesn't double-invoke.
 	onClose []func()
+	// life holds close-request vetoes, activation / move / minimize
+	// callbacks and window ownership. See window_lifecycle.go.
+	life windowLifecycle
 	// onFSChange callbacks fire when the window's fullscreen state changes —
 	// including changes the app did not make (the traffic-light button,
 	// Ctrl+Cmd+F). wasFullscreen is the last observed state; the check is a
@@ -253,6 +280,20 @@ func (w *Window) AcceleratorShortcuts() []string {
 	}
 	w.assertUIThread("Window.AcceleratorShortcuts")
 	return w.accels.Shortcuts()
+}
+
+// Accelerators returns the window's accelerator registry, installing an
+// empty one first if none is set — the convenient entry point for app code
+// that just wants to bind a shortcut.
+func (w *Window) Accelerators() *AcceleratorRegistry {
+	if w == nil {
+		return nil
+	}
+	w.assertUIThread("Window.Accelerators")
+	if w.accels == nil {
+		w.accels = NewAcceleratorRegistry()
+	}
+	return w.accels
 }
 
 // AcceleratorRegistry returns the currently installed registry, or nil.
@@ -822,27 +863,50 @@ func (w *Window) Focused() Widget {
 	return w.focused
 }
 
-// PushOverlay adds a widget on top of the overlay stack. The caller is
-// responsible for pre-laying out the widget (call widget.Layout(rect)
-// before pushing) so it knows where to render. The overlay's bounds
-// are automatically invalidated so the next Step paints it in.
+// PushOverlay adds a widget on top of the overlay stack (within
+// OverlayLayerDefault — see PushOverlayLayer). The caller is responsible
+// for pre-laying out the widget (call widget.Layout(rect) before pushing)
+// so it knows where to render. The overlay's bounds are automatically
+// invalidated so the next Step paints it in. Pushing an overlay that is
+// already shown raises it to the top of its layer.
 func (w *Window) PushOverlay(widget Widget) {
 	if w == nil || widget == nil {
 		return
 	}
 	w.assertUIThread("Window.PushOverlay")
+	layer := OverlayLayerDefault
+	if l, ok := w.overlayLayers[widget]; ok {
+		layer = l
+	}
+	w.pushOverlay(widget, layer)
+}
+
+// PushOverlayLayer is PushOverlay into a specific layer. The stack is kept
+// ordered by layer, so an overlay in a higher layer stays above any later
+// push into a lower one — a toast pushed now still sits above a modal
+// opened a second later, and tooltips above both.
+func (w *Window) PushOverlayLayer(widget Widget, layer OverlayLayer) {
+	if w == nil || widget == nil {
+		return
+	}
+	w.assertUIThread("Window.PushOverlayLayer")
+	w.pushOverlay(widget, layer)
+}
+
+func (w *Window) pushOverlay(widget Widget, layer OverlayLayer) {
+	w.cancelOverlayExit(widget)
+	if w.overlayLayers == nil {
+		w.overlayLayers = map[Widget]OverlayLayer{}
+	}
 	for i, overlay := range w.overlays {
 		if overlay != widget {
 			continue
 		}
-		if i == len(w.overlays)-1 {
-			return
-		}
 		scope := w.overlayFocusScopes[i]
 		w.overlays = append(w.overlays[:i], w.overlays[i+1:]...)
 		w.overlayFocusScopes = append(w.overlayFocusScopes[:i], w.overlayFocusScopes[i+1:]...)
-		w.overlays = append(w.overlays, widget)
-		w.overlayFocusScopes = append(w.overlayFocusScopes, scope)
+		w.overlayLayers[widget] = layer
+		w.insertOverlay(widget, scope, layer)
 		w.InvalidateRect(PaintBoundsInWindow(widget))
 		return
 	}
@@ -850,9 +914,19 @@ func (w *Window) PushOverlay(widget Widget) {
 	if !AdoptWidgetTree(widget, nil, w) {
 		return
 	}
-	w.overlays = append(w.overlays, widget)
-	w.overlayFocusScopes = append(w.overlayFocusScopes, scope)
+	w.overlayLayers[widget] = layer
+	w.insertOverlay(widget, scope, layer)
 	w.InvalidateRect(PaintBoundsInWindow(widget))
+}
+
+// insertOverlay places widget above every overlay whose layer is <= layer.
+func (w *Window) insertOverlay(widget Widget, scope overlayFocusScope, layer OverlayLayer) {
+	at := len(w.overlays)
+	for at > 0 && w.overlayLayers[w.overlays[at-1]] > layer {
+		at--
+	}
+	w.overlays = slices.Insert(w.overlays, at, widget)
+	w.overlayFocusScopes = slices.Insert(w.overlayFocusScopes, at, scope)
 }
 
 // PopOverlay removes and returns the topmost overlay. Returns nil if
@@ -900,6 +974,7 @@ func (w *Window) removeOverlayAt(index int) Widget {
 	focusedInside := widgetIsDescendant(w.focused, widget)
 	scope := w.takeOverlayFocusScope(index, widget)
 	w.overlays = append(w.overlays[:index], w.overlays[index+1:]...)
+	delete(w.overlayLayers, widget)
 	w.InvalidateRect(PaintBoundsInWindow(widget))
 
 	// Transfer focus while the removed subtree is still wired, so the old
@@ -912,6 +987,9 @@ func (w *Window) removeOverlayAt(index int) Widget {
 		}
 		w.focusVisible = scope.focusVisible
 		w.SetFocus(restore)
+	}
+	if w.beginOverlayExit(widget) {
+		return widget
 	}
 	DetachWidgetTree(widget)
 	return widget
@@ -933,6 +1011,7 @@ func (w *Window) releaseTopLevelForTransfer(widget Widget) bool {
 		}
 		w.takeOverlayFocusScope(i, widget)
 		w.overlays = append(w.overlays[:i], w.overlays[i+1:]...)
+		delete(w.overlayLayers, widget)
 		w.InvalidateRect(PaintBoundsInWindow(widget))
 		return true
 	}
@@ -1030,15 +1109,22 @@ func (w *Window) updateTooltipFromHover(cursorX, cursorY float32) {
 		// where the pointer entered.
 		w.tooltipCloseAt = time.Time{}
 		if target != w.tooltipTarget || anchor != w.tooltipAnchor {
+			showing := w.tooltipView != nil
 			w.tooltipTarget = target
 			w.tooltipAnchor = anchor
 			w.closeTooltip()
+			if d := w.tooltipStyle.Delay; d > 0 && !showing {
+				w.tooltipText = text
+				w.tooltipShowAt = time.Now().Add(d)
+				return
+			}
 			w.showTooltip(text, anchor)
 		}
 		return
 	}
 
 	// Not over any tooltipped widget.
+	w.tooltipShowAt = time.Time{}
 	if w.tooltipView == nil {
 		w.tooltipTarget, w.tooltipAnchor = nil, Rect{}
 		return
@@ -1053,7 +1139,7 @@ func (w *Window) updateTooltipFromHover(cursorX, cursorY float32) {
 	}
 	// Left both the widget and the tooltip — arm the grace-period close.
 	if w.tooltipCloseAt.IsZero() {
-		w.tooltipCloseAt = time.Now().Add(tooltipGracePeriod)
+		w.tooltipCloseAt = time.Now().Add(w.tooltipStyle.grace())
 	}
 }
 
@@ -1061,6 +1147,12 @@ func (w *Window) updateTooltipFromHover(cursorX, cursorY float32) {
 // Called from Step (outside the overlay tick loop so removing the overlay
 // doesn't mutate the slice being ranged). now is the frame time.
 func (w *Window) tickTooltip(now time.Time) {
+	if !w.tooltipShowAt.IsZero() && !now.Before(w.tooltipShowAt) {
+		w.tooltipShowAt = time.Time{}
+		if w.tooltipTarget != nil && w.tooltipView == nil {
+			w.showTooltip(w.tooltipText, w.tooltipAnchor)
+		}
+	}
 	if w.tooltipView == nil || w.tooltipCloseAt.IsZero() {
 		return
 	}
@@ -1083,10 +1175,10 @@ func (w *Window) tickTooltip(now time.Time) {
 func (w *Window) showTooltip(text string, anchor Rect) {
 	// Tooltips must NOT steal clicks — tooltipView.HitTest returns nil
 	// so events fall through to the widget underneath. Purely visual.
-	tv := newTooltipView(text)
+	tv := newTooltipView(text, w.tooltipStyle)
 
-	const gap = 6    // vertical gap between the widget and the tooltip
-	const margin = 4 // keep a small gap from the window edges
+	gap := w.tooltipStyle.gap() // vertical gap between the widget and the tooltip
+	const margin = 4            // keep a small gap from the window edges
 	winW, winH := w.lastSize.W, w.lastSize.H
 
 	// Cap the tooltip width so long text soft-wraps instead of running off
@@ -1094,8 +1186,7 @@ func (w *Window) showTooltip(text string, anchor Rect) {
 	// fits inside the window margins. wrapWidth is content-only, so subtract
 	// the horizontal padding.
 	_, padding, _ := tv.scaled()
-	const preferredW = 360 // logical px — comfortable multi-line reading width
-	maxContentW := float32(preferredW)
+	maxContentW := w.tooltipStyle.maxWidth() // comfortable multi-line reading width
 	if fit := winW - 2*margin - padding.Horizontal(); fit < maxContentW {
 		maxContentW = fit
 	}
@@ -1132,12 +1223,13 @@ func (w *Window) showTooltip(text string, anchor Rect) {
 	}
 
 	tv.Layout(Rect{X: px, Y: py, W: size.W, H: size.H})
-	w.PushOverlay(tv)
+	w.PushOverlayLayer(tv, OverlayLayerTooltip)
 	w.tooltipView = tv
 }
 
 func (w *Window) closeTooltip() {
 	w.tooltipCloseAt = time.Time{}
+	w.tooltipShowAt = time.Time{}
 	if w.tooltipView != nil {
 		w.tooltipView.close(w)
 		w.tooltipView = nil
@@ -1376,9 +1468,8 @@ func (w *Window) ShouldClose() bool {
 // dialogs) that need the message loop alive during teardown.
 //
 // Multiple registrations are allowed and fire in registration order.
-// A handler that needs to *cancel* the close should call
-// w.handle.SetShouldClose(false) from inside the callback — but note
-// that qui's standard loop will then keep running.
+// OnClose runs once the close is final; to cancel a close the user asked
+// for (unsaved changes), register OnCloseRequest instead.
 func (w *Window) OnClose(fn func()) {
 	if w == nil || fn == nil {
 		return
@@ -1450,6 +1541,7 @@ func (w *Window) Destroy() {
 	// should still get a chance to clean up subsystem resources before
 	// GLFW tears the window down.
 	w.runCloseHandlers()
+	w.releaseOwnership()
 	if w.unsubscribeTheme != nil {
 		w.unsubscribeTheme()
 		w.unsubscribeTheme = nil
@@ -1459,10 +1551,12 @@ func (w *Window) Destroy() {
 		w.unsubscribeLocale = nil
 	}
 	root := w.root
-	overlays := append([]Widget(nil), w.overlays...)
+	overlays := append(append([]Widget(nil), w.overlays...), w.exitingOverlays...)
 	w.root = nil
 	w.overlays = nil
 	w.overlayFocusScopes = nil
+	w.overlayLayers = nil
+	w.exitingOverlays = nil
 	if root != nil {
 		DetachWidgetTree(root)
 	}
@@ -1534,6 +1628,9 @@ func (w *Window) Step() {
 	for _, ov := range w.overlays {
 		w.dirtyRegion = w.dirtyRegion.Union(tickWidget(ov, now))
 	}
+	for _, ov := range slices.Clone(w.exitingOverlays) {
+		w.dirtyRegion = w.dirtyRegion.Union(tickWidget(ov, now))
+	}
 	// Layout caching: skip Measure+Layout unless something explicitly
 	// invalidated the layout. This is the win for high-frequency
 	// repaints like cursor blink — the layout hasn't changed, only
@@ -1555,6 +1652,9 @@ func (w *Window) Step() {
 		w.root.Layout(Rect{X: 0, Y: 0, W: w.lastSize.W, H: w.lastSize.H})
 		w.root.ClearLayoutDirty()
 		w.inLayoutPass = false
+		if widgetDebugEnabled {
+			debugCheckTree(w.root)
+		}
 		if w.boundsChanged {
 			w.Invalidate()
 		}
@@ -1657,6 +1757,14 @@ func (w *Window) Step() {
 				ov.Draw(drawCanvas)
 			}
 		}
+		for _, ov := range w.exitingOverlays {
+			if PaintBoundsOf(ov).Intersects(clip) {
+				ov.Draw(drawCanvas)
+			}
+		}
+		if img := w.drag.image; img != nil && PaintBoundsOf(img).Intersects(clip) {
+			img.Draw(drawCanvas)
+		}
 		if w.onRender != nil {
 			w.onRender(drawCanvas)
 		}
@@ -1715,6 +1823,14 @@ func (w *Window) dispatch(event Event) {
 	}
 	w.assertUIThread("Window.dispatch")
 	if w.root == nil {
+		return
+	}
+	if me, ok := event.(MouseEvent); ok && me.Clicks == 0 &&
+		(me.eventType == EventMouseDown || me.eventType == EventMouseUp) {
+		me.Clicks = w.clicks.count(me)
+		event = me
+	}
+	if w.runEventFilters(event) {
 		return
 	}
 
@@ -1944,9 +2060,8 @@ func (w *Window) dispatch(event Event) {
 		// App shortcuts act on the content behind a modal (Cmd+S saving
 		// the document under a confirm dialog), so they wait for it to
 		// close. The view shortcuts above stay live.
-		if w.topModalIndex() < 0 {
-			w.accels.Match(ke)
-		}
+		// Scoped entries inside the modal stay live.
+		w.accels.match(ke, target, w.topModalIndex() >= 0)
 	}
 	if ke, ok := event.(KeyEvent); ok && ke.eventType == EventKeyDown && w.accels == nil {
 		if w.handleZoomShortcut(ke) {
@@ -2113,79 +2228,6 @@ func draggableAncestor(w Widget) Widget {
 		}
 	}
 	return nil
-}
-
-// droppableAncestor returns the nearest self-or-ancestor of w that reports
-// Droppable() == true, or nil.
-func droppableAncestor(w Widget) Widget {
-	for cur := w; cur != nil; cur = cur.Parent() {
-		if d, ok := cur.(Droppable); ok && d.Droppable() {
-			return cur
-		}
-	}
-	return nil
-}
-
-func (w *Window) handleDragMove(me MouseEvent) {
-	if w.dragCandidate == nil {
-		return
-	}
-	dx := me.X - w.dragStart.X
-	dy := me.Y - w.dragStart.Y
-	if !w.dragging {
-		if dx*dx+dy*dy < 16 {
-			return
-		}
-		w.dragging = true
-		// A widget drag now owns the gesture. Drop any text selection that
-		// formed during the sub-dead-zone moves and disarm the selection
-		// drag so the highlight doesn't fight the drag (dispatch also stops
-		// routing moves to the captured widget while w.dragging).
-		w.clearAllTextSelection()
-		w.endTextSelectionDrag()
-		w.dragCandidate.Handle(w.dragEventFor(w.dragCandidate, EventDragStart, Point{X: me.X, Y: me.Y}))
-	}
-	if w.dragging {
-		w.dragCandidate.Handle(w.dragEventFor(w.dragCandidate, EventDragMove, Point{X: me.X, Y: me.Y}))
-		// Notify the droppable under the cursor (standard DnD dragover) so a
-		// target can show a drop indicator. Fired every move; the target
-		// dedupes if it wants.
-		if over := droppableAncestor(w.hitTestAll(Point{X: me.X, Y: me.Y})); over != nil {
-			over.Handle(w.dragEventFor(over, EventDragOver, Point{X: me.X, Y: me.Y}))
-		}
-	}
-}
-
-func (w *Window) handleDragEnd(me MouseEvent) {
-	if w.dragCandidate == nil {
-		return
-	}
-	if w.dragging {
-		w.dragCandidate.Handle(w.dragEventFor(w.dragCandidate, EventDragEnd, Point{X: me.X, Y: me.Y}))
-		hit := w.hitTestAll(Point{X: me.X, Y: me.Y})
-		if target := droppableAncestor(hit); target != nil {
-			target.Handle(w.dragEventFor(target, EventDrop, Point{X: me.X, Y: me.Y}))
-		}
-	}
-	w.dragCandidate = nil
-	w.dragging = false
-}
-
-// dragEventFor builds a synthesized drag event addressed to receiver, with
-// the cursor position mapped into the RECEIVER's own coordinate space — a
-// drop target inside a scroll container computes its insertion index from
-// its children's retained (content-space) bounds, so a raw window
-// coordinate would land in the wrong row.
-func (w *Window) dragEventFor(receiver Widget, kind EventType, at Point) DragEvent {
-	p := WindowPointToLocal(receiver, at)
-	return DragEvent{
-		baseEvent: baseEvent{shared: &eventState{}},
-		eventType: kind,
-		When:      time.Now(),
-		X:         p.X,
-		Y:         p.Y,
-		Source:    w.dragCandidate,
-	}
 }
 
 // Ensure window has a valid root set.

@@ -7,21 +7,9 @@ import "time"
 // (document order), which is the least-surprising default. Custom tab
 // orders can come later via a per-widget TabIndex hint.
 
-// childLister mirrors Container.ChildList without importing dispatch
-// concerns. Kept private: only framework code walks the tree.
-type childLister interface {
-	ChildList() []Widget
-}
+type childLister = ChildLister
 
-// focusVisibleAware is optional — widgets implement it to be told
-// whether the current focus is keyboard-induced (true) or mouse-induced
-// (false). Mirrors the CSS :focus-visible distinction so widgets can
-// suppress the focus state-layer / ring after a click while keeping
-// real keyboard focus indicated. Window calls SetFocusVisible right
-// after SetFocused(true) when focus changes.
-type focusVisibleAware interface {
-	SetFocusVisible(bool)
-}
+type focusVisibleAware = FocusVisibleAware
 
 // ClickFocusPolicy is optional for focusable widgets. One whose
 // FocusOnClick returns false is reached by Tab but a click on it — or on
@@ -46,13 +34,7 @@ func isTabStop(w Widget) bool {
 	return true
 }
 
-// modalOverlay is implemented by overlays that should trap focus —
-// while one is on the stack, Tab cycles only within that overlay,
-// skipping the main tree and any non-modal overlays below. Used for
-// Dialog; Tooltip / Popup should not be modal.
-type modalOverlay interface {
-	Modal() bool
-}
+type modalOverlay = ModalOverlay
 
 type overlayFocusScope struct {
 	restore      Widget
@@ -174,8 +156,8 @@ func (w *Window) SetFocus(target Widget) {
 	if target != nil {
 		w.InvalidateRect(PaintBoundsInWindow(target))
 	}
-	for _, fn := range w.focusListeners {
-		fn()
+	for _, l := range append([]focusListener(nil), w.focusListeners...) {
+		l.fn()
 	}
 }
 
@@ -288,16 +270,9 @@ func (w *Window) releaseSubtreeInteractions(root Widget) {
 		w.gestureRotation = 0
 	}
 	if widgetIsDescendant(w.dragCandidate, root) {
-		if w.dragging {
-			w.dragCandidate.Handle(DragEvent{
-				baseEvent: baseEvent{shared: &eventState{}},
-				eventType: EventDragEnd,
-				When:      time.Now(),
-				Source:    w.dragCandidate,
-			})
-		}
-		w.dragCandidate = nil
-		w.dragging = false
+		w.cancelDrag()
+	} else if widgetIsDescendant(w.drag.over, root) {
+		w.drag.over = nil
 	}
 
 	selectionTouchesRoot := widgetIsDescendant(w.textSel.anchor, root)
@@ -389,16 +364,33 @@ func (w *Window) clearHoverPath() {
 	w.hoverPath = nil
 }
 
+// focusListener is one AddFocusChangeListener registration.
+type focusListener struct {
+	id int64
+	fn func()
+}
+
 // AddFocusChangeListener registers fn to run after keyboard focus moves
-// between widgets (including to/from nil). Listeners cannot be removed —
-// register once per long-lived subsystem (the html-css engine uses this to
-// repaint ancestor-:focus dependents).
-func (w *Window) AddFocusChangeListener(fn func()) {
+// between widgets (including to/from nil) and returns a function that
+// removes it. The html-css engine uses this to repaint ancestor-:focus
+// dependents; a component that listens only while it is mounted calls the
+// remover when it unmounts.
+func (w *Window) AddFocusChangeListener(fn func()) (remove func()) {
 	if w == nil || fn == nil {
-		return
+		return func() {}
 	}
 	w.assertUIThread("Window.AddFocusChangeListener")
-	w.focusListeners = append(w.focusListeners, fn)
+	w.nextHookID++
+	id := w.nextHookID
+	w.focusListeners = append(w.focusListeners, focusListener{id: id, fn: fn})
+	return func() {
+		for i, l := range w.focusListeners {
+			if l.id == id {
+				w.focusListeners = append(w.focusListeners[:i:i], w.focusListeners[i+1:]...)
+				return
+			}
+		}
+	}
 }
 
 // FocusNext advances focus to the next focusable widget in tree order,

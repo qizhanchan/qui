@@ -78,6 +78,10 @@ type App struct {
 	// — keeps OnClose callbacks (agent socket unlink, dirty buffer
 	// flush, etc.) running on the GLFW thread where they belong.
 	closing atomic.Bool
+	// keepAlive keeps Run going with no windows open (SetKeepAlive); quit
+	// ends it regardless (Quit).
+	keepAlive bool
+	quit      bool
 }
 
 // ErrAppAlreadyExists is returned when NewApp is called more than once in
@@ -275,10 +279,12 @@ func (a *App) RunStep(waitTimeoutSeconds float64) bool {
 		// bar. Destroy unregisters each item from a.statusItems, so
 		// snapshot the slice before iterating.
 		a.destroyStatusItems()
+		a.quit = true
 		for _, w := range a.windows {
 			if w == nil || w.plat == nil {
 				continue
 			}
+			w.life.forceClose = true
 			w.plat.setShouldClose(true)
 		}
 	}
@@ -286,6 +292,12 @@ func (a *App) RunStep(waitTimeoutSeconds float64) bool {
 	for _, w := range a.windows {
 		if w == nil {
 			continue
+		}
+		if w.ShouldClose() && w.closeVetoed() {
+			// An OnCloseRequest handler kept the window open (it is
+			// probably showing a "save changes?" dialog right now), which
+			// also cancels a Quit in progress.
+			a.quit = false
 		}
 		if w.ShouldClose() {
 			// runCloseHandlers fires user-registered OnClose callbacks
@@ -306,6 +318,7 @@ func (a *App) RunStep(waitTimeoutSeconds float64) bool {
 			continue
 		}
 		alive++
+		w.pollLifecycle()
 		if !frameDue(w) {
 			continue
 		}
@@ -316,8 +329,40 @@ func (a *App) RunStep(waitTimeoutSeconds float64) bool {
 	// slice rather than compacting the range in place.
 	a.pruneDestroyedWindows()
 	alive = len(a.windows)
-	a.running = alive > 0
+	if a.keepAlive {
+		a.running = !a.quit || alive > 0
+	} else {
+		a.running = alive > 0
+	}
 	return a.running
+}
+
+// SetKeepAlive keeps Run going after the last window closes — what a
+// menu-bar (tray) app or a macOS-style "app stays open with no documents"
+// needs. Run then ends only through Quit or SIGINT/SIGTERM.
+func (a *App) SetKeepAlive(on bool) {
+	if a == nil {
+		return
+	}
+	a.keepAlive = on
+}
+
+// Quit asks every window to close (OnCloseRequest handlers can veto, which
+// cancels the quit) and ends Run once they have. Safe from the UI thread.
+func (a *App) Quit() {
+	if a == nil {
+		return
+	}
+	a.quit = true
+	if len(a.windows) == 0 {
+		a.running = false
+	}
+	for _, w := range a.windows {
+		if w != nil && w.plat != nil {
+			w.plat.setShouldClose(true)
+		}
+	}
+	WakeEventLoop()
 }
 
 func (a *App) pruneDestroyedWindows() {

@@ -214,3 +214,27 @@ func TestDialogInheritsFromDeclaringTree(t *testing.T) {
 		t.Error("dialog kept the dark background after .dark was removed")
 	}
 }
+
+// Handler props on a re-rendered dialog must be the current render's
+// closures, not the first render's.
+func TestDialogConfirmSeesLatestState(t *testing.T) {
+	win := qui.NewTestWindow(qui.Size{W: 800, H: 600})
+	var setName func(string)
+	got := ""
+	rt := h.Mount(win, ``, func() h.Node {
+		name, set := reactive.UseState("first")
+		setName = set
+		return h.Div(h.Dialog(h.DialogProps{
+			Title:     "Rename",
+			OnDismiss: func() {},
+			OnConfirm: func() { got = name },
+		}))
+	})
+	setName("second")
+	rt.Flush()
+	win.SetFocus(nil)
+	win.DispatchTestEvent(qui.NewKeyEvent(qui.EventKeyDown, qui.KeyEnter, 0))
+	if got != "second" {
+		t.Errorf("OnConfirm saw %q, want the re-rendered state %q", got, "second")
+	}
+}
