@@ -190,8 +190,8 @@ type reconcilePass struct {
 	providers map[*contextKey][]*providerState
 
 	// hosts is the stack of host widgets enclosing the current point of
-	// the DFS — the declaring context a Portal hands its content as a
-	// style parent (see adoptPortalStyle).
+	// the DFS — the declaring context a Portal or Show/For hands its
+	// content as a style parent (see adoptStyleParent).
 	hosts []qui.Widget
 }
 
@@ -215,11 +215,13 @@ func (p *reconcilePass) currentHost() qui.Widget {
 // interface so reactive stays backend-agnostic.
 type styleParented interface{ SetStyleParent(qui.Widget) }
 
-// adoptPortalStyle links a portal's content widgets to the host the
-// portal was declared under, so the content cascades from its declaring
-// context (inherited properties, ancestor selectors) even though it is
-// mounted into the overlay stack.
-func adoptPortalStyle(widgets []qui.Widget, parent qui.Widget) {
+// adoptStyleParent links widgets that sit outside their declaring host's
+// own child list to that host, so they cascade from their declaring
+// context (inherited properties, custom properties, ancestor selectors):
+// a portal's content, mounted into the overlay stack, and the children
+// of a Show/For container, which the host sees only as one opaque
+// non-element child.
+func adoptStyleParent(widgets []qui.Widget, parent qui.Widget) {
 	if parent == nil {
 		return
 	}
@@ -312,7 +314,7 @@ type instance struct {
 	isPortal   bool
 	portalOpts *PortalOptions
 	// styleParent is the host a portal was declared under (see
-	// adoptPortalStyle); re-applied when the portal's content widget
+	// adoptStyleParent); re-applied when the portal's content widget
 	// changes.
 	styleParent qui.Widget
 
@@ -428,6 +430,7 @@ func reconcileNode(prev *instance, next Element, pass *reconcilePass) (*instance
 		prev.bnd.data = next.bound
 		prev.bnd.parentFiber = pass.currentFiber()
 		prev.bnd.providers = snapshotProviders(pass)
+		prev.bnd.host = pass.currentHost()
 		if prev.bnd.layout != next.bound.layout {
 			if c, ok := prev.widget.(*qui.Container); ok {
 				applyBoundLayout(c, next.bound.layout)
@@ -436,7 +439,9 @@ func reconcileNode(prev *instance, next Element, pass *reconcilePass) (*instance
 		}
 		children, childFlags := reconcileChildren(prev.children, next.bound.build(), pass)
 		prev.children = children
-		return prev, childFlags | syncChildWidgets(prev)
+		childFlags |= syncChildWidgets(prev)
+		adoptStyleParent(prev.lastWidgets, prev.bnd.host)
+		return prev, childFlags
 	}
 
 	if next.isPortal() {
@@ -449,10 +454,10 @@ func reconcileNode(prev *instance, next Element, pass *reconcilePass) (*instance
 			unmountInstance(prev, pass)
 			return mountNode(next, pass)
 		}
-		// Callbacks are re-installed on every render: valuesEqual compares
-		// funcs by code pointer, so a re-rendered closure over fresh state
-		// (an OnEnter reading the form) would otherwise keep the first
-		// render's captures. Only a geometry/visual change re-lays out.
+		// Callbacks are re-installed on every render (the current
+		// closures, over fresh state). They used to also force a relayout
+		// each render — valuesEqual never equates non-nil funcs — so only a
+		// geometry / visual change re-lays out now.
 		geometryChanged := !valuesEqual(portalGeometry(*prev.portalOpts), portalGeometry(*next.portal))
 		host.applyOpts(*next.portal)
 		prev.portalOpts = next.portal
@@ -463,7 +468,7 @@ func reconcileNode(prev *instance, next Element, pass *reconcilePass) (*instance
 		prev.children = children
 		synced := syncChildWidgets(prev)
 		if synced != FlagNone {
-			adoptPortalStyle(prev.lastWidgets, prev.styleParent)
+			adoptStyleParent(prev.lastWidgets, prev.styleParent)
 		}
 		if synced != FlagNone || childFlags.has(FlagLayout) {
 			layoutPortal(host, pass.runtime.window)
@@ -807,7 +812,7 @@ func mountPortal(elem Element, pass *reconcilePass) (*instance, Flags) {
 	node.lastWidgets = collectWidgets(children)
 	node.setChildren(host, node.lastWidgets)
 	node.styleParent = pass.currentHost()
-	adoptPortalStyle(node.lastWidgets, node.styleParent)
+	adoptStyleParent(node.lastWidgets, node.styleParent)
 
 	layoutPortal(host, window)
 	window.PushOverlay(host)

@@ -145,6 +145,12 @@ type boundState struct {
 	// replay the correct hook + context environment for the subtree.
 	parentFiber *componentFiber
 	providers   map[*contextKey][]*providerState
+	// host is the nearest enclosing host widget — the style parent of the
+	// mounted children. The container is a plain widget the host's style
+	// engine cannot see through, so without this link the children would
+	// be unparented style roots: no inherited color/font, no custom
+	// properties, no ancestor selectors (`.app.dark .empty`).
+	host qui.Widget
 
 	syncPending atomic.Bool
 }
@@ -192,6 +198,9 @@ func (r *Runtime) syncBoundNode(node *instance) {
 		if node.bnd.parentFiber != nil {
 			pass.fiberStack = append(pass.fiberStack, node.bnd.parentFiber)
 		}
+		if node.bnd.host != nil {
+			pass.pushHost(node.bnd.host)
+		}
 		if len(node.bnd.providers) > 0 {
 			pass.providers = make(map[*contextKey][]*providerState, len(node.bnd.providers))
 			for key, stack := range node.bnd.providers {
@@ -202,6 +211,7 @@ func (r *Runtime) syncBoundNode(node *instance) {
 		children, childFlags := reconcileChildren(node.children, node.bnd.data.build(), pass)
 		node.children = children
 		flags = childFlags | syncChildWidgets(node)
+		adoptStyleParent(node.lastWidgets, node.bnd.host)
 		cleanups = pass.cleanups
 
 		// Honest accounting: scoped syncs add their node work to the total
@@ -307,6 +317,7 @@ func mountBound(elem Element, pass *reconcilePass) (*instance, Flags) {
 		layout:      elem.bound.layout,
 		parentFiber: pass.currentFiber(),
 		providers:   snapshotProviders(pass),
+		host:        pass.currentHost(),
 	}
 	node := &instance{
 		kind:   elem.Kind,
@@ -321,6 +332,7 @@ func mountBound(elem Element, pass *reconcilePass) (*instance, Flags) {
 	children, flags := reconcileChildren(nil, elem.bound.build(), pass)
 	node.children = children
 	flags |= syncChildWidgets(node)
+	adoptStyleParent(node.lastWidgets, state.host)
 
 	state.unsub = elem.bound.watch.Subscribe(func() {
 		rt.scheduleBoundSync(node)
