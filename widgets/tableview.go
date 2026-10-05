@@ -13,9 +13,13 @@ import (
 // equally, so a common idiom is one fixed "ID" column + variable-
 // width "Name" column.
 //
+// Columns can align their text, draw their own cells (DrawCell) and sort
+// on a header click (Sortable + OnSort, or a SortableTableModel). Widget
+// rows can be supplied up front (SetRowWidgets) or built only while
+// visible (SetRowFactory).
+//
 // Current limitations:
 //   - Column resize drag (handle on column boundary)
-//   - Sort on header click
 //   - Multi-select
 //   - Horizontal scroll (columns are clipped if they overflow)
 //
@@ -31,9 +35,49 @@ type TableModel interface {
 // TableColumn describes one visible column.
 type TableColumn struct {
 	Title string
+	// TitleKey makes the header caption come from the message catalog
+	// (Title is the fallback).
+	TitleKey string
 	// Width in logical pixels. 0 means "take an equal share of
 	// whatever remains after fixed-width columns are laid out".
 	Width float32
+	// Align places the cell text (and header caption) horizontally.
+	Align TextAlign
+	// Sortable makes a header click sort by this column (see
+	// TableView.OnSort).
+	Sortable bool
+	// DrawCell, when set, paints this column's cells instead of the
+	// model text — a progress bar, a status dot, an icon. It runs inside
+	// the cell's clip, after the row background.
+	DrawCell func(canvas Canvas, cell TableCell)
+}
+
+// DisplayTitle is the header caption: TitleKey resolved, or Title.
+func (c TableColumn) DisplayTitle() string {
+	if c.TitleKey == "" {
+		return c.Title
+	}
+	return TranslateOr("", c.TitleKey, c.Title, nil)
+}
+
+// TableCell is what a DrawCell callback paints.
+type TableCell struct {
+	Row, Col int
+	// Rect is the cell's full rectangle; Content is Rect minus the
+	// standard horizontal padding.
+	Rect, Content Rect
+	Text          string
+	Selected      bool
+	Hovered       bool
+	// Foreground is the text color the table would have used.
+	Foreground Color
+	Font       Font
+}
+
+// SortableTableModel is implemented by a model that can reorder itself.
+// A header click on a Sortable column calls SortBy (after OnSort).
+type SortableTableModel interface {
+	SortBy(col int, descending bool)
 }
 
 // SliceTableModel is a trivial TableModel backed by [][]string —
@@ -71,13 +115,25 @@ type TableView struct {
 	Model         TableModel
 	rowWidgets    []Widget
 	useWidgetRows bool
-	Columns       []TableColumn
-	SelectedIdx   int
-	selection     singleSelectionModel
-	RowHeight     float32
-	HeaderHeight  float32
-	OnSelect      func(row int)
-	OnActivate    func(row int)
+	lazy          *lazyRows
+	// Colors overrides the theme palette field by field (see RowColors).
+	Colors       RowColors
+	Columns      []TableColumn
+	SelectedIdx  int
+	selection    singleSelectionModel
+	RowHeight    float32
+	HeaderHeight float32
+	OnSelect     func(row int)
+	// OnActivate fires on a double-click on a row, or Enter with a row
+	// selected.
+	OnActivate func(row int)
+	// SortColumn is the column the data is sorted by (-1 for none) and
+	// SortDescending its direction; the header shows an arrow there. A
+	// click on a Sortable header updates both, then calls OnSort and the
+	// model's SortBy.
+	SortColumn     int
+	SortDescending bool
+	OnSort         func(col int, descending bool)
 
 	scrollY  float32
 	hoverIdx int
@@ -101,11 +157,10 @@ func NewTableView(columns []TableColumn, model TableModel) *TableView {
 		HeaderHeight:  tableHeaderDefaultH,
 		hoverIdx:      -1,
 		useWidgetRows: false,
+		SortColumn:    -1,
 	}
 	tv.SetSelf(tv)
-	tv.Style().Background = Color{R: 0.1, G: 0.1, B: 0.12, A: 1}
-	tv.Style().Foreground = ColorWhite
-	tv.Style().Border = Color{R: 0.3, G: 0.3, B: 0.35, A: 1}
+	// Colors resolve from the theme at draw time (see RowColors).
 	tv.Style().BorderSize = 1
 	tv.Style().Radius = 3
 	tv.Style().Font = Font{Size: 14}
@@ -131,7 +186,63 @@ func (tv *TableView) ChildList() []Widget {
 	if !tv.useWidgetRows {
 		return nil
 	}
+	if tv.lazy != nil {
+		return tv.lazy.children()
+	}
 	return tv.rowWidgets
+}
+
+// widgetRow returns row i in widget-row mode, building it in factory mode.
+func (tv *TableView) widgetRow(i int) Widget {
+	if tv.lazy != nil {
+		var parent Widget = tv
+		if s := tv.Self(); s != nil {
+			parent = s
+		}
+		return tv.lazy.get(i, parent, tv.Window())
+	}
+	if i < 0 || i >= len(tv.rowWidgets) {
+		return nil
+	}
+	return tv.rowWidgets[i]
+}
+
+// SetRowFactory switches to widget-row mode with rows built on demand
+// (typically NewTableRow(tv.Columns, cells)): build(i) runs when row i
+// scrolls into view and far-off rows are released. See
+// ListView.SetRowFactory.
+func (tv *TableView) SetRowFactory(count int, build func(row int) Widget) {
+	tv.detachRowWidgets()
+	tv.Model = nil
+	tv.useWidgetRows = true
+	tv.lazy = &lazyRows{count: maxInt(count, 0), build: build}
+	tv.selection.Sync(tv.SelectedIdx)
+	tv.selection.Clamp(tv.lazy.count)
+	tv.SelectedIdx = tv.selection.Index()
+	tv.scrollY = ClampScroll(tv.scrollY, tv.contentHeight(), tv.bodyRect().H)
+	tv.InvalidateLayout()
+}
+
+// SetRowCount updates a factory table's row count.
+func (tv *TableView) SetRowCount(count int) {
+	if tv.lazy == nil {
+		return
+	}
+	tv.lazy.count = maxInt(count, 0)
+	tv.lazy.prune(0, tv.lazy.count)
+	tv.selection.Sync(tv.SelectedIdx)
+	tv.selection.Clamp(tv.lazy.count)
+	tv.SelectedIdx = tv.selection.Index()
+	tv.scrollY = ClampScroll(tv.scrollY, tv.contentHeight(), tv.bodyRect().H)
+	tv.InvalidateLayout()
+}
+
+// RefreshRows drops every built factory row so visible rows are rebuilt.
+func (tv *TableView) RefreshRows() {
+	if tv.lazy != nil {
+		tv.lazy.releaseAll()
+		tv.Invalidate()
+	}
 }
 
 func (tv *TableView) SetModel(model TableModel) {
@@ -150,9 +261,11 @@ func (tv *TableView) SetModel(model TableModel) {
 // Rows are treated as child widgets and rendered in the body viewport
 // (below the header strip).
 func (tv *TableView) SetRowWidgets(rows []Widget) {
-	if tv.useWidgetRows && tv.Model == nil && sameWidgetSlice(tv.rowWidgets, rows) {
+	if tv.useWidgetRows && tv.Model == nil && tv.lazy == nil && sameWidgetSlice(tv.rowWidgets, rows) {
 		return
 	}
+	tv.lazy.releaseAll()
+	tv.lazy = nil
 	tv.Model = nil
 	tv.useWidgetRows = true
 	oldRows := append([]Widget(nil), tv.rowWidgets...)
@@ -187,6 +300,8 @@ func (tv *TableView) SetRowWidgets(rows []Widget) {
 }
 
 func (tv *TableView) detachRowWidgets() {
+	tv.lazy.releaseAll()
+	tv.lazy = nil
 	rows := append([]Widget(nil), tv.rowWidgets...)
 	for _, row := range rows {
 		if row == nil {
@@ -199,6 +314,12 @@ func (tv *TableView) detachRowWidgets() {
 }
 
 func (tv *TableView) ReleaseChildForTransfer(child Widget) bool {
+	if tv.lazy.release(child) {
+		if child.Parent() == tv {
+			child.SetParent(nil)
+		}
+		return true
+	}
 	for i, row := range tv.rowWidgets {
 		if row != child {
 			continue
@@ -214,6 +335,9 @@ func (tv *TableView) ReleaseChildForTransfer(child Widget) bool {
 }
 
 func (tv *TableView) RowCount() int {
+	if tv.lazy != nil {
+		return tv.lazy.count
+	}
 	if tv.useWidgetRows {
 		return len(tv.rowWidgets)
 	}
@@ -314,16 +438,19 @@ func (tv *TableView) ensureVisible(row int) {
 	tv.scrollY = fixedRowEnsureVisible(tv.scrollY, row, tv.RowCount(), tv.RowHeight, tv.bodyRect())
 }
 
+func (tv *TableView) colors() RowColors { return tv.Colors.resolve(tv.Style()) }
+
 func (tv *TableView) Draw(canvas Canvas) {
 	b := tv.Bounds()
-	if tv.Style().Background.A > 0 {
-		canvas.FillRoundedRect(b, tv.Style().Radius, tv.Style().Background)
+	c := tv.colors()
+	if c.Background.A > 0 {
+		canvas.FillRoundedRect(b, tv.Style().Radius, c.Background)
 	}
 
 	widths := tv.columnWidths()
 
 	// Header — drawn first so the body clip doesn't paint over it.
-	tv.drawHeader(canvas, widths)
+	tv.drawHeader(canvas, widths, c)
 
 	// Body rows, virtualized + clipped.
 	body := tv.bodyRect()
@@ -342,11 +469,15 @@ func (tv *TableView) Draw(canvas Canvas) {
 		id := canvas.Save()
 		canvas.ClipRect(effectiveClip)
 		if tv.useWidgetRows {
-			tv.drawWidgetRows(canvas, body, contentW)
+			tv.drawWidgetRows(canvas, body, contentW, c)
 		} else {
-			tv.drawRows(canvas, widths, body, contentW)
+			tv.drawRows(canvas, widths, body, contentW, c)
 		}
 		canvas.RestoreTo(id)
+	}
+	if tv.lazy != nil {
+		start, end := tv.visibleRange()
+		tv.lazy.prune(start, end)
 	}
 
 	// Scrollbar on the body area only — doesn't extend into header
@@ -354,10 +485,10 @@ func (tv *TableView) Draw(canvas Canvas) {
 	if tv.hasScrollbar() {
 		track := VBarTrackRect(body)
 		thumb := VBarThumbRect(track, tv.contentHeight(), tv.scrollY)
-		VBarDraw(canvas, track, thumb, tv.barDragging)
+		VBarDrawColors(canvas, track, thumb, tv.barDragging, c.Scrollbar)
 	}
 	if tv.Style().BorderSize > 0 {
-		canvas.StrokeRect(b, tv.Style().Border, tv.Style().BorderSize)
+		canvas.StrokeRect(b, c.Border, tv.Style().BorderSize)
 	}
 }
 
@@ -373,78 +504,183 @@ func (tv *TableView) rowRect(row int, contentW float32) Rect {
 	return fixedRowRect(tv.bodyRect(), row, tv.RowHeight, tv.scrollY, contentW)
 }
 
-func (tv *TableView) drawHeader(canvas Canvas, widths []float32) {
+func (tv *TableView) drawHeader(canvas Canvas, widths []float32, c RowColors) {
 	b := tv.Bounds()
 	header := Rect{X: b.X, Y: b.Y, W: b.W, H: tv.HeaderHeight}
-	canvas.FillRect(header, Color{R: 0.14, G: 0.14, B: 0.17, A: 1})
+	canvas.FillRect(header, c.Header)
 	x := b.X
 	headerFont := Font{Size: tv.Style().Font.Size, Bold: true}
 	for i, col := range tv.Columns {
 		cellRect := Rect{X: x, Y: b.Y, W: widths[i], H: tv.HeaderHeight}
-		canvas.DrawText(col.Title,
-			Rect{X: cellRect.X + tableCellPadX, Y: cellRect.Y + 6, W: cellRect.W - 2*tableCellPadX, H: cellRect.H - 10},
-			Color{R: 0.85, G: 0.85, B: 0.88, A: 1}, headerFont)
+		textRect := Rect{X: cellRect.X + tableCellPadX, Y: cellRect.Y + 6, W: cellRect.W - 2*tableCellPadX, H: cellRect.H - 10}
+		if i == tv.SortColumn {
+			// Reserve the arrow's slot at the trailing edge.
+			const arrowW = 12
+			arrow := Rect{X: textRect.X + textRect.W - arrowW, Y: cellRect.Y, W: arrowW, H: cellRect.H}
+			drawSortArrow(canvas, arrow, tv.SortDescending, c.HeaderText)
+			textRect.W -= arrowW + 4
+		}
+		drawAlignedText(canvas, col.DisplayTitle(), textRect, c.HeaderText, headerFont, col.Align)
 		// Right divider.
-		canvas.FillRect(Rect{X: cellRect.X + widths[i] - 1, Y: b.Y + 4, W: 1, H: tv.HeaderHeight - 8},
-			Color{R: 0.3, G: 0.3, B: 0.33, A: 1})
+		canvas.FillRect(Rect{X: cellRect.X + widths[i] - 1, Y: b.Y + 4, W: 1, H: tv.HeaderHeight - 8}, c.Divider)
 		x += widths[i]
 	}
 	// Bottom separator between header and body.
-	canvas.FillRect(Rect{X: b.X, Y: b.Y + tv.HeaderHeight - 1, W: b.W, H: 1},
-		Color{R: 0.3, G: 0.3, B: 0.33, A: 1})
+	canvas.FillRect(Rect{X: b.X, Y: b.Y + tv.HeaderHeight - 1, W: b.W, H: 1}, c.Divider)
 }
 
-func (tv *TableView) drawRows(canvas Canvas, widths []float32, body Rect, contentW float32) {
-	start, end := tv.visibleRange()
-	selectedBg := Color{R: 0.25, G: 0.5, B: 1.0, A: 1}
-	hoverBg := Color{R: 0.18, G: 0.18, B: 0.22, A: 1}
+// drawSortArrow paints a small up (ascending) or down triangle centered
+// in slot.
+func drawSortArrow(canvas Canvas, slot Rect, descending bool, color Color) {
+	const w, h = 8, 4
+	cx := slot.X + slot.W/2
+	cy := slot.Y + (slot.H-h)/2
+	for i := 0; i < h; i++ {
+		rowW := w * (1 - float32(i)/h)
+		y := cy + float32(i) // descending: base on top, apex below
+		if !descending {
+			y = cy + h - 1 - float32(i)
+		}
+		canvas.FillRect(Rect{X: cx - rowW/2, Y: y, W: rowW, H: 1}, color)
+	}
+}
 
+// drawAlignedText draws text in rect at the given horizontal alignment.
+func drawAlignedText(canvas Canvas, text string, rect Rect, color Color, font Font, align TextAlign) {
+	if align == TextAlignCenter || align == TextAlignEnd {
+		tw, _ := TextMetrics(text, font)
+		if tw < rect.W {
+			if align == TextAlignCenter {
+				rect.X += (rect.W - tw) / 2
+			} else {
+				rect.X += rect.W - tw
+			}
+			rect.W = tw
+		}
+	}
+	canvas.DrawText(text, rect, color, font)
+}
+
+func (tv *TableView) drawRows(canvas Canvas, widths []float32, body Rect, contentW float32, c RowColors) {
+	start, end := tv.visibleRange()
 	for i := start; i < end; i++ {
 		rowY := body.Y + float32(i)*tv.RowHeight - tv.scrollY
 		rowRect := Rect{X: body.X, Y: rowY, W: contentW, H: tv.RowHeight}
 
-		if i == tv.SelectedIdx {
-			canvas.FillRect(rowRect, selectedBg)
+		selected := i == tv.SelectedIdx
+		fg := c.Text
+		if selected {
+			canvas.FillRect(rowRect, c.Selected)
+			fg = c.SelectedText
 		} else if i == tv.hoverIdx {
-			canvas.FillRect(rowRect, hoverBg)
-		} else if i%2 == 1 {
+			canvas.FillRect(rowRect, c.Hover)
+		} else if i%2 == 1 && c.Stripe.A > 0 {
 			// Subtle zebra striping for readability.
-			canvas.FillRect(rowRect, Color{R: 0.12, G: 0.12, B: 0.14, A: 1})
+			canvas.FillRect(rowRect, c.Stripe)
 		}
 
 		x := rowRect.X
-		for c, w := range widths {
-			cellRect := Rect{X: x + tableCellPadX, Y: rowRect.Y + 4, W: w - 2*tableCellPadX, H: rowRect.H - 8}
-			canvas.DrawText(tv.Model.CellText(i, c), cellRect, tv.Style().Foreground, tv.Style().Font)
+		for col, w := range widths {
+			cell := Rect{X: x, Y: rowRect.Y, W: w, H: rowRect.H}
+			content := Rect{X: x + tableCellPadX, Y: rowRect.Y + 4, W: w - 2*tableCellPadX, H: rowRect.H - 8}
+			text := tv.Model.CellText(i, col)
+			if col < len(tv.Columns) && tv.Columns[col].DrawCell != nil {
+				draw := tv.Columns[col].DrawCell
+				WithClipRect(canvas, cell, func(cv Canvas) {
+					draw(cv, TableCell{Row: i, Col: col, Rect: cell, Content: content, Text: text,
+						Selected: selected, Hovered: i == tv.hoverIdx, Foreground: fg, Font: tv.Style().Font})
+				})
+			} else {
+				align := TextAlignStart
+				if col < len(tv.Columns) {
+					align = tv.Columns[col].Align
+				}
+				drawAlignedText(canvas, text, content, fg, tv.Style().Font, align)
+			}
 			x += w
 		}
 	}
 }
 
-func (tv *TableView) drawWidgetRows(canvas Canvas, body Rect, contentW float32) {
+func (tv *TableView) drawWidgetRows(canvas Canvas, body Rect, contentW float32, c RowColors) {
 	start, end := tv.visibleRange()
-	selectedBg := Color{R: 0.25, G: 0.5, B: 1.0, A: 1}
-	hoverBg := Color{R: 0.18, G: 0.18, B: 0.22, A: 1}
-
 	for i := start; i < end; i++ {
-		if i < 0 || i >= len(tv.rowWidgets) {
-			continue
-		}
-		row := tv.rowWidgets[i]
+		row := tv.widgetRow(i)
 		if row == nil {
 			continue
 		}
 		rowRect := tv.rowRect(i, contentW)
 		if i == tv.SelectedIdx {
-			canvas.FillRect(rowRect, selectedBg)
+			canvas.FillRect(rowRect, c.Selected)
 		} else if i == tv.hoverIdx {
-			canvas.FillRect(rowRect, hoverBg)
-		} else if i%2 == 1 {
-			canvas.FillRect(rowRect, Color{R: 0.12, G: 0.12, B: 0.14, A: 1})
+			canvas.FillRect(rowRect, c.Hover)
+		} else if i%2 == 1 && c.Stripe.A > 0 {
+			canvas.FillRect(rowRect, c.Stripe)
 		}
 		row.Layout(rowRect)
 		WithClipRect(canvas, rowRect, row.Draw)
 	}
+}
+
+// headerColumnAt returns the column under x in the header, or -1.
+func (tv *TableView) headerColumnAt(x float32) int {
+	widths := tv.columnWidths()
+	cx := tv.Bounds().X
+	for i, w := range widths {
+		if x >= cx && x < cx+w {
+			return i
+		}
+		cx += w
+	}
+	return -1
+}
+
+// SortBy sets the sort column / direction, repaints the header, and
+// notifies OnSort and a SortableTableModel.
+func (tv *TableView) SortBy(col int, descending bool) {
+	tv.SortColumn, tv.SortDescending = col, descending
+	tv.Invalidate()
+	if tv.OnSort != nil {
+		tv.OnSort(col, descending)
+	}
+	if m, ok := tv.Model.(SortableTableModel); ok && col >= 0 {
+		m.SortBy(col, descending)
+		tv.Invalidate()
+	}
+}
+
+// AccessibleChildren publishes the header cells, and in model mode the
+// visible data cells, so `[role=columnheader][name="Size"]` can be clicked
+// to sort and a cell can be read without a screenshot.
+func (tv *TableView) AccessibleChildren() []AXChild {
+	widths := tv.columnWidths()
+	b := tv.Bounds()
+	var out []AXChild
+	x := b.X
+	for i, col := range tv.Columns {
+		out = append(out, AXChild{Role: RoleColumnHeader, Name: col.DisplayTitle(),
+			Bounds: Rect{X: x, Y: b.Y, W: widths[i], H: tv.HeaderHeight}})
+		x += widths[i]
+	}
+	if tv.useWidgetRows || tv.Model == nil {
+		return out
+	}
+	start, end := tv.visibleRange()
+	contentW := tv.bodyContentWidth()
+	for r := start; r < end; r++ {
+		rowRect := tv.rowRect(r, contentW)
+		var st AccessibleState
+		if r == tv.SelectedIdx {
+			st |= AXStateSelected
+		}
+		cx := rowRect.X
+		for col, w := range widths {
+			out = append(out, AXChild{Role: RoleTableCell, Name: tv.Model.CellText(r, col), State: st,
+				Bounds: Rect{X: cx, Y: rowRect.Y, W: w, H: rowRect.H}})
+			cx += w
+		}
+	}
+	return out
 }
 
 func (tv *TableView) Handle(event Event) bool {
@@ -494,9 +730,18 @@ func (tv *TableView) Handle(event Event) bool {
 			if !tv.Bounds().Contains(p) {
 				return false
 			}
-			// Header clicks are ignored for now (future: sort).
+			// Header click: sort by a Sortable column (again to flip).
 			if e.Y < tv.Bounds().Y+tv.HeaderHeight {
-				return false
+				col := tv.headerColumnAt(e.X)
+				if col < 0 || col >= len(tv.Columns) || !tv.Columns[col].Sortable {
+					return false
+				}
+				desc := false
+				if col == tv.SortColumn {
+					desc = !tv.SortDescending
+				}
+				tv.SortBy(col, desc)
+				return true
 			}
 			// Scrollbar.
 			if tv.hasScrollbar() {
@@ -524,12 +769,13 @@ func (tv *TableView) Handle(event Event) bool {
 			}
 			// Row selection.
 			if idx := tv.rowAt(e.X, e.Y); idx >= 0 {
-				if tv.useWidgetRows && e.Phase() == PhaseCapture {
-					tv.Select(idx)
-					return false
-				}
 				tv.Select(idx)
-				return true
+				if e.Clicks == 2 && tv.OnActivate != nil {
+					tv.OnActivate(idx)
+				}
+				// In widget-row mode capture selects without consuming, so
+				// the cell widgets still get the press.
+				return !(tv.useWidgetRows && e.Phase() == PhaseCapture)
 			}
 		case EventMouseUp:
 			if tv.barDragging {
@@ -575,10 +821,7 @@ func (tv *TableView) HitTest(p Point) Widget {
 		if p.Y >= body.Y && p.X <= body.X+contentW {
 			start, end := tv.visibleRange()
 			for i := end - 1; i >= start; i-- {
-				if i < 0 || i >= len(tv.rowWidgets) {
-					continue
-				}
-				row := tv.rowWidgets[i]
+				row := tv.widgetRow(i)
 				if row == nil {
 					continue
 				}
@@ -608,10 +851,7 @@ func (tv *TableView) Tick(now time.Time) Rect {
 	contentW := tv.bodyContentWidth()
 	var dirty Rect
 	for i := start; i < end; i++ {
-		if i < 0 || i >= len(tv.rowWidgets) {
-			continue
-		}
-		row := tv.rowWidgets[i]
+		row := tv.widgetRow(i)
 		if row == nil {
 			continue
 		}

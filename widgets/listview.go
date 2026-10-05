@@ -19,10 +19,13 @@ import (
 //   - Selection + hover visual states
 //   - Optional row-widget mode (rows are real child widgets)
 //
+//   - Factory rows (SetRowFactory): widget rows built only while visible
+//   - Double-click (or Enter) activates a row
+//   - Colors from the theme, overridable per field (Colors)
+//
 // Not yet supported (future iterations):
 //   - Multi-select (Ctrl/Shift range)
 //   - Variable-height rows
-//   - Keyboard PageUp/Down/Home/End (KeyPageUp etc. not in enum yet)
 
 // ListModel is the data source for a plain-text ListView.
 type ListModel interface {
@@ -53,14 +56,19 @@ type ListView struct {
 	// and row rendering/hit-testing target these concrete widgets.
 	rowWidgets    []Widget
 	useWidgetRows bool
+	lazy          *lazyRows
+
+	// Colors overrides the theme palette field by field (see RowColors).
+	// Style().Background / Foreground / Border are honored too.
+	Colors RowColors
 
 	SelectedIdx int
 	selection   singleSelectionModel
 	RowHeight   float32
 	// OnSelect fires when SelectedIdx changes (click or keyboard).
 	OnSelect func(index int)
-	// OnActivate fires on Enter key when a row is selected — use this
-	// for double-click-equivalent semantics (open file, drill in, etc.).
+	// OnActivate fires on a double-click on a row, or Enter with a row
+	// selected (open file, drill in, etc.).
 	OnActivate func(index int)
 
 	scrollY  float32
@@ -95,9 +103,7 @@ func NewListView(model ListModel) *ListView {
 		useWidgetRows: false,
 	}
 	lv.SetSelf(lv)
-	lv.Style().Background = Color{R: 0.1, G: 0.1, B: 0.12, A: 1}
-	lv.Style().Foreground = ColorWhite
-	lv.Style().Border = Color{R: 0.3, G: 0.3, B: 0.35, A: 1}
+	// Colors resolve from the theme at draw time (see RowColors).
 	lv.Style().BorderSize = 1
 	lv.Style().Radius = 3
 	lv.Style().Font = Font{Size: 14}
@@ -125,11 +131,72 @@ func (lv *ListView) ChildList() []Widget {
 	if !lv.useWidgetRows {
 		return nil
 	}
+	if lv.lazy != nil {
+		return lv.lazy.children()
+	}
 	return lv.rowWidgets
+}
+
+// widgetRow returns row i in widget-row mode, building it in factory mode.
+func (lv *ListView) widgetRow(i int) Widget {
+	if lv.lazy != nil {
+		var parent Widget = lv
+		if s := lv.Self(); s != nil {
+			parent = s
+		}
+		return lv.lazy.get(i, parent, lv.Window())
+	}
+	if i < 0 || i >= len(lv.rowWidgets) {
+		return nil
+	}
+	return lv.rowWidgets[i]
+}
+
+// SetRowFactory switches to widget-row mode with rows built on demand:
+// build(i) runs the first time row i scrolls into view, and rows that
+// scroll well out of view are released (detached) — so per-row widgets
+// stay affordable for very long lists. Agent tree walks see the built
+// rows only. Call SetRowCount when the count changes and RefreshRows when
+// row content must be rebuilt.
+func (lv *ListView) SetRowFactory(count int, build func(index int) Widget) {
+	lv.detachRowWidgets()
+	lv.Model = nil
+	lv.useWidgetRows = true
+	lv.lazy = &lazyRows{count: maxInt(count, 0), build: build}
+	lv.selection.Sync(lv.SelectedIdx)
+	lv.selection.Clamp(lv.lazy.count)
+	lv.SelectedIdx = lv.selection.Index()
+	lv.ClampScroll()
+	lv.InvalidateLayout()
+}
+
+// SetRowCount updates a factory list's row count.
+func (lv *ListView) SetRowCount(count int) {
+	if lv.lazy == nil {
+		return
+	}
+	lv.lazy.count = maxInt(count, 0)
+	lv.lazy.prune(0, lv.lazy.count)
+	lv.selection.Sync(lv.SelectedIdx)
+	lv.selection.Clamp(lv.lazy.count)
+	lv.SelectedIdx = lv.selection.Index()
+	lv.ClampScroll()
+	lv.InvalidateLayout()
+}
+
+// RefreshRows drops every built factory row so visible rows are rebuilt.
+func (lv *ListView) RefreshRows() {
+	if lv.lazy != nil {
+		lv.lazy.releaseAll()
+		lv.Invalidate()
+	}
 }
 
 // RowCount returns the count from the active row source.
 func (lv *ListView) RowCount() int {
+	if lv.lazy != nil {
+		return lv.lazy.count
+	}
 	if lv.useWidgetRows {
 		return len(lv.rowWidgets)
 	}
@@ -171,9 +238,11 @@ func (lv *ListView) SetModel(m ListModel) {
 // routing. Parent pointers are wired to this ListView so capture/
 // bubble paths include the list.
 func (lv *ListView) SetRowWidgets(rows []Widget) {
-	if lv.useWidgetRows && lv.Model == nil && sameWidgetSlice(lv.rowWidgets, rows) {
+	if lv.useWidgetRows && lv.Model == nil && lv.lazy == nil && sameWidgetSlice(lv.rowWidgets, rows) {
 		return
 	}
+	lv.lazy.releaseAll()
+	lv.lazy = nil
 	lv.Model = nil
 	lv.useWidgetRows = true
 	oldRows := append([]Widget(nil), lv.rowWidgets...)
@@ -229,6 +298,8 @@ func widgetSliceContains(widgets []Widget, target Widget) bool {
 }
 
 func (lv *ListView) detachRowWidgets() {
+	lv.lazy.releaseAll()
+	lv.lazy = nil
 	rows := append([]Widget(nil), lv.rowWidgets...)
 	for _, row := range rows {
 		if row == nil {
@@ -241,6 +312,12 @@ func (lv *ListView) detachRowWidgets() {
 }
 
 func (lv *ListView) ReleaseChildForTransfer(child Widget) bool {
+	if lv.lazy.release(child) {
+		if child.Parent() == lv {
+			child.SetParent(nil)
+		}
+		return true
+	}
 	for i, row := range lv.rowWidgets {
 		if row != child {
 			continue
@@ -344,11 +421,15 @@ func (lv *ListView) ensureVisible(idx int) {
 	lv.scrollY = fixedRowEnsureVisible(lv.scrollY, idx, lv.RowCount(), lv.RowHeight, lv.Bounds())
 }
 
+// colors resolves the palette for this frame.
+func (lv *ListView) colors() RowColors { return lv.Colors.resolve(lv.Style()) }
+
 func (lv *ListView) Draw(canvas Canvas) {
 	b := lv.Bounds()
+	c := lv.colors()
 	// Background + border.
-	if lv.Style().Background.A > 0 {
-		canvas.FillRoundedRect(b, lv.Style().Radius, lv.Style().Background)
+	if c.Background.A > 0 {
+		canvas.FillRoundedRect(b, lv.Style().Radius, c.Background)
 	}
 
 	// Clip row drawing to the content area (excluding scrollbar column).
@@ -364,36 +445,39 @@ func (lv *ListView) Draw(canvas Canvas) {
 		id := canvas.Save()
 		canvas.ClipRect(effectiveClip)
 		if lv.useWidgetRows {
-			lv.drawRowWidgets(canvas, contentW)
+			lv.drawRowWidgets(canvas, contentW, c)
 		} else {
-			lv.drawRows(canvas, contentW)
+			lv.drawRows(canvas, contentW, c)
 		}
 		canvas.RestoreTo(id)
 	}
+	if lv.lazy != nil {
+		start, end := lv.visibleRange()
+		lv.lazy.prune(start, end)
+	}
 
 	if lv.hasScrollbar() {
-		lv.drawScrollbar(canvas)
+		lv.drawScrollbar(canvas, c)
 	}
 
 	// Outer border last so it's not clipped by the row scope.
 	if lv.Style().BorderSize > 0 {
-		canvas.StrokeRect(b, lv.Style().Border, lv.Style().BorderSize)
+		canvas.StrokeRect(b, c.Border, lv.Style().BorderSize)
 	}
 }
 
-func (lv *ListView) drawRows(canvas Canvas, contentW float32) {
+func (lv *ListView) drawRows(canvas Canvas, contentW float32, c RowColors) {
 	start, end := lv.visibleRange()
-	selectedBg := Color{R: 0.25, G: 0.5, B: 1.0, A: 1}
-	hoverBg := Color{R: 0.18, G: 0.18, B: 0.22, A: 1}
-
 	for i := start; i < end; i++ {
 		rowRect := lv.rowRect(i, contentW)
 
 		// Row state coloring — selection wins over hover.
+		fg := c.Text
 		if i == lv.SelectedIdx {
-			canvas.FillRect(rowRect, selectedBg)
+			canvas.FillRect(rowRect, c.Selected)
+			fg = c.SelectedText
 		} else if i == lv.hoverIdx {
-			canvas.FillRect(rowRect, hoverBg)
+			canvas.FillRect(rowRect, c.Hover)
 		}
 
 		// Row text.
@@ -403,31 +487,25 @@ func (lv *ListView) drawRows(canvas Canvas, contentW float32) {
 			W: rowRect.W - 2*listRowPaddingX,
 			H: rowRect.H - 8,
 		}
-		canvas.DrawText(lv.Model.RowText(i), textRect, lv.Style().Foreground, lv.Style().Font)
+		canvas.DrawText(lv.Model.RowText(i), textRect, fg, lv.Style().Font)
 	}
 }
 
-func (lv *ListView) drawRowWidgets(canvas Canvas, contentW float32) {
+func (lv *ListView) drawRowWidgets(canvas Canvas, contentW float32, c RowColors) {
 	start, end := lv.visibleRange()
 	if start == end {
 		return
 	}
-	selectedBg := Color{R: 0.25, G: 0.5, B: 1.0, A: 1}
-	hoverBg := Color{R: 0.18, G: 0.18, B: 0.22, A: 1}
-
 	for i := start; i < end; i++ {
 		rowRect := lv.rowRect(i, contentW)
 
 		if i == lv.SelectedIdx {
-			canvas.FillRect(rowRect, selectedBg)
+			canvas.FillRect(rowRect, c.Selected)
 		} else if i == lv.hoverIdx {
-			canvas.FillRect(rowRect, hoverBg)
+			canvas.FillRect(rowRect, c.Hover)
 		}
 
-		if i < 0 || i >= len(lv.rowWidgets) {
-			continue
-		}
-		row := lv.rowWidgets[i]
+		row := lv.widgetRow(i)
 		if row == nil {
 			continue
 		}
@@ -449,10 +527,7 @@ func (lv *ListView) Tick(now time.Time) Rect {
 	contentW := lv.contentWidth()
 	var dirty Rect
 	for i := start; i < end; i++ {
-		if i < 0 || i >= len(lv.rowWidgets) {
-			continue
-		}
-		row := lv.rowWidgets[i]
+		row := lv.widgetRow(i)
 		if row == nil {
 			continue
 		}
@@ -522,12 +597,18 @@ func (lv *ListView) Handle(event Event) bool {
 			if lv.useWidgetRows && e.Phase() == PhaseCapture {
 				if idx := lv.rowAt(e.X, e.Y); idx >= 0 {
 					lv.Select(idx)
+					if e.Clicks == 2 && lv.OnActivate != nil {
+						lv.OnActivate(idx)
+					}
 				}
 				return false
 			}
-			// Row click.
+			// Row click; a double-click activates.
 			if idx := lv.rowAt(e.X, e.Y); idx >= 0 {
 				lv.Select(idx)
+				if e.Clicks == 2 && lv.OnActivate != nil {
+					lv.OnActivate(idx)
+				}
 				return true
 			}
 		case EventMouseUp:
@@ -573,10 +654,7 @@ func (lv *ListView) HitTest(p Point) Widget {
 		if p.X <= lv.Bounds().X+contentW {
 			start, end := lv.visibleRange()
 			for i := end - 1; i >= start; i-- {
-				if i < 0 || i >= len(lv.rowWidgets) {
-					continue
-				}
-				row := lv.rowWidgets[i]
+				row := lv.widgetRow(i)
 				if row == nil {
 					continue
 				}
@@ -668,13 +746,26 @@ func (lv *ListView) barDragMove(y float32) {
 	}
 }
 
-func (lv *ListView) drawScrollbar(canvas Canvas) {
-	track := lv.barTrack()
-	thumb := lv.barThumb()
-	canvas.FillRoundedRect(track, 2, Color{R: 0.06, G: 0.06, B: 0.08, A: 1})
-	color := Color{R: 0.4, G: 0.4, B: 0.45, A: 1}
-	if lv.barDragging {
-		color = Color{R: 0.6, G: 0.6, B: 0.65, A: 1}
+func (lv *ListView) drawScrollbar(canvas Canvas, c RowColors) {
+	VBarDrawColors(canvas, lv.barTrack(), lv.barThumb(), lv.barDragging, c.Scrollbar)
+}
+
+// AccessibleChildren publishes the visible text-model rows as list items,
+// so `[role=listitem][name="Inbox"]` reaches a row of a model-backed list
+// (widget rows are real children and need no help).
+func (lv *ListView) AccessibleChildren() []AXChild {
+	if lv.useWidgetRows || lv.Model == nil {
+		return nil
 	}
-	canvas.FillRoundedRect(thumb, 2, color)
+	start, end := lv.visibleRange()
+	contentW := lv.contentWidth()
+	out := make([]AXChild, 0, end-start)
+	for i := start; i < end; i++ {
+		var st AccessibleState
+		if i == lv.SelectedIdx {
+			st |= AXStateSelected
+		}
+		out = append(out, AXChild{Role: RoleListitem, Name: lv.Model.RowText(i), State: st, Bounds: lv.rowRect(i, contentW)})
+	}
+	return out
 }

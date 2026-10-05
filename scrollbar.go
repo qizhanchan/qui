@@ -67,15 +67,56 @@ func VBarScrollFromDrag(track Rect, contentH, startScrollY, startMouseY, current
 	return startScrollY + dy*(maxScroll/travel)
 }
 
-// vbarDraw renders the track + thumb onto canvas. Caller decides when
-// to highlight (usually while dragging). Colors follow the light UI
-// convention: a faint gutter track with a mid-grey thumb that darkens
-// while dragged (matching desktop-spreadsheet scrollbars).
+// ScrollbarColors is a scrollbar palette. Zero fields fall back to the
+// theme-derived default (see DefaultScrollbarColors), so a widget can carry
+// a partial override — e.g. one set from CSS `scrollbar-color`.
+type ScrollbarColors struct {
+	Track       Color
+	Thumb       Color
+	ThumbActive Color // while dragged
+}
+
+// DefaultScrollbarColors derives the bar colors by mixing the theme's
+// Text toward its Surface: a faint track and a mid-gray thumb that darkens
+// while dragged. Opaque results, because the rounded-rect fill doesn't
+// alpha-blend.
+func DefaultScrollbarColors() ScrollbarColors {
+	th := CurrentTheme()
+	return ScrollbarColors{
+		Track:       LerpColor(th.Surface, th.Text, 0.08),
+		Thumb:       LerpColor(th.Surface, th.Text, 0.30),
+		ThumbActive: LerpColor(th.Surface, th.Text, 0.45),
+	}
+}
+
+// Resolve fills zero fields from DefaultScrollbarColors.
+func (c ScrollbarColors) Resolve() ScrollbarColors {
+	d := DefaultScrollbarColors()
+	if c.Track == (Color{}) {
+		c.Track = d.Track
+	}
+	if c.Thumb == (Color{}) {
+		c.Thumb = d.Thumb
+	}
+	if c.ThumbActive == (Color{}) {
+		c.ThumbActive = d.ThumbActive
+	}
+	return c
+}
+
+// VBarDraw renders the track + thumb in the theme's scrollbar colors.
+// Caller decides when to highlight (usually while dragging).
 func VBarDraw(canvas Canvas, track, thumb Rect, dragging bool) {
-	canvas.FillRoundedRect(track, 2, Color{R: 0.95, G: 0.95, B: 0.96, A: 1})
-	color := Color{R: 0.74, G: 0.75, B: 0.77, A: 1}
+	VBarDrawColors(canvas, track, thumb, dragging, ScrollbarColors{})
+}
+
+// VBarDrawColors is VBarDraw with a palette (zero fields = theme).
+func VBarDrawColors(canvas Canvas, track, thumb Rect, dragging bool, c ScrollbarColors) {
+	c = c.Resolve()
+	canvas.FillRoundedRect(track, 2, c.Track)
+	color := c.Thumb
 	if dragging {
-		color = Color{R: 0.56, G: 0.57, B: 0.60, A: 1}
+		color = c.ThumbActive
 	}
 	canvas.FillRoundedRect(thumb, 2, color)
 }

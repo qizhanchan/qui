@@ -82,6 +82,9 @@ type ScrollView struct {
 	barDragStartMouse  float32 // mouse position at drag start, on the main axis
 	barDragStartScroll float32
 
+	// BarColors overrides the scrollbar palette (zero fields = theme).
+	BarColors ScrollbarColors
+
 	// OnScroll, when set, is invoked whenever the scroll offset changes
 	// value (wheel, drag, track click, keys, or ScrollTo). Hosts use it
 	// to mirror scroll position across panes.
@@ -708,17 +711,5 @@ func (s *ScrollView) barDragMove(mousePos float32) {
 func (s *ScrollView) drawBar(canvas Canvas) {
 	track := s.barTrack()
 	thumb := s.barThumb()
-	// Derive the bar colors by mixing the theme's OnSurface toward the
-	// Surface (page) color, and pass OPAQUE results — the rounded-rect
-	// fill doesn't alpha-blend, so a translucent color would paint solid.
-	// Mixing follows a retinted theme: a faint track + mid-gray thumb.
-	th := CurrentTheme()
-	trackColor := LerpColor(th.Surface, th.Text, 0.08)
-	thumbT := float32(0.30)
-	if s.barDragging {
-		thumbT = 0.45
-	}
-	thumbColor := LerpColor(th.Surface, th.Text, thumbT)
-	canvas.FillRoundedRect(track, 2, trackColor)
-	canvas.FillRoundedRect(thumb, 2, thumbColor)
+	VBarDrawColors(canvas, track, thumb, s.barDragging, s.BarColors)
 }
