@@ -155,6 +155,8 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | `cursor` | ✅ | inheritable; resolved declaratively at the root in two levels — an explicit declaration (CSS or `SetCursorShape`) wins from innermost out, otherwise the widget's own shape is used (link hand, text I-beam, anchor hand, tooltip). UA adds `pointer` to `a[href]`; `<button>` is not given `pointer` (browser behavior). Limit: GLFW 3.3 has only six standard cursors, so `not-allowed`/`move`/`grab`/`wait`/`zoom-*`/diagonal-resize degrade to the arrow; no `url()` custom cursor |
 | `user-select` | ✅ | inheritable (incl. `-webkit-` alias). `none` removes the element's text from drag-selection and the clipboard; `text`/`auto`/`all`/`contain` restore it. Control surfaces are non-selectable even without a declaration. Two-way: dropping the rule restores selectability |
 | `pointer-events: none / auto` | ✅ | inheritable; filtered at target selection, so hover/focus/tooltip/cursor/drag all see the same target. A transparent element is not a target itself but descendants are still probed first, so an `auto` descendant re-opens a hole (browser behavior). SVG-specific values are treated as hittable |
+| `scrollbar-color` | ✅ | inheritable; `<thumb> <track>` or `auto`, applied to `overflow: auto/scroll` scrollbars |
+| Native popup colors | ✅ | the `<select>` dropdown, datalist list and color palette take their colors from the inherited custom properties `--popup-background` / `--popup-color` / `--popup-border` / `--popup-accent`, else the opening element's own `background-color` / `color` / `accent-color`, else the theme. `title` tooltips read `--tooltip-background` / `--tooltip-color` / `--tooltip-border` (falling back to `--popup-*`) from the root element |
 
 ### Selectors / variables / at-rules
 
@@ -163,7 +165,8 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | tag / `.class` / `#id` / `*` | ✅ | |
 | attribute selectors `[a]` `=` `^=` `$=` `*=` `~=` `\|=` | ✅ | case-insensitive flag `i` supported |
 | combinators (descendant / `>` / `+` / `~`) | ✅ | right-to-left matching |
-| `:hover` `:focus` `:active` | ✅ | `focus-within`/`visible` normalize to focus |
+| `:hover` `:focus` `:active` | ✅ | `focus-within` normalizes to focus |
+| `:focus-visible` | ✅ | keyboard focus only (Tab, programmatic focus, a key pressed while focused) — a click doesn't show it, and it doesn't opt a push button into click focus. On a non-subject compound it acts as `:focus` |
 | Ancestor/sibling state triggering descendants (`.row:hover .del`, `.a:hover ~ .b`, …) | ✅ | the state of the element named by the selector drives box decoration / text color / `visibility`. Triggers are discovered precisely; payload is computed per active trigger combination. Limits: `display:none` reveal not supported; a rule with two non-subject state compounds is not discovered |
 | `:root` `:first-child` `:last-child` `:only-child` `:nth-child(An+B)` `:not(simple)` | ✅ | |
 | `:nth-of-type(An+B)` | ✅ | counts same tag |
@@ -172,7 +175,8 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | `:nth-last-child(An+B)` `:empty` `:has()` | ✅ | `:has()` is limited to a single simple descendant selector (`div:has(img)`) |
 | `::before` `::after` | 🟡 | generate `content` text (leaf/inline elements fold into the same InlineBox). `content` supports quoted strings + `attr(name)` + concatenation. Limits: not generated on elements with block children; no `counter()` or full generated-box model |
 | Other pseudo-elements (`::first-line`, …) | ❌ | parsed but not generated |
-| CSS variables `--x` / `var(--x, fallback)` / `:root` | ✅ | inheritance + recursive resolution (depth limit 16) |
+| CSS variables `--x` / `var(--x, fallback)` / `:root` | ✅ | inheritance + recursive resolution (depth limit 16). Readable from Go with `ComputedStyle.Var` |
+| Custom properties and elements | ✅ | `RegisterProperty(name, PropertyDef{Inherited, Initial})` makes any property name readable through `ComputedStyle.Property`; `RegisterElement(tag, ElementDef{Create, Apply})` backs a custom tag with a native widget that the element hosts, with `Apply` mapping the computed style onto it after each restyle. `El.SetOnStyle` is the per-element form |
 | Shorthands `font` `flex` `inset` | ✅ | |
 | `@media` | 🟡 | `min-width`/`max-width` (`and`, screen/all/print) evaluated at parse time against the viewport width; matching blocks flatten into the stylesheet. **Not responsive** (does not re-evaluate on resize) |
 | `@font-face` `@keyframes` `@import` `@supports` | ❌ | at-rules skipped wholesale |
@@ -188,12 +192,13 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 
 | Capability | Status | Notes |
 |---|---|---|
-| Click `onClick` | ✅ | |
+| Click `onClick` | ✅ | `OnClickEvent` adds position, button, modifiers, click count and `PreventDefault` (stops a submit button submitting, a link navigating, a file / color input opening its picker) |
+| `onPointerDown` / `onPointerMove` / `onPointerUp` | ✅ | position (window + element-local), button, modifiers, click count; return true to consume. A press captures the pointer, so moves and the release keep arriving outside the element |
 | `onContextMenu` | ✅ | reports window coordinates, so a menu can be anchored |
-| `<a href>` navigation | ✅ | clickable as the element or inside a folded span |
+| `<a href>` navigation | ✅ | clickable as the element or inside a folded span. `StyleEngine.SetLinkHandler` decides first (in-app routes such as `#/settings`); without it only `http(s)` and `mailto` links open, in the system handler — other schemes and relative / fragment links do nothing. An author click handler on the link owns the click |
 | `:hover`/`:active` box decoration | ✅ | buttons get built-in darken/press when the author has no rule |
 | `:hover`/`:focus`/`:active` text color + text-decoration | ✅ | both standalone elements and folded inline links. Limit: state changing `font-weight`/`size` re-lays-out, so it is not applied at draw time |
-| `:focus` box style | ✅ | a focusable box disables child-label selection to take focus |
+| `:focus` / `:focus-visible` box style | ✅ | a focusable box disables child-label selection to take focus |
 | Input `onInput` / Enter `onSubmit` | ✅ | input/textarea |
 | checkbox `onToggle` / select `onChange` | ✅ | toggling syncs the `checked` attribute and relinks `:checked` |
 | `<form>` submit `onFormSubmit` | ✅ | `SetOnFormSubmit(map[string]string)`; triggered by Enter or a submit button; collects named control values |
@@ -205,6 +210,9 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | Cross-widget text selection | ✅ | Label + InlineBox implement `TextSelectable` |
 | Clipboard copy (plain text + HTML flavor) | ✅ | images inline as data URIs; lists rebuilt as `<ol>/<ul>`; tables rebuilt as `<table>` (HTML → real tables in Docs/Word; plain → TSV for Sheets). Mixed selections each stay structured, in document order. Selection coordinates normalize to the bounding box. Limits: nested lists inside a cell flatten to `<br>`; spanning cells in a whole-block selection are approximated |
 | Drag & drop reorder | ✅ | Draggable/DragHandle/OnDrop/OnDragOver with paint-only Transform feedback |
+| OS file drop onto an element | ✅ | `OnFileDrop(paths)`; the window-level `SetOnFileDrop` only sees drops no element took |
+| Paste hook | ✅ | `OnPaste(text) bool` intercepts Cmd/Ctrl+V inside the element, ahead of the focused field |
+| `<canvas>` drawing | ✅ | `SetCanvasDraw`, or `SetCanvasPaint` / `h.Canvas` with the computed style (`ctx.Color`, `ctx.Font`, `ctx.Style.Var`) |
 | `app-region: drag / no-drag` | ✅ | inheritable (Electron `-webkit-app-region` alias); `drag` on a title-bar strip lets the whole subtree drag the window, `no-drag` children opt back out. Backed by `Window.BeginWindowDrag()` (native window-manager drag). Only meaningful with `Window.SetTitlebarStyle(qui.TitlebarOverlay)`; unsupported platforms degrade to a normal press |
 | Keyboard focus / Tab cycling | ✅ | framework-level; control editing uses the backing widget. Selectable text is click-focusable (for copy) but not a Tab stop. `El.RequestFocus()` focuses programmatically |
 | HTML `disabled` attribute | ✅ | disables the backing control; `El.SetDisabled(bool)` toggles at runtime and relinks `:disabled` |
@@ -221,9 +229,9 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 
 Grouped by how likely a desktop application is to need them.
 
-**High value (native + everyday):** `aspect-ratio`; `position: sticky`; `::placeholder` and `:placeholder-shown`/`:valid`/`:invalid`/`:indeterminate`/`:default` (all need a "value changed → scoped restyle" hook); `::selection`/`::marker`; `:is()`/`:where()`/CSS nesting; `transition`; the remaining mouse events (`mousemove`, `scroll`, `change`); the `tabindex`/`minlength`/`pattern`/`rows`/`cols`/`inputmode`/`spellcheck` attributes.
+**High value (native + everyday):** `aspect-ratio`; `position: sticky`; `::placeholder` and `:placeholder-shown`/`:valid`/`:invalid`/`:indeterminate`/`:default` (all need a "value changed → scoped restyle" hook); `::selection`/`::marker`; `:is()`/`:where()`/CSS nesting; `transition`; the `scroll` and `change` events; the `tabindex`/`minlength`/`pattern`/`rows`/`cols`/`inputmode`/`spellcheck` attributes.
 
-**Medium value:** Grid `justify-items`/`justify-self`/`place-*`/`grid-auto-*`/implicit tracks; `min-content`/`max-content`/`fit-content` sizing keywords; responsive `@media` re-evaluation and `prefers-color-scheme`/`(hover)`/`(pointer)`/`prefers-reduced-motion`; `@container`; `color-scheme`; `oklch()`/`color-mix()`/`light-dark()`/`hwb()`/`lab()`; `text-shadow`; text polish (`text-wrap`, `hyphens`, `tab-size`, `font-variant*`, `font-feature-settings`, `text-underline-offset`); `background-position`/`-repeat`/explicit `background-size`/repeating gradients; remote image URLs / `srcset`; scroll and resize polish (`resize`, `appearance`, `caret-color`, `scrollbar-*`, `overscroll-behavior`, `scroll-behavior`, scroll-snap); `<select multiple>`/`size`; native date/color pickers; `<a target>`/`download`.
+**Medium value:** Grid `justify-items`/`justify-self`/`place-*`/`grid-auto-*`/implicit tracks; `min-content`/`max-content`/`fit-content` sizing keywords; responsive `@media` re-evaluation and `prefers-color-scheme`/`(hover)`/`(pointer)`/`prefers-reduced-motion`; `@container`; `color-scheme`; `oklch()`/`color-mix()`/`light-dark()`/`hwb()`/`lab()`; `text-shadow`; text polish (`text-wrap`, `hyphens`, `tab-size`, `font-variant*`, `font-feature-settings`, `text-underline-offset`); `background-position`/`-repeat`/explicit `background-size`/repeating gradients; remote image URLs / `srcset`; scroll and resize polish (`resize`, `appearance`, `caret-color`, `scrollbar-width`/`scrollbar-gutter`, `overscroll-behavior`, `scroll-behavior`, scroll-snap); `<select multiple>`/`size`; native date/color pickers; `<a target>`/`download`.
 
 **Deliberately not supported:** `float`/`clear`; multi-column; `@keyframes` + `animation`; `writing-mode`; `clip-path`/`mask`; `mix-blend-mode`/`isolation`; full stacking context; `backdrop-filter`; 3D `transform`; `contenteditable`; `<iframe>` (use `webview`); Shadow DOM / `<template>` / `<slot>`; `content-visibility`/`will-change`; `@import`; `@supports`.
 

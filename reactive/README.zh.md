@@ -198,6 +198,9 @@ positional per-fiber（调用顺序必须稳定，否则 panic——和 React �
 | `UseCallback(fn, deps...)` | 稳定函数身份 |
 | `UseEffect(fn, deps...)` | commit 后跑副作用，返回 cleanup |
 | `UseEffectOnce(fn)` | 仅挂载跑一次，卸载 cleanup |
+| `UseLayoutEffect(fn, deps...)` | 同 `UseEffect`，但在窗口下一次布局之后、绘制之前执行，`Bounds()` 已是最终值；其中设置的状态会在本帧绘制前重新渲染 |
+| `UseId()` | 进程内唯一、组件生命周期内稳定的 id |
+| `UseResource(fetch, deps...)` | 在 UI goroutine 之外异步加载：`{Value, Err, Loading, Ready, Reload}`；deps 变化 / 卸载时取消 context，迟到的结果被丢弃 |
 | `UseSignal(init)` | 每 fiber 记忆化的 Signal，满足直绑的身份稳定要求；`Set` 不触发重渲染 |
 
 Context：
@@ -219,6 +222,7 @@ theme := ThemeCtx.Use()           // 任意深度消费（订阅，值变时标�
   - Esc 和 Enter 在冒泡阶段处理，获得焦点的内容先拿到这两个键，例如 textarea 换行、行内编辑取消。
   - portal 内容从声明它的位置继承样式：虽然它挂在 overlay 栈上，但能继承自定义属性，也能匹配 `.app.dark .x` 这类祖先选择器。
   - overlay 的失效在 portal 本地处理，不冒泡到主树。
+- **Popover**（`h.Popover(anchorEl, h.PopoverOptions{...}, node)` / `h.PopoverAt(rectFn, ...)`，或 `reactive.PortalAnchored`）：内容放在锚点旁边，放不下时翻到另一侧，夹紧在窗口内，锚点移动时重新定位。用 `.RefTo(ref)` 取得锚点。
 - **Dialog**（`h.Dialog(h.DialogProps{Title, Body, Actions, OnDismiss, OnConfirm, CloseButton, Class})`）：基于 `ModalPortalWith` 的现成对话框外壳。
   - 结构：`div.q-dialog > header.q-dialog-header(.q-dialog-title, .q-dialog-close) + .q-dialog-body + footer.q-dialog-actions`。
   - 外观来自框架层 CSS，任何作者规则都能覆盖；也可以通过 `--q-dialog-bg/-fg/-radius/-shadow` 换肤。

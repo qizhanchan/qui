@@ -155,6 +155,8 @@
 | `cursor` | ✅ | 继承；root 层两级声明式解析 —— 显式声明（CSS / `SetCursorShape`）由内向外胜出，否则用 widget 内建形状（链接手型、文字 I 形、Anchor 手型、tooltip）。UA 给 `a[href]` 加 `pointer`；`<button>` 不加（浏览器行为）。限制：GLFW 3.3 只有 6 种标准光标，`not-allowed`/`move`/`grab`/`wait`/`zoom-*`/斜向 resize 退化成箭头；不支持 `url()` 自定义光标 |
 | `user-select` | ✅ | 继承（含 `-webkit-` 别名）。`none` 把元素文字移出拖选与剪贴板；`text`/`auto`/`all`/`contain` 复原。控件面即使没声明也不可选。双向：撤掉规则会交还可选性 |
 | `pointer-events: none / auto` | ✅ | 继承；在选目标处过滤，所以 hover/focus/tooltip/cursor/drag 看到同一目标。透明元素自己不当目标，但先下钻子元素，于是 `auto` 后代能重新开洞（浏览器行为）。SVG 专用值按「可命中」处理 |
+| `scrollbar-color` | ✅ | 继承；`<thumb> <track>` 或 `auto`，作用于 `overflow: auto/scroll` 的滚动条 |
+| 原生弹出层配色 | ✅ | `<select>` 下拉、datalist 列表与调色板取色顺序：可继承的自定义属性 `--popup-background` / `--popup-color` / `--popup-border` / `--popup-accent` → 打开它的元素自身的 `background-color` / `color` / `accent-color` → 主题。`title` 提示从根元素读 `--tooltip-background` / `--tooltip-color` / `--tooltip-border`（缺省回落到 `--popup-*`） |
 
 ### 选择器 / 变量 / at-rules
 
@@ -163,7 +165,8 @@
 | 标签 / `.class` / `#id` / `*` | ✅ | |
 | 属性选择器 `[a]` `=` `^=` `$=` `*=` `~=` `\|=` | ✅ | 支持大小写不敏感标志 `i` |
 | 组合器（后代 / `>` / `+` / `~`） | ✅ | 右到左匹配 |
-| `:hover` `:focus` `:active` | ✅ | `focus-within`/`visible` 归一为 focus |
+| `:hover` `:focus` `:active` | ✅ | `focus-within` 归一为 focus |
+| `:focus-visible` | ✅ | 只在键盘焦点时生效（Tab、程序设焦点、获焦后按键）——点击不显示，也不会让按钮因此接受点击取焦。出现在非主体复合选择器上时等同 `:focus` |
 | 祖先/兄弟状态触发后代（`.row:hover .del`、`.a:hover ~ .b` 等） | ✅ | 由选择器点名的那个元素的状态驱动盒装饰 / 文字色 / `visibility`。触发器精确发现；payload 按当前活跃触发器组合计算。限制：`display:none`→揭示未支持；一条规则带两个非主体状态 compound 不发现触发器 |
 | `:root` `:first-child` `:last-child` `:only-child` `:nth-child(An+B)` `:not(simple)` | ✅ | |
 | `:nth-of-type(An+B)` | ✅ | 按同 tag 计数 |
@@ -172,7 +175,8 @@
 | `:nth-last-child(An+B)` `:empty` `:has()` | ✅ | `:has()` 限单个简单后代选择器（`div:has(img)`） |
 | `::before` `::after` | 🟡 | 生成 `content` 文本（叶 / 行内元素折进同一 InlineBox）。`content` 支持引号字符串 + `attr(name)` + 拼接。限制：带块级子元素的元素上不生成；不支持 `counter()` 或生成盒的完整盒模型 |
 | 其他伪元素（`::first-line`…） | ❌ | 解析但不生成 |
-| CSS 变量 `--x` / `var(--x, fallback)` / `:root` | ✅ | 继承 + 递归解析（深度上限 16） |
+| CSS 变量 `--x` / `var(--x, fallback)` / `:root` | ✅ | 继承 + 递归解析（深度上限 16）。Go 侧用 `ComputedStyle.Var` 读取 |
+| 自定义属性与自定义元素 | ✅ | `RegisterProperty(name, PropertyDef{Inherited, Initial})` 让任意属性名可经 `ComputedStyle.Property` 读取；`RegisterElement(tag, ElementDef{Create, Apply})` 让自定义标签承载一个原生 widget，`Apply` 在每次 restyle 后把计算样式映射到它上面。逐元素版本是 `El.SetOnStyle` |
 | 简写 `font` `flex` `inset` | ✅ | |
 | `@media` | 🟡 | `min-width`/`max-width`（`and`、screen/all/print）在解析时对视口宽度求值；匹配块扁平进样式表。**非响应式**（不随 resize 重算） |
 | `@font-face` `@keyframes` `@import` `@supports` | ❌ | at-rule 整块跳过 |
@@ -188,12 +192,13 @@
 
 | 能力 | 状态 | 备注 |
 |---|---|---|
-| 点击 `onClick` | ✅ | |
+| 点击 `onClick` | ✅ | `OnClickEvent` 额外给出位置、按键、修饰键、点击次数与 `PreventDefault`（阻止 submit 按钮提交、链接跳转、file / color 输入打开选择器） |
+| `onPointerDown` / `onPointerMove` / `onPointerUp` | ✅ | 位置（窗口 + 元素局部）、按键、修饰键、点击次数；返回 true 即消费。按下会捕获指针，移出元素后仍收到移动与松开 |
 | 右键 `onContextMenu` | ✅ | 回传窗口坐标，可锚定菜单 |
-| `<a href>` 导航 | ✅ | 元素本身或折叠 span 均可点 |
+| `<a href>` 导航 | ✅ | 元素本身或折叠 span 均可点。`StyleEngine.SetLinkHandler` 优先决定（应用内路由，如 `#/settings`）；未设置时只有 `http(s)` 与 `mailto` 交给系统打开，其他协议与相对 / 片段链接什么也不做。链接上的作者点击处理器拥有这次点击 |
 | `:hover`/`:active` 盒装饰 | ✅ | button 无 author 规则时有内建 darken/press |
 | `:hover`/`:focus`/`:active` 改文字色 + text-decoration | ✅ | 独立元素与折叠行内链接均可。限制：状态改 `font-weight`/`size` 会重排，未在 draw 时应用 |
-| `:focus` 盒样式 | ✅ | focusable 盒子会禁用子 Label 选择以抢焦点 |
+| `:focus` / `:focus-visible` 盒样式 | ✅ | focusable 盒子会禁用子 Label 选择以抢焦点 |
 | 输入 `onInput` / 回车 `onSubmit` | ✅ | input/textarea |
 | checkbox `onToggle` / select `onChange` | ✅ | 用户切换会同步 `checked` 属性 + relink `:checked` |
 | `<form>` 提交 `onFormSubmit` | ✅ | `SetOnFormSubmit(map[string]string)`；回车 / submit 按钮触发，收集具名控件值 |
@@ -205,6 +210,9 @@
 | 跨 widget 文本选择 | ✅ | Label + InlineBox 实现 `TextSelectable` |
 | 剪贴板复制（纯文本 + HTML flavor） | ✅ | 图片内联 data URI；列表重建 `<ol>/<ul>`；表格重建 `<table>`（HTML→Docs/Word 真表格；plain→TSV 供 Sheets）。混排选区各自成结构、按文档顺序。选区坐标归一到包围盒。限制：单元格内嵌套列表 flatten 成 `<br>`；整块选区里跨行/跨列合并单元格为近似 |
 | 拖拽重排 Drag & Drop | ✅ | Draggable/DragHandle/OnDrop/OnDragOver，paint-only Transform 反馈 |
+| 系统文件拖放到元素 | ✅ | `OnFileDrop(paths)`；窗口级 `SetOnFileDrop` 只收到没有元素接住的拖放 |
+| 粘贴钩子 | ✅ | `OnPaste(text) bool` 在元素内先于获焦输入框拦截 Cmd/Ctrl+V |
+| `<canvas>` 绘制 | ✅ | `SetCanvasDraw`，或带计算样式的 `SetCanvasPaint` / `h.Canvas`（`ctx.Color`、`ctx.Font`、`ctx.Style.Var`） |
 | `app-region: drag / no-drag` | ✅ | 可继承（Electron `-webkit-app-region` 别名）；`drag` 声明在标题栏条上，整个子树可拖窗，`no-drag` 子元素挖回来。落到 `Window.BeginWindowDrag()`。只在 `Window.SetTitlebarStyle(qui.TitlebarOverlay)` 的窗口有意义；不支持的平台退化为普通按下 |
 | 键盘焦点 / Tab 循环 | ✅ | 框架层；控件编辑走 backing widget。可选中的文字能点击聚焦（用于复制），但不是 Tab 停靠点。`El.RequestFocus()` 可以用代码设置焦点 |
 | HTML `disabled` 属性 | ✅ | 禁用 backing 控件；`El.SetDisabled(bool)` 运行时切换并 relink `:disabled` |
@@ -221,9 +229,9 @@
 
 按桌面应用需要它的高频程度分组。
 
-**高价值（原生 + 日常）：** `aspect-ratio`；`position: sticky`；`::placeholder` 与 `:placeholder-shown`/`:valid`/`:invalid`/`:indeterminate`/`:default`（共用「值变化 → 作用域 restyle」实时钩子）；`::selection`/`::marker`；`:is()`/`:where()`/CSS 嵌套；`transition`；其余鼠标事件（`mousemove`、`scroll`、`change`）；`tabindex`/`minlength`/`pattern`/`rows`/`cols`/`inputmode`/`spellcheck` 属性。
+**高价值（原生 + 日常）：** `aspect-ratio`；`position: sticky`；`::placeholder` 与 `:placeholder-shown`/`:valid`/`:invalid`/`:indeterminate`/`:default`（共用「值变化 → 作用域 restyle」实时钩子）；`::selection`/`::marker`；`:is()`/`:where()`/CSS 嵌套；`transition`；`scroll` 与 `change` 事件；`tabindex`/`minlength`/`pattern`/`rows`/`cols`/`inputmode`/`spellcheck` 属性。
 
-**中价值：** Grid `justify-items`/`justify-self`/`place-*`/`grid-auto-*`/隐式轨道；`min-content`/`max-content`/`fit-content` 尺寸关键字；`@media` 响应式重算与 `prefers-color-scheme`/`(hover)`/`(pointer)`/`prefers-reduced-motion`；`@container`；`color-scheme`；`oklch()`/`color-mix()`/`light-dark()`/`hwb()`/`lab()`；`text-shadow`；文本抛光（`text-wrap`、`hyphens`、`tab-size`、`font-variant*`、`font-feature-settings`、`text-underline-offset`）；`background-position`/`-repeat`/显式 `background-size`/repeating 渐变；远程图片 URL / `srcset`；滚动与 resize 抛光（`resize`、`appearance`、`caret-color`、`scrollbar-*`、`overscroll-behavior`、`scroll-behavior`、scroll-snap）；`<select multiple>`/`size`；原生日期 / 颜色选择器；`<a target>`/`download`。
+**中价值：** Grid `justify-items`/`justify-self`/`place-*`/`grid-auto-*`/隐式轨道；`min-content`/`max-content`/`fit-content` 尺寸关键字；`@media` 响应式重算与 `prefers-color-scheme`/`(hover)`/`(pointer)`/`prefers-reduced-motion`；`@container`；`color-scheme`；`oklch()`/`color-mix()`/`light-dark()`/`hwb()`/`lab()`；`text-shadow`；文本抛光（`text-wrap`、`hyphens`、`tab-size`、`font-variant*`、`font-feature-settings`、`text-underline-offset`）；`background-position`/`-repeat`/显式 `background-size`/repeating 渐变；远程图片 URL / `srcset`；滚动与 resize 抛光（`resize`、`appearance`、`caret-color`、`scrollbar-width`/`scrollbar-gutter`、`overscroll-behavior`、`scroll-behavior`、scroll-snap）；`<select multiple>`/`size`；原生日期 / 颜色选择器；`<a target>`/`download`。
 
 **明确不做：** `float`/`clear`；多列；`@keyframes` + `animation`；`writing-mode`；`clip-path`/`mask`；`mix-blend-mode`/`isolation`；完整 stacking context；`backdrop-filter`；3D `transform`；`contenteditable`；`<iframe>`（走 `webview`）；Shadow DOM / `<template>` / `<slot>`；`content-visibility`/`will-change`；`@import`；`@supports`。
 

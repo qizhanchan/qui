@@ -8,7 +8,9 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 
 **Window and lifecycle**
 
-- `App` owns the platform backend; `App.NewWindow` / `App.NewOverlayPanel`; `App.Run` with SIGINT/SIGTERM close handling.
+- `App` owns the platform backend; `App.NewWindow` / `App.NewOverlayPanel`; `App.Run` with SIGINT/SIGTERM close handling; `App.SetKeepAlive` (tray apps that outlive their windows) and `App.Quit`.
+- Close veto: `Window.OnCloseRequest` (return false to keep the window — the "save changes?" flow), `RequestClose`, unvetoable `Close`.
+- Lifecycle callbacks: `OnActivate`, `OnMove`, `OnMinimize`, `OnFullscreenChange`; owned child windows (`SetOwner`) and sheets (`ShowAsSheet`, macOS).
 - Multiple windows per app; detached windows may be constructed off-thread.
 - Per-window renderer selection, device-pixel-ratio handling and content-viewport zoom.
 - Window modes: normal, fullscreen, overlay panel (non-activating, transparent, always-on-top — cocoa backend).
@@ -23,14 +25,22 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 - Modifier abstraction (`IsCommandMod`) and named-key + text/char events.
 - Gestures: pinch, rotation, two-finger double-tap; precise scroll phase and modifiers.
 - Modal overlay focus trapping, top-down hit testing, and keyboard containment (keys and window accelerators don't reach the UI behind a modal).
+- `Window.AddEventFilter`: see (and optionally consume) every event before dispatch — command palettes, modal key layers, macro recording.
+- App-defined events: `CustomEvent` + `DispatchCustomEvent` travel capture → target → bubble like input.
+- `MouseEvent.Clicks` (double / triple click count) and per-widget `OnFocus` / `OnBlur` / `OnKeyDown` hooks on every `BaseWidget`.
+- Accelerators: `CmdOrCtrl` token, `Bind` / `Unregister`, widget-scoped bindings (`RegisterScoped`) that outrank window-wide ones and stay live inside a modal that contains them; the newest binding wins.
+- Drag and drop with typed payloads (`DragData`, `DragDataProvider`), `DragEnter` / `DragLeave`, `DropAcceptor` accept/reject, a drag image, and OS file drops routed to `Droppable` widgets first.
 - Optional focus policies: `ClickFocusPolicy` (Tab-reachable but a click keeps focus where it was) and `TabStopper` (click-focusable but skipped by Tab — selectable text).
 - Overlays re-lay themselves out when their content changes (`OverlayLayouter`); `TickWidget` forwards frame ticks through non-Tickable containers.
+- Overlay layers (`PushOverlayLayer`: toasts stay above a later modal, tooltips above everything) and exit animations (`OverlayExiter`).
+- Optional widget contracts are named, exported interfaces: `ChildLister`, `ModalOverlay`, `FocusVisibleAware`, `WindowAware`, `LayoutDirtyMarker`; `QUI_DEBUG_WIDGETS=1` reports a missing `SetSelf`.
 
 **Layout**
 
 - `FlexLayout` (CSS-aligned flexbox), `GridLayout`, `FlowLayout`, `AbsoluteLayout`.
 - CSS margin-box semantics in flex/container measure.
 - Controlled per-child metadata: `SetFlexItem` / `SetGridItem` / `SetAbsolutePosition`.
+- Custom layout engines report an intrinsic size through `LayoutMeasurer`; `Window.AfterLayout` runs code against final geometry before paint.
 - Shrink-to-fit measurement; grid row spans; debug overflow overlay (`QUI_DEBUG_LAYOUT=1`).
 
 **Rendering**
@@ -52,7 +62,8 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 **Theme**
 
 - Global design-token `Theme`: surface ladder, text roles, accent, borders, semantic colors, elevation, state opacities, spacing/radius/font/transition scales.
-- `SetTheme` invalidation; live `CurrentTheme()` reads. One light scheme; dark UI is CSS.
+- `SetTheme` invalidation; live `CurrentTheme()` reads; `ThemeGeneration()` for caches; removable `SubscribeTheme`. Native controls built with baseline colors follow a theme swap. One light scheme; dark UI is CSS.
+- Configurable tooltips per window (`SetTooltipStyle`: colors, font, padding, width, show delay, grace period).
 
 **Internationalization seam**
 
@@ -75,22 +86,25 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 
 ## `widgets`
 
-- Structure: `Box`, `Container` layouts, `Rule`, `FieldSet`, `Anchor`, `ScrollView`, `ListView` (virtualized), `TableView` (fixed + virtual rows), `TabView`.
+- Structure: `Box`, `Container` layouts, `Rule`, `FieldSet`, `Anchor`, `ScrollView` (content size measured automatically), `ListView` (virtualized; factory rows built only while visible), `TableView` (cell renderers, column alignment, header-click sort, factory rows), `TabView` (icons, badges, closable and disabled tabs, fit-width tabs with an overflow-scrolling strip, switch veto). List and table colors come from the theme, overridable per field (`RowColors`).
 - Text: `Label`, `RichText`, `InlineBox`; text selection and copy.
-- Input: `Input`, `TextArea` (both with clipboard, IME and undo/redo), `CheckBox`, `RadioButton` / `RadioGroup`, `Switch`, `Slider`, `Select`.
+- Input: `Input`, `TextArea` (both with clipboard, IME and undo/redo), `CheckBox`, `RadioButton` / `RadioGroup`, `Switch`, `Slider`, `Select` (value / label options with icons and groups, custom option rows, open / close events).
 - Feedback: `Progress`, `Tooltip`.
-- Overlays: `Popup`, `Dialog` (any widgets as actions, `CanClose` veto, `OnClose(reason)`, Enter → `DefaultAction`, `InitialFocus`, custom `Header`, theme-token colors), `MenuBar`, `ContextMenu`, `MenuItem` panels.
+- Overlays: `Popup` (close reasons + veto, click-through, auto-focus, edge clamping), `Dialog` (any widgets as actions, `CanClose` veto, `OnClose(reason)`, Enter → `DefaultAction`, `InitialFocus`, custom `Header`, theme-token colors), `MenuBar` (Left / Right between menus), `ContextMenu`, `MenuItem` icons / IDs / custom content, keyboard-navigable panel rows (`MenuActivatable`).
 - Media: `Image` (raster + vector).
-- i18n: `TextKey` fields resolved in Measure/Draw, with `AccessibleNameKey()`.
+- i18n: `TextKey`-style keys on every text-bearing widget (tabs, columns, menu items, labels, fieldset titles, tooltips) resolved in Measure/Draw, with `AccessibleNameKey()`.
+- Accessibility: label-aware names, `SetAccessibleName` override, self-drawn tabs / list rows / table cells published as AX children, Tab scrolls the focused widget into view.
 - Text-widget undo history (`undo.go`) and a reusable selection model.
 
 ## `htmlcss`
 
 **HTML tags:** structural/semantic containers (`div`, `section`, `article`, `header`, `footer`, `nav`, `main`, `aside`, `p`, headings, lists, `table`/`tr`/`td`/`th`/`caption`/`colgroup`, `pre`, `code`, `blockquote`, `hr`, `br`, `span`, `b`, `em`, `strong`, `i`, `u`, `a`, `img`, `svg`, `canvas`, `input` variants, `textarea`, `select`/`option`, `button`, `label`, `fieldset`, `datalist`, `template`). Unsupported tags are parsed and skipped.
 
-**CSS:** the full selector set including interactive states (`:hover`, `:focus`, `:checked`, `:disabled`, `:enabled`, `:required`, `:optional`, `:read-only`, `:read-write`), `var()` + `:root`, shorthands, the box model with per-side borders, background color/gradient, box-shadow, opacity, transform, `position:relative`, overflow (`auto`/`scroll` hosted by a `ScrollView`), `display:flex`/`grid`, list markers, text-decoration/transform/overflow, white-space, `overflow-wrap`/`word-break`.
+**CSS:** the full selector set including interactive states (`:hover`, `:focus`, `:focus-visible`, `:checked`, `:disabled`, `:enabled`, `:required`, `:optional`, `:read-only`, `:read-write`), `var()` + `:root`, shorthands, the box model with per-side borders, background color/gradient, box-shadow, opacity, transform, `position:relative`, overflow (`auto`/`scroll` hosted by a `ScrollView`), `display:flex`/`grid`, list markers, text-decoration/transform/overflow, white-space, `overflow-wrap`/`word-break`, `scrollbar-color`. Native popups (select, datalist, color palette, tooltips) follow `--popup-*` / `--tooltip-*` custom properties.
 
-**Events and interaction:** click/double-click, hover, focus (`El.RequestFocus`, `autofocus`; `<button>` is Tab-reachable and presses on Enter/Space), keyboard (author handlers act on target/bubble), pointer events (`pointer-events:none`), wheel, drag-reorder (`Draggable`/`DragHandle`/`OnDrop`/`OnDragOver`), `<a>` link activation, `app-region: drag|no-drag`.
+**Extension points:** `RegisterElement` (custom tags backed by native widgets), `RegisterProperty` + `ComputedStyle.Property` / `Var`, `El.SetOnStyle`, style-aware canvas painting (`SetCanvasPaint`), `StyleEngine.SetLinkHandler`.
+
+**Events and interaction:** click/double-click (with position and `PreventDefault`), pointer down / move / up with capture, hover, focus (`El.RequestFocus`, `autofocus`; `<button>` is Tab-reachable and presses on Enter/Space), keyboard (author handlers act on target/bubble), `pointer-events:none`, wheel, drag-reorder (`Draggable`/`DragHandle`/`OnDrop`/`OnDragOver`), element-level file drops and paste hooks, `<a>` link activation, `app-region: drag|no-drag`.
 
 **Two entry points, one assembly:** the live `El` + `StyleEngine` (retained, subtree-scoped restyle) and the one-shot `Render` / `RenderDoc` that compiles a parsed DOM into a static but still mutable `El` tree.
 
@@ -98,9 +112,9 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 
 ## `reactive` and `reactive/html`
 
-- Reconciler for structure: `UseState`, `UseReducer`, `UseRef`, `UseMemo`, `UseCallback`, `UseEffect(Once)`, `UseSignal`, `UseContext`; keyed lists; error boundaries; portals.
+- Reconciler for structure: `UseState`, `UseReducer`, `UseRef`, `UseMemo`, `UseCallback`, `UseEffect(Once)`, `UseLayoutEffect` (after layout, before paint), `UseId`, `UseResource` (async load with cancellation), `UseSignal`, `UseContext`; keyed lists; error boundaries; portals, including anchored popovers (`PortalAnchored`).
 - Signal engine for high-frequency updates: `Signal[T]`, `Map`/`Computed`, `BindWidget`, `Show`/`For` bound nodes — all skipping the render pass.
-- `reactive/html`: fluent builders for every common tag, chainable props under HTML names, `h.If`/`h.Show`/`h.For`/`h.Each`/`h.Frag`, overlays (`h.Portal`/`h.ModalPortal`/`h.ModalPortalWith`/`h.ContextMenu`), the `h.Dialog` shell (header / body / actions with `.q-dialog-*` classes and framework-origin CSS), `h.Mount`. Portal content cascades from where it is declared (`.app.dark .q-dialog` matches; custom properties inherit).
+- `reactive/html`: fluent builders for every common tag, chainable props under HTML names, `h.If`/`h.Show`/`h.For`/`h.Each`/`h.Frag`, overlays (`h.Portal`/`h.ModalPortal`/`h.ModalPortalWith`/`h.Popover`/`h.ContextMenu`), refs that track the latest render (`.Ref`, `.RefTo`), `h.Canvas`, `h.Leaf` (a native widget hosted in a styled element), pointer / click / file-drop / paste / form-submit builders, the `h.Dialog` shell (header / body / actions with `.q-dialog-*` classes and framework-origin CSS), `h.Mount`. Portal content cascades from where it is declared (`.app.dark .q-dialog` matches; custom properties inherit).
 - HTML components: `h.MustParse` / `MustParseSet` compile markup fragments; `Template.Bind(Scope)` fills them; signal-valued holes bind instead of interpolating; errors carry the template line number.
 
 ## `i18n` + `cmd/qui-i18n`

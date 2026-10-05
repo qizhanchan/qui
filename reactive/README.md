@@ -196,6 +196,9 @@ Positional per fiber (call order must be stable or it panics — just like React
 | `UseCallback(fn, deps...)` | stable function identity |
 | `UseEffect(fn, deps...)` | run a side effect after commit; return a cleanup |
 | `UseEffectOnce(fn)` | run once on mount; cleanup on unmount |
+| `UseLayoutEffect(fn, deps...)` | like `UseEffect`, but after the window's next layout pass and before paint, so `Bounds()` are final; state it sets re-renders before the frame paints |
+| `UseId()` | a process-unique id, stable for the component's life |
+| `UseResource(fetch, deps...)` | async load off the UI goroutine: `{Value, Err, Loading, Ready, Reload}`; the context is cancelled on dep change / unmount and late results are dropped |
 | `UseSignal(init)` | per-fiber memoized Signal, satisfying the stable-identity requirement for direct binding; `Set` does not re-render |
 
 Context:
@@ -212,6 +215,7 @@ theme := ThemeCtx.Use()           // consume at any depth (subscribes; marks con
 
 - **Fragment** (`reactive.Fragment` / `h.Frag`): a component returns several siblings that participate directly in the parent layout, with no wrapping container.
 - **Portal** (`h.Portal` / `h.ModalPortal(onDismiss, node)` / `h.ModalPortalWith(opts, node)`): declarative overlay. `h.If(open, h.ModalPortal(...))` is a modal with a scrim, click/Esc dismissal and a focus trap; `ModalPortalWith` sets the scrim, which gestures dismiss, and an `OnEnter` default action. Escape and Enter are handled on the way back up, so focused content (a textarea's newline, an inline editor's cancel) gets them first. Portal content cascades from where it is declared — it inherits custom properties and matches ancestor selectors like `.app.dark .x` even though it lives in the overlay stack. Overlay invalidation is handled locally in the portal and does not bubble to the main tree.
+- **Popover** (`h.Popover(anchorEl, h.PopoverOptions{...}, node)` / `h.PopoverAt(rectFn, ...)`, or `reactive.PortalAnchored`): content placed beside an anchor, flipped to the other side when it doesn't fit, clamped into the window, and re-placed whenever the anchor moves. Capture the anchor with `.RefTo(ref)`.
 - **Dialog** (`h.Dialog(h.DialogProps{Title, Body, Actions, OnDismiss, OnConfirm, CloseButton, Class})`): the ready-made dialog shell on top of `ModalPortalWith` — `div.q-dialog > header.q-dialog-header(.q-dialog-title, .q-dialog-close) + .q-dialog-body + footer.q-dialog-actions`. Its look is framework-origin CSS that any author rule overrides; `--q-dialog-bg/-fg/-radius/-shadow` theme it. Buttons are Tab-reachable and press on Enter/Space; give the opening field `.Autofocus()`.
 - **ErrorBoundary** (`reactive.ErrorBoundary(key, child, fallback)`): catches **render/reconcile panics** in a subtree (which would kill the process in a Go GUI), switching to a fallback + retry. A panic in the fallback itself propagates; panics in event handlers/effects are out of scope.
 

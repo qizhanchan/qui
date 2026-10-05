@@ -21,7 +21,6 @@
 | [docs/features.zh.md](docs/features.zh.md) | 引擎、widgets、htmlcss、reactive、i18n 以及各辅助包的功能清单 |
 | [reactive/README.zh.md](reactive/README.zh.md) | reactive 运行时深入解析 |
 | [htmlcss/COVERAGE.zh.md](htmlcss/COVERAGE.zh.md) | 权威的 HTML/CSS 能力矩阵 |
-| [docs/extensibility-audit.zh.md](docs/extensibility-audit.zh.md) | 扩展性与完备性审计：第一轮修了什么，以及剩余缺口的优先级路线图 |
 | [agent/llm.txt](agent/llm.txt) | agent 线缆规范（运行中的应用也会在 `/llm.txt` 提供） |
 
 顶层文档都同时提供英文版；中文版与英文版并列，文件名以 `.zh.md` 结尾。
