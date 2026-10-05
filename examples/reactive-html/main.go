@@ -9,8 +9,8 @@
 //     A signal-bound filter (h.Show + BindClass) toggles the visible rows
 //     and the active chip with zero render.
 //   - Drag-to-reorder rows (El Draggable/OnDrop) and right-click menus.
-//   - OS → app file drop: drag files from Finder/Explorer onto the window
-//     (Window.SetOnFileDrop) and the dropped paths render into a signal-
+//   - OS → app file drop: drag files from Finder/Explorer onto the drop
+//     zone (Builder.OnFileDrop) and the dropped paths render into a signal-
 //     bound list — no reconcile.
 //   - Keyboard: Enter in the field adds a todo; Tab moves focus across the
 //     controls; Esc dismisses the confirm dialog.
@@ -159,26 +159,22 @@ func App(window *qui.Window) h.Node {
 		return func() { close(stop) }
 	})
 
-	// OS → app file drop. GLFW fires SetOnFileDrop's callback on the main
-	// thread when files are dragged from Finder/Explorer onto the window; we
-	// stat each path and push the result into a signal, so the list below
-	// re-syncs with no render pass. Cleared on unmount.
+	// OS → app file drop onto the drop zone element (Builder.OnFileDrop):
+	// we stat each path and push the result into a signal, so the list
+	// below re-syncs with no render pass.
 	drops := reactive.UseSignal([]droppedFile{})
-	reactive.UseEffectOnce(func() func() {
-		window.SetOnFileDrop(func(paths []string, _, _ float32) {
-			items := make([]droppedFile, 0, len(paths))
-			for _, p := range paths {
-				df := droppedFile{path: p, name: filepath.Base(p)}
-				if info, err := os.Stat(p); err == nil {
-					df.size = info.Size()
-					df.dir = info.IsDir()
-				}
-				items = append(items, df)
+	onDrop := func(paths []string) {
+		items := make([]droppedFile, 0, len(paths))
+		for _, p := range paths {
+			df := droppedFile{path: p, name: filepath.Base(p)}
+			if info, err := os.Stat(p); err == nil {
+				df.size = info.Size()
+				df.dir = info.IsDir()
 			}
-			drops.Set(items)
-		})
-		return func() { window.SetOnFileDrop(nil) }
-	})
+			items = append(items, df)
+		}
+		drops.Set(items)
+	}
 	noDrops := reactive.UseMemo(func() *reactive.Signal[bool] {
 		return reactive.Computed(func() bool { return len(drops.Get()) == 0 })
 	}, "noDrops")
@@ -392,15 +388,15 @@ func App(window *qui.Window) h.Node {
 		).Class("cards"),
 
 		// OS file drop: a drop zone plus a signal-bound list of dropped paths.
-		// Drag files from Finder/Explorer onto the window to populate it.
+		// Drag files from Finder/Explorer onto the zone to populate it.
 		h.Div(
 			h.Div(
 				h.Icon(icons.CloudUpload).Class("drop-icon"),
 				h.Div(
 					h.H3("Drop files here").Class("card-title"),
-					h.P("Drag files from Finder / Explorer onto this window.").Class("card-desc"),
+					h.P("Drag files from Finder / Explorer onto this box.").Class("card-desc"),
 				).Class("drop-copy"),
-			).Class("dropzone"),
+			).Class("dropzone").OnFileDrop(onDrop),
 			h.Div(
 				h.ForWith("drops", reactive.BoundLayout{Direction: qui.Vertical, Gap: 6},
 					drops, renderDrop),

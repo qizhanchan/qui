@@ -5,7 +5,8 @@
 //   - Focus the list (click inside it), then Up/Down to move the
 //     selection — the view auto-scrolls to keep it visible.
 //   - Mouse wheel scrolls; drag the scrollbar thumb on the right edge.
-//   - Press Enter on a selected row to "activate" it (logged).
+//   - Double-click a row, or press Enter on a selected one, to "activate"
+//     it (logged).
 //   - Use the buttons to mutate the model and observe the list react.
 package main
 
@@ -14,6 +15,7 @@ import (
 	"log"
 
 	"github.com/qizhanchan/qui"
+	"github.com/qizhanchan/qui/agent"
 	"github.com/qizhanchan/qui/widgets"
 )
 
@@ -59,6 +61,18 @@ func main() {
 	}
 	// Let the list absorb the remaining vertical space.
 	list.SetFlex(1)
+	// The list follows the theme by default; this page is dark, so give it
+	// a dark palette (unset fields still come from the theme).
+	list.Colors = widgets.RowColors{
+		Background: qui.Color{R: 0.1, G: 0.1, B: 0.12, A: 1},
+		Text:       qui.ColorWhite,
+		Border:     qui.Color{R: 0.3, G: 0.3, B: 0.35, A: 1},
+		Hover:      qui.Color{R: 0.18, G: 0.18, B: 0.22, A: 1},
+		Scrollbar: qui.ScrollbarColors{
+			Track: qui.Color{R: 0.06, G: 0.06, B: 0.08, A: 1},
+			Thumb: qui.Color{R: 0.4, G: 0.4, B: 0.45, A: 1},
+		},
+	}
 
 	addBtn := widgets.NewButton("Add Item", func() {
 		items = append(items, fmt.Sprintf("Added %03d", len(items)+1))
@@ -103,5 +117,6 @@ func main() {
 	root.Style().Padding = qui.Insets{Top: 20, Right: 20, Bottom: 20, Left: 20}
 
 	window.SetRoot(root)
+	agent.BindEnv(window) // QUI_AGENT=1 → drive it with cmd/qui-agent
 	app.Run()
 }

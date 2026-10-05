@@ -14,6 +14,14 @@
   --chip: #ece9f6;
   --chip-ink: #4a3f77;
 
+  /* Native popups (the <select> list, tooltips) and scrollbars follow the
+     tokens, so .dark re-themes them too. */
+  --popup-background: var(--surface);
+  --popup-color: var(--fg);
+  --popup-border: var(--border);
+  --popup-accent: var(--primary);
+  scrollbar-color: var(--muted) var(--surface-2);
+
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -400,6 +408,11 @@
 
 .del:hover {
   background: #d63a3a;
+}
+
+select {
+  color: var(--fg);
+  background: var(--surface);
 }
 
 .empty {
