@@ -21,6 +21,7 @@
 | [docs/features.md](docs/features.md) | Feature catalog across the engine, widgets, htmlcss, reactive, i18n and the auxiliary packages |
 | [reactive/README.md](reactive/README.md) | Deep dive into the reactive runtime |
 | [htmlcss/COVERAGE.md](htmlcss/COVERAGE.md) | The authoritative HTML/CSS coverage matrix |
+| [docs/extensibility-audit.md](docs/extensibility-audit.md) | Extensibility / completeness audit: what round 1 fixed, and the prioritized roadmap of remaining gaps |
 | [agent/llm.txt](agent/llm.txt) | The agent wire spec (also served live at `/llm.txt`) |
 
 Chinese versions of the top-level documents live alongside the English ones with a `.zh.md` suffix.

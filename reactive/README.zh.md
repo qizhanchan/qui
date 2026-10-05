@@ -213,7 +213,16 @@ theme := ThemeCtx.Use()           // 任意深度消费（订阅，值变时标�
 ## 6. 其他能力
 
 - **Fragment**（`reactive.Fragment` / `h.Frag`）：组件返回多个兄弟，直接参与父布局，无容器包裹。
-- **Portal**（`h.Portal` / `h.ModalPortal(onDismiss, node)`）：声明式 overlay。`h.If(open, h.ModalPortal(...))` 就是一个带 scrim、点击/Esc 关闭、焦点陷阱的模态对话框。overlay 的失效在 portal 本地处理，不冒泡到主树。
+- **Portal**（`h.Portal` / `h.ModalPortal(onDismiss, node)` / `h.ModalPortalWith(opts, node)`）：声明式 overlay。
+  - `h.If(open, h.ModalPortal(...))` 就是一个带 scrim、点击/Esc 关闭、焦点陷阱的模态框。
+  - `ModalPortalWith` 可以配置 scrim、哪些手势会关闭，以及由 `OnEnter` 触发的默认动作。
+  - Esc 和 Enter 在冒泡阶段处理，获得焦点的内容先拿到这两个键，例如 textarea 换行、行内编辑取消。
+  - portal 内容从声明它的位置继承样式：虽然它挂在 overlay 栈上，但能继承自定义属性，也能匹配 `.app.dark .x` 这类祖先选择器。
+  - overlay 的失效在 portal 本地处理，不冒泡到主树。
+- **Dialog**（`h.Dialog(h.DialogProps{Title, Body, Actions, OnDismiss, OnConfirm, CloseButton, Class})`）：基于 `ModalPortalWith` 的现成对话框外壳。
+  - 结构：`div.q-dialog > header.q-dialog-header(.q-dialog-title, .q-dialog-close) + .q-dialog-body + footer.q-dialog-actions`。
+  - 外观来自框架层 CSS，任何作者规则都能覆盖；也可以通过 `--q-dialog-bg/-fg/-radius/-shadow` 换肤。
+  - 按钮可以 Tab 到达，Enter/Space 按下；打开时要聚焦的输入框加上 `.Autofocus()`。
 - **ErrorBoundary**（`reactive.ErrorBoundary(key, child, fallback)`）：捕获子树的 **render/reconcile panic**（Go GUI 里这会杀进程），切换到 fallback + retry。fallback 自身 panic 会向上传播；事件处理器/effect 里的 panic 不在覆盖范围。
 
 ---
@@ -231,7 +240,9 @@ theme := ThemeCtx.Use()           // 任意深度消费（订阅，值变时标�
 拖拽    .Draggable(key)/.DragHandle/.OnDrop/.OnDragOver/.OnDragEnd
 条件    If / Nothing / Frag / ForEach / El(rawElement)
 信号    .BindText/.BindClass；Show(key, sig, build) / For(key, sig, render) / ForWith
-浮层    Portal / ModalPortal(onDismiss, node) / ContextMenu(window, x, y, items)
+浮层    Portal / ModalPortal(onDismiss, node) / ModalPortalWith(opts, node) / Dialog(props)
+        ContextMenu(window, x, y, items)
+焦点    .Autofocus()；El.RequestFocus()
 ```
 
 **样式规则**：全部走 CSS class（`h.Mount` 传入的 stylesheet），状态驱动的样式用 `.BindClass` 切换类名或 setState 换 `.Class`——没有内联样式 prop。

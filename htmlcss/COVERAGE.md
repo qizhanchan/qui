@@ -49,7 +49,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | `input[type=file]` | ✅ | rendered as a button; click opens the native file dialog (`qui.OpenFile`/`OpenFiles`; `multiple`; `accept` `.ext` tokens → `AllowedExtensions`). Label is the selected file's base name (`(+N)` for multiple), default `Choose File…`; serializes absolute paths. Non-darwin returns `ErrDialogNotSupported` |
 | `textarea` | ✅ | `widgets.TextArea` |
 | `select` `option` `optgroup` | ✅ | requires `Options.Window`; without one it degrades to a placeholder label. `option value` is the submitted value (falling back to visible text), `selected` is initial and restored by form reset, `disabled` is skipped by click / arrows / type-ahead; `<optgroup>` inserts a non-clickable group header. Keyboard type-ahead (cycles on repeated letters, buffer clears after 1s). Limits: groups are a header + flattened approximation; no `multiple`/`size` |
-| `button` | ✅ | Box rendering + built-in hover/press feedback |
+| `button` | ✅ | Box rendering + built-in hover/press feedback. Tab-reachable and pressed by Enter / Space (also push-button `<input>`s); a mouse click does not move focus (a text field keeps it) unless the author styles `:focus`. No built-in focus ring — style `:focus` |
 | `form` | ✅ | `El.SetOnFormSubmit(func(map[string]string))` collects the current values of named descendant controls. Triggered by Enter in a text field or a submit button; `<input type=reset>` restores defaults. Limits: no native action/method network submit, no `formdata`/validation |
 | `fieldset` `legend` | ✅ | UA border/padding + bold legend |
 | `label[for]` | ✅ | click activates the control (toggle checkbox, select radio, focus text field). As a control surface its text is not drag-selectable; a click only toggles |
@@ -70,7 +70,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | `video` | `media.VideoView` |
 | `iframe` / embedded browser | `webview` (CEF, build tag) |
 | `svg` (inline tag) | `<img src=*.svg>` or `h.Icon` + `svg.Document` (`qui.VectorSource`) |
-| `dialog` | reactive `h.ModalPortal` / `widgets.Dialog` |
+| `dialog` | reactive `h.Dialog` (shell) / `h.ModalPortalWith` / `widgets.Dialog`. Portal content cascades from its declaring element (inheritance + ancestor selectors) |
 | `details/summary` `progress` `meter` | composed native `widgets` (ScrollView/Progress etc.) |
 | `text-shadow` | ❌ |
 
@@ -206,11 +206,12 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | Clipboard copy (plain text + HTML flavor) | ✅ | images inline as data URIs; lists rebuilt as `<ol>/<ul>`; tables rebuilt as `<table>` (HTML → real tables in Docs/Word; plain → TSV for Sheets). Mixed selections each stay structured, in document order. Selection coordinates normalize to the bounding box. Limits: nested lists inside a cell flatten to `<br>`; spanning cells in a whole-block selection are approximated |
 | Drag & drop reorder | ✅ | Draggable/DragHandle/OnDrop/OnDragOver with paint-only Transform feedback |
 | `app-region: drag / no-drag` | ✅ | inheritable (Electron `-webkit-app-region` alias); `drag` on a title-bar strip lets the whole subtree drag the window, `no-drag` children opt back out. Backed by `Window.BeginWindowDrag()` (native window-manager drag). Only meaningful with `Window.SetTitlebarStyle(qui.TitlebarOverlay)`; unsupported platforms degrade to a normal press |
-| Keyboard focus / Tab cycling | ✅ | framework-level; control editing uses the backing widget |
+| Keyboard focus / Tab cycling | ✅ | framework-level; control editing uses the backing widget. Selectable text is click-focusable (for copy) but not a Tab stop. `El.RequestFocus()` focuses programmatically |
 | HTML `disabled` attribute | ✅ | disables the backing control; `El.SetDisabled(bool)` toggles at runtime and relinks `:disabled` |
 | HTML `title` attribute → hover tooltip | ✅ | pushed to the widget's tooltip on restyle; folded inline elements have no widget of their own |
 | HTML `hidden` attribute | ✅ | implemented per UA rules (a tier-0 `display:none`), so author CSS can override it. Static `Render` prunes resolved-none subtrees at compile time |
-| `tabindex` / `accesskey` / `minlength` / `pattern` / `rows` / `cols` / `autofocus` / `inputmode` / `spellcheck` | ❌ | not read |
+| `autofocus` | ✅ | focuses the element (its editing control for form elements) once, when it first mounts — including inside a portal |
+| `tabindex` / `accesskey` / `minlength` / `pattern` / `rows` / `cols` / `inputmode` / `spellcheck` | ❌ | not read |
 | `label[for]` click focus | ✅ | toggle / select / focus |
 | AX roles (button/link/textbox/img/list/heading…) | ✅ | `El.Role()` + `AccessibleName()`, addressable by the agent |
 
@@ -220,7 +221,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 
 Grouped by how likely a desktop application is to need them.
 
-**High value (native + everyday):** `aspect-ratio`; `position: sticky`; `::placeholder` and `:placeholder-shown`/`:valid`/`:invalid`/`:indeterminate`/`:default` (all need a "value changed → scoped restyle" hook); `::selection`/`::marker`; `:is()`/`:where()`/CSS nesting; `transition`; the remaining mouse events (`mousemove`, `scroll`, `change`); the `tabindex`/`minlength`/`pattern`/`rows`/`cols`/`autofocus`/`inputmode`/`spellcheck` attributes.
+**High value (native + everyday):** `aspect-ratio`; `position: sticky`; `::placeholder` and `:placeholder-shown`/`:valid`/`:invalid`/`:indeterminate`/`:default` (all need a "value changed → scoped restyle" hook); `::selection`/`::marker`; `:is()`/`:where()`/CSS nesting; `transition`; the remaining mouse events (`mousemove`, `scroll`, `change`); the `tabindex`/`minlength`/`pattern`/`rows`/`cols`/`inputmode`/`spellcheck` attributes.
 
 **Medium value:** Grid `justify-items`/`justify-self`/`place-*`/`grid-auto-*`/implicit tracks; `min-content`/`max-content`/`fit-content` sizing keywords; responsive `@media` re-evaluation and `prefers-color-scheme`/`(hover)`/`(pointer)`/`prefers-reduced-motion`; `@container`; `color-scheme`; `oklch()`/`color-mix()`/`light-dark()`/`hwb()`/`lab()`; `text-shadow`; text polish (`text-wrap`, `hyphens`, `tab-size`, `font-variant*`, `font-feature-settings`, `text-underline-offset`); `background-position`/`-repeat`/explicit `background-size`/repeating gradients; remote image URLs / `srcset`; scroll and resize polish (`resize`, `appearance`, `caret-color`, `scrollbar-*`, `overscroll-behavior`, `scroll-behavior`, scroll-snap); `<select multiple>`/`size`; native date/color pickers; `<a target>`/`download`.
 

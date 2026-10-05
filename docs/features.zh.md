@@ -22,7 +22,9 @@
 - 每个控件自己的坐标空间，配 `WindowPointToLocal` / `LocalPointToWindow` / `InteractionBoundsOf`。
 - 修饰键抽象（`IsCommandMod`）以及命名键 + 文本 / 字符事件。
 - 手势：捏合、旋转、双指双击；精确的滚轮阶段与修饰键。
-- 模态浮层困住焦点，自上而下命中测试。
+- 模态浮层困住焦点，自上而下命中测试，并且隔离键盘：按键和窗口快捷键都到不了 modal 背后的界面。
+- 可选的焦点策略：`ClickFocusPolicy`（可以 Tab 到达，但点击不转移焦点）与 `TabStopper`（可以点击聚焦，但 Tab 跳过，用于可选中的文字）。
+- 浮层内容变化时会自行重新布局（`OverlayLayouter`）；`TickWidget` 会穿过未实现 Tickable 的容器继续传递帧 tick。
 
 **布局**
 
@@ -77,7 +79,7 @@
 - 文字：`Label`、`RichText`、`InlineBox`；文字选择与复制。
 - 输入：`Input`、`TextArea`（均支持剪贴板、IME 与撤销 / 重做）、`CheckBox`、`RadioButton` / `RadioGroup`、`Switch`、`Slider`、`Select`。
 - 反馈：`Progress`、`Tooltip`。
-- 浮层：`Popup`、`Dialog`、`MenuBar`、`ContextMenu`、`MenuItem` 面板。
+- 浮层：`Popup`、`Dialog`、`MenuBar`、`ContextMenu`、`MenuItem` 面板。`Dialog` 的按钮行可以放任意控件，支持 `CanClose` 否决关闭、`OnClose(reason)`、Enter 触发 `DefaultAction`、`InitialFocus`、自定义 `Header`，颜色取自主题 token。
 - 媒体：`Image`（光栅 + 矢量）。
 - i18n：在 Measure/Draw 中解析的 `TextKey` 字段，以及 `AccessibleNameKey()`。
 - 文本控件撤销历史（`undo.go`）与可复用的选择模型。
@@ -88,7 +90,7 @@
 
 **CSS：** 完整选择器集，含交互状态（`:hover`、`:focus`、`:checked`、`:disabled`、`:enabled`、`:required`、`:optional`、`:read-only`、`:read-write`）、`var()` + `:root`、简写属性、逐边边框的盒模型、背景色 / 渐变、box-shadow、opacity、transform、`position:relative`、overflow（`auto`/`scroll` 由 `ScrollView` 托管）、`display:flex`/`grid`、列表标记、text-decoration/transform/overflow、white-space、`overflow-wrap`/`word-break`。
 
-**事件与交互：** 单击 / 双击、hover、焦点、键盘、指针事件（`pointer-events:none`）、滚轮、拖拽重排（`Draggable`/`DragHandle`/`OnDrop`/`OnDragOver`）、`<a>` 链接激活、`app-region: drag|no-drag`。
+**事件与交互：** 单击 / 双击、hover、焦点（`El.RequestFocus`、`autofocus`；`<button>` 可以 Tab 到达，Enter/Space 按下）、键盘（作者回调只在目标 / 冒泡阶段执行）、指针事件（`pointer-events:none`）、滚轮、拖拽重排（`Draggable`/`DragHandle`/`OnDrop`/`OnDragOver`）、`<a>` 链接激活、`app-region: drag|no-drag`。
 
 **两个入口，一个装配体：** 活动元素 `El` + `StyleEngine`（保留式、子树作用域重样式），以及一次性的 `Render` / `RenderDoc`（把解析后的 DOM 编译成静态但仍可变的 `El` 树）。
 
@@ -98,7 +100,7 @@
 
 - 负责结构的 reconciler：`UseState`、`UseReducer`、`UseRef`、`UseMemo`、`UseCallback`、`UseEffect(Once)`、`UseSignal`、`UseContext`；带 key 的列表；错误边界；portal。
 - 负责高频更新的 signal 引擎：`Signal[T]`、`Map`/`Computed`、`BindWidget`、`Show`/`For` 绑定节点 —— 全部跳过 render 过程。
-- `reactive/html`：几乎所有常用标签的流式 builder，以 HTML 名字命名的链式 prop，`h.If`/`h.Show`/`h.For`/`h.Each`/`h.Frag`，浮层（`h.Portal`/`h.ModalPortal`/`h.ContextMenu`），`h.Mount`。
+- `reactive/html`：几乎所有常用标签的流式 builder，以 HTML 名字命名的链式 prop，`h.If`/`h.Show`/`h.For`/`h.Each`/`h.Frag`，浮层（`h.Portal`/`h.ModalPortal`/`h.ModalPortalWith`/`h.ContextMenu`），`h.Dialog` 对话框外壳（头部 / 正文 / 按钮行，类名为 `.q-dialog-*`，默认外观由框架层 CSS 提供），`h.Mount`。portal 内容从声明它的位置继承样式：`.app.dark .q-dialog` 能匹配，自定义属性也能继承。
 - HTML 组件：`h.MustParse` / `MustParseSet` 编译标记片段；`Template.Bind(Scope)` 填充它们；signal 值的洞绑定而非插值；错误携带模板行号。
 
 ## `i18n` + `cmd/qui-i18n`

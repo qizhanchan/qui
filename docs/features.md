@@ -22,7 +22,9 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 - Per-widget coordinate spaces with `WindowPointToLocal` / `LocalPointToWindow` / `InteractionBoundsOf`.
 - Modifier abstraction (`IsCommandMod`) and named-key + text/char events.
 - Gestures: pinch, rotation, two-finger double-tap; precise scroll phase and modifiers.
-- Modal overlay focus trapping and top-down hit testing.
+- Modal overlay focus trapping, top-down hit testing, and keyboard containment (keys and window accelerators don't reach the UI behind a modal).
+- Optional focus policies: `ClickFocusPolicy` (Tab-reachable but a click keeps focus where it was) and `TabStopper` (click-focusable but skipped by Tab — selectable text).
+- Overlays re-lay themselves out when their content changes (`OverlayLayouter`); `TickWidget` forwards frame ticks through non-Tickable containers.
 
 **Layout**
 
@@ -77,7 +79,7 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 - Text: `Label`, `RichText`, `InlineBox`; text selection and copy.
 - Input: `Input`, `TextArea` (both with clipboard, IME and undo/redo), `CheckBox`, `RadioButton` / `RadioGroup`, `Switch`, `Slider`, `Select`.
 - Feedback: `Progress`, `Tooltip`.
-- Overlays: `Popup`, `Dialog`, `MenuBar`, `ContextMenu`, `MenuItem` panels.
+- Overlays: `Popup`, `Dialog` (any widgets as actions, `CanClose` veto, `OnClose(reason)`, Enter → `DefaultAction`, `InitialFocus`, custom `Header`, theme-token colors), `MenuBar`, `ContextMenu`, `MenuItem` panels.
 - Media: `Image` (raster + vector).
 - i18n: `TextKey` fields resolved in Measure/Draw, with `AccessibleNameKey()`.
 - Text-widget undo history (`undo.go`) and a reusable selection model.
@@ -88,7 +90,7 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 
 **CSS:** the full selector set including interactive states (`:hover`, `:focus`, `:checked`, `:disabled`, `:enabled`, `:required`, `:optional`, `:read-only`, `:read-write`), `var()` + `:root`, shorthands, the box model with per-side borders, background color/gradient, box-shadow, opacity, transform, `position:relative`, overflow (`auto`/`scroll` hosted by a `ScrollView`), `display:flex`/`grid`, list markers, text-decoration/transform/overflow, white-space, `overflow-wrap`/`word-break`.
 
-**Events and interaction:** click/double-click, hover, focus, keyboard, pointer events (`pointer-events:none`), wheel, drag-reorder (`Draggable`/`DragHandle`/`OnDrop`/`OnDragOver`), `<a>` link activation, `app-region: drag|no-drag`.
+**Events and interaction:** click/double-click, hover, focus (`El.RequestFocus`, `autofocus`; `<button>` is Tab-reachable and presses on Enter/Space), keyboard (author handlers act on target/bubble), pointer events (`pointer-events:none`), wheel, drag-reorder (`Draggable`/`DragHandle`/`OnDrop`/`OnDragOver`), `<a>` link activation, `app-region: drag|no-drag`.
 
 **Two entry points, one assembly:** the live `El` + `StyleEngine` (retained, subtree-scoped restyle) and the one-shot `Render` / `RenderDoc` that compiles a parsed DOM into a static but still mutable `El` tree.
 
@@ -98,7 +100,7 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 
 - Reconciler for structure: `UseState`, `UseReducer`, `UseRef`, `UseMemo`, `UseCallback`, `UseEffect(Once)`, `UseSignal`, `UseContext`; keyed lists; error boundaries; portals.
 - Signal engine for high-frequency updates: `Signal[T]`, `Map`/`Computed`, `BindWidget`, `Show`/`For` bound nodes — all skipping the render pass.
-- `reactive/html`: fluent builders for every common tag, chainable props under HTML names, `h.If`/`h.Show`/`h.For`/`h.Each`/`h.Frag`, overlays (`h.Portal`/`h.ModalPortal`/`h.ContextMenu`), `h.Mount`.
+- `reactive/html`: fluent builders for every common tag, chainable props under HTML names, `h.If`/`h.Show`/`h.For`/`h.Each`/`h.Frag`, overlays (`h.Portal`/`h.ModalPortal`/`h.ModalPortalWith`/`h.ContextMenu`), the `h.Dialog` shell (header / body / actions with `.q-dialog-*` classes and framework-origin CSS), `h.Mount`. Portal content cascades from where it is declared (`.app.dark .q-dialog` matches; custom properties inherit).
 - HTML components: `h.MustParse` / `MustParseSet` compile markup fragments; `Template.Bind(Scope)` fills them; signal-valued holes bind instead of interpolating; errors carry the template line number.
 
 ## `i18n` + `cmd/qui-i18n`

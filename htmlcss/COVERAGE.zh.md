@@ -49,7 +49,7 @@
 | `input[type=file]` | ✅ | 渲染为按钮；点击弹原生文件对话框（`qui.OpenFile`/`OpenFiles`；`multiple`；`accept` 的 `.ext` 令牌→`AllowedExtensions`）。label 为所选文件基名（多选加 `(+N)`），缺省 `Choose File…`；序列化回传绝对路径。非 darwin 返回 `ErrDialogNotSupported` |
 | `textarea` | ✅ | `widgets.TextArea` |
 | `select` `option` `optgroup` | ✅ | 需 `Options.Window`；无 window 时降级为占位 label。`option value` 是提交值（缺省回退到可见文字）、`selected` 设初选且被 form reset 还原、`disabled` 被点击 / 方向键 / type-ahead 跳过；`<optgroup>` 在其选项前插一条不可点的分组标题行。键盘 type-ahead（连敲同一字母循环、1s 无输入清空缓冲）。限制：分组是「标题行 + 平铺」的近似；无 `multiple`/`size` |
-| `button` | ✅ | Box 渲染 + 内建 hover/press 反馈 |
+| `button` | ✅ | Box 渲染 + 内建 hover/press 反馈。可以 Tab 到达，Enter / Space 按下（推按钮型 `<input>` 也一样）。鼠标点击不转移焦点（输入框保持焦点），除非作者写了 `:focus` 样式。不画内建焦点环，需要的话自己写 `:focus` |
 | `form` | ✅ | `El.SetOnFormSubmit(func(map[string]string))` 收集具名后代控件的当前值。文本框回车或 submit 按钮触发；`<input type=reset>` 恢复默认。限制：无原生 action/method 网络提交、无 `formdata`/校验 |
 | `fieldset` `legend` | ✅ | UA 边框 / 内距 + legend 粗体 |
 | `label[for]` | ✅ | 点击激活关联控件（勾选 checkbox / 选中 radio / 聚焦文本框）。作为控件面，其文字不可拖选；点击只 toggle |
@@ -70,7 +70,7 @@
 | `video` | `media.VideoView` |
 | `iframe` / 内嵌浏览器 | `webview`（CEF，需 build tag） |
 | `svg`（内联标签） | `<img src=*.svg>` 或 `h.Icon` + `svg.Document`（`qui.VectorSource`） |
-| `dialog` | reactive `h.ModalPortal` / `widgets.Dialog` |
+| `dialog` | reactive `h.Dialog`（外壳）/ `h.ModalPortalWith` / `widgets.Dialog`。portal 内容从声明它的元素继承样式，包括属性继承和祖先选择器 |
 | `details/summary` `progress` `meter` | 原生 `widgets` 组合（ScrollView/Progress 等） |
 | `text-shadow` | ❌ |
 
@@ -206,11 +206,12 @@
 | 剪贴板复制（纯文本 + HTML flavor） | ✅ | 图片内联 data URI；列表重建 `<ol>/<ul>`；表格重建 `<table>`（HTML→Docs/Word 真表格；plain→TSV 供 Sheets）。混排选区各自成结构、按文档顺序。选区坐标归一到包围盒。限制：单元格内嵌套列表 flatten 成 `<br>`；整块选区里跨行/跨列合并单元格为近似 |
 | 拖拽重排 Drag & Drop | ✅ | Draggable/DragHandle/OnDrop/OnDragOver，paint-only Transform 反馈 |
 | `app-region: drag / no-drag` | ✅ | 可继承（Electron `-webkit-app-region` 别名）；`drag` 声明在标题栏条上，整个子树可拖窗，`no-drag` 子元素挖回来。落到 `Window.BeginWindowDrag()`。只在 `Window.SetTitlebarStyle(qui.TitlebarOverlay)` 的窗口有意义；不支持的平台退化为普通按下 |
-| 键盘焦点 / Tab 循环 | ✅ | 框架层；控件编辑走 backing widget |
+| 键盘焦点 / Tab 循环 | ✅ | 框架层；控件编辑走 backing widget。可选中的文字能点击聚焦（用于复制），但不是 Tab 停靠点。`El.RequestFocus()` 可以用代码设置焦点 |
 | HTML `disabled` 属性 | ✅ | 禁用 backing 控件；`El.SetDisabled(bool)` 运行时切换并 relink `:disabled` |
 | HTML `title` 属性 → hover tooltip | ✅ | restyle 时推到 widget `SetTooltip`；折叠进行内元素无独立 widget |
 | HTML `hidden` 属性 | ✅ | 按 UA 规则实现（tier 0 的 `display:none`），作者 CSS 可覆盖。静态 `Render` 下命中 display:none 的编译期剪枝 |
-| `tabindex` / `accesskey` / `minlength` / `pattern` / `rows` / `cols` / `autofocus` / `inputmode` / `spellcheck` | ❌ | 不读取 |
+| `autofocus` | ✅ | 元素首次挂载时聚焦一次，表单元素会聚焦到它的编辑控件；在 portal 里同样有效 |
+| `tabindex` / `accesskey` / `minlength` / `pattern` / `rows` / `cols` / `inputmode` / `spellcheck` | ❌ | 不读取 |
 | `label[for]` 点击聚焦控件 | ✅ | toggle / select / focus |
 | AX 角色（button/link/textbox/img/list/heading…） | ✅ | `El.Role()` + `AccessibleName()`，agent 可寻址 |
 
@@ -220,7 +221,7 @@
 
 按桌面应用需要它的高频程度分组。
 
-**高价值（原生 + 日常）：** `aspect-ratio`；`position: sticky`；`::placeholder` 与 `:placeholder-shown`/`:valid`/`:invalid`/`:indeterminate`/`:default`（共用「值变化 → 作用域 restyle」实时钩子）；`::selection`/`::marker`；`:is()`/`:where()`/CSS 嵌套；`transition`；其余鼠标事件（`mousemove`、`scroll`、`change`）；`tabindex`/`minlength`/`pattern`/`rows`/`cols`/`autofocus`/`inputmode`/`spellcheck` 属性。
+**高价值（原生 + 日常）：** `aspect-ratio`；`position: sticky`；`::placeholder` 与 `:placeholder-shown`/`:valid`/`:invalid`/`:indeterminate`/`:default`（共用「值变化 → 作用域 restyle」实时钩子）；`::selection`/`::marker`；`:is()`/`:where()`/CSS 嵌套；`transition`；其余鼠标事件（`mousemove`、`scroll`、`change`）；`tabindex`/`minlength`/`pattern`/`rows`/`cols`/`inputmode`/`spellcheck` 属性。
 
 **中价值：** Grid `justify-items`/`justify-self`/`place-*`/`grid-auto-*`/隐式轨道；`min-content`/`max-content`/`fit-content` 尺寸关键字；`@media` 响应式重算与 `prefers-color-scheme`/`(hover)`/`(pointer)`/`prefers-reduced-motion`；`@container`；`color-scheme`；`oklch()`/`color-mix()`/`light-dark()`/`hwb()`/`lab()`；`text-shadow`；文本抛光（`text-wrap`、`hyphens`、`tab-size`、`font-variant*`、`font-feature-settings`、`text-underline-offset`）；`background-position`/`-repeat`/显式 `background-size`/repeating 渐变；远程图片 URL / `srcset`；滚动与 resize 抛光（`resize`、`appearance`、`caret-color`、`scrollbar-*`、`overscroll-behavior`、`scroll-behavior`、scroll-snap）；`<select multiple>`/`size`；原生日期 / 颜色选择器；`<a target>`/`download`。
 
