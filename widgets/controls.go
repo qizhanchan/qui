@@ -158,13 +158,13 @@ func (c *CheckBox) Draw(canvas Canvas) {
 
 	// State layer overlay (opt-in via StateLayerColor + StateLayerSize).
 	// Skipped for raw-HTML checkboxes.
-	if c.StateLayerColor.A > 0 && c.StateLayerSize > 0 {
+	if themed(c.StateLayerColor).A > 0 && c.StateLayerSize > 0 {
 		stateRect := Rect{X: b.X, Y: b.Y + (b.H-slot)/2, W: slot, H: slot}
 		switch {
 		case c.hovering:
-			DrawStateLayer(canvas, stateRect, slot/2, c.StateLayerColor, theme.HoverOpacity)
+			DrawStateLayer(canvas, stateRect, slot/2, themed(c.StateLayerColor), theme.HoverOpacity)
 		case c.focusVisible:
-			DrawStateLayer(canvas, stateRect, slot/2, c.StateLayerColor, theme.FocusOpacity)
+			DrawStateLayer(canvas, stateRect, slot/2, themed(c.StateLayerColor), theme.FocusOpacity)
 		}
 	}
 
@@ -177,7 +177,7 @@ func (c *CheckBox) Draw(canvas Canvas) {
 		radius = htmlControlRadius
 	}
 	if c.Checked {
-		canvas.FillRoundedRect(box, radius, c.CheckedFillColor)
+		canvas.FillRoundedRect(box, radius, themed(c.CheckedFillColor))
 		// Checkmark — three-point polyline within an 18-unit box, same
 		// anchors at any scale.
 		ssx := boxSize / 18
@@ -187,14 +187,14 @@ func (c *CheckBox) Draw(canvas Canvas) {
 			{X: box.X + 7.5*ssx, Y: box.Y + 13.5*ssy},
 			{X: box.X + 14.5*ssx, Y: box.Y + 6.0*ssy},
 		}
-		canvas.DrawPolyline(pts, c.CheckMarkColor, 2)
+		canvas.DrawPolyline(pts, themed(c.CheckMarkColor), 2)
 	} else {
-		canvas.StrokeRoundedRect(box, radius, c.OutlineColor, borderW)
+		canvas.StrokeRoundedRect(box, radius, themed(c.OutlineColor), borderW)
 	}
 
 	if label := c.DisplayLabel(); label != "" {
 		labelRect := Rect{X: b.X + slot + 4, Y: b.Y, W: b.W - slot - 4, H: b.H}
-		canvas.DrawText(label, labelRect, c.LabelColor, c.labelFont())
+		canvas.DrawText(label, labelRect, themed(c.LabelColor), c.labelFont())
 	}
 }
 
@@ -293,8 +293,8 @@ func (p *Progress) Measure(available Size) Size {
 func (p *Progress) Draw(canvas Canvas) {
 	b := p.Bounds()
 	radius := p.Radius
-	if p.TrackColor.A > 0 {
-		canvas.FillRoundedRect(b, radius, p.TrackColor)
+	if themed(p.TrackColor).A > 0 {
+		canvas.FillRoundedRect(b, radius, themed(p.TrackColor))
 	}
 	progress := p.fraction()
 	if progress <= 0 {
@@ -306,7 +306,7 @@ func (p *Progress) Draw(canvas Canvas) {
 	if fillW < 2*r {
 		r = fillW / 2
 	}
-	canvas.FillRoundedRect(fill, r, p.FillColor)
+	canvas.FillRoundedRect(fill, r, themed(p.FillColor))
 }
 
 func (p *Progress) HitTest(pt Point) Widget {

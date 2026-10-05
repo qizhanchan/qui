@@ -2028,9 +2028,13 @@ func (w *Window) dispatch(event Event) {
 		}
 	}
 
-	// Target phase.
+	// Target phase. An OnKeyDown hook gets the key before the widget.
 	state.phase = PhaseTarget
 	state.currentTarget = target
+	if runKeyHook(target, event) {
+		state.stopped = true
+		return
+	}
 	if target.Handle(eventInWidgetSpace(event, target)) {
 		state.stopped = true
 	}

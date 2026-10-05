@@ -67,6 +67,7 @@ type Select struct {
 	// placeholderKey, when set, supersedes Placeholder and is resolved
 	// during Measure/Draw. Read it through DisplayPlaceholder().
 	placeholderKey messageKey
+	labelKey       messageKey
 	Variant        SelectVariant
 	// Dense collapses the trigger to button height (40 dp base, density-
 	// scaled) and removes the top overhang strip. Mirrors Input.Dense
@@ -677,7 +678,7 @@ func (cb *Select) Measure(available Size) Size {
 		}
 	}
 	if cb.Label != "" {
-		w, _ := TextMetrics(cb.Label, font)
+		w, _ := TextMetrics(cb.DisplayLabel(), font)
 		if w > maxTextW {
 			maxTextW = w
 		}
@@ -722,7 +723,7 @@ func (cb *Select) Draw(canvas Canvas) {
 	theme := CurrentTheme()
 	b := cb.fieldBounds()
 	state := cb.currentState()
-	style := cb.States.Resolve(state)
+	style := themedStyle(cb.States.Resolve(state))
 	radius := style.Radius
 	if radius <= 0 {
 		radius = theme.RadiusSmall
@@ -751,7 +752,7 @@ func (cb *Select) Draw(canvas Canvas) {
 		if floating && accent.A > 0 {
 			// Notch the top border under the floating label so it reads
 			// as sitting on the border line, not through it.
-			labelW, _ := TextMetrics(cb.Label, ThemeFont(TextBodySmall))
+			labelW, _ := TextMetrics(cb.DisplayLabel(), ThemeFont(TextBodySmall))
 			notchX := b.X + cbLeadingSpace - cbOutlineLabelPad
 			notchW := labelW + cbOutlineLabelPad*2
 			canvas.FillRect(Rect{X: notchX, Y: b.Y, W: notchW, H: thickness}, theme.Surface)
@@ -788,7 +789,7 @@ func (cb *Select) Draw(canvas Canvas) {
 				H: cbLabelRestingLineH,
 			}
 		}
-		canvas.DrawText(cb.Label, labelRect, labelColor, labelFont)
+		canvas.DrawText(cb.DisplayLabel(), labelRect, labelColor, labelFont)
 	}
 
 	// Selected value (or placeholder).

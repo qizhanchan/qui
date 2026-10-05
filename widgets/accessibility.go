@@ -51,10 +51,22 @@ func (l *Label) AccessibleNameKey() string { return l.TextKey() }
 // -------------------------------------------------------------------
 // Input
 
-func (t *Input) Role() string              { return RoleTextbox }
-func (t *Input) AccessibleName() string    { return t.DisplayPlaceholder() }
-func (t *Input) AccessibleNameKey() string { return t.PlaceholderKey() }
-func (t *Input) AccessibleValue() string   { return t.Text }
+// Input's name is its floating label when it has one (that is what a
+// sighted user reads as the field's name), else its placeholder.
+func (t *Input) Role() string { return RoleTextbox }
+func (t *Input) AccessibleName() string {
+	if l := t.DisplayLabel(); l != "" {
+		return l
+	}
+	return t.DisplayPlaceholder()
+}
+func (t *Input) AccessibleNameKey() string {
+	if t.Label != "" || t.LabelKey() != "" {
+		return t.LabelKey()
+	}
+	return t.PlaceholderKey()
+}
+func (t *Input) AccessibleValue() string { return t.Text }
 
 // -------------------------------------------------------------------
 // TextArea
@@ -119,9 +131,19 @@ func (s *Slider) AccessibleValue() string {
 // -------------------------------------------------------------------
 // Select
 
-func (c *Select) Role() string              { return RoleCombobox }
-func (c *Select) AccessibleName() string    { return c.DisplayPlaceholder() }
-func (c *Select) AccessibleNameKey() string { return c.PlaceholderKey() }
+func (c *Select) Role() string { return RoleCombobox }
+func (c *Select) AccessibleName() string {
+	if l := c.DisplayLabel(); l != "" {
+		return l
+	}
+	return c.DisplayPlaceholder()
+}
+func (c *Select) AccessibleNameKey() string {
+	if c.Label != "" || c.LabelKey() != "" {
+		return c.LabelKey()
+	}
+	return c.PlaceholderKey()
+}
 func (c *Select) AccessibleValue() string {
 	if c.SelectedIdx < 0 || c.SelectedIdx >= len(c.Items) {
 		return ""
@@ -165,8 +187,9 @@ func (c *Select) AccessibleOptions() []AXOption {
 // -------------------------------------------------------------------
 // RadioButton
 
-func (r *RadioButton) Role() string           { return RoleRadio }
-func (r *RadioButton) AccessibleName() string { return r.Label }
+func (r *RadioButton) Role() string              { return RoleRadio }
+func (r *RadioButton) AccessibleName() string    { return r.DisplayLabel() }
+func (r *RadioButton) AccessibleNameKey() string { return r.LabelKey() }
 func (r *RadioButton) AccessibleState() AccessibleState {
 	if r.group != nil && r.group.selected == r {
 		return AXStateChecked
@@ -198,7 +221,7 @@ func (tv *TabView) AccessibleValue() string {
 	if tv.SelectedIdx < 0 || tv.SelectedIdx >= len(tv.Tabs) {
 		return ""
 	}
-	return tv.Tabs[tv.SelectedIdx].Title
+	return tv.Tabs[tv.SelectedIdx].DisplayTitle()
 }
 
 // -------------------------------------------------------------------
@@ -211,8 +234,9 @@ func (tv *TabView) AccessibleValue() string {
 // -------------------------------------------------------------------
 // FieldSet
 
-func (g *FieldSet) Role() string           { return RoleFrame }
-func (g *FieldSet) AccessibleName() string { return g.Title() }
+func (g *FieldSet) Role() string              { return RoleFrame }
+func (g *FieldSet) AccessibleName() string    { return g.Title() }
+func (g *FieldSet) AccessibleNameKey() string { return g.TitleKey() }
 
 // -------------------------------------------------------------------
 // Popup, Dialog
@@ -230,8 +254,12 @@ func (mb *MenuBar) Role() string { return RoleMenu }
 // -------------------------------------------------------------------
 // Menu rows + list
 
-func (v *menuItemView) Role() string           { return RoleMenuitem }
-func (v *menuItemView) AccessibleName() string { return v.item.Label }
+func (v *menuItemView) Role() string              { return RoleMenuitem }
+func (v *menuItemView) AccessibleName() string    { return v.item.DisplayLabel() }
+func (v *menuItemView) AccessibleNameKey() string { return v.item.LabelKey }
+
+func (r *menuContentRow) Role() string           { return RoleMenuitem }
+func (r *menuContentRow) AccessibleName() string { return r.item.DisplayLabel() }
 
 // AccessibleState publishes the tick / radio selection. Disabled comes
 // from the framework (newMenuItemView mirrors item.Disabled into

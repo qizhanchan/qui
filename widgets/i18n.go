@@ -213,3 +213,50 @@ func (cb *Select) PlaceholderKey() string { return cb.placeholderKey.key }
 
 // DisplayPlaceholder is the placeholder the select actually renders.
 func (cb *Select) DisplayPlaceholder() string { return cb.placeholderKey.resolve(cb.Placeholder) }
+
+// SetLabelKey makes the radio button's caption come from the catalog.
+func (r *RadioButton) SetLabelKey(key string, args ...any) {
+	if r.labelKey.set(key, args) {
+		r.InvalidateLayout()
+	}
+}
+
+// LabelKey returns the radio button's message key, or "".
+func (r *RadioButton) LabelKey() string { return r.labelKey.key }
+
+// DisplayLabel is the caption the radio button actually renders.
+func (r *RadioButton) DisplayLabel() string { return r.labelKey.resolve(r.Label) }
+
+// SetLabelKey makes the input's floating label come from the catalog
+// (Label stays the fallback and still decides whether a label is shown).
+func (t *Input) SetLabelKey(key string, args ...any) {
+	if t.labelKey.set(key, args) {
+		t.InvalidateLayout()
+	}
+}
+
+// LabelKey returns the input's label message key, or "".
+func (t *Input) LabelKey() string { return t.labelKey.key }
+
+// DisplayLabel is the floating label the input actually renders.
+func (t *Input) DisplayLabel() string { return t.labelKey.resolve(t.Label) }
+
+// SetLabelKey makes the select's floating label come from the catalog
+// (Label stays the fallback and still decides whether a label is shown).
+func (cb *Select) SetLabelKey(key string, args ...any) {
+	if cb.labelKey.set(key, args) {
+		cb.InvalidateLayout()
+	}
+}
+
+// LabelKey returns the select's label message key, or "".
+func (cb *Select) LabelKey() string { return cb.labelKey.key }
+
+// DisplayLabel is the floating label the select actually renders.
+func (cb *Select) DisplayLabel() string { return cb.labelKey.resolve(cb.Label) }
+
+// SetTitleKey makes the fieldset's title come from the catalog.
+func (g *FieldSet) SetTitleKey(key string, args ...any) { g.title.SetTextKey(key, args...) }
+
+// TitleKey returns the fieldset's title message key, or "".
+func (g *FieldSet) TitleKey() string { return g.title.TextKey() }

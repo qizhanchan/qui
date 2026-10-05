@@ -146,7 +146,7 @@ func (s *Slider) Draw(canvas Canvas) {
 	handleCY := b.Y + b.H/2
 
 	// Inactive track.
-	inactiveColor := s.InactiveTrackColor
+	inactiveColor := themed(s.InactiveTrackColor)
 	if disabled {
 		inactiveColor = mixAlpha(inactiveColor, 0.5)
 	}
@@ -158,7 +158,7 @@ func (s *Slider) Draw(canvas Canvas) {
 	// Active track (left-of-handle).
 	activeW := handleCX - trackX
 	if activeW > 0 {
-		activeColor := s.ActiveTrackColor
+		activeColor := themed(s.ActiveTrackColor)
 		if disabled {
 			activeColor = mixAlpha(activeColor, 0.5)
 		}
@@ -173,7 +173,7 @@ func (s *Slider) Draw(canvas Canvas) {
 	}
 
 	// State-layer overlay (opt-in via StateLayerColor).
-	if !disabled && s.StateLayerColor.A > 0 {
+	if !disabled && themed(s.StateLayerColor).A > 0 {
 		stateRect := Rect{
 			X: handleCX - stateSize/2,
 			Y: handleCY - stateSize/2,
@@ -182,12 +182,12 @@ func (s *Slider) Draw(canvas Canvas) {
 		}
 		switch {
 		case s.dragging:
-			DrawStateLayer(canvas, stateRect, stateSize/2, s.StateLayerColor, theme.PressedOpacity)
+			DrawStateLayer(canvas, stateRect, stateSize/2, themed(s.StateLayerColor), theme.PressedOpacity)
 		case s.hovering:
 			t := s.hoverTrans.Value(time.Now())
-			DrawStateLayer(canvas, stateRect, stateSize/2, s.StateLayerColor, theme.HoverOpacity*t)
+			DrawStateLayer(canvas, stateRect, stateSize/2, themed(s.StateLayerColor), theme.HoverOpacity*t)
 		case s.focusVisible:
-			DrawStateLayer(canvas, stateRect, stateSize/2, s.StateLayerColor, theme.FocusOpacity)
+			DrawStateLayer(canvas, stateRect, stateSize/2, themed(s.StateLayerColor), theme.FocusOpacity)
 		}
 	}
 
@@ -198,7 +198,7 @@ func (s *Slider) Draw(canvas Canvas) {
 		W: handleSize,
 		H: handleSize,
 	}
-	handleColor := s.HandleColor
+	handleColor := themed(s.HandleColor)
 	handleRadius := handleSize / 2
 	if disabled {
 		handleColor = mixAlpha(handleColor, 0.5)

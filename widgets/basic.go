@@ -315,7 +315,7 @@ func (b *Button) Draw(canvas Canvas) {
 	rect := b.Bounds()
 	theme := CurrentTheme()
 	state := b.currentState()
-	style := b.States.Resolve(state)
+	style := themedStyle(b.States.Resolve(state))
 	bg := style.Background
 	fg := style.Foreground
 	border := style.Border

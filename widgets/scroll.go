@@ -39,14 +39,15 @@ const (
 //     exactly as before (see qui's eventInWidgetSpace).
 //   - ScrollTo is O(1): it moves an offset and dirties the viewport rect.
 //
-// Callers provide ContentSize explicitly (SetContent(widget, size))
-// because Container.Measure doesn't always report intrinsic size for
-// every layout family; supplying it directly sidesteps that. Typical
-// vertical use:
+// Content size: pass a zero Size to SetContent (or call SetContentAuto)
+// and the view measures its content on every layout, so content that grows
+// or shrinks scrolls correctly with no bookkeeping. Pass an explicit size
+// when the content can't measure itself (a custom layout without
+// LayoutMeasurer) or is virtual. Typical vertical use:
 //
 //	sv := widgets.NewScrollView()
 //	content := qui.NewContainer(qui.FlexLayout{Direction: qui.Vertical}, items...)
-//	sv.SetContent(content, qui.Size{W: 300, H: float32(len(items)) * 22})
+//	sv.SetContentAuto(content)
 //
 // Typical horizontal use (e.g. an info-dense toolbar):
 //
@@ -81,6 +82,12 @@ type ScrollView struct {
 	barDragging        bool
 	barDragStartMouse  float32 // mouse position at drag start, on the main axis
 	barDragStartScroll float32
+
+	// sizeAuto: ContentSize is re-measured from Content on every layout.
+	// lastAuto is the last derived size; a ContentSize that differs was
+	// written by the app, which turns auto sizing off.
+	sizeAuto bool
+	lastAuto Size
 
 	// BarColors overrides the scrollbar palette (zero fields = theme).
 	BarColors ScrollbarColors
@@ -118,6 +125,12 @@ func NewScrollView() *ScrollView {
 // The ScrollView takes parent ownership — content.Parent() is wired
 // back so phased event dispatch can walk the tree.
 func (s *ScrollView) SetContent(widget Widget, contentSize Size) {
+	main := contentSize.H
+	if s.Orientation == ScrollHorizontal {
+		main = contentSize.W
+	}
+	s.sizeAuto = main <= 0
+	s.lastAuto = contentSize
 	if s.Content == widget {
 		s.ContentSize = contentSize
 		s.ClampScroll()
@@ -137,6 +150,10 @@ func (s *ScrollView) SetContent(widget Widget, contentSize Size) {
 	s.ClampScroll()
 	s.InvalidateLayout()
 }
+
+// SetContentAuto sets the content and has the view measure it on every
+// layout (ContentSize then always reflects the content's natural size).
+func (s *ScrollView) SetContentAuto(widget Widget) { s.SetContent(widget, Size{}) }
 
 func (s *ScrollView) ReleaseChildForTransfer(child Widget) bool {
 	if s.Content != child {
@@ -505,10 +522,23 @@ func (s *ScrollView) ensureContentSize(rect Rect) {
 	if s.Content == nil {
 		return
 	}
+	if s.sizeAuto {
+		if s.ContentSize != s.lastAuto {
+			s.sizeAuto = false
+		} else {
+			s.ContentSize = Size{}
+		}
+	}
+	defer func() {
+		if s.sizeAuto {
+			s.lastAuto = s.ContentSize
+		}
+	}()
 	if s.Orientation == ScrollHorizontal {
 		if s.ContentSize.W > 0 {
 			return
 		}
+		s.sizeAuto = true
 		nat := s.Content.Measure(Size{W: 0, H: rect.H})
 		s.ContentSize.W = nat.W
 		if s.ContentSize.H <= 0 {
@@ -518,6 +548,7 @@ func (s *ScrollView) ensureContentSize(rect Rect) {
 		if s.ContentSize.H > 0 {
 			return
 		}
+		s.sizeAuto = true
 		nat := s.Content.Measure(Size{W: rect.W, H: 0})
 		s.ContentSize.H = nat.H
 		if s.ContentSize.W <= 0 {

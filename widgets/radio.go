@@ -67,7 +67,8 @@ func (g *RadioGroup) add(rb *RadioButton) {
 // button in the group carries Checked=true at a time.
 type RadioButton struct {
 	BaseWidget
-	Label   string
+	labelKey messageKey
+	Label    string
 	Checked bool
 
 	// Color knobs — same convention as CheckBox. Zero A on any field
@@ -157,8 +158,8 @@ func (r *RadioButton) Measure(available Size) Size {
 	_, slot := r.slotSize()
 	h := slot
 	w := slot
-	if r.Label != "" {
-		textW, textH := TextMetrics(r.Label, ThemeFont(TextBody))
+	if r.Label != "" || r.labelKey.key != "" {
+		textW, textH := TextMetrics(r.DisplayLabel(), ThemeFont(TextBody))
 		if textH > h {
 			h = textH
 		}
@@ -182,13 +183,13 @@ func (r *RadioButton) Draw(canvas Canvas) {
 	}
 
 	// State-layer overlay (opt-in via StateLayerColor + StateLayerSize).
-	if r.StateLayerColor.A > 0 && r.StateLayerSize > 0 {
+	if themed(r.StateLayerColor).A > 0 && r.StateLayerSize > 0 {
 		stateRect := Rect{X: b.X, Y: b.Y + (b.H-slot)/2, W: slot, H: slot}
 		switch {
 		case r.hovering:
-			DrawStateLayer(canvas, stateRect, slot/2, r.StateLayerColor, theme.HoverOpacity)
+			DrawStateLayer(canvas, stateRect, slot/2, themed(r.StateLayerColor), theme.HoverOpacity)
 		case r.focusVisible:
-			DrawStateLayer(canvas, stateRect, slot/2, r.StateLayerColor, theme.FocusOpacity)
+			DrawStateLayer(canvas, stateRect, slot/2, themed(r.StateLayerColor), theme.FocusOpacity)
 		}
 	}
 
@@ -197,21 +198,21 @@ func (r *RadioButton) Draw(canvas Canvas) {
 		ringW = 1
 	}
 	// Outer ring — RingColor unless selected, then SelectedColor.
-	ringColor := r.RingColor
+	ringColor := themed(r.RingColor)
 	if r.Checked {
-		ringColor = r.SelectedColor
+		ringColor = themed(r.SelectedColor)
 	}
 	canvas.StrokeRoundedRect(outer, dotSize/2, ringColor, ringW)
 	if r.Checked {
 		// Inner dot ≈ half the ring diameter (20→10; native 13→~6.5).
 		dotR := dotSize / 4
 		inner := Rect{X: outer.X + outer.W/2 - dotR, Y: outer.Y + outer.H/2 - dotR, W: 2 * dotR, H: 2 * dotR}
-		canvas.FillRoundedRect(inner, dotR, r.SelectedColor)
+		canvas.FillRoundedRect(inner, dotR, themed(r.SelectedColor))
 	}
 
-	if r.Label != "" {
+	if r.Label != "" || r.labelKey.key != "" {
 		labelRect := Rect{X: b.X + slot + 4, Y: b.Y, W: b.W - slot - 4, H: b.H}
-		canvas.DrawText(r.Label, labelRect, r.LabelColor, ThemeFont(TextBody))
+		canvas.DrawText(r.DisplayLabel(), labelRect, themed(r.LabelColor), ThemeFont(TextBody))
 	}
 }
 

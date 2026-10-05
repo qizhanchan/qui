@@ -19,7 +19,8 @@ import . "github.com/qizhanchan/qui"
 // copy exactly like any other text, without the caller doing anything.
 type FieldSet struct {
 	Container
-	title *Label
+	title  *Label
+	titleH float32
 }
 
 const groupBoxTitleH = 22
@@ -50,6 +51,24 @@ func NewFieldSet(title string, layout Layout, children ...Widget) *FieldSet {
 		g.AddChild(c)
 	}
 	return g
+}
+
+// SetTitleHeight sets the title strip's height (default 22) and the top
+// padding that keeps content below it. The title's font is Style().Font.
+func (g *FieldSet) SetTitleHeight(h float32) {
+	if h <= 0 {
+		h = groupBoxTitleH
+	}
+	g.Style().Padding.Top += h - g.titleStripH()
+	g.titleH = h
+	g.InvalidateLayout()
+}
+
+func (g *FieldSet) titleStripH() float32 {
+	if g.titleH > 0 {
+		return g.titleH
+	}
+	return groupBoxTitleH
 }
 
 // Title returns the current title text.
@@ -97,7 +116,7 @@ func (g *FieldSet) Layout(rect Rect) {
 
 func (g *FieldSet) layoutTitle() {
 	b := g.Bounds()
-	g.title.Layout(Rect{X: b.X + 10, Y: b.Y + 4, W: b.W - 20, H: groupBoxTitleH})
+	g.title.Layout(Rect{X: b.X + 10, Y: b.Y + 4, W: b.W - 20, H: g.titleStripH()})
 }
 
 func (g *FieldSet) Draw(canvas Canvas) {
@@ -115,7 +134,7 @@ func (g *FieldSet) Draw(canvas Canvas) {
 		if g.Style().BorderSize > 0 {
 			canvas.StrokeRect(b, theme.Border, g.Style().BorderSize)
 		}
-		if g.title.Text() != "" {
+		if g.title.Text() != "" || g.title.TextKey() != "" {
 			// Keep the title's style in sync with the theme, then let the
 			// Label paint (including any selection highlight).
 			g.title.Style().Font = g.Style().Font

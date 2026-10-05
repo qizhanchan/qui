@@ -418,6 +418,11 @@ func WidgetName(w Widget) string {
 	if w == nil {
 		return ""
 	}
+	if o, ok := w.(interface{ accessibleNameOverride() string }); ok {
+		if name := o.accessibleNameOverride(); name != "" {
+			return name
+		}
+	}
 	if n, ok := w.(Named); ok {
 		return n.AccessibleName()
 	}
@@ -429,6 +434,9 @@ func WidgetName(w Widget) string {
 func WidgetNameKey(w Widget) string {
 	if w == nil {
 		return ""
+	}
+	if o, ok := w.(interface{ accessibleNameOverride() string }); ok && o.accessibleNameOverride() != "" {
+		return "" // an explicit name is a literal
 	}
 	if n, ok := w.(NameKeyed); ok {
 		return n.AccessibleNameKey()

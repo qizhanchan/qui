@@ -38,7 +38,8 @@ const (
 
 type Input struct {
 	BaseWidget
-	Text string
+	labelKey messageKey
+	Text     string
 	// Password masks the displayed text with dots while keeping the real
 	// characters in Text for GetText/editing. The mask is drawn as geometry
 	// at a fixed pitch (see maskPitchEm) rather than as glyphs, so caret,
@@ -689,7 +690,7 @@ func (t *Input) Draw(canvas Canvas) {
 	theme := CurrentTheme()
 	b := t.fieldBounds()
 	state := t.currentState()
-	style := t.States.Resolve(state)
+	style := themedStyle(t.States.Resolve(state))
 	radius := style.Radius
 
 	// Variant background. Filled paints its container fill; Outlined
@@ -718,7 +719,7 @@ func (t *Input) Draw(canvas Canvas) {
 			// Notch: paint the active surface color over the segment of
 			// the top border under the label so the floating label reads
 			// as sitting on the border line, not through it.
-			labelW, _ := TextMetrics(t.Label, ThemeFont(TextBodySmall))
+			labelW, _ := TextMetrics(t.DisplayLabel(), ThemeFont(TextBodySmall))
 			notchX := b.X + lead - tfOutlineLabelPadding
 			notchW := labelW + tfOutlineLabelPadding*2
 			canvas.FillRect(Rect{
@@ -765,7 +766,7 @@ func (t *Input) Draw(canvas Canvas) {
 				H: tfLabelRestingLineH,
 			}
 		}
-		canvas.DrawText(t.Label, labelRect, labelColor, labelFont)
+		canvas.DrawText(t.DisplayLabel(), labelRect, labelColor, labelFont)
 	}
 
 	// The in-field affordance sits in the trailing inset, OUTSIDE the text

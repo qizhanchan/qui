@@ -150,6 +150,8 @@ func (w *Window) SetFocus(target Widget) {
 			fv.SetFocusVisible(w.focusVisible)
 		}
 	}
+	runFocusHooks(prevFocused, false)
+	runFocusHooks(target, true)
 	if prevFocused != nil {
 		w.InvalidateRect(PaintBoundsInWindow(prevFocused))
 	}
@@ -407,6 +409,7 @@ func (w *Window) FocusNext() {
 	}
 	w.focusVisible = true
 	w.SetFocus(list[nextFocusIndex(list, w.focused, +1)])
+	w.scrollAncestorsIntoView(w.focused)
 }
 
 // FocusPrev advances focus to the previous focusable widget in tree
@@ -423,6 +426,7 @@ func (w *Window) FocusPrev() {
 	}
 	w.focusVisible = true
 	w.SetFocus(list[nextFocusIndex(list, w.focused, -1)])
+	w.scrollAncestorsIntoView(w.focused)
 }
 
 // ClearFocus removes focus from any currently focused widget.

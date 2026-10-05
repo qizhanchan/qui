@@ -49,3 +49,85 @@ const (
 	// htmlCheckSize is the <input type=checkbox|radio> box edge (13 px).
 	htmlCheckSize float32 = 13
 )
+
+// Theme tracking for the native baseline.
+//
+// The zero-config constructors copy the HTML baseline colors above into
+// their state styles and color fields. Under the default light theme those
+// ARE the intended pixels (the compare-html.sh baseline), but after
+// SetTheme a control built with them would keep its light look. themed
+// maps each baseline constant to the theme token it stands for, at draw
+// time, whenever the active theme is not the default one. Colors an app set
+// itself don't match a baseline constant and pass through untouched.
+
+var (
+	baselineGen   = ^uint64(0)
+	baselineState bool
+)
+
+// themeIsBaseline reports whether the active theme is the default light
+// theme (cached per ThemeGeneration).
+func themeIsBaseline() bool {
+	if g := ThemeGeneration(); g != baselineGen {
+		baselineGen = g
+		baselineState = *CurrentTheme() == LightTheme
+	}
+	return baselineState
+}
+
+// Literal baseline grays some constructors use besides the named ones.
+var (
+	baselineHoverBg    = Color{R: 0.90, G: 0.90, B: 0.90, A: 1}
+	baselinePressedBg  = Color{R: 0.82, G: 0.82, B: 0.82, A: 1}
+	baselineDisabledBg = Color{R: 0.94, G: 0.94, B: 0.94, A: 1}
+	baselineBlue       = Color{R: 0.30, G: 0.55, B: 0.85, A: 1}
+	baselineTrack      = Color{R: 0.88, G: 0.88, B: 0.88, A: 1}
+	baselineOffBorder  = Color{R: 0.60, G: 0.60, B: 0.60, A: 1}
+	baselineTextGray   = Color{R: 0.35, G: 0.35, B: 0.35, A: 1}
+)
+
+// themed maps a baseline color to its theme token (see above).
+func themed(c Color) Color {
+	if c.A == 0 || themeIsBaseline() {
+		return c
+	}
+	th := CurrentTheme()
+	switch c {
+	case htmlControlBorder:
+		return th.BorderStrong
+	case htmlControlText:
+		return th.Text
+	case htmlControlBg:
+		return th.SurfaceOverlay
+	case htmlButtonBg:
+		return th.SurfaceStrong
+	case htmlAccent, baselineBlue:
+		return th.Accent
+	case htmlDisabledText:
+		return LerpColor(th.Surface, th.Text, 0.45)
+	case htmlDisabledBorder:
+		return th.Border
+	case baselineHoverBg:
+		return LerpColor(th.SurfaceStrong, th.Text, th.HoverOpacity)
+	case baselinePressedBg:
+		return LerpColor(th.SurfaceStrong, th.Text, th.PressedOpacity)
+	case baselineDisabledBg, baselineTrack:
+		return th.SurfaceRaised
+	case baselineOffBorder, baselineTextGray:
+		return th.TextMuted
+	}
+	return c
+}
+
+// themedStyle returns s with its colors passed through themed. The result
+// is a copy; s is not modified.
+func themedStyle(s *Style) *Style {
+	if themeIsBaseline() {
+		return s
+	}
+	out := *s
+	out.Background = themed(s.Background)
+	out.Foreground = themed(s.Foreground)
+	out.Border = themed(s.Border)
+	return &out
+}

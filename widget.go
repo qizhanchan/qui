@@ -253,6 +253,11 @@ type BaseWidget struct {
 	maxSize   Size // zero = unconstrained on that axis
 	preferred Size // zero = no override on that axis; non-zero replaces Measure on that axis
 	tooltip   string
+	// tooltipKey, when set, resolves the tooltip from the catalog each
+	// time it is shown (tooltip is the fallback).
+	tooltipKey string
+	// axName overrides the widget's accessible name (SetAccessibleName).
+	axName string
 	cursor    CursorShape // declared pointer shape (CSS `cursor`); see cursor.go
 	hasCursor bool        // whether cursor was declared at all
 	// pointerThrough declines pointer targeting so events reach whatever is
@@ -265,6 +270,7 @@ type BaseWidget struct {
 	absCB          bool // establishes a containing block for out-of-flow descendants
 	collapsed      bool // removed from layout AND paint entirely (CSS display:none)
 	layoutDirty    bool // only the root's flag is consulted; set via InvalidateLayout
+	hooks          *widgetHooks // OnFocus / OnBlur / OnKeyDown; see widget_hooks.go
 }
 
 func NewBaseWidget() BaseWidget {
@@ -409,8 +415,33 @@ func (b *BaseWidget) SetParent(p Widget) {
 // hover tracker reads it directly, no AttachTooltip call needed.
 func (b *BaseWidget) TooltipText() string {
 	b.assertUIThread("BaseWidget.TooltipText")
+	if b.tooltipKey != "" {
+		return TranslateOr("", b.tooltipKey, b.tooltip, nil)
+	}
 	return b.tooltip
 }
+
+// SetTooltipKey makes the tooltip come from the message catalog, resolved
+// each time it shows, so it follows a language switch. fallback is the
+// text without a catalog. Pass key "" to go back to SetTooltip's text.
+func (b *BaseWidget) SetTooltipKey(key, fallback string) {
+	b.assertUIThread("BaseWidget.SetTooltipKey")
+	b.tooltipKey = key
+	b.tooltip = fallback
+}
+
+// SetAccessibleName overrides the name the AX tree (and agent selectors)
+// report for this widget — an icon-only button's "Delete", a field whose
+// visible label is a separate widget. "" restores the widget's own name.
+func (b *BaseWidget) SetAccessibleName(name string) {
+	b.assertUIThread("BaseWidget.SetAccessibleName")
+	b.axName = name
+}
+
+func (b *BaseWidget) accessibleNameOverride() string { return b.axName }
+
+// TooltipKey returns the tooltip's message key, or "".
+func (b *BaseWidget) TooltipKey() string { return b.tooltipKey }
 
 // SetTooltip sets (or clears, with "") the hover-tooltip text. The tooltip
 // appears near the cursor when this widget is the topmost hovered node and

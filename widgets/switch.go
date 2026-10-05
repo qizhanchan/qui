@@ -193,6 +193,7 @@ func (s *Switch) Draw(canvas Canvas) {
 	stateSize := switchStateSize
 
 	trackFill, trackBorder, handleColor, layerColor := s.resolveColors()
+	trackFill, trackBorder, handleColor = themed(trackFill), themed(trackBorder), themed(handleColor)
 
 	if trackFill.A > 0 {
 		canvas.FillRoundedRect(track, trackRadius, trackFill)
@@ -262,7 +263,7 @@ func (s *Switch) Draw(canvas Canvas) {
 			W: b.X + b.W - labelX,
 			H: b.H,
 		}
-		labelColor := s.LabelColor
+		labelColor := themed(s.LabelColor)
 		if s.disabled {
 			labelColor = mixAlpha(labelColor, 0.38)
 		}
