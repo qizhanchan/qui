@@ -13,7 +13,8 @@ package qui
 // Returns: malloc'd RGBA pixel buffer (caller must free) + width/height.
 // *outPixels set to NULL on failure. Pixel format is RGBA8888
 // PREMULTIPLIED alpha, top-left origin.
-void quiRenderEmoji(const char* utf8, double fontSize,
+// targetWidth > 0 fits the glyph to exactly that pixel width.
+void quiRenderEmoji(const char* utf8, double fontSize, int targetWidth,
                     uint8_t** outPixels, int* outW, int* outH);
 */
 import "C"
@@ -36,14 +37,20 @@ import (
 // into clusters before calling this — see EmojiClusterEnd in emoji.go.
 type coreTextEmojiProvider struct{}
 
-// EmojiImage rasterizes a UTF-8 emoji cluster via Core Text.
+// EmojiImage rasterizes a UTF-8 emoji cluster via Core Text, already
+// fitted to round(fontSize) pixels wide so normalizeEmojiBitmap passes
+// it through without a second (blurring) resample.
 func (coreTextEmojiProvider) EmojiImage(seq string, fontSize float32) image.Image {
 	cstr := C.CString(seq)
 	defer C.free(unsafe.Pointer(cstr))
 
 	var pixels *C.uint8_t
 	var w, h C.int
-	C.quiRenderEmoji(cstr, C.double(fontSize), &pixels, &w, &h)
+	target := int(fontSize + 0.5)
+	if target < 1 {
+		target = 1
+	}
+	C.quiRenderEmoji(cstr, C.double(fontSize), C.int(target), &pixels, &w, &h)
 	if pixels == nil || w == 0 || h == 0 {
 		return nil
 	}

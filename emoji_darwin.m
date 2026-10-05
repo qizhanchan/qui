@@ -8,11 +8,18 @@
 // Sized to the typographic bounds of the text — caller blits at its
 // text baseline offset.
 //
+// targetWidth > 0 fits the glyph to exactly that many pixels wide
+// (height follows the natural aspect). Apple Color Emoji only ships sbix
+// strikes at {20,32,40,48,64,96,160}px, so at most sizes the line comes
+// back a few pixels wider than the em. Scaling inside Quartz — with high
+// interpolation, from the strike Core Text picked — keeps the bitmap
+// crisp; resampling it afterwards in Go blurred it noticeably.
+//
 // Why Core Text: CoreGraphics' CGContextShowText path doesn't handle
 // SBIX color glyphs (Apple's emoji font format). CTLineDraw does —
 // it knows about color glyph tables and stamps the right color PNG
 // rasters into the bitmap context.
-void quiRenderEmoji(const char* utf8, double fontSize,
+void quiRenderEmoji(const char* utf8, double fontSize, int targetWidth,
                     uint8_t** outPixels, int* outW, int* outH) {
     *outPixels = NULL;
     *outW = 0;
@@ -47,8 +54,12 @@ void quiRenderEmoji(const char* utf8, double fontSize,
     // ascent/descent so the raster matches text line height.
     CGFloat ascent = 0, descent = 0, leading = 0;
     double width = CTLineGetTypographicBounds(line, &ascent, &descent, &leading);
-    int w = (int)ceil(width);
-    int h = (int)ceil(ascent + descent);
+    CGFloat scale = 1;
+    if (targetWidth > 0 && width > 0) {
+        scale = (CGFloat)targetWidth / width;
+    }
+    int w = targetWidth > 0 ? targetWidth : (int)ceil(width);
+    int h = (int)ceil((ascent + descent) * scale);
     if (w <= 0 || h <= 0) {
         CFRelease(line);
         CFRelease(font);
@@ -89,6 +100,9 @@ void quiRenderEmoji(const char* utf8, double fontSize,
     // after `translateCTM(0, descent)` + `CTLineDraw`, the glyph's
     // ascender sits near memory row 0 — exactly what Go consumers want.
     // An extra flip would undo this natural orientation.
+    CGContextSetInterpolationQuality(ctx, kCGInterpolationHigh);
+    CGContextSetShouldAntialias(ctx, true);
+    CGContextScaleCTM(ctx, scale, scale);
     CGContextTranslateCTM(ctx, 0, (CGFloat)descent);
     CTLineDraw(line, ctx);
     CGContextRelease(ctx);

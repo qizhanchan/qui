@@ -305,6 +305,12 @@ func (c *pdfCanvas) emitLegacyTextLine(line string, x, baseline, size float32, f
 	}
 }
 
+// pdfEmojiOversample is how many raster pixels a PDF emoji gets per
+// point. PDF is resolution-independent but emoji are bitmaps: embedding
+// one at 1px/pt looks soft on any retina screen or printer, so rasterize
+// at 4× and let the viewer scale it down into the same box.
+const pdfEmojiOversample = 4
+
 func (c *pdfCanvas) emitShapedTextLine(line *shapedLine, x, baseline float32, fontSpec Font) {
 	if line == nil {
 		return
@@ -323,10 +329,12 @@ func (c *pdfCanvas) emitShapedTextLine(line *shapedLine, x, baseline float32, fo
 				start := glyph.ClusterIndex
 				end := start + glyph.RuneCount
 				if start >= 0 && end <= len(line.text) && start < end {
-					if img := lookupEmojiSequence(string(line.text[start:end]), fontSpec.Size); img != nil {
+					if img := lookupEmojiSequence(string(line.text[start:end]), fontSpec.Size*pdfEmojiOversample); img != nil {
 						bounds := img.Bounds()
-						w, h := float32(bounds.Dx()), float32(bounds.Dy())
-						c.DrawImage(img, Rect{X: penX, Y: baseline - capHeight/2 - h/2, W: w, H: h})
+						w := float32(bounds.Dx()) / pdfEmojiOversample
+						h := float32(bounds.Dy()) / pdfEmojiOversample
+						adv := fixedToPx(glyph.Advance)
+						c.DrawImage(img, Rect{X: penX + (adv-w)/2, Y: baseline - capHeight/2 - h/2, W: w, H: h})
 					}
 				}
 				penX += fixedToPx(glyph.Advance)

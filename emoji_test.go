@@ -308,3 +308,75 @@ func TestSetEmojiProviderInvalidatesCache(t *testing.T) {
 		t.Errorf("provider swap did not invalidate cache; stubB calls=%d", stubB.calls)
 	}
 }
+
+// stripedEmojiProvider returns a round(fontSize)-wide bitmap of
+// alternating pure-red / pure-blue columns. Any resampling on the way to
+// the framebuffer blends neighbouring columns into purple, so the stripes
+// double as a "was this blitted 1:1" detector.
+type stripedEmojiProvider struct{ sizes []float32 }
+
+func (p *stripedEmojiProvider) EmojiImage(_ string, fontSize float32) image.Image {
+	p.sizes = append(p.sizes, fontSize)
+	n := int(fontSize + 0.5)
+	img := image.NewRGBA(image.Rect(0, 0, n, n))
+	for y := 0; y < n; y++ {
+		for x := 0; x < n; x++ {
+			c := color.RGBA{R: 255, A: 255}
+			if x%2 == 1 {
+				c = color.RGBA{B: 255, A: 255}
+			}
+			img.SetRGBA(x, y, c)
+		}
+	}
+	return img
+}
+
+// On a 2× canvas the emoji must be rasterized at the physical size and
+// copied pixel-for-pixel. Fetching it at logical size and stretching it
+// through the canvas matrix made emoji visibly blurry on retina screens.
+func TestEmojiDrawsAtPhysicalResolutionOnHiDPI(t *testing.T) {
+	orig := currentEmojiProvider()
+	defer SetEmojiProvider(orig)
+	stub := &stripedEmojiProvider{}
+	SetEmojiProvider(stub)
+
+	f := Font{Size: 14}
+	img := image.NewRGBA(image.Rect(0, 0, 200, 80))
+	c := NewImageCanvas(img)
+	c.Scale(2, 2)
+	// Fractional origin: the blit must still land on whole device pixels.
+	DrawTextBlock(c, "A\U0001F600B", Rect{X: 4.3, Y: 4.3, W: 80, H: 24}, Color{A: 1}, f, TextLayoutOptions{})
+
+	sawPhysical := false
+	for _, s := range stub.sizes {
+		if s == 28 {
+			sawPhysical = true
+		}
+	}
+	if !sawPhysical {
+		t.Fatalf("provider sizes = %v; want a 28px (14pt × 2) request for drawing", stub.sizes)
+	}
+
+	red, blue, blended := 0, 0, 0
+	for y := 0; y < img.Bounds().Dy(); y++ {
+		for x := 0; x < img.Bounds().Dx(); x++ {
+			px := img.RGBAAt(x, y)
+			switch {
+			case px.A == 0, px.R == px.G && px.G == px.B:
+				// background or the black text glyphs
+			case px == color.RGBA{R: 255, A: 255}:
+				red++
+			case px == color.RGBA{B: 255, A: 255}:
+				blue++
+			default:
+				blended++
+			}
+		}
+	}
+	if red != 14*28 || blue != 14*28 {
+		t.Errorf("red=%d blue=%d pixels; want %d each (a 28×28 bitmap copied 1:1)", red, blue, 14*28)
+	}
+	if blended != 0 {
+		t.Errorf("%d resampled (blended) emoji pixels; want a straight copy", blended)
+	}
+}

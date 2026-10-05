@@ -240,6 +240,12 @@ func lookupEmojiSequence(seq string, fontSize float32) image.Image {
 // equals round(fontSize). Preserves the natural aspect ratio so emoji
 // proportions look right at any size — width-only rescaling would
 // squash glyphs horizontally.
+//
+// The Core Text provider already returns the exact width, so this is
+// only the fallback for custom providers (e.g. fixed-size Twemoji PNGs).
+// CatmullRom, not ApproxBiLinear: the bilinear approximation samples
+// just 2×2 source pixels per output pixel, so shrinking a 72px asset to
+// 28px skips most of the image and the result reads as blurry/aliased.
 func normalizeEmojiBitmap(raw image.Image, fontSize float32) image.Image {
 	if raw == nil {
 		return nil
@@ -261,7 +267,7 @@ func normalizeEmojiBitmap(raw image.Image, fontSize float32) image.Image {
 		h = 1
 	}
 	out := image.NewRGBA(image.Rect(0, 0, target, h))
-	xdraw.ApproxBiLinear.Scale(out, out.Bounds(), raw, bounds, xdraw.Over, nil)
+	xdraw.CatmullRom.Scale(out, out.Bounds(), raw, bounds, xdraw.Over, nil)
 	return out
 }
 

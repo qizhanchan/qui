@@ -1,6 +1,7 @@
 package qui
 
 import (
+	"math"
 	"sort"
 
 	gtfont "github.com/go-text/typesetting/font"
@@ -58,20 +59,51 @@ func (c imageCanvas) drawShapedLineAtBaseline(line *shapedLine, x, baseline floa
 	}
 }
 
+// drawEmojiGlyph blits one emoji cluster at display resolution.
+//
+// The glyph's advance was measured at the logical font size, but the
+// bitmap is fetched at fontSize × canvas scale so a 2× display (or a
+// zoomed viewport) gets a 2× raster. Fetching at logical size and letting
+// DrawImage stretch it — what this used to do — upscaled a 14px bitmap to
+// 28 device pixels, which is why emoji looked soft next to the
+// outline-rendered text around them.
 func drawEmojiGlyph(c imageCanvas, line *shapedLine, glyph shaping.Glyph, penX, baseline, capHeight float32, fontSpec Font) {
 	start := glyph.ClusterIndex
 	end := start + glyph.RuneCount
 	if start < 0 || end > len(line.text) || start >= end {
 		return
 	}
-	img := lookupEmojiSequence(string(line.text[start:end]), fontSpec.Size)
+	top := c.topCopy()
+	s := top.matrix.avgScale()
+	if s <= 0 {
+		return
+	}
+	img := lookupEmojiSequence(string(line.text[start:end]), fontSpec.Size*s)
 	if img == nil {
 		return
 	}
 	bounds := img.Bounds()
-	w, h := float32(bounds.Dx()), float32(bounds.Dy())
+	pw, ph := float32(bounds.Dx()), float32(bounds.Dy())
+	// Logical box the raster covers: centered on the advance (rounding
+	// size×scale can differ from advance×scale by a pixel) and on the
+	// cap-height midline vertically, like the surrounding glyphs.
+	w, h := pw/s, ph/s
 	capCenter := baseline - capHeight/2
-	c.DrawImage(img, Rect{X: penX, Y: capCenter - h/2, W: w, H: h})
+	rect := Rect{X: penX + (fixedToPx(glyph.Advance)-w)/2, Y: capCenter - h/2, W: w, H: h}
+	m := top.matrix
+	if m.B != 0 || m.C != 0 || m.A <= 0 || m.D <= 0 || absf(m.A-m.D) > 1e-3 {
+		// Rotated, mirrored or non-uniformly scaled: no 1:1 pixel mapping
+		// exists, so let the general path resample.
+		c.DrawImage(img, rect)
+		return
+	}
+	// Uniform positive scale: snap the origin to a whole device pixel and
+	// keep the bitmap's own pixel size so the blit is a straight copy.
+	// A fractional origin would bilinear-sample every pixel and soften
+	// the edges again.
+	dev := m.TransformRect(rect)
+	dev = Rect{X: float32(math.Round(float64(dev.X))), Y: float32(math.Round(float64(dev.Y))), W: pw, H: ph}
+	c.backend.DrawImage(img, dev, top.clip)
 }
 
 func visualRunOrder(runs []shaping.Output) []int {

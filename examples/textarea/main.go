@@ -4,6 +4,7 @@ import (
 	"log"
 
 	"github.com/qizhanchan/qui"
+	"github.com/qizhanchan/qui/agent"
 	"github.com/qizhanchan/qui/widgets"
 )
 
@@ -84,6 +85,7 @@ func main() {
 	root.Style().Background = qui.Color{R: 0.12, G: 0.12, B: 0.12, A: 1}
 
 	window.SetRoot(root)
+	agent.BindEnv(window) // QUI_AGENT=1 → drive it with cmd/qui-agent
 
 	window.SetCustomRender(func(canvas qui.Canvas) {
 		// Custom rendering can be done here if needed
