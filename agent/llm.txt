@@ -331,7 +331,9 @@ row. Instead:
 READ the choices without opening it. Every combobox node carries an
 `options` array in BOTH /tree and /dom:
    "options": [ { "label": "GET", "selected": true }, { "label": "POST" }, … ]
-plus `value` = the selected label and, in `state`, `expanded` when the
+An option may also carry "value" (the app-side value when it differs from
+the label — stable across languages), "disabled": true (can't be picked)
+and "group" (its heading). The node has `value` = the selected label and, in `state`, `expanded` when the
 dropdown is currently open. So "what can I pick / what is picked / is it
 open" is answerable from one /tree or /dom read.
 

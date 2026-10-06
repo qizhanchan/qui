@@ -166,7 +166,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | attribute selectors `[a]` `=` `^=` `$=` `*=` `~=` `\|=` | ✅ | case-insensitive flag `i` supported |
 | combinators (descendant / `>` / `+` / `~`) | ✅ | right-to-left matching |
 | `:hover` `:focus` `:active` | ✅ | `focus-within` normalizes to focus |
-| `:focus-visible` | ✅ | keyboard focus only (Tab, programmatic focus, a key pressed while focused) — a click doesn't show it, and it doesn't opt a push button into click focus. On a non-subject compound it acts as `:focus` |
+| `:focus-visible` | ✅ | follows the input modality: keyboard focus (Tab, a key pressed while focused) shows it, a click doesn't; programmatic focus (`RequestFocus`, `autofocus`) shows it unless the last input was a pointer press — autofocus on a fresh window does, a `focus()` from a click handler doesn't. It doesn't opt a push button into click focus. On a non-subject compound it acts as `:focus`. On `<input>` / `<textarea>` / `<select>` the author's `:focus` / `:focus-visible` background, border and color replace the native focus ring |
 | Ancestor/sibling state triggering descendants (`.row:hover .del`, `.a:hover ~ .b`, …) | ✅ | the state of the element named by the selector drives box decoration / text color / `visibility`. Triggers are discovered precisely; payload is computed per active trigger combination. Limits: `display:none` reveal not supported; a rule with two non-subject state compounds is not discovered |
 | `:root` `:first-child` `:last-child` `:only-child` `:nth-child(An+B)` `:not(simple)` | ✅ | |
 | `:nth-of-type(An+B)` | ✅ | counts same tag |
@@ -176,7 +176,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | `::before` `::after` | 🟡 | generate `content` text (leaf/inline elements fold into the same InlineBox). `content` supports quoted strings + `attr(name)` + concatenation. Limits: not generated on elements with block children; no `counter()` or full generated-box model |
 | Other pseudo-elements (`::first-line`, …) | ❌ | parsed but not generated |
 | CSS variables `--x` / `var(--x, fallback)` / `:root` | ✅ | inheritance + recursive resolution (depth limit 16). Readable from Go with `ComputedStyle.Var` |
-| Custom properties and elements | ✅ | `RegisterProperty(name, PropertyDef{Inherited, Initial})` makes any property name readable through `ComputedStyle.Property`; `RegisterElement(tag, ElementDef{Create, Apply})` backs a custom tag with a native widget that the element hosts, with `Apply` mapping the computed style onto it after each restyle. `El.SetOnStyle` is the per-element form |
+| Custom properties and elements | ✅ | `RegisterProperty(name, PropertyDef{Inherited, Initial})` makes any property name readable through `ComputedStyle.Property` (`inherit` / `initial` / `unset` resolve as on built-in properties); `RegisterElement(tag, ElementDef{Create, Apply})` backs a custom tag with a native widget that the element hosts, with `Apply` mapping the computed style onto it after each restyle. `El.SetOnStyle` is the per-element form |
 | Shorthands `font` `flex` `inset` | ✅ | |
 | `@media` | 🟡 | `min-width`/`max-width` (`and`, screen/all/print) evaluated at parse time against the viewport width; matching blocks flatten into the stylesheet. **Not responsive** (does not re-evaluate on resize) |
 | `@font-face` `@keyframes` `@import` `@supports` | ❌ | at-rules skipped wholesale |
@@ -192,10 +192,10 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 
 | Capability | Status | Notes |
 |---|---|---|
-| Click `onClick` | ✅ | `OnClickEvent` adds position, button, modifiers, click count and `PreventDefault` (stops a submit button submitting, a link navigating, a file / color input opening its picker) |
+| Click `onClick` | ✅ | `OnClickEvent` adds position, button, modifiers, click count and `PreventDefault` (stops a submit button submitting, a link navigating, a file / color input opening its picker). A press dragged off the element and released elsewhere doesn't click it (pointerup still fires); an ancestor containing both ends gets the click |
 | `onPointerDown` / `onPointerMove` / `onPointerUp` | ✅ | position (window + element-local), button, modifiers, click count; return true to consume. A press captures the pointer, so moves and the release keep arriving outside the element |
 | `onContextMenu` | ✅ | reports window coordinates, so a menu can be anchored |
-| `<a href>` navigation | ✅ | clickable as the element or inside a folded span. `StyleEngine.SetLinkHandler` decides first (in-app routes such as `#/settings`); without it only `http(s)` and `mailto` links open, in the system handler — other schemes and relative / fragment links do nothing. An author click handler on the link owns the click |
+| `<a href>` navigation | ✅ | clickable as the element or inside a folded span. `StyleEngine.SetLinkHandler` decides first (in-app routes such as `#/settings`) and receives the `<a>` element either way; without it only `http(s)` and `mailto` links open, in the system handler — other schemes and relative / fragment links do nothing. An author click handler on the link owns the click |
 | `:hover`/`:active` box decoration | ✅ | buttons get built-in darken/press when the author has no rule |
 | `:hover`/`:focus`/`:active` text color + text-decoration | ✅ | both standalone elements and folded inline links. Limit: state changing `font-weight`/`size` re-lays-out, so it is not applied at draw time |
 | `:focus` / `:focus-visible` box style | ✅ | a focusable box disables child-label selection to take focus |

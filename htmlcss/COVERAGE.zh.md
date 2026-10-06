@@ -166,7 +166,7 @@
 | 属性选择器 `[a]` `=` `^=` `$=` `*=` `~=` `\|=` | ✅ | 支持大小写不敏感标志 `i` |
 | 组合器（后代 / `>` / `+` / `~`） | ✅ | 右到左匹配 |
 | `:hover` `:focus` `:active` | ✅ | `focus-within` 归一为 focus |
-| `:focus-visible` | ✅ | 只在键盘焦点时生效（Tab、程序设焦点、获焦后按键）——点击不显示，也不会让按钮因此接受点击取焦。出现在非主体复合选择器上时等同 `:focus` |
+| `:focus-visible` | ✅ | 跟随输入方式：键盘焦点（Tab、获焦后按键）显示，点击不显示；程序设焦点（`RequestFocus`、`autofocus`）在最近一次输入不是指针按下时显示——新窗口上的 autofocus 显示，点击回调里调用的 `focus()` 不显示。不会让按钮因此接受点击取焦。出现在非主体复合选择器上时等同 `:focus`。在 `<input>` / `<textarea>` / `<select>` 上，作者写的 `:focus` / `:focus-visible` 背景、边框和文字颜色会替换原生焦点框 |
 | 祖先/兄弟状态触发后代（`.row:hover .del`、`.a:hover ~ .b` 等） | ✅ | 由选择器点名的那个元素的状态驱动盒装饰 / 文字色 / `visibility`。触发器精确发现；payload 按当前活跃触发器组合计算。限制：`display:none`→揭示未支持；一条规则带两个非主体状态 compound 不发现触发器 |
 | `:root` `:first-child` `:last-child` `:only-child` `:nth-child(An+B)` `:not(simple)` | ✅ | |
 | `:nth-of-type(An+B)` | ✅ | 按同 tag 计数 |
@@ -176,7 +176,7 @@
 | `::before` `::after` | 🟡 | 生成 `content` 文本（叶 / 行内元素折进同一 InlineBox）。`content` 支持引号字符串 + `attr(name)` + 拼接。限制：带块级子元素的元素上不生成；不支持 `counter()` 或生成盒的完整盒模型 |
 | 其他伪元素（`::first-line`…） | ❌ | 解析但不生成 |
 | CSS 变量 `--x` / `var(--x, fallback)` / `:root` | ✅ | 继承 + 递归解析（深度上限 16）。Go 侧用 `ComputedStyle.Var` 读取 |
-| 自定义属性与自定义元素 | ✅ | `RegisterProperty(name, PropertyDef{Inherited, Initial})` 让任意属性名可经 `ComputedStyle.Property` 读取；`RegisterElement(tag, ElementDef{Create, Apply})` 让自定义标签承载一个原生 widget，`Apply` 在每次 restyle 后把计算样式映射到它上面。逐元素版本是 `El.SetOnStyle` |
+| 自定义属性与自定义元素 | ✅ | `RegisterProperty(name, PropertyDef{Inherited, Initial})` 让任意属性名可经 `ComputedStyle.Property` 读取（`inherit` / `initial` / `unset` 的解析与内置属性一致）；`RegisterElement(tag, ElementDef{Create, Apply})` 让自定义标签承载一个原生 widget，`Apply` 在每次 restyle 后把计算样式映射到它上面。逐元素版本是 `El.SetOnStyle` |
 | 简写 `font` `flex` `inset` | ✅ | |
 | `@media` | 🟡 | `min-width`/`max-width`（`and`、screen/all/print）在解析时对视口宽度求值；匹配块扁平进样式表。**非响应式**（不随 resize 重算） |
 | `@font-face` `@keyframes` `@import` `@supports` | ❌ | at-rule 整块跳过 |
@@ -192,10 +192,10 @@
 
 | 能力 | 状态 | 备注 |
 |---|---|---|
-| 点击 `onClick` | ✅ | `OnClickEvent` 额外给出位置、按键、修饰键、点击次数与 `PreventDefault`（阻止 submit 按钮提交、链接跳转、file / color 输入打开选择器） |
+| 点击 `onClick` | ✅ | `OnClickEvent` 额外给出位置、按键、修饰键、点击次数与 `PreventDefault`（阻止 submit 按钮提交、链接跳转、file / color 输入打开选择器）。在元素上按下、拖到别处松开不算点击（pointerup 照常触发）；同时包含按下点和松开点的祖先会收到点击 |
 | `onPointerDown` / `onPointerMove` / `onPointerUp` | ✅ | 位置（窗口 + 元素局部）、按键、修饰键、点击次数；返回 true 即消费。按下会捕获指针，移出元素后仍收到移动与松开 |
 | 右键 `onContextMenu` | ✅ | 回传窗口坐标，可锚定菜单 |
-| `<a href>` 导航 | ✅ | 元素本身或折叠 span 均可点。`StyleEngine.SetLinkHandler` 优先决定（应用内路由，如 `#/settings`）；未设置时只有 `http(s)` 与 `mailto` 交给系统打开，其他协议与相对 / 片段链接什么也不做。链接上的作者点击处理器拥有这次点击 |
+| `<a href>` 导航 | ✅ | 元素本身或折叠 span 均可点。`StyleEngine.SetLinkHandler` 优先决定（应用内路由，如 `#/settings`），两种情况下拿到的都是 `<a>` 元素本身；未设置时只有 `http(s)` 与 `mailto` 交给系统打开，其他协议与相对 / 片段链接什么也不做。链接上的作者点击处理器拥有这次点击 |
 | `:hover`/`:active` 盒装饰 | ✅ | button 无 author 规则时有内建 darken/press |
 | `:hover`/`:focus`/`:active` 改文字色 + text-decoration | ✅ | 独立元素与折叠行内链接均可。限制：状态改 `font-weight`/`size` 会重排，未在 draw 时应用 |
 | `:focus` / `:focus-visible` 盒样式 | ✅ | focusable 盒子会禁用子 Label 选择以抢焦点 |

@@ -10,7 +10,7 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 
 - `App` owns the platform backend; `App.NewWindow` / `App.NewOverlayPanel`; `App.Run` with SIGINT/SIGTERM close handling; `App.SetKeepAlive` (tray apps that outlive their windows) and `App.Quit`.
 - Close veto: `Window.OnCloseRequest` (return false to keep the window — the "save changes?" flow), `RequestClose`, unvetoable `Close`.
-- Lifecycle callbacks: `OnActivate`, `OnMove`, `OnMinimize`, `OnFullscreenChange`; owned child windows (`SetOwner`) and sheets (`ShowAsSheet`, macOS).
+- Lifecycle callbacks: `OnActivate`, `OnMove`, `OnMinimize`, `OnFullscreenChange`, `OnClose` (each returns its remover); owned child windows (`SetOwner`) and sheets (`ShowAsSheet`, macOS).
 - Multiple windows per app; detached windows may be constructed off-thread.
 - Per-window renderer selection, device-pixel-ratio handling and content-viewport zoom.
 - Window modes: normal, fullscreen, overlay panel (non-activating, transparent, always-on-top — cocoa backend).
@@ -27,9 +27,9 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 - Modal overlay focus trapping, top-down hit testing, and keyboard containment (keys and window accelerators don't reach the UI behind a modal).
 - `Window.AddEventFilter`: see (and optionally consume) every event before dispatch — command palettes, modal key layers, macro recording.
 - App-defined events: `CustomEvent` + `DispatchCustomEvent` travel capture → target → bubble like input.
-- `MouseEvent.Clicks` (double / triple click count) and per-widget `OnFocus` / `OnBlur` / `OnKeyDown` hooks on every `BaseWidget`.
-- Accelerators: `CmdOrCtrl` token, `Bind` / `Unregister`, widget-scoped bindings (`RegisterScoped`) that outrank window-wide ones and stay live inside a modal that contains them; the newest binding wins.
-- Drag and drop with typed payloads (`DragData`, `DragDataProvider`), `DragEnter` / `DragLeave`, `DropAcceptor` accept/reject, a drag image, and OS file drops routed to `Droppable` widgets first.
+- `MouseEvent.Clicks` (double / triple click count), `MouseEvent.ReleasedOver` (a press dragged off a control and released elsewhere is a cancelled click), and per-widget `OnFocus` / `OnBlur` / `OnKeyDown` hooks on every `BaseWidget`, each returning its remover. `OnKeyDown` sees Tab before focus navigation.
+- Accelerators: `CmdOrCtrl` token, `Bind` / `Unregister`, conditional bindings (`BindIf` — skipped while unavailable, so the key falls through), widget-scoped bindings (`RegisterScoped`) that outrank window-wide ones and stay live inside a modal that contains them; the newest binding wins. `MenuBar.BindAccelerators` adds a menu's shortcuts to an existing registry and keeps them in sync; disabled items don't fire.
+- Drag and drop with typed payloads (`DragData`, `DragDataProvider`), `DragEnter` / `DragLeave`, `DropAcceptor` accept/reject, a drag image, Escape to cancel, and OS file drops routed to `Droppable` widgets first.
 - Optional focus policies: `ClickFocusPolicy` (Tab-reachable but a click keeps focus where it was) and `TabStopper` (click-focusable but skipped by Tab — selectable text).
 - Overlays re-lay themselves out when their content changes (`OverlayLayouter`); `TickWidget` forwards frame ticks through non-Tickable containers.
 - Overlay layers (`PushOverlayLayer`: toasts stay above a later modal, tooltips above everything) and exit animations (`OverlayExiter`).
@@ -86,11 +86,11 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 
 ## `widgets`
 
-- Structure: `Box`, `Container` layouts, `Rule`, `FieldSet`, `Anchor`, `ScrollView` (content size measured automatically), `ListView` (virtualized; factory rows built only while visible), `TableView` (cell renderers, column alignment, header-click sort, factory rows), `TabView` (icons, badges, closable and disabled tabs, fit-width tabs with an overflow-scrolling strip, switch veto). List and table colors come from the theme, overridable per field (`RowColors`).
+- Structure: `Box`, `Container` layouts, `Rule`, `FieldSet`, `Anchor`, `ScrollView` (content size measured automatically), `ListView` (virtualized; factory rows built only while visible), `TableView` (cell renderers, column alignment, header-click sort that keeps the selected record via `RowKeyModel`, factory rows), `TabView` (icons, badges, closable and disabled tabs, fit-width tabs with an overflow-scrolling strip, switch veto). List and table colors come from the theme, overridable per field (`RowColors`; `NoStripe` / `NoHover` switch decorations off). The zero-config controls (Input, TextArea, Select, TabView, MenuBar, …) follow `SetTheme`.
 - Text: `Label`, `RichText`, `InlineBox`; text selection and copy.
 - Input: `Input`, `TextArea` (both with clipboard, IME and undo/redo), `CheckBox`, `RadioButton` / `RadioGroup`, `Switch`, `Slider`, `Select` (value / label options with icons and groups, custom option rows, open / close events).
 - Feedback: `Progress`, `Tooltip`.
-- Overlays: `Popup` (close reasons + veto, click-through, auto-focus, edge clamping), `Dialog` (any widgets as actions, `CanClose` veto, `OnClose(reason)`, Enter → `DefaultAction`, `InitialFocus`, custom `Header`, theme-token colors), `MenuBar` (Left / Right between menus), `ContextMenu`, `MenuItem` icons / IDs / custom content, keyboard-navigable panel rows (`MenuActivatable`).
+- Overlays: `Popup` (close reasons + veto, click-through, auto-focus, edge clamping; recovers when removed from the overlay stack behind its back), `Dialog` (any widgets as actions, `CanClose` veto, `OnClose(reason)`, Enter → `DefaultAction`, `InitialFocus`, custom `Header`, theme-token colors), `MenuBar` (Left / Right between menus), `ContextMenu`, `MenuItem` icons / IDs / custom content, keyboard-navigable panel rows (`MenuActivatable`).
 - Media: `Image` (raster + vector).
 - i18n: `TextKey`-style keys on every text-bearing widget (tabs, columns, menu items, labels, fieldset titles, tooltips) resolved in Measure/Draw, with `AccessibleNameKey()`.
 - Accessibility: label-aware names, `SetAccessibleName` override, self-drawn tabs / list rows / table cells published as AX children, Tab scrolls the focused widget into view.
@@ -102,7 +102,7 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 
 **CSS:** the full selector set including interactive states (`:hover`, `:focus`, `:focus-visible`, `:checked`, `:disabled`, `:enabled`, `:required`, `:optional`, `:read-only`, `:read-write`), `var()` + `:root`, shorthands, the box model with per-side borders, background color/gradient, box-shadow, opacity, transform, `position:relative`, overflow (`auto`/`scroll` hosted by a `ScrollView`), `display:flex`/`grid`, list markers, text-decoration/transform/overflow, white-space, `overflow-wrap`/`word-break`, `scrollbar-color`. Native popups (select, datalist, color palette, tooltips) follow `--popup-*` / `--tooltip-*` custom properties.
 
-**Extension points:** `RegisterElement` (custom tags backed by native widgets), `RegisterProperty` + `ComputedStyle.Property` / `Var`, `El.SetOnStyle`, style-aware canvas painting (`SetCanvasPaint`), `StyleEngine.SetLinkHandler`.
+**Extension points:** `RegisterElement` (custom tags backed by native widgets), `RegisterProperty` + `ComputedStyle.Property` / `Var` (CSS-wide keywords included), `El.SetOnStyle`, style-aware canvas painting (`SetCanvasPaint`), `StyleEngine.SetLinkHandler` (told which `<a>` was clicked, folded or not). `h.Mount` styles its first pass before that pass's effects run.
 
 **Events and interaction:** click/double-click (with position and `PreventDefault`), pointer down / move / up with capture, hover, focus (`El.RequestFocus`, `autofocus`; `<button>` is Tab-reachable and presses on Enter/Space), keyboard (author handlers act on target/bubble), `pointer-events:none`, wheel, drag-reorder (`Draggable`/`DragHandle`/`OnDrop`/`OnDragOver`), element-level file drops and paste hooks, `<a>` link activation, `app-region: drag|no-drag`.
 

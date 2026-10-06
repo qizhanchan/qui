@@ -10,7 +10,7 @@
 
 - `App` 拥有平台后端；`App.NewWindow` / `App.NewOverlayPanel`；`App.Run` 处理 SIGINT/SIGTERM 关闭；`App.SetKeepAlive`（窗口全关后仍运行的托盘应用）与 `App.Quit`。
 - 关闭否决：`Window.OnCloseRequest`（返回 false 保留窗口 —— “保存更改？”流程）、`RequestClose`，以及不可否决的 `Close`。
-- 生命周期回调：`OnActivate`、`OnMove`、`OnMinimize`、`OnFullscreenChange`；附属子窗口（`SetOwner`）与 sheet（`ShowAsSheet`，macOS）。
+- 生命周期回调：`OnActivate`、`OnMove`、`OnMinimize`、`OnFullscreenChange`、`OnClose`（都返回注销函数）；附属子窗口（`SetOwner`）与 sheet（`ShowAsSheet`，macOS）。
 - 每个应用多个窗口；游离窗口可以在其他线程构造。
 - 每个窗口的渲染器选择、设备像素比处理和内容视口缩放。
 - 窗口模式：普通、全屏、浮层面板（不激活、透明、始终置顶 —— cocoa 后端）。
@@ -27,9 +27,9 @@
 - 模态浮层困住焦点，自上而下命中测试，并且隔离键盘：按键和窗口快捷键都到不了 modal 背后的界面。
 - `Window.AddEventFilter`：在分发前看到（并可吞掉）每个事件 —— 命令面板、模态按键层、宏录制。
 - 应用自定义事件：`CustomEvent` + `DispatchCustomEvent`，像输入事件一样走捕获 → 目标 → 冒泡。
-- `MouseEvent.Clicks`（双击 / 三击计数），以及每个 `BaseWidget` 都有的 `OnFocus` / `OnBlur` / `OnKeyDown` 钩子。
-- 快捷键：`CmdOrCtrl` 记号、`Bind` / `Unregister`、按控件作用域绑定（`RegisterScoped`，优先于窗口级绑定，并在包含它的 modal 内保持有效）；后注册者优先。
-- 拖放：带类型的载荷（`DragData`、`DragDataProvider`）、`DragEnter` / `DragLeave`、`DropAcceptor` 接受 / 拒绝、拖拽图像，系统文件拖放优先交给 `Droppable` 控件。
+- `MouseEvent.Clicks`（双击 / 三击计数）、`MouseEvent.ReleasedOver`（在控件上按下、拖到别处松开即取消点击），以及每个 `BaseWidget` 都有的 `OnFocus` / `OnBlur` / `OnKeyDown` 钩子，都返回注销函数。`OnKeyDown` 先于焦点导航收到 Tab。
+- 快捷键：`CmdOrCtrl` 记号、`Bind` / `Unregister`、条件绑定（`BindIf`，不可用时跳过，按键继续传递）、按控件作用域绑定（`RegisterScoped`，优先于窗口级绑定，并在包含它的 modal 内保持有效）；后注册者优先。`MenuBar.BindAccelerators` 把菜单快捷键并入已有注册表并保持同步；禁用项不触发。
+- 拖放：带类型的载荷（`DragData`、`DragDataProvider`）、`DragEnter` / `DragLeave`、`DropAcceptor` 接受 / 拒绝、拖拽图像，Esc 取消拖放，系统文件拖放优先交给 `Droppable` 控件。
 - 可选的焦点策略：`ClickFocusPolicy`（可以 Tab 到达，但点击不转移焦点）与 `TabStopper`（可以点击聚焦，但 Tab 跳过，用于可选中的文字）。
 - 浮层内容变化时会自行重新布局（`OverlayLayouter`）；`TickWidget` 会穿过未实现 Tickable 的容器继续传递帧 tick。
 - 浮层分层（`PushOverlayLayer`：toast 始终在之后打开的 modal 之上，tooltip 在最上）与退出动画（`OverlayExiter`）。
@@ -86,11 +86,11 @@
 
 ## `widgets`
 
-- 结构：`Box`、`Container` 布局、`Rule`、`FieldSet`、`Anchor`、`ScrollView`（内容尺寸自动测量）、`ListView`（虚拟化；工厂行只在可见时构建）、`TableView`（单元格渲染器、列对齐、点击表头排序、工厂行）、`TabView`（图标、徽标、可关闭与禁用的标签、按内容宽度的标签与可滚动溢出、切换否决）。列表与表格的颜色取自主题，可逐字段覆盖（`RowColors`）。
+- 结构：`Box`、`Container` 布局、`Rule`、`FieldSet`、`Anchor`、`ScrollView`（内容尺寸自动测量）、`ListView`（虚拟化；工厂行只在可见时构建）、`TableView`（单元格渲染器、列对齐、点击表头排序且经 `RowKeyModel` 保持选中记录、工厂行）、`TabView`（图标、徽标、可关闭与禁用的标签、按内容宽度的标签与可滚动溢出、切换否决）。列表与表格的颜色取自主题，可逐字段覆盖（`RowColors`；`NoStripe` / `NoHover` 关闭对应装饰）。零配置构造的控件（Input、TextArea、Select、TabView、MenuBar 等）跟随 `SetTheme`。
 - 文字：`Label`、`RichText`、`InlineBox`；文字选择与复制。
 - 输入：`Input`、`TextArea`（均支持剪贴板、IME 与撤销 / 重做）、`CheckBox`、`RadioButton` / `RadioGroup`、`Switch`、`Slider`、`Select`（值 / 标签分离的选项，支持图标与分组、自定义选项行、打开 / 关闭事件）。
 - 反馈：`Progress`、`Tooltip`。
-- 浮层：`Popup`（关闭原因 + 否决、点击穿透、自动聚焦、贴边约束）、`Dialog`、`MenuBar`（左右键切换菜单）、`ContextMenu`、`MenuItem` 图标 / ID / 自定义内容，可键盘导航的面板行（`MenuActivatable`）。`Dialog` 的按钮行可以放任意控件，支持 `CanClose` 否决关闭、`OnClose(reason)`、Enter 触发 `DefaultAction`、`InitialFocus`、自定义 `Header`，颜色取自主题 token。
+- 浮层：`Popup`（关闭原因 + 否决、点击穿透、自动聚焦、贴边约束；被外部移出浮层栈后能自行复位）、`Dialog`、`MenuBar`（左右键切换菜单）、`ContextMenu`、`MenuItem` 图标 / ID / 自定义内容，可键盘导航的面板行（`MenuActivatable`）。`Dialog` 的按钮行可以放任意控件，支持 `CanClose` 否决关闭、`OnClose(reason)`、Enter 触发 `DefaultAction`、`InitialFocus`、自定义 `Header`，颜色取自主题 token。
 - 媒体：`Image`（光栅 + 矢量）。
 - i18n：所有带文字的控件（标签页、列、菜单项、标签、fieldset 标题、tooltip）都有在 Measure/Draw 中解析的 `TextKey` 式 key，以及 `AccessibleNameKey()`。
 - 无障碍：名称考虑 label、`SetAccessibleName` 覆盖、自绘的标签页 / 列表行 / 表格单元格作为 AX 子节点发布、Tab 时把获焦控件滚动到可见。
@@ -102,7 +102,7 @@
 
 **CSS：** 完整选择器集，含交互状态（`:hover`、`:focus`、`:focus-visible`、`:checked`、`:disabled`、`:enabled`、`:required`、`:optional`、`:read-only`、`:read-write`）、`var()` + `:root`、简写属性、逐边边框的盒模型、背景色 / 渐变、box-shadow、opacity、transform、`position:relative`、overflow（`auto`/`scroll` 由 `ScrollView` 托管）、`display:flex`/`grid`、列表标记、text-decoration/transform/overflow、white-space、`overflow-wrap`/`word-break`、`scrollbar-color`。原生弹出层（select、datalist、调色板、tooltip）跟随 `--popup-*` / `--tooltip-*` 自定义属性。
 
-**扩展点：** `RegisterElement`（由原生控件承载的自定义标签）、`RegisterProperty` + `ComputedStyle.Property` / `Var`、`El.SetOnStyle`、感知样式的画布绘制（`SetCanvasPaint`）、`StyleEngine.SetLinkHandler`。
+**扩展点：** `RegisterElement`（由原生控件承载的自定义标签）、`RegisterProperty` + `ComputedStyle.Property` / `Var`（支持 CSS 全局关键字）、`El.SetOnStyle`、感知样式的画布绘制（`SetCanvasPaint`）、`StyleEngine.SetLinkHandler`（能拿到被点击的 `<a>`，折叠进行内文本的也一样）。`h.Mount` 的首轮渲染在其 effect 执行前就已完成样式计算。
 
 **事件与交互：** 单击 / 双击（带位置与 `PreventDefault`）、带捕获的指针按下 / 移动 / 松开、hover、焦点（`El.RequestFocus`、`autofocus`；`<button>` 可以 Tab 到达，Enter/Space 按下）、键盘（作者回调只在目标 / 冒泡阶段执行）、`pointer-events:none`、滚轮、拖拽重排（`Draggable`/`DragHandle`/`OnDrop`/`OnDragOver`）、元素级文件拖放与粘贴钩子、`<a>` 链接激活、`app-region: drag|no-drag`。
 
