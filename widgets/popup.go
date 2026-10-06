@@ -16,6 +16,10 @@ const (
 	// PopupCloseResize is a window resize on a popup without a resize
 	// handler.
 	PopupCloseResize
+	// PopupCloseRemoved is the popup leaving its window behind its back —
+	// Window.RemoveOverlay / PopOverlay, or the window closing. Not
+	// vetoable; the popup is already gone.
+	PopupCloseRemoved
 )
 
 // Popup is a lightweight overlay for dropdowns, context menus, and
@@ -154,9 +158,11 @@ func (p *Popup) showAtSize(w *Window, x, y float32, size Size) {
 	}
 }
 
-// clickThroughFilter dismisses on a press that lands in the main tree and
-// lets the press continue there. Presses on this popup, or on overlays
-// above it (a submenu), are left alone.
+// clickThroughFilter dismisses on a press that lands anywhere outside
+// this popup — in the main tree, or in an overlay beneath it (the dialog a
+// toolbar dropdown was opened from) — and lets the press continue there.
+// Presses on this popup, or on overlays above it (a submenu), are left
+// alone.
 func (p *Popup) clickThroughFilter(e Event) bool {
 	me, ok := e.(MouseEvent)
 	if !ok || me.Type() != EventMouseDown || p.window == nil {
@@ -167,10 +173,37 @@ func (p *Popup) clickThroughFilter(e Event) bool {
 	for top != nil && top.Parent() != nil {
 		top = top.Parent()
 	}
-	if top == nil || top == p.window.Root() {
-		p.closeFor(PopupCloseOutsideClick)
+	if top != nil && p.overlayAtOrAbove(top) {
+		return false
+	}
+	p.closeFor(PopupCloseOutsideClick)
+	return false
+}
+
+// overlayAtOrAbove reports whether w is this popup or an overlay stacked
+// above it.
+func (p *Popup) overlayAtOrAbove(w Widget) bool {
+	seen := false
+	for _, ov := range p.window.Overlays() {
+		if ov == p {
+			seen = true
+		}
+		if seen && ov == w {
+			return true
+		}
 	}
 	return false
+}
+
+// SetWindow notices the popup being detached by something other than its
+// own close path (Window.RemoveOverlay / PopOverlay, a closing window) and
+// unwinds: IsShown turns false, OnClose / OnCloseReason(PopupCloseRemoved)
+// fire, and ShowAt works again.
+func (p *Popup) SetWindow(w *Window) {
+	p.BaseWidget.SetWindow(w)
+	if w == nil && p.window != nil {
+		p.finishClose(PopupCloseRemoved)
+	}
 }
 
 func firstFocusable(w Widget) Widget {
@@ -204,12 +237,9 @@ func (p *Popup) closeFor(reason PopupCloseReason) bool {
 }
 
 func (p *Popup) close(reason PopupCloseReason) {
-	if p.window == nil {
+	w := p.window
+	if w == nil {
 		return
-	}
-	if p.removeFilter != nil {
-		p.removeFilter()
-		p.removeFilter = nil
 	}
 	// Invalidate the inflated content halo BEFORE RemoveOverlay so the
 	// area covered by the elevation shadow gets repainted with whatever
@@ -221,10 +251,31 @@ func (p *Popup) close(reason PopupCloseReason) {
 	// the trigger button area, and on close the trigger button keeps
 	// the gray halo overlay until next hover.
 	if r, ok := overlayHaloRect(p.Content); ok {
-		p.window.InvalidateRect(r)
+		w.InvalidateRect(r)
 	}
-	p.window.RemoveOverlay(p)
+	// Mark closed before RemoveOverlay: detaching calls SetWindow(nil),
+	// which must not read as an external removal. The callbacks run after
+	// it, so one that reopens the popup isn't undone.
+	p.markClosed()
+	w.RemoveOverlay(p)
+	p.fireClose(reason)
+}
+
+// finishClose clears the shown state and fires the close callbacks.
+func (p *Popup) finishClose(reason PopupCloseReason) {
+	p.markClosed()
+	p.fireClose(reason)
+}
+
+func (p *Popup) markClosed() {
 	p.window = nil
+	if p.removeFilter != nil {
+		p.removeFilter()
+		p.removeFilter = nil
+	}
+}
+
+func (p *Popup) fireClose(reason PopupCloseReason) {
 	if p.OnClose != nil {
 		p.OnClose()
 	}

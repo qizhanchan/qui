@@ -693,10 +693,10 @@ func (t *Input) Draw(canvas Canvas) {
 	style := themedStyle(t.States.Resolve(state))
 	radius := style.Radius
 
-	// Variant background. Filled paints its container fill; Outlined
-	// stays transparent so its border does all the work. Base style's
-	// Background is honored either way.
-	if t.Variant != InputOutlined && style.Background.A > 0 {
+	// Background: the resolved state style's fill, for either variant (a
+	// transparent Background leaves an Outlined field see-through). This is
+	// what a CSS `background` on <input>, and on input:focus, paints.
+	if style.Background.A > 0 {
 		canvas.FillRoundedRect(b, radius, style.Background)
 	}
 
@@ -782,6 +782,7 @@ func (t *Input) Draw(canvas Canvas) {
 	// Selection highlight (drawn under the text).
 	if t.hasSelection() {
 		a, c := t.orderedSelection()
+		bandY, bandH := TextCaretBand(content, t.font())
 		fill := func(offsetX, width float32) {
 			x0 := content.X - t.scrollX + offsetX
 			x1 := x0 + width
@@ -792,7 +793,7 @@ func (t *Input) Draw(canvas Canvas) {
 				x1 = content.X + content.W
 			}
 			if x1 > x0 {
-				canvas.FillRect(Rect{X: x0, Y: content.Y, W: x1 - x0, H: content.H}, SelectionHighlight(t))
+				canvas.FillRect(Rect{X: x0, Y: bandY, W: x1 - x0, H: bandH}, SelectionHighlight(t))
 			}
 		}
 		if t.Password {
@@ -878,7 +879,8 @@ func (t *Input) Draw(canvas Canvas) {
 			caretX += TextXForOffset(t.preeditText, t.font(), TextDirectionAuto, cur)
 		}
 		if caretX >= content.X-0.5 && caretX <= content.X+content.W+0.5 {
-			canvas.FillRect(Rect{X: caretX, Y: content.Y, W: 1, H: content.H}, style.Foreground)
+			y, h := TextCaretBand(content, t.font())
+			canvas.FillRect(Rect{X: caretX, Y: y, W: 1, H: h}, style.Foreground)
 		}
 	}
 }
@@ -1021,7 +1023,7 @@ func (t *Input) Tick(now time.Time) Rect {
 	if nowMS-t.cursorBlinkMS > 500 {
 		t.cursorVisible = !t.cursorVisible
 		t.cursorBlinkMS = nowMS
-		return t.Bounds()
+		return PaintBoundsInWindow(t)
 	}
 	return Rect{}
 }
@@ -1789,7 +1791,8 @@ func (t *Input) CaretRect() Rect {
 		}
 		cx += TextXForOffset(t.preeditText, t.font(), TextDirectionAuto, t.preeditCursor)
 	}
-	return Rect{X: cx, Y: content.Y, W: 1, H: content.H}
+	y, h := TextCaretBand(content, t.font())
+	return Rect{X: cx, Y: y, W: 1, H: h}
 }
 
 // fireCommit reports a finished value (see OnCommit) and rebases the

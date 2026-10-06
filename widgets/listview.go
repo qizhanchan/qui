@@ -476,7 +476,7 @@ func (lv *ListView) drawRows(canvas Canvas, contentW float32, c RowColors) {
 		if i == lv.SelectedIdx {
 			canvas.FillRect(rowRect, c.Selected)
 			fg = c.SelectedText
-		} else if i == lv.hoverIdx {
+		} else if i == lv.hoverIdx && c.Hover.A > 0 {
 			canvas.FillRect(rowRect, c.Hover)
 		}
 
@@ -501,7 +501,7 @@ func (lv *ListView) drawRowWidgets(canvas Canvas, contentW float32, c RowColors)
 
 		if i == lv.SelectedIdx {
 			canvas.FillRect(rowRect, c.Selected)
-		} else if i == lv.hoverIdx {
+		} else if i == lv.hoverIdx && c.Hover.A > 0 {
 			canvas.FillRect(rowRect, c.Hover)
 		}
 
@@ -602,6 +602,12 @@ func (lv *ListView) Handle(event Event) bool {
 					}
 				}
 				return false
+			}
+			// The capture pass above already handled a widget-row press; one
+			// the row widget didn't consume bubbles back here and must not
+			// select / activate a second time.
+			if lv.useWidgetRows && e.Phase() == PhaseBubble && lv.rowAt(e.X, e.Y) >= 0 {
+				return true
 			}
 			// Row click; a double-click activates.
 			if idx := lv.rowAt(e.X, e.Y); idx >= 0 {

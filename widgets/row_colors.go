@@ -5,6 +5,8 @@ import . "github.com/qizhanchan/qui"
 // RowColors is the palette ListView and TableView paint with. Every zero
 // field resolves from the current theme at draw time, so SetTheme (or a
 // stylesheet setting a few fields) restyles a list that already exists.
+// Because zero means "theme", a color field can't switch its decoration
+// off; NoStripe / NoHover do that.
 type RowColors struct {
 	Background   Color
 	Text         Color
@@ -12,11 +14,15 @@ type RowColors struct {
 	Selected     Color // selected-row fill
 	SelectedText Color
 	Hover        Color
-	Stripe       Color // odd-row zebra fill (TableView); transparent = none
+	Stripe       Color // odd-row zebra fill (TableView)
 	Header       Color // TableView header strip
 	HeaderText   Color
 	Divider      Color // header dividers and separator
 	Scrollbar    ScrollbarColors
+	// NoStripe paints odd rows like even ones (no zebra); NoHover paints no
+	// hover highlight. They beat Stripe / Hover.
+	NoStripe bool
+	NoHover  bool
 }
 
 // defaultRowColors is the theme-derived palette.
@@ -57,6 +63,12 @@ func (c RowColors) resolve(legacy *Style) RowColors {
 	pick(&out.HeaderText, c.HeaderText)
 	pick(&out.Divider, c.Divider)
 	out.Scrollbar = c.Scrollbar
+	if c.NoStripe {
+		out.Stripe = Color{}
+	}
+	if c.NoHover {
+		out.Hover = Color{}
+	}
 	return out
 }
 

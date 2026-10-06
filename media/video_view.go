@@ -831,7 +831,7 @@ func (v *VideoView) Tick(_ time.Time) qui.Rect {
 	hasFrame := v.currentFrame != nil
 	v.mu.Unlock()
 	if state == StatePlaying || promoted || hasFrame {
-		return v.Bounds()
+		return qui.PaintBoundsInWindow(v)
 	}
 	return qui.Rect{}
 }

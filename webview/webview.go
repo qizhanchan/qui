@@ -617,7 +617,7 @@ func (v *WebView) Tick(_ time.Time) qui.Rect {
 	if !has {
 		return qui.Rect{}
 	}
-	return v.Bounds()
+	return qui.PaintBoundsInWindow(v)
 }
 
 // Draw composites the latest frame onto the canvas.

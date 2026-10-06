@@ -145,6 +145,7 @@ func (c *Select) AccessibleNameKey() string {
 	return c.PlaceholderKey()
 }
 func (c *Select) AccessibleValue() string {
+	c.refreshItems()
 	if c.SelectedIdx < 0 || c.SelectedIdx >= len(c.Items) {
 		return ""
 	}
@@ -174,12 +175,18 @@ func (c *Select) AccessibleHasPopup() bool { return true }
 // picked while the dropdown is closed. Pair with the Type action
 // (Select.SetText) to select an option by label.
 func (c *Select) AccessibleOptions() []AXOption {
+	c.refreshItems()
 	if len(c.Items) == 0 {
 		return nil
 	}
 	opts := make([]AXOption, len(c.Items))
 	for i, it := range c.Items {
-		opts[i] = AXOption{Label: it, Selected: i == c.SelectedIdx}
+		o := c.option(i)
+		ax := AXOption{Label: it, Selected: i == c.SelectedIdx, Disabled: !c.itemEnabled(i), Group: o.Group}
+		if o.Value != "" && o.Value != it {
+			ax.Value = o.Value
+		}
+		opts[i] = ax
 	}
 	return opts
 }

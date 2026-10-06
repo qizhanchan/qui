@@ -441,7 +441,7 @@ func (b *Button) drawIcon(canvas Canvas, rect Rect) {
 // cleanly (without leaking ghost pixels at the previous elevation).
 func (b *Button) Tick(now time.Time) Rect {
 	if b.hoverTrans.Active(now) {
-		return b.dirtyRect()
+		return RectInWindow(b, b.dirtyRect())
 	}
 	return Rect{}
 }

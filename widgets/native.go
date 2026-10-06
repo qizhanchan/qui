@@ -84,6 +84,9 @@ var (
 	baselineTrack      = Color{R: 0.88, G: 0.88, B: 0.88, A: 1}
 	baselineOffBorder  = Color{R: 0.60, G: 0.60, B: 0.60, A: 1}
 	baselineTextGray   = Color{R: 0.35, G: 0.35, B: 0.35, A: 1}
+	// MenuBar's bar surface and caption color.
+	baselineBarBg   = Color{R: 0.95, G: 0.95, B: 0.95, A: 1}
+	baselineBarText = Color{R: 0.10, G: 0.10, B: 0.10, A: 1}
 )
 
 // themed maps a baseline color to its theme token (see above).
@@ -115,6 +118,10 @@ func themed(c Color) Color {
 		return th.SurfaceRaised
 	case baselineOffBorder, baselineTextGray:
 		return th.TextMuted
+	case baselineBarBg:
+		return th.SurfaceRaised
+	case baselineBarText:
+		return th.Text
 	}
 	return c
 }

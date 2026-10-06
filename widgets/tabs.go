@@ -41,9 +41,10 @@ type TabView struct {
 	MinTabWidth float32
 	MaxTabWidth float32
 
-	// Color knobs. NewTabView fills them for a plain HTML look; set
-	// them (e.g. from CurrentTheme) for a themed strip. Zero fields fall
-	// back to the theme. The html-css layer styles tabs with plain CSS.
+	// Color knobs. NewTabView fills them with the plain HTML look, which
+	// follows SetTheme like the other native controls; colors set here
+	// are used as given. Zero fields fall back to the theme. The html-css
+	// layer styles tabs with plain CSS.
 	StripColor      Color // strip + content area background
 	IndicatorColor  Color // painted under the selected tab label
 	SelectedColor   Color // selected tab label color
@@ -318,6 +319,8 @@ func (t *TabView) colors() (strip, indicator, selected, inactive, badge Color) {
 	pick(&selected, t.SelectedColor)
 	pick(&inactive, t.InactiveColor)
 	pick(&badge, t.BadgeColor)
+	// The constructor's plain-HTML values map onto the active theme.
+	strip, indicator, selected, inactive, badge = themed(strip), themed(indicator), themed(selected), themed(inactive), themed(badge)
 	return
 }
 

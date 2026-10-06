@@ -52,6 +52,12 @@ type TextArea struct {
 	cursorVisible     bool  // current cursor visibility state
 	OnChange          func(text string)
 
+	// FocusedStyle, when non-nil, replaces the resting chrome (background,
+	// border, radius, text color) while the field holds focus. Nil keeps
+	// the built-in focus look: a slightly lifted background and an accent
+	// border.
+	FocusedStyle *Style
+
 	// IME composition state. preeditText is the in-flight
 	// composed string; preeditCursor is the rune position inside it.
 	// Rendered near the caret with an underline while composing.
@@ -144,24 +150,33 @@ func (t *TextArea) Measure(available Size) Size {
 func (t *TextArea) Draw(canvas Canvas) {
 	rect := t.Bounds()
 
-	// Draw background
-	bg := t.Style().Background
-	if t.focused {
+	// Chrome: the resting style, or FocusedStyle while focused. Both go
+	// through themedStyle so the native baseline colors follow SetTheme
+	// (like Input); colors an app set itself pass through.
+	st := themedStyle(t.Style())
+	custom := t.focused && t.FocusedStyle != nil
+	if custom {
+		st = themedStyle(t.FocusedStyle)
+	}
+	bg := st.Background
+	if t.focused && !custom {
 		bg = Color{R: min(bg.R+0.05, 1), G: min(bg.G+0.05, 1), B: min(bg.B+0.05, 1), A: bg.A}
 	}
-	if t.Style().Radius > 0 {
-		canvas.FillRoundedRect(rect, t.Style().Radius, bg)
+	if st.Radius > 0 {
+		canvas.FillRoundedRect(rect, st.Radius, bg)
 	} else {
 		canvas.FillRect(rect, bg)
 	}
 
-	// Draw border
-	borderColor := t.Style().Border
-	if t.focused {
+	borderColor := st.Border
+	if t.focused && !custom {
 		borderColor = Color{R: 0.4, G: 0.6, B: 1.0, A: 1}
+		if !themeIsBaseline() {
+			borderColor = CurrentTheme().Accent
+		}
 	}
-	if t.Style().BorderSize > 0 {
-		canvas.StrokeRect(rect, borderColor, t.Style().BorderSize)
+	if st.BorderSize > 0 {
+		canvas.StrokeRect(rect, borderColor, st.BorderSize)
 	}
 
 	content, showScrollX, showScrollY := t.visibleContentRect(rect)
@@ -170,7 +185,7 @@ func (t *TextArea) Draw(canvas Canvas) {
 
 	// Draw text or placeholder
 	displayText := t.Text
-	textColor := t.Style().Foreground
+	textColor := st.Foreground
 	if displayText == "" && !t.focused {
 		displayText = t.DisplayPlaceholder()
 		textColor = Color{R: 0.5, G: 0.5, B: 0.5, A: 1}
@@ -190,7 +205,7 @@ func (t *TextArea) Draw(canvas Canvas) {
 			cp = len(runes)
 		}
 		displayText = string(runes[:cp]) + t.preeditText + string(runes[cp:])
-		textColor = t.Style().Foreground
+		textColor = st.Foreground
 	}
 
 	// Draw selection beneath text
@@ -243,7 +258,7 @@ func (t *TextArea) Draw(canvas Canvas) {
 			if cursorY >= content.Y && cursorY+cursorHeight <= content.Y+content.H {
 				canvas.FillRect(
 					Rect{X: cursorX, Y: cursorY, W: 1, H: cursorHeight},
-					t.Style().Foreground,
+					st.Foreground,
 				)
 			}
 		}
@@ -1695,7 +1710,7 @@ func (t *TextArea) Tick(now time.Time) Rect {
 	if currentTime-t.cursorBlinkTime > 500 {
 		t.cursorVisible = !t.cursorVisible
 		t.cursorBlinkTime = currentTime
-		return t.Bounds()
+		return PaintBoundsInWindow(t)
 	}
 	return Rect{}
 }

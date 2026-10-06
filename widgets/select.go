@@ -106,12 +106,15 @@ type Select struct {
 	OnOpen  func()
 	OnClose func()
 
-	options  []SelectOption
-	window   *Window
-	hovering bool
-	focused  bool
-	isOpen   bool
-	popup    *Popup
+	options []SelectOption
+	// itemsLocale is the LocaleGeneration Items was last resolved under,
+	// so a language switch re-resolves LabelKey options on next use.
+	itemsLocale uint64
+	window      *Window
+	hovering    bool
+	focused     bool
+	isOpen      bool
+	popup       *Popup
 
 	// Type-ahead state (see typeAhead): the letters typed so far and when
 	// the last one arrived, so a pause starts a fresh search.
@@ -180,6 +183,18 @@ func (cb *Select) syncItemsFromOptions() {
 		disabled[i] = o.Disabled
 	}
 	cb.Items, cb.ItemDisabled = items, disabled
+	cb.itemsLocale = LocaleGeneration()
+}
+
+// refreshItems re-resolves the option labels when the language changed
+// since they were last resolved. Everything that reads Items for display
+// or matching — the trigger text, SelectedValue, type-ahead, the AX value
+// and options — goes through it, so a closed Select follows a locale
+// switch too, not only the next time its dropdown opens.
+func (cb *Select) refreshItems() {
+	if cb.options != nil && cb.itemsLocale != LocaleGeneration() {
+		cb.syncItemsFromOptions()
+	}
 }
 
 // option returns option i in the rich model, or a label-only option built
@@ -196,6 +211,7 @@ func (cb *Select) option(i int) SelectOption {
 
 // SelectedOption returns the selected option, ok false when none.
 func (cb *Select) SelectedOption() (SelectOption, bool) {
+	cb.refreshItems()
 	if cb.SelectedIdx < 0 || cb.SelectedIdx >= len(cb.Items) {
 		return SelectOption{}, false
 	}
@@ -416,6 +432,7 @@ func (cb *Select) typeAhead(r rune, when time.Time) bool {
 	}
 	cb.typeAt = when
 	cb.typeBuf += string(unicode.ToLower(r))
+	cb.refreshItems()
 
 	// Same letter repeated → cycle to the NEXT match rather than sticking on
 	// the first one.
@@ -556,6 +573,7 @@ func (cb *Select) SetFocused(f bool) {
 
 // SelectedValue returns the current selection, or "" if none.
 func (cb *Select) SelectedValue() string {
+	cb.refreshItems()
 	if cb.SelectedIdx < 0 || cb.SelectedIdx >= len(cb.Items) {
 		return ""
 	}
@@ -666,6 +684,7 @@ func (cb *Select) inputBounds() Rect {
 }
 
 func (cb *Select) Measure(available Size) Size {
+	cb.refreshItems()
 	// Width: max of (widest item + chevron + padding) and the default
 	// 200 px. Both label + placeholder participate so an empty initial
 	// state doesn't shrink below text width.
@@ -720,6 +739,7 @@ func (cb *Select) Measure(available Size) Size {
 }
 
 func (cb *Select) Draw(canvas Canvas) {
+	cb.refreshItems()
 	theme := CurrentTheme()
 	b := cb.fieldBounds()
 	state := cb.currentState()
@@ -1116,6 +1136,7 @@ func (cb *Select) SetText(value string) {
 // indexForLabel resolves a label to its item index using the tiered match
 // described on SetText. Returns -1 when nothing matches.
 func (cb *Select) indexForLabel(value string) int {
+	cb.refreshItems()
 	for i := range cb.options {
 		if o := cb.options[i]; (o.Value != "" && o.Value == value) || (o.LabelKey != "" && o.LabelKey == value) {
 			if i < len(cb.Items) {

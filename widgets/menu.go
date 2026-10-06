@@ -1499,7 +1499,7 @@ func (lv *menuListView) moveFrom(start, step int) int {
 //	    {Label: "Open", Shortcut: "CmdOrCtrl+O", OnClick: openFile},
 //	})
 //	mb.AddMenu("Edit", ...)
-//	window.SetAcceleratorRegistry(mb.AcceleratorRegistry())
+//	mb.BindAccelerators(window.Accelerators())
 //
 // The window argument may be nil when the bar is built before it is
 // mounted: the bar then uses the window it is attached to.
@@ -1518,6 +1518,11 @@ type MenuBar struct {
 	menus   []menuEntry
 	openIdx int
 	open    *Popup
+
+	// accelReg is the registry BindAccelerators feeds; accelRemove removes
+	// the bindings it added, so a menu change can re-register them.
+	accelReg    *AcceleratorRegistry
+	accelRemove []func()
 }
 
 type menuEntry struct {
@@ -1577,6 +1582,7 @@ func (mb *MenuBar) AddMenuKey(key, label string, items []*MenuItem) {
 	mb.styleTrigger(entry.trigger)
 	mb.menus = append(mb.menus, entry)
 	mb.AddChild(entry.trigger)
+	mb.rebindAccelerators()
 }
 
 // Menus returns the top-level captions, in order.
@@ -1603,6 +1609,7 @@ func (mb *MenuBar) Trigger(i int) *Button {
 func (mb *MenuBar) SetMenuItems(i int, items []*MenuItem) {
 	if i >= 0 && i < len(mb.menus) {
 		mb.menus[i].Items = items
+		mb.rebindAccelerators()
 	}
 }
 
@@ -1616,15 +1623,22 @@ func (mb *MenuBar) styleTrigger(b *Button) {
 	b.States.Base.BorderSize = 0
 	b.States.Base.Radius = 2
 	b.States.Base.Padding = Insets{Top: 4, Right: 10, Bottom: 4, Left: 10}
-	b.States.Base.Background = mb.Style().Background
-	b.States.Base.Foreground = mb.Style().Foreground
+	b.States.Base.Background = themed(mb.Style().Background)
+	b.States.Base.Foreground = themed(mb.Style().Foreground)
 }
 
 func (mb *MenuBar) Draw(canvas Canvas) {
 	for _, m := range mb.menus {
 		mb.styleTrigger(m.trigger)
 	}
+	// The constructor's plain bar colors follow SetTheme (see themed);
+	// colors the app set pass through. Swapped in for this draw only so
+	// Style() keeps reading back what was set.
+	st := mb.Style()
+	bg, fg := st.Background, st.Foreground
+	st.Background, st.Foreground = themed(bg), themed(fg)
 	mb.Container.Draw(canvas)
+	st.Background, st.Foreground = bg, fg
 }
 
 // OpenMenu opens top-level menu idx (closing any other) and focuses it.
@@ -1673,33 +1687,80 @@ func (mb *MenuBar) OpenIndex() int { return mb.openIdx }
 
 // AcceleratorRegistry walks every menu item (including submenus) and
 // builds a fresh registry binding each item's Shortcut to its OnClick.
-// Attach the returned registry with Window.SetAcceleratorRegistry.
+// Attaching it with Window.SetAcceleratorRegistry REPLACES the window's
+// registry, so prefer BindAccelerators, which adds the menu's shortcuts to
+// a registry that other code also binds into.
 //
 // Separators and items without a Shortcut or OnClick are skipped.
 // Checkable items get wrapped so firing the accelerator flips Checked
 // (matching what a click would do); the caller still needs to redraw
 // the menu if they want the tick mark to update without a fresh open.
+// A Disabled item (or one under a Disabled submenu) doesn't fire: its key
+// goes on as if unbound.
 func (mb *MenuBar) AcceleratorRegistry() *AcceleratorRegistry {
 	reg := NewAcceleratorRegistry()
 	for _, m := range mb.menus {
-		registerItems(reg, m.Items)
+		registerItems(reg, m.Items, nil, nil)
 	}
 	return reg
 }
 
-func registerItems(reg *AcceleratorRegistry, items []*MenuItem) {
+// BindAccelerators adds every item's shortcut to reg alongside the
+// bindings reg already holds (typically window.Accelerators()), with the
+// rules AcceleratorRegistry describes, and keeps them current: AddMenu,
+// AddMenuKey and SetMenuItems re-register the menu's bindings. The returned
+// function removes exactly the menu's bindings and stops the syncing.
+// Binding into a second registry moves the menu's bindings there.
+func (mb *MenuBar) BindAccelerators(reg *AcceleratorRegistry) (remove func()) {
+	mb.unbindAccelerators()
+	mb.accelReg = reg
+	mb.rebindAccelerators()
+	return func() {
+		if mb.accelReg == reg {
+			mb.unbindAccelerators()
+			mb.accelReg = nil
+		}
+	}
+}
+
+func (mb *MenuBar) unbindAccelerators() {
+	for _, rm := range mb.accelRemove {
+		rm()
+	}
+	mb.accelRemove = nil
+}
+
+// rebindAccelerators re-registers the menu's shortcuts into accelReg, if
+// BindAccelerators attached one.
+func (mb *MenuBar) rebindAccelerators() {
+	if mb.accelReg == nil {
+		return
+	}
+	mb.unbindAccelerators()
+	for _, m := range mb.menus {
+		registerItems(mb.accelReg, m.Items, nil, &mb.accelRemove)
+	}
+}
+
+// registerItems binds items' shortcuts into reg. parentEnabled reports
+// whether every enclosing submenu row is enabled (nil at the top level);
+// removers, when non-nil, collects each binding's remover.
+func registerItems(reg *AcceleratorRegistry, items []*MenuItem, parentEnabled func() bool, removers *[]func()) {
 	for _, it := range items {
 		if it.Separator {
 			continue
 		}
+		item := it // capture
+		enabled := func() bool {
+			return !item.Disabled && (parentEnabled == nil || parentEnabled())
+		}
 		if it.Submenu != nil {
-			registerItems(reg, it.Submenu)
+			registerItems(reg, it.Submenu, enabled, removers)
 			continue
 		}
 		if it.Shortcut == "" || it.OnClick == nil {
 			continue
 		}
-		item := it // capture
 		fn := func() {
 			if item.Checkable {
 				item.Checked = !item.Checked
@@ -1708,6 +1769,9 @@ func registerItems(reg *AcceleratorRegistry, items []*MenuItem) {
 		}
 		// Best-effort registration: swallow parse errors so one bad
 		// shortcut doesn't break the whole menu.
-		_ = reg.Register(item.Shortcut, fn)
+		rm, err := reg.BindIf(item.Shortcut, enabled, fn)
+		if err == nil && removers != nil {
+			*removers = append(*removers, rm)
+		}
 	}
 }

@@ -299,7 +299,7 @@ func (s *Switch) resolveColors() (trackFill, trackBorder, handle, layer Color) {
 
 func (s *Switch) Tick(now time.Time) Rect {
 	if s.hoverTrans.Active(now) {
-		return s.Bounds()
+		return PaintBoundsInWindow(s)
 	}
 	return Rect{}
 }

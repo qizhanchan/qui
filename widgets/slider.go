@@ -210,7 +210,7 @@ func (s *Slider) Draw(canvas Canvas) {
 
 func (s *Slider) Tick(now time.Time) Rect {
 	if s.hoverTrans.Active(now) {
-		return s.Bounds()
+		return PaintBoundsInWindow(s)
 	}
 	return Rect{}
 }

@@ -99,7 +99,7 @@ func (v *Viewport) Tick(now time.Time) qui.Rect {
 		v.OnFrame(now.Sub(v.lastTick))
 	}
 	v.lastTick = now
-	return v.Bounds()
+	return qui.PaintBoundsInWindow(v)
 }
 
 // Measure: viewport takes whatever space the layout gives it.

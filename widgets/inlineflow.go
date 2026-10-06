@@ -76,6 +76,7 @@ type inlinePart struct {
 	deco      TextDecoration
 	decoPaint DecorationPaint
 	href      string
+	linkSrc   any
 
 	child  Widget
 	valign InlineVAlign
@@ -98,10 +99,18 @@ func (b *InlineBox) AddText(text string, font Font, color Color, deco TextDecora
 // AddTextPaint is AddText with an explicit decoration paint (CSS
 // text-decoration-color/-style/-thickness) for the run's underline etc.
 func (b *InlineBox) AddTextPaint(text string, font Font, color Color, deco TextDecoration, decoPaint DecorationPaint, href string) {
+	b.AddLinkText(text, font, color, deco, decoPaint, href, nil)
+}
+
+// AddLinkText is AddTextPaint for a run that belongs to a link, with an
+// identity for that link (source — any comparable value, typically the
+// element it came from). LinkSourceAt reports it back for a click, so two
+// links sharing an href, or a link's own attributes, can be told apart.
+func (b *InlineBox) AddLinkText(text string, font Font, color Color, deco TextDecoration, decoPaint DecorationPaint, href string, source any) {
 	if text == "" {
 		return
 	}
-	b.parts = append(b.parts, inlinePart{text: text, font: font, color: color, deco: deco, decoPaint: decoPaint, href: href})
+	b.parts = append(b.parts, inlinePart{text: text, font: font, color: color, deco: deco, decoPaint: decoPaint, href: href, linkSrc: source})
 	b.haveLay = false
 	b.InvalidateLayout()
 }
@@ -167,6 +176,7 @@ func (b *InlineBox) buildItems(maxW float32) []InlineItem {
 			Decoration:      p.deco,
 			DecorationPaint: p.decoPaint,
 			Href:            p.href,
+			LinkSource:      p.linkSrc,
 		})
 	}
 	return items
@@ -715,6 +725,12 @@ func (b *InlineBox) Text() string {
 // on a text fragment carrying a non-empty Href.
 func (b *InlineBox) LinkAt(p Point) (string, bool) {
 	return b.layout.LinkAt(b.Bounds(), p)
+}
+
+// LinkSourceAt is LinkAt also returning the source the run was added with
+// (AddLinkText); nil for runs added without one.
+func (b *InlineBox) LinkSourceAt(p Point) (href string, source any, ok bool) {
+	return b.layout.LinkSourceAt(b.Bounds(), p)
 }
 
 // inlineChildSize measures a child and applies its Style sizing hints

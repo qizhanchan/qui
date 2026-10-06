@@ -76,8 +76,20 @@ type TableCell struct {
 
 // SortableTableModel is implemented by a model that can reorder itself.
 // A header click on a Sortable column calls SortBy (after OnSort).
+//
+// Reordering moves records between row indexes, so the selection has to
+// follow its record: implement RowKeyModel too and the selected record
+// stays selected (at its new index). Without RowKey the table can't tell
+// where the record went and clears the selection rather than leave it on
+// a different record.
 type SortableTableModel interface {
 	SortBy(col int, descending bool)
+}
+
+// RowKeyModel gives each row a stable identity — a database ID, a pointer
+// — that survives reordering. RowKey's result must be comparable (==).
+type RowKeyModel interface {
+	RowKey(row int) any
 }
 
 // SliceTableModel is a trivial TableModel backed by [][]string —
@@ -572,7 +584,7 @@ func (tv *TableView) drawRows(canvas Canvas, widths []float32, body Rect, conten
 		if selected {
 			canvas.FillRect(rowRect, c.Selected)
 			fg = c.SelectedText
-		} else if i == tv.hoverIdx {
+		} else if i == tv.hoverIdx && c.Hover.A > 0 {
 			canvas.FillRect(rowRect, c.Hover)
 		} else if i%2 == 1 && c.Stripe.A > 0 {
 			// Subtle zebra striping for readability.
@@ -612,7 +624,7 @@ func (tv *TableView) drawWidgetRows(canvas Canvas, body Rect, contentW float32, 
 		rowRect := tv.rowRect(i, contentW)
 		if i == tv.SelectedIdx {
 			canvas.FillRect(rowRect, c.Selected)
-		} else if i == tv.hoverIdx {
+		} else if i == tv.hoverIdx && c.Hover.A > 0 {
 			canvas.FillRect(rowRect, c.Hover)
 		} else if i%2 == 1 && c.Stripe.A > 0 {
 			canvas.FillRect(rowRect, c.Stripe)
@@ -644,7 +656,32 @@ func (tv *TableView) SortBy(col int, descending bool) {
 		tv.OnSort(col, descending)
 	}
 	if m, ok := tv.Model.(SortableTableModel); ok && col >= 0 {
+		sel := tv.SelectedIdx
+		keyed, hasKey := tv.Model.(RowKeyModel)
+		var key any
+		if sel >= 0 && hasKey {
+			key = keyed.RowKey(sel)
+		}
 		m.SortBy(col, descending)
+		if sel >= 0 {
+			// Keep the selection on its record; Select reports the new index
+			// through OnSelect when it moved.
+			next := -1
+			if hasKey {
+				for r, n := 0, tv.Model.RowCount(); r < n; r++ {
+					if keyed.RowKey(r) == key {
+						next = r
+						break
+					}
+				}
+			}
+			if next >= 0 {
+				tv.Select(next)
+			} else {
+				tv.selection.Reset()
+				tv.SelectedIdx = -1
+			}
+		}
 		tv.Invalidate()
 	}
 }
@@ -766,6 +803,12 @@ func (tv *TableView) Handle(event Event) bool {
 					}
 					return true
 				}
+			}
+			// In widget-row mode the capture pass already selected (and
+			// activated) the row; a press the cell didn't consume bubbles
+			// back here and must not run the row click a second time.
+			if tv.useWidgetRows && e.Phase() == PhaseBubble && tv.rowAt(e.X, e.Y) >= 0 {
+				return true
 			}
 			// Row selection.
 			if idx := tv.rowAt(e.X, e.Y); idx >= 0 {
