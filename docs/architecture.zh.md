@@ -44,6 +44,7 @@ AppKit 可能在等待期间、没有任何输入事件的情况下投递的平�
 
 - `Invalidate` / `InvalidateRect` 标记纯视觉变化。
 - `InvalidateLayout` 标记影响尺寸的变化。它只把调用者的绘制范围标脏（而非整个窗口），并向根冒泡一个标志。布局过程随后仅当某个控件的包围盒真的改变时才提升为全量重绘（`BaseWidget.Layout` → `noteBoundsChange`）。`boundsEpsilon` 以下的亚像素抖动保持作用域内；在布局过程之外调用 `Layout` 会直接标脏新旧范围。
+- 测量结果带缓存（`measure_cache.go`）。布局引擎通过 `MeasureChild` 测量子控件，它按可用尺寸记忆每个控件的 `Measure` 结果。`InvalidateLayout` 会清掉该控件及其所有祖先的缓存，因此一次变化只会重新测量它的祖先链，未变化的兄弟子树直接用缓存作答；主题、字体、语言、窗口尺寸变化以及 `Window.InvalidateLayout` 会清掉全部缓存。约定是：影响尺寸的状态变化时，控件要对**自己**调用 `InvalidateLayout`——只改子控件却只让祖先失效，会让子控件的缓存尺寸过期。`QUI_DEBUG_LAYOUT_CACHE=1` 会在每次命中缓存时重新测量，并记录违反约定的控件。
 - 一次测量结果不变的文字 tick 只重绘自己的矩形，因此窗口在两次更新之间真正空闲，`WaitIdle` 也能对持续更新的应用工作。设 `QUI_DEBUG_PAINT=1` 可记录全量重绘提升以及第一个移动的控件。
 
 文字测量是带缓存的（`text.go` 中的 `BuildTextLayout` 缓存，在字体注册表变化时失效），因此任何布局失效触发的全树重新布局，对未变化的文字而言只是 map 查找，而不是重新测量。

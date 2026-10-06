@@ -413,7 +413,7 @@ func (c *Container) Measure(available Size) Size {
 	// Engines that can't report a size keep the old "take all offered"
 	// behavior.
 	for _, child := range children {
-		child.Measure(padded)
+		MeasureChild(child, padded)
 	}
 	return available
 }

@@ -1367,14 +1367,16 @@ func (w *Window) Bounds() Rect {
 }
 
 // InvalidateLayout forces the next Step to run Measure + Layout on
-// the tree. Use when changing a widget's size-affecting state from
-// outside the normal invalidation path (e.g., programmatic edits
-// without a wrapping Container.AddChild or widget SetText).
+// the tree, discarding every cached measurement. Use when changing a
+// widget's size-affecting state from outside the normal invalidation path
+// (e.g., programmatic edits without a wrapping Container.AddChild or
+// widget SetText), and for changes that reach every widget at once.
 func (w *Window) InvalidateLayout() {
 	if w == nil {
 		return
 	}
 	w.assertUIThread("Window.InvalidateLayout")
+	invalidateAllMeasures()
 	// Overlays too: a theme or locale switch re-measures their text, and
 	// relayoutDirtyOverlays only revisits overlays flagged dirty.
 	for _, ov := range w.overlays {
@@ -2294,7 +2296,7 @@ func (w *Window) layoutPass() {
 		if w.root != nil && w.root.IsLayoutDirty() {
 			w.inLayoutPass = true
 			w.boundsChanged = false
-			w.root.Measure(w.lastSize)
+			MeasureChild(w.root, w.lastSize)
 			w.root.Layout(Rect{X: 0, Y: 0, W: w.lastSize.W, H: w.lastSize.H})
 			w.root.ClearLayoutDirty()
 			w.inLayoutPass = false
@@ -2353,6 +2355,7 @@ func (w *Window) LayoutForTest() {
 		return
 	}
 	w.assertUIThread("Window.LayoutForTest")
+	invalidateAllMeasures()
 	if w.root != nil {
 		w.root.InvalidateLayout()
 	}

@@ -208,7 +208,11 @@ func TestDialogContentRelayoutsWhenItGrows(t *testing.T) {
 	d.Show(w)
 	before := body.Bounds().H
 
-	body.hitRect.H = 120 // content grew while shown
+	// Content grew while shown. A widget that changes size invalidates
+	// its own layout — that is what drops its cached measurement and
+	// flags the overlay for RelayoutOverlay.
+	body.hitRect.H = 120
+	body.InvalidateLayout()
 	d.RelayoutOverlay(Size{W: 800, H: 600})
 	if got := body.Bounds().H; got <= before {
 		t.Errorf("content height %v after growing, want > %v", got, before)

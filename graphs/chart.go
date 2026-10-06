@@ -187,7 +187,7 @@ func (c *Chart) Layout(r Rect) {
 	// Legend reserves space at bottom / right when attached.
 	var legendSize Size
 	if c.Legend != nil {
-		legendSize = c.Legend.Measure(Size{W: r.W, H: r.H})
+		legendSize = MeasureChild(c.Legend, Size{W: r.W, H: r.H})
 		switch c.Legend.Position {
 		case LegendBottom, LegendTop:
 			g.Bottom += legendSize.H + 4

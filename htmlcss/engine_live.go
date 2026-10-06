@@ -1,6 +1,8 @@
 package htmlcss
 
 import (
+	"reflect"
+
 	"github.com/qizhanchan/qui"
 	"github.com/qizhanchan/qui/widgets"
 )
@@ -29,7 +31,9 @@ type StyleEngine struct {
 	// tooltipStyled: the stylesheet set the window's tooltip colors.
 	tooltipStyled bool
 
-	sheet     *Stylesheet
+	sheet *Stylesheet
+	// scoped is set while flush restyles dirty scopes (vs. a full Restyle).
+	scoped    bool
 	viewportW float32      // @media evaluation width (0 = default), kept for SetCSS
 	opts      Options      // BaseDir (img resolution) + Window (select backing)
 	root      *El          // main-tree root (holds the window for invalidation)
@@ -355,6 +359,8 @@ func (eng *StyleEngine) flush() {
 		}
 	}
 	eng.pass++
+	eng.scoped = true
+	defer func() { eng.scoped = false }()
 	for s := range scopes {
 		var parentCS *ComputedStyle
 		if p := s.inheritParent(); p != nil {
@@ -377,7 +383,17 @@ func (eng *StyleEngine) restyleWalk(e *El, parent *ComputedStyle) {
 	}
 	eng.styled++
 	e.styledPass = eng.pass
+	prev := e.lastCS
 	e.applyComputed(cs)
+	// applyComputed rebuilds widget state straight from cs, partly through
+	// plain fields (layout engines, paragraph flags) that don't invalidate
+	// on their own. A full Restyle re-measures everything anyway; a scoped
+	// one must drop the cached measurements of what it really changed —
+	// but only for a change that can move something: a hover color swap
+	// stays a repaint.
+	if eng.scoped && prev != nil && prev != cs && !reflect.DeepEqual(layoutView(prev), layoutView(cs)) {
+		e.invalidateStyledLayout()
+	}
 	for _, kid := range e.elementKids {
 		if ke, ok := kid.(*El); ok {
 			eng.restyleWalk(ke, cs)
@@ -419,4 +435,63 @@ func (eng *StyleEngine) Restyle() {
 			win.Invalidate()
 		}
 	}
+}
+
+// invalidateStyledLayout drops the cached layout of an element whose
+// computed style changed, and of the internal widgets it built for itself
+// (text label, list marker, li content box) — everything up to the next
+// child element, which a restyle checks on its own.
+func (e *El) invalidateStyledLayout() {
+	e.InvalidateLayout()
+	var walk func(w qui.Widget)
+	walk = func(w qui.Widget) {
+		if _, isEl := w.(*El); isEl {
+			return
+		}
+		w.InvalidateLayout()
+		if l, ok := w.(interface{ ChildList() []qui.Widget }); ok {
+			for _, c := range l.ChildList() {
+				walk(c)
+			}
+		}
+	}
+	for _, c := range e.ChildList() {
+		walk(c)
+	}
+}
+
+// layoutView returns cs with every property that only affects painting
+// cleared, so two styles compare equal exactly when they lay out the same.
+// The list names paint-only properties rather than layout ones: a property
+// missing from it costs a needless relayout, never a stale size.
+func layoutView(cs *ComputedStyle) *ComputedStyle {
+	if cs == nil {
+		return nil
+	}
+	v := *cs
+	v.Hidden = false // visibility:hidden keeps its box
+	v.Color, v.HasColor = qui.Color{}, false
+	v.AccentColor, v.HasAccentColor = qui.Color{}, false
+	v.ScrollbarThumb, v.ScrollbarTrack, v.HasScrollbarColor = qui.Color{}, qui.Color{}, false
+	v.Underline, v.LineThrough, v.Overline = false, false, false
+	v.DecorationColor, v.HasDecorationColor = qui.Color{}, false
+	v.DecorationStyle, v.DecorationThickness = 0, 0
+	v.Background, v.HasBackground, v.BackgroundImageURL = qui.Color{}, false, ""
+	v.Gradient = nil
+	v.BorderColor, v.SideColors = qui.Color{}, qui.SideColors{}
+	v.Radius, v.Corners = 0, qui.CornerRadii{}
+	v.OutlineWidth, v.OutlineColor, v.HasOutline = 0, qui.Color{}, false
+	v.Shadow, v.HasShadow, v.ExtraShadows = qui.ShadowStyle{}, false, nil
+	v.Opacity, v.HasOpacity = 0, false
+	v.Transform = nil // transforms move pixels, not boxes
+	v.Filter = nil
+	v.Cursor, v.HasCursor = 0, false
+	v.NoSelect, v.PointerNone = false, false
+	v.AppRegion = ""
+	// The declarations and custom properties are already resolved into the
+	// fields above.
+	v.raw, v.customProps = nil, nil
+	v.Hover, v.Focus, v.Active, v.FocusVisible = layoutView(cs.Hover), layoutView(cs.Focus), layoutView(cs.Active), layoutView(cs.FocusVisible)
+	v.AncestorHover, v.AncestorFocus, v.AncestorActive = layoutView(cs.AncestorHover), layoutView(cs.AncestorFocus), layoutView(cs.AncestorActive)
+	return &v
 }

@@ -293,6 +293,7 @@ type BaseWidget struct {
 	absCB          bool         // establishes a containing block for out-of-flow descendants
 	collapsed      bool         // removed from layout AND paint entirely (CSS display:none)
 	layoutDirty    bool         // only the root's flag is consulted; set via InvalidateLayout
+	measureMemo    measureCache // MeasureChild's memo; see measure_cache.go
 	hooks          *widgetHooks // OnFocus / OnBlur / OnKeyDown; see widget_hooks.go
 }
 
@@ -1005,8 +1006,10 @@ func (b *BaseWidget) InvalidateLayout() {
 // dirtiness on the tree root — the only flag Window.Step consults —
 // WITHOUT InvalidateLayout's repaint side effect (each ancestor's paint
 // bounds grow toward the full window; invalidating them would defeat
-// scoped repaints).
+// scoped repaints). Every widget on the way drops its cached
+// measurements: its size may depend on whatever changed below it.
 func (b *BaseWidget) markLayoutDirty() {
+	b.measureMemo.invalidate()
 	if b.parent != nil {
 		if m, ok := b.parent.(interface{ markLayoutDirty() }); ok {
 			m.markLayoutDirty()

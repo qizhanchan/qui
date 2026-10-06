@@ -2109,13 +2109,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	if e.isTextSeg() {
 		e.flowKids = nil
 		e.ensureLabel()
-		e.textLabel.SetText(collapseText(e.text))
-		applyTextStyle(e.textLabel, cs)
-		qui.UpdateStyle(e.textLabel, func(st *qui.Style) {
-			st.Margin = qui.Insets{}
-			st.Padding = qui.Insets{}
-			st.Background = qui.Color{}
-		})
+		applyTextStyle(e.textLabel, collapseText(e.text), cs, textLabelOpts{boxless: true})
 		e.syncChildren()
 		return
 	}
@@ -2178,21 +2172,14 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 			// No window yet (static render without opts.Window): show the
 			// option list as a plain placeholder label.
 			e.ensureLabel()
-			e.textLabel.SetText(strings.Join(e.selectItems, " / "))
-			applyTextStyle(e.textLabel, cs)
+			applyTextStyle(e.textLabel, strings.Join(e.selectItems, " / "), cs, textLabelOpts{})
 		}
 		e.LayoutEngine = qui.FlowLayout{}
 		if e.tag == "input" && e.attrs["type"] == "checkbox" && e.attrs["value"] != "" {
 			// checkbox with a visible value label: centered row (the label
 			// is a separate widget so it stays text-selectable).
 			e.ensureLabel()
-			e.textLabel.SetText(collapseText(e.attrs["value"]))
-			applyTextStyle(e.textLabel, cs)
-			qui.UpdateStyle(e.textLabel, func(lst *qui.Style) {
-				lst.Margin = qui.Insets{}
-				lst.Padding = qui.Insets{}
-				lst.Background = qui.Color{}
-			})
+			applyTextStyle(e.textLabel, collapseText(e.attrs["value"]), cs, textLabelOpts{boxless: true})
 			e.LayoutEngine = qui.FlexLayout{Direction: qui.Horizontal, AlignItems: qui.AlignCenter, Gap: 6}
 		}
 		e.syncChildren()
@@ -2446,12 +2433,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 			// typography on the internal label; box model stays on the box
 			// (mirror of build.go's visual-box path so padding isn't doubled).
 			e.ensureLabel()
-			e.textLabel.SetText(e.text)
-			applyTextStyle(e.textLabel, cs)
-			st := e.textLabel.Style()
-			st.Margin = qui.Insets{}
-			st.Padding = qui.Insets{}
-			st.Background = qui.Color{}
+			applyTextStyle(e.textLabel, e.text, cs, textLabelOpts{boxless: true})
 		}
 
 		// Browser parity: a push-button control centers its single-leaf
@@ -2515,17 +2497,11 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 				if e.markerLabel == nil {
 					e.markerLabel = widgets.NewLabel(m)
 				}
-				e.markerLabel.SetText(m)
-				applyTextStyle(e.markerLabel, cs)
+				applyTextStyle(e.markerLabel, m, cs, textLabelOpts{boxless: true, noWrap: true})
 				// A list marker isn't user-selectable (browser behavior) — keep
 				// it out of drag-selection and clipboard; the real <ol>/<ul>
 				// regenerates its own markers on paste.
 				e.markerLabel.Selectable = false
-				e.markerLabel.Paragraph.Wrap = false
-				mst := e.markerLabel.Style()
-				mst.Margin = qui.Insets{}
-				mst.Padding = qui.Insets{}
-				mst.Background = qui.Color{}
 			}
 			if e.liContent == nil {
 				e.liContent = widgets.NewBox(qui.FlowLayout{})
@@ -3262,7 +3238,7 @@ func (e *El) updateScrollContentAt(cw float32) {
 		return
 	}
 	e.lastScrollW = cw
-	nat := e.scrollInner.Measure(qui.Size{W: cw, H: 1 << 14})
+	nat := qui.MeasureChild(e.scrollInner, qui.Size{W: cw, H: 1 << 14})
 	if nat != e.scrollView.ContentSize || e.scrollView.Content != e.scrollInner {
 		e.scrollView.SetContent(e.scrollInner, nat)
 	}

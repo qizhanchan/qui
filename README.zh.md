@@ -133,7 +133,7 @@ go run ./cmd/qui-agent shot /tmp/ui.png
 # 或者直接：curl --unix-socket $TMPDIR/qui-agent-*.sock http://./llm.txt
 ```
 
-常用环境变量：`QUI_PLATFORM=glfw|cocoa`（窗口后端 —— 见下）、`QUI_GPU_RASTER=1`（GPU 光栅后端）、`QUI_AGENT=1` / `QUI_AGENT_TCP=:port` / `QUI_AGENT_TOKEN` / `QUI_AGENT_SOCK`（agent 服务）、`QUI_DEBUG_LAYOUT=1`（flex 溢出日志）、`QUI_DEBUG_PAINT=1`（记录全量重绘提升 + 第一个移动的控件）、`QUI_DEBUG_THREAD=1`（UI 线程归属快速失败检查）、`QUI_DEBUG_GESTURE=1`（记录 macOS 桥装了哪些手势选择器，含是否保留 GLFW 的 scrollWheel:）、`QUI_I18N_STRICT=1`（未解析的 key 渲染为 ⟦key⟧ 并各记录一次）、`QUI_GOLDEN=1`（写入 golden 截图）、`QUI_HTMLCSS_SNAPSHOT=1`（htmlcss 快照 PNG）。
+常用环境变量：`QUI_PLATFORM=glfw|cocoa`（窗口后端 —— 见下）、`QUI_GPU_RASTER=1`（GPU 光栅后端）、`QUI_AGENT=1` / `QUI_AGENT_TCP=:port` / `QUI_AGENT_TOKEN` / `QUI_AGENT_SOCK`（agent 服务）、`QUI_DEBUG_LAYOUT=1`（flex 溢出日志）、`QUI_DEBUG_PAINT=1`（记录全量重绘提升 + 第一个移动的控件）、`QUI_DEBUG_LAYOUT_CACHE=1`（每次命中测量缓存都重新测量，并记录未对自身调用 `InvalidateLayout` 就改变了尺寸的控件）、`QUI_DEBUG_THREAD=1`（UI 线程归属快速失败检查）、`QUI_DEBUG_GESTURE=1`（记录 macOS 桥装了哪些手势选择器，含是否保留 GLFW 的 scrollWheel:）、`QUI_I18N_STRICT=1`（未解析的 key 渲染为 ⟦key⟧ 并各记录一次）、`QUI_GOLDEN=1`（写入 golden 截图）、`QUI_HTMLCSS_SNAPSHOT=1`（htmlcss 快照 PNG）。
 
 **窗口后端（`QUI_PLATFORM`）。** 操作系统窗口层位于平台接缝（`platform.go`）之后，编译进了多个实现，在*运行时*选择：
 

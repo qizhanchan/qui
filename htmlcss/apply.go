@@ -668,39 +668,75 @@ func syncControlStateChrome(ss *qui.StateStyle) {
 	sync(ss.Disabled, true) // keep the disabled dimmed text + its own border
 }
 
-// applyTextStyle sets font/color/alignment on a Label.
-func applyTextStyle(lbl *widgets.Label, cs *ComputedStyle) {
+// textLabelOpts says how an element's internal label relates to it.
+type textLabelOpts struct {
+	// boxless keeps margin, padding and background off the label: the
+	// element's own box carries them and the label is only its typography
+	// (otherwise padding would apply twice).
+	boxless bool
+	// noWrap keeps the label on one line whatever white-space says (list
+	// markers).
+	noWrap bool
+}
+
+// applyTextStyle sets a Label's text, font, color and paragraph layout
+// from cs in one step, so restyling an unchanged element changes nothing:
+// no transient style or text whose round trip would invalidate layout and
+// repaint on every pass. Paragraph settings are plain fields, so a change
+// to them invalidates layout here — the label's cached measurement
+// depends on them.
+func applyTextStyle(lbl *widgets.Label, text string, cs *ComputedStyle, o textLabelOpts) {
+	if text != "" && cs.TextTransform != "" && cs.TextTransform != "none" {
+		text = transformText(text, cs.TextTransform)
+	}
+	lbl.SetText(text)
 	qui.UpdateStyle(lbl, func(st *qui.Style) {
 		st.Foreground = cs.Color
 		st.Font = fontFrom(cs)
+		if o.boxless {
+			st.Margin = qui.Insets{}
+			st.Padding = qui.Insets{}
+			st.Background = qui.Color{}
+			return
+		}
 		st.Margin = cs.Margin
 		st.Padding = cs.Padding
 		if cs.HasBackground {
 			st.Background = cs.Background
 		}
 	})
-	lbl.Paragraph.Wrap = !cs.NoWrap
+	p := lbl.Paragraph
+	p.Wrap = !cs.NoWrap && !o.noWrap
 	// CSS default is overflow-wrap:normal — a word with no break opportunity
 	// overflows. The native Label default is the opposite (always break), so
 	// this must be set on every restyle, not only when BreakWord is on.
-	lbl.Paragraph.BreakLongWords = cs.BreakWord
-	lbl.Paragraph.Align = cs.TextAlign
-	lbl.Paragraph.Decoration = cs.decoration()
-	lbl.Paragraph.DecorationPaint = cs.decorationPaint()
+	p.BreakLongWords = cs.BreakWord
+	p.Align = cs.TextAlign
+	p.Decoration = cs.decoration()
+	p.DecorationPaint = cs.decorationPaint()
 	if cs.Ellipsis {
-		lbl.Paragraph.Ellipsis = true
+		p.Ellipsis = true
 		if cs.NoWrap {
-			lbl.Paragraph.MaxLines = 1
+			p.MaxLines = 1
 		}
 	}
 	if cs.LineHeight > 0 {
-		lbl.Paragraph.LineHeightScale = cs.LineHeight
+		p.LineHeightScale = cs.LineHeight
 	}
-	lbl.Paragraph.FirstIndent = cs.TextIndent
-	if cs.TextTransform != "" && cs.TextTransform != "none" {
-		if t := lbl.Text(); t != "" {
-			lbl.SetText(transformText(t, cs.TextTransform))
-		}
+	p.FirstIndent = cs.TextIndent
+	if p == lbl.Paragraph {
+		return
+	}
+	// Decoration only paints; everything else shapes the lines.
+	layoutChanged := p.Wrap != lbl.Paragraph.Wrap || p.BreakLongWords != lbl.Paragraph.BreakLongWords ||
+		p.Align != lbl.Paragraph.Align || p.Ellipsis != lbl.Paragraph.Ellipsis ||
+		p.MaxLines != lbl.Paragraph.MaxLines || p.LineHeightScale != lbl.Paragraph.LineHeightScale ||
+		p.FirstIndent != lbl.Paragraph.FirstIndent || p.Direction != lbl.Paragraph.Direction
+	lbl.Paragraph = p
+	if layoutChanged {
+		lbl.InvalidateLayout()
+	} else if win := lbl.Window(); win != nil {
+		win.InvalidateRect(qui.PaintBoundsInWindow(lbl))
 	}
 }
 

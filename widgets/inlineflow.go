@@ -737,7 +737,7 @@ func (b *InlineBox) LinkSourceAt(p Point) (href string, source any, ok bool) {
 // (explicit width/height, min/max) — the engine only knows a box's final
 // Size, so an inline-block with an explicit CSS width is honored here.
 func inlineChildSize(w Widget, avail Size) Size {
-	m := w.Measure(avail)
+	m := MeasureChild(w, avail)
 	st := w.Style()
 	if st == nil {
 		return m

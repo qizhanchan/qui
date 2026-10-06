@@ -99,7 +99,7 @@ func resolveFlowBlockSize(child Widget, availW, availH float32) (layoutW, height
 	case shrinkToFitWidth(child):
 		// A shrink-to-fit block (CSS display:table without a width) is only
 		// as wide as its content, not the full available width.
-		if n := child.Measure(Size{W: availW, H: availH}); n.W < layoutW {
+		if n := MeasureChild(child, Size{W: availW, H: availH}); n.W < layoutW {
 			layoutW = n.W
 		}
 	}
@@ -110,7 +110,7 @@ func resolveFlowBlockSize(child Widget, availW, availH float32) (layoutW, height
 		layoutW = max.W
 	}
 
-	sz := child.Measure(Size{W: layoutW, H: availH})
+	sz := MeasureChild(child, Size{W: layoutW, H: availH})
 	height = sz.H
 	if pref.H > 0 {
 		height = pref.H
@@ -155,7 +155,7 @@ func (f FlowLayout) Measure(children []Widget, avail Size) Size {
 		m := child.Style().Margin
 		switch flowLevelOf(child) {
 		case FlowInline:
-			sz := child.Measure(Size{W: avail.W - m.Left - m.Right, H: avail.H})
+			sz := MeasureChild(child, Size{W: avail.W - m.Left - m.Right, H: avail.H})
 			boxW := m.Left + sz.W + m.Right
 			if lineOpen && lineW+boxW > avail.W {
 				if lineW > maxW {
@@ -222,7 +222,7 @@ func (f FlowLayout) Apply(children []Widget, bounds Rect) {
 		switch flowLevelOf(child) {
 		case FlowInline:
 			avail := Size{W: bounds.W - m.Left - m.Right, H: bounds.H}
-			sz := child.Measure(avail)
+			sz := MeasureChild(child, avail)
 			// Wrap when this box would overflow the content width and
 			// the line already has something on it.
 			if lineOpen && x+m.Left+sz.W > bounds.X+bounds.W {

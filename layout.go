@@ -390,7 +390,7 @@ func resolvedMaxSize(w Widget, cb Size) Size {
 // budget, overlays any PreferredSize axes, then applies min/max. Use
 // this anywhere a layout pass currently calls Measure + applyMinSize.
 func measureWithConstraints(w Widget, avail Size) Size {
-	m := w.Measure(avail)
+	m := MeasureChild(w, avail)
 	if p := widgetPreferredSize(w); p.W > 0 || p.H > 0 {
 		if p.W > 0 {
 			m.W = p.W
@@ -410,7 +410,7 @@ func measureWithConstraints(w Widget, avail Size) Size {
 // must measure through this, or an explicitly sized child (a CSS-sized
 // dialog, say) silently keeps whatever its own Measure returned.
 func MeasureConstrained(w Widget, avail Size) Size {
-	m := w.Measure(avail)
+	m := MeasureChild(w, avail)
 	p := widgetPreferredSize(w)
 	if s := w.Style(); s != nil {
 		if p.W == 0 && s.WidthPct > 0 && avail.W > 0 {
@@ -1583,7 +1583,7 @@ func resolveAnchorAxis(anchor, startBit, endBit AnchorSide,
 }
 
 func anchorMeasure(child Widget, parentExtent float32, widthAxis bool) float32 {
-	sz := child.Measure(Size{W: parentExtent, H: parentExtent})
+	sz := MeasureChild(child, Size{W: parentExtent, H: parentExtent})
 	if widthAxis {
 		return sz.W
 	}

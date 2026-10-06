@@ -226,7 +226,7 @@ func (s *ScrollView) Layout(rect Rect) {
 	// paint/interaction transform, so this layout is independent of it —
 	// scrolling never re-enters here.
 	r := s.contentRect()
-	s.Content.Measure(Size{W: r.W, H: r.H})
+	MeasureChild(s.Content, Size{W: r.W, H: r.H})
 	s.Content.Layout(r)
 }
 
@@ -539,7 +539,7 @@ func (s *ScrollView) ensureContentSize(rect Rect) {
 			return
 		}
 		s.sizeAuto = true
-		nat := s.Content.Measure(Size{W: 0, H: rect.H})
+		nat := MeasureChild(s.Content, Size{W: 0, H: rect.H})
 		s.ContentSize.W = nat.W
 		if s.ContentSize.H <= 0 {
 			s.ContentSize.H = rect.H
@@ -549,7 +549,7 @@ func (s *ScrollView) ensureContentSize(rect Rect) {
 			return
 		}
 		s.sizeAuto = true
-		nat := s.Content.Measure(Size{W: rect.W, H: 0})
+		nat := MeasureChild(s.Content, Size{W: rect.W, H: 0})
 		s.ContentSize.H = nat.H
 		if s.ContentSize.W <= 0 {
 			s.ContentSize.W = rect.W
