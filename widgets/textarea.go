@@ -1707,12 +1707,15 @@ func (t *TextArea) Tick(now time.Time) Rect {
 		return Rect{}
 	}
 	currentTime := now.UnixMilli()
+	var dirty Rect
 	if currentTime-t.cursorBlinkTime > 500 {
 		t.cursorVisible = !t.cursorVisible
 		t.cursorBlinkTime = currentTime
-		return PaintBoundsInWindow(t)
+		dirty = PaintBoundsInWindow(t)
 	}
-	return Rect{}
+	// Wake an idle window for the next flip.
+	t.Window().RequestTickAt(time.UnixMilli(t.cursorBlinkTime + 501))
+	return dirty
 }
 
 // ----------------------------------------------------------------------

@@ -1014,18 +1014,21 @@ func (t *Input) WidgetCursor() (CursorShape, bool) {
 
 // Tick drives cursor blink. Matches TextArea's 500ms interval.
 // Returns widget Bounds as dirty region when visibility flips so the
-// window repaints only this field.
+// window repaints only this field, and asks an idle window to wake for
+// the next flip.
 func (t *Input) Tick(now time.Time) Rect {
 	if !t.focused {
 		return Rect{}
 	}
 	nowMS := now.UnixMilli()
+	var dirty Rect
 	if nowMS-t.cursorBlinkMS > 500 {
 		t.cursorVisible = !t.cursorVisible
 		t.cursorBlinkMS = nowMS
-		return PaintBoundsInWindow(t)
+		dirty = PaintBoundsInWindow(t)
 	}
-	return Rect{}
+	t.Window().RequestTickAt(time.UnixMilli(t.cursorBlinkMS + 501))
+	return dirty
 }
 
 // ----------------------------------------------------------------------

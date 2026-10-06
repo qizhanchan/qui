@@ -74,7 +74,7 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 
 - `PostJob` / `TryPostJob` / `PostPriorityJob` main-thread queue; `IdleState`.
 - `QUI_DEBUG_THREAD=1` fail-fast UI-thread ownership checks.
-- `Tickable` / `Animator` / `Focusable` / `IMEClient` contracts.
+- `Tickable` / `Animator` / `Focusable` / `IMEClient` contracts; `Window.RequestTickAt` for Tickables that must wake an idle loop (on-demand frame pacing, `App.SetMaxIdleWait`).
 
 **AI-native introspection**
 

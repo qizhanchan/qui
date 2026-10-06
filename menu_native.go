@@ -90,11 +90,12 @@ func registerAction(fn func(), scope actionScope) int {
 
 // postAction is called from the backend (macOS NSMenuItem target, etc.)
 // to queue an action. Safe to call from any thread; the main goroutine
-// drains the queue each frame.
+// drains the queue once per loop iteration, so wake an idle loop.
 func postAction(id int) {
 	actionMu.Lock()
 	actionPending = append(actionPending, id)
 	actionMu.Unlock()
+	WakeEventLoop()
 }
 
 // drainActions runs all queued menu actions on the caller's goroutine.

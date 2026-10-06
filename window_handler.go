@@ -87,6 +87,9 @@ func (w *Window) onChar(r rune) {
 }
 
 func (w *Window) onFocus(focused bool) {
+	// App activation can arrive inside an idle wait without an input
+	// event; whatever the focus change dirtied must still get its frame.
+	defer wakeIfBlocked()
 	w.noteActivation(focused)
 	w.dispatch(FocusEvent{
 		baseEvent: baseEvent{shared: &eventState{}},
@@ -102,19 +105,26 @@ func (w *Window) onFocus(focused bool) {
 // frame scheduled "for later" would not paint until the user let go. Any
 // backend must therefore be able to re-enter Step from inside an event
 // callback — worth knowing before writing the next one.
+//
+// Each also cuts an idle wait short: the synchronous frame may leave work
+// (a transition it started, a layout an AfterLayout dirtied) that the
+// loop must schedule.
 func (w *Window) onResize(width, height int) {
 	w.resizeTo(w.noteWindowSize(width, height))
 	w.Step()
+	wakeIfBlocked()
 }
 
 func (w *Window) onFramebufferResize(_, _ int) {
 	w.Invalidate()
 	w.Step()
+	wakeIfBlocked()
 }
 
 func (w *Window) onRefresh() {
 	w.Invalidate()
 	w.Step()
+	wakeIfBlocked()
 }
 
 func (w *Window) onFileDrop(paths []string, x, y float64) {

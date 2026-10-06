@@ -151,7 +151,11 @@ func (cocoaApp) newWindow(cfg platformWindowConfig) (platformWindow, error) {
 }
 
 func (cocoaApp) pumpEvents(timeout time.Duration) {
-	C.quiCocoaPump(C.double(timeout.Seconds()))
+	seconds := timeout.Seconds()
+	if timeout == pumpForever {
+		seconds = -1 // quiCocoaPump: wait for an event, however long
+	}
+	C.quiCocoaPump(C.double(seconds))
 }
 
 func (cocoaApp) wake() { C.quiCocoaWake() }
@@ -598,6 +602,9 @@ func quiCocoaOnRefresh(id C.uintptr_t) {
 	}
 	w.handler.onRefresh()
 }
+
+//export quiCocoaOnWindowState
+func quiCocoaOnWindowState() { wakeIfBlocked() }
 
 //export quiCocoaOnDropPath
 func quiCocoaOnDropPath(id C.uintptr_t, path *C.char) {

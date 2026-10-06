@@ -361,6 +361,15 @@ static void quiCocoaNotifyGeometry(QuiWindowBox* box, uintptr_t handle) {
     quiCocoaOnRefresh(self.handle);
 }
 
+// State the loop polls (OnMove / OnMinimize, fullscreen) can change from
+// inside an idle wait with no input event of its own — a Dock minimize, a
+// fullscreen animation settling. Cut the wait short so the loop notices.
+- (void)windowDidMove:(NSNotification*)note { quiCocoaOnWindowState(); }
+- (void)windowDidMiniaturize:(NSNotification*)note { quiCocoaOnWindowState(); }
+- (void)windowDidDeminiaturize:(NSNotification*)note { quiCocoaOnWindowState(); }
+- (void)windowDidEnterFullScreen:(NSNotification*)note { quiCocoaOnWindowState(); }
+- (void)windowDidExitFullScreen:(NSNotification*)note { quiCocoaOnWindowState(); }
+
 @end
 
 // --- application -----------------------------------------------------
@@ -422,8 +431,9 @@ int quiCocoaInit(int policy) {
 
 void quiCocoaPump(double seconds) {
     @autoreleasepool {
-        NSDate* until = seconds > 0
-            ? [NSDate dateWithTimeIntervalSinceNow:seconds]
+        // < 0 waits for an event, 0 polls, > 0 waits at most that long.
+        NSDate* until = seconds < 0 ? [NSDate distantFuture]
+            : seconds > 0 ? [NSDate dateWithTimeIntervalSinceNow:seconds]
             : [NSDate distantPast];
         for (;;) {
             NSEvent* event = [NSApp nextEventMatchingMask:NSEventMaskAny

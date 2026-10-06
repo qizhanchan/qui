@@ -10,6 +10,12 @@ import "time"
 // change. A non-empty Rect is unioned into the window's dirty region and
 // only those pixels are re-rasterized.
 //
+// Ticks are not on a fixed clock: an idle window is not Stepped at all
+// (see idle.go). Returning a dirty rect keeps frames coming, so an
+// animation needs nothing more. A Tickable that changes after a quiet
+// stretch — a blink, a delayed reveal — must call Window.RequestTickAt
+// with the moment it next needs a Tick, or it waits for the next event.
+//
 // Widgets that do not animate simply do not implement this interface.
 type Tickable interface {
 	Tick(now time.Time) Rect

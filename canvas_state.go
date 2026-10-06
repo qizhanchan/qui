@@ -1,6 +1,9 @@
 package qui
 
-import "math"
+import (
+	"image"
+	"math"
+)
 
 // canvasState is the per-Canvas drawing-state stack — what Skia models
 // as SkCanvas's matrix/clip stack. Every Canvas implementation owns one
@@ -377,4 +380,13 @@ func snapRectOutward(r Rect, scaleX, scaleY float32) Rect {
 	x1 := float32(math.Ceil(float64((r.X+r.W)*scaleX))) / scaleX
 	y1 := float32(math.Ceil(float64((r.Y+r.H)*scaleY))) / scaleY
 	return Rect{X: x0, Y: y0, W: x1 - x0, H: y1 - y0}
+}
+
+// physicalRect converts a logical rect to the device pixels that cover it,
+// rounding outward.
+func physicalRect(r Rect, scaleX, scaleY float32) image.Rectangle {
+	return image.Rect(
+		int(math.Floor(float64(r.X*scaleX))), int(math.Floor(float64(r.Y*scaleY))),
+		int(math.Ceil(float64((r.X+r.W)*scaleX))), int(math.Ceil(float64((r.Y+r.H)*scaleY))),
+	)
 }

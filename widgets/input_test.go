@@ -418,3 +418,29 @@ func TestInputOnCommitFiresOnEnterAndBlur(t *testing.T) {
 		t.Errorf("blur without an edit committed: %v", commits)
 	}
 }
+
+// The window's loop sleeps when nothing changes, so a focused field must
+// ask to be woken for its next caret flip — otherwise the caret freezes
+// until the next input event.
+func TestInputCaretBlinkRequestsItsNextTick(t *testing.T) {
+	win := NewTestWindow(Size{W: 300, H: 100})
+	in := NewInput("")
+	win.SetRoot(in)
+	in.Layout(Rect{X: 0, Y: 0, W: 300, H: 40})
+
+	now := time.Now()
+	in.Tick(now)
+	if got := win.TickRequestForTest(); !got.IsZero() {
+		t.Fatalf("unfocused field requested a tick at %v", got)
+	}
+
+	win.SetFocus(in)
+	in.Tick(now)
+	got := win.TickRequestForTest()
+	if got.IsZero() {
+		t.Fatal("focused field did not request its next caret flip")
+	}
+	if d := got.Sub(now); d <= 0 || d > 510*time.Millisecond {
+		t.Fatalf("next flip requested %v from now, want within the 500ms blink", d)
+	}
+}

@@ -317,6 +317,16 @@ func NewTestWindow(size Size) *Window {
 	return &Window{lastSize: size, windowSize: size, zoom: 1, focusVisible: true}
 }
 
+// TickRequestForTest returns the earliest pending RequestTickAt deadline
+// (zero if none), so tests in other packages can assert that a Tickable
+// asks an idle window to wake it.
+func (w *Window) TickRequestForTest() time.Time {
+	if w == nil {
+		return time.Time{}
+	}
+	return w.tickAt
+}
+
 // DispatchTestEvent routes an event through Window's normal dispatch
 // pipeline (capture/target/bubble, mouse capture, focus updates).
 // Intended for unit tests in other packages that need end-to-end

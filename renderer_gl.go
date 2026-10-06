@@ -40,6 +40,12 @@ type GLRenderer struct {
 	// so a steady-state frame updates the existing storage instead of
 	// handing the driver a fresh allocation every frame.
 	texW, texH int32
+	// texSrc is the image whose pixels r.texture currently mirrors (nil:
+	// unknown), and damage the physical-pixel area of it the frame being
+	// rendered changed (SetDamage; empty: unknown). Together they let a
+	// frame upload just what changed instead of the whole framebuffer.
+	texSrc *image.RGBA
+	damage image.Rectangle
 
 	// GPU compositing path (DrawTexture). A separate program that
 	// doesn't Y-flip by default so FBO textures composite correctly;
@@ -307,6 +313,31 @@ func (r *GLRenderer) End() {
 	if r.postHook != nil {
 		r.postHook(state)
 	}
+	// Damage describes one frame; the next must report its own.
+	r.damage = image.Rectangle{}
+}
+
+// SetDamage tells the renderer which framebuffer pixels (physical, in
+// r.img's coordinates) the current frame changed, so End uploads only
+// those to the GPU. Call it between Begin and End; Window.Step does this
+// with the frame's dirty region. Without it End uploads everything.
+// Pixels outside rect must not have been touched by this frame's drawing.
+func (r *GLRenderer) SetDamage(rect image.Rectangle) {
+	if r == nil {
+		return
+	}
+	r.damage = rect
+}
+
+// textureUploadRect is the part of img End must upload for r.texture to
+// match it: all of it when the texture mirrors something else (first
+// frame, a resize, the GPU backend borrowed it) or the damage is unknown,
+// otherwise just the damaged pixels plus a one-pixel guard band.
+func (r *GLRenderer) textureUploadRect(img *image.RGBA) image.Rectangle {
+	if r.texSrc != img || r.damage.Empty() {
+		return img.Rect
+	}
+	return r.damage.Inset(-1).Intersect(img.Rect)
 }
 
 // compositeCPUImageToDefault uploads `img` into r.texture and draws
@@ -332,8 +363,23 @@ func compositeCPUImageToDefault(r *GLRenderer, img *image.RGBA) {
 	if r.texW != w || r.texH != h {
 		gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, nil)
 		r.texW, r.texH = w, h
+		r.texSrc = nil
 	}
-	gl.TexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(img.Pix))
+	// The texture outlives the frame, so pixels this frame didn't touch
+	// are already there: upload only the damage (a caret blink is a few
+	// hundred pixels, the framebuffer several megabytes).
+	switch up := r.textureUploadRect(img); {
+	case up == img.Rect:
+		gl.TexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(img.Pix))
+	case !up.Empty():
+		gl.PixelStorei(gl.UNPACK_ROW_LENGTH, int32(img.Stride/4))
+		gl.TexSubImage2D(gl.TEXTURE_2D, 0,
+			int32(up.Min.X-img.Rect.Min.X), int32(up.Min.Y-img.Rect.Min.Y),
+			int32(up.Dx()), int32(up.Dy()),
+			gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&img.Pix[img.PixOffset(up.Min.X, up.Min.Y)]))
+		gl.PixelStorei(gl.UNPACK_ROW_LENGTH, 0)
+	}
+	r.texSrc = img
 	gl.UseProgram(r.program)
 	gl.Uniform1f(r.programFlip, 1.0)
 	gl.BindVertexArray(r.vao)

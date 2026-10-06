@@ -17,14 +17,22 @@ reactive/html ──► reactive ──► 根 qui
 
 ## 帧循环
 
-引擎运行一个绑定在操作系统主线程上的单线程循环（`runtime.LockOSThread`）。在 GLFW 后端，`glfw.WaitEventsTimeout(1/60)` 会阻塞等待输入，但每 1/60 秒唤醒一次以驱动动画器。每次 `Window.Step()`：
+引擎运行一个绑定在操作系统主线程上的单线程循环（`runtime.LockOSThread`）。每次 `Window.Step()`：
 
 1. 排空 `PostJob` 队列；
 2. 对每个 `Tickable` 调用 `Tick(now)`（返回的矩形并入 `dirtyRegion`）；
 3. 若 `root.IsLayoutDirty()` 则重新布局；
 4. **若 `dirtyRegion` 为空，直接返回、不绘制**；
 5. 只清除并重绘脏区域；
-6. swap buffers。
+6. 只把重绘过的像素上传到 GPU（`GLRenderer.SetDamage`），然后 swap buffers。
+
+帧是按需调度的（`idle.go`），而不是由固定时钟驱动。每轮迭代之间，`App.Run` 询问每个窗口距离下一次 `Step` 还有多久，并在平台的事件等待中恰好阻塞这么长时间：
+
+- **正在变化**——上一帧有绘制，或存在动画器、待处理 job、脏绘制区域或脏布局：按显示节奏（1/60 秒）唤醒。由于一次绘制会换来下一帧，靠每帧返回脏矩形来做动画的 `Tickable` 无需额外代码就能持续运行，并在其 `Tick` 不再报告变化时停止；
+- **等待某个时刻**——在一段静默后才变化的 `Tickable`（光标闪烁）在 `Tick` 中调用 `Window.RequestTickAt(t)`；tooltip 的延迟也按同样方式跟踪：在最早的那个时刻唤醒；
+- **空闲**——一直阻塞，直到操作系统事件或跨 goroutine 唤醒（`PostJob`、`WakeEventLoop`、菜单动作）。空闲的应用不消耗 CPU。
+
+AppKit 可能在等待期间、没有任何输入事件的情况下投递的平台回调（Dock 最小化、全屏过渡结束、程序化移动）会提前结束等待，从而轮询类状态（`OnMove`、`OnMinimize`、全屏）依然能被察觉。`App.SetMaxIdleWait(d)` 为早于 `RequestTickAt` 的第三方 `Tickable` 限制最长睡眠时间；更推荐直接修正该 `Tickable`。
 
 控件树、焦点、浮层、布局元数据、渲染状态和直接内省都属于这个 UI goroutine。跨 goroutine 的代码必须使用 `Window.PostJob` / `TryPostJob` / `PostPriorityJob`；agent 的读取侧代码使用 `*Synced` API。`QUI_DEBUG_THREAD=1` 为生产窗口打开快速失败线程归属检查（`Window.EnableUIThreadChecks` 可在测试或自定义宿主中选择性开启）。游离的控件可以在其他线程构造，但一旦挂载，其状态就归 UI 线程所有。
 

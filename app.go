@@ -82,6 +82,9 @@ type App struct {
 	// ends it regardless (Quit).
 	keepAlive bool
 	quit      bool
+	// maxIdleWait caps the loop's sleep when no window needs a frame
+	// (SetMaxIdleWait); zero means no cap.
+	maxIdleWait time.Duration
 }
 
 // ErrAppAlreadyExists is returned when NewApp is called more than once in
@@ -192,9 +195,11 @@ func (a *App) Run() {
 		}
 	}()
 
-	const frameTimeout = 1.0 / 60.0
+	// Sleep exactly as long as the windows allow: a frame interval while
+	// something changes, until the next deadline while one is pending,
+	// and until an event otherwise (idle.go).
 	for a.running {
-		if !a.RunStep(frameTimeout) {
+		if !a.step(a.idleTimeout(time.Now())) {
 			break
 		}
 	}
@@ -250,25 +255,36 @@ func (a *App) RunStep(waitTimeoutSeconds float64) bool {
 	if a == nil {
 		return false
 	}
+	return a.step(time.Duration(waitTimeoutSeconds * float64(time.Second)))
+}
+
+// step is RunStep with the wait as a Duration; pumpForever blocks until
+// an event or a wake.
+func (a *App) step(timeout time.Duration) bool {
 	assertProcessUIThread("App.RunStep")
 	plat, err := activePlatform()
 	if err != nil {
 		return false
 	}
-	timeout := time.Duration(waitTimeoutSeconds * float64(time.Second))
-	if shutdownDebug {
+	// Callbacks that fire inside a long wait use this to cut it short.
+	if timeout > frameInterval {
+		pumpBlocked.Store(true)
+	}
+	if shutdownDebug && timeout < 200*time.Millisecond {
 		t0 := time.Now()
 		plat.pumpEvents(timeout)
-		// A WaitEventsTimeout(1/60) call should return within ~16ms
-		// (timeout) or sooner (an event woke it). Anything much larger
-		// means the Cocoa run loop was throttled — the smoking gun for a
-		// post-sleep stall where the close event isn't observed promptly.
+		// A short wait should return within its timeout or sooner (an
+		// event woke it). Anything much larger means the Cocoa run loop
+		// was throttled — the smoking gun for a post-sleep stall where
+		// the close event isn't observed promptly.
 		if blocked := time.Since(t0); blocked > 200*time.Millisecond {
-			log.Printf("qui/shutdown: event pump blocked %v (timeout was %.0fms)", blocked, waitTimeoutSeconds*1000)
+			log.Printf("qui/shutdown: event pump blocked %v (timeout was %v)", blocked, timeout)
 		}
 	} else {
 		plat.pumpEvents(timeout)
 	}
+	pumpBlocked.Store(false)
+	wakeQueued.Store(false)
 	// Menu actions fired by the OS on the main thread during event
 	// pumping — drain here, on the Go main goroutine, so user
 	// callbacks can safely mutate the widget tree.

@@ -17,14 +17,22 @@ Subpackages import the root engine; the root never imports a subpackage. Root↔
 
 ## Frame loop
 
-The engine runs a single-threaded loop pinned to the OS main thread (`runtime.LockOSThread`). On the GLFW backend, `glfw.WaitEventsTimeout(1/60)` blocks on input but wakes at 60 Hz for animators. Each `Window.Step()`:
+The engine runs a single-threaded loop pinned to the OS main thread (`runtime.LockOSThread`). Each `Window.Step()`:
 
 1. drain the `PostJob` queue;
 2. `Tick(now)` every `Tickable` (returned rects union into `dirtyRegion`);
 3. re-layout if `root.IsLayoutDirty()`;
 4. **if `dirtyRegion` is empty, return without painting**;
 5. clear and redraw only the dirty region;
-6. swap buffers.
+6. upload only the redrawn pixels to the GPU (`GLRenderer.SetDamage`) and swap buffers.
+
+Frames are paced on demand (`idle.go`), not by a fixed clock. Between iterations `App.Run` asks each window how soon it needs the next `Step` and blocks in the platform's event wait for exactly that long:
+
+- **changing** — it painted last frame, or has animators, pending jobs, dirty paint or dirty layout: wake at display cadence (1/60 s). Because a paint buys the next frame, a `Tickable` that animates by returning a dirty rect each frame keeps running with no extra code and stops when its `Tick` reports nothing;
+- **waiting on a moment** — a `Tickable` that changes after a quiet stretch (the caret blink) calls `Window.RequestTickAt(t)` from `Tick`; tooltip delays are tracked the same way: wake at the earliest such moment;
+- **idle** — block until an OS event or a cross-goroutine wake (`PostJob`, `WakeEventLoop`, menu actions). An idle app costs no CPU.
+
+Platform callbacks that AppKit can deliver from inside the wait without an input event (Dock minimize, a fullscreen transition settling, a programmatic move) cut the wait short so polled state (`OnMove`, `OnMinimize`, fullscreen) is still noticed. `App.SetMaxIdleWait(d)` caps the sleep for third-party `Tickable`s that predate `RequestTickAt`; prefer fixing the `Tickable`.
 
 Widget trees, focus, overlays, layout metadata, rendering state and direct introspection belong to that UI goroutine. Cross-goroutine code must use `Window.PostJob` / `TryPostJob` / `PostPriorityJob`; read-side agent code uses the `*Synced` APIs. `QUI_DEBUG_THREAD=1` turns on fail-fast thread-ownership checks for production windows (and `Window.EnableUIThreadChecks` enables them selectively in tests or custom hosts). Detached widgets may be constructed off-thread, but once attached their state is UI-owned.
 

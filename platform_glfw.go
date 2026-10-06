@@ -87,6 +87,10 @@ func (glfwApp) newWindow(cfg platformWindowConfig) (platformWindow, error) {
 }
 
 func (glfwApp) pumpEvents(timeout time.Duration) {
+	if timeout == pumpForever {
+		glfw.WaitEvents()
+		return
+	}
 	if timeout > 0 {
 		glfw.WaitEventsTimeout(timeout.Seconds())
 		return
@@ -440,6 +444,16 @@ func (w *glfwWindow) installCallbacks() {
 			hh.onRefresh()
 		}
 	})
+
+	// State the loop polls (OnMove / OnMinimize, close requests,
+	// fullscreen) can change from inside an idle wait with no input event
+	// of its own — a Dock minimize, Dock "Quit", a fullscreen animation
+	// settling. Cut the wait short so the loop notices.
+	w.handle.SetCloseCallback(func(*glfw.Window) { wakeIfBlocked() })
+	w.handle.SetIconifyCallback(func(*glfw.Window, bool) { wakeIfBlocked() })
+	w.handle.SetMaximizeCallback(func(*glfw.Window, bool) { wakeIfBlocked() })
+	w.handle.SetPosCallback(func(*glfw.Window, int, int) { wakeIfBlocked() })
+	w.handle.SetContentScaleCallback(func(*glfw.Window, float32, float32) { wakeIfBlocked() })
 }
 
 // setDropEnabled wires (or clears) the OS file-drop callback. GLFW

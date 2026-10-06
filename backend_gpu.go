@@ -347,6 +347,9 @@ func (b *gpuBackend) flushCPUIfDirty() {
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, b.r.texture)
 	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, int32(w), int32(h), 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(img.Pix))
+	// The shared texture now holds this batch, not the CPU frame; the CPU
+	// path's next composite must re-upload in full.
+	b.r.texW, b.r.texH, b.r.texSrc = int32(w), int32(h), nil
 	gl.UseProgram(b.r.program)
 	gl.Uniform1f(b.r.programFlip, 1.0)
 	gl.BindVertexArray(b.r.vao)

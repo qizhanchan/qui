@@ -201,6 +201,11 @@ type Window struct {
 	// to live in the tree. Tween / Spring / Timeline register here.
 	// Done animators are pruned in-place during Step.
 	animators []Animator
+	// tickAt is the earliest RequestTickAt deadline still pending; Step
+	// clears it once reached. framePainted records that the last Step
+	// painted, which buys the window another frame (see idle.go).
+	tickAt       time.Time
+	framePainted bool
 	// inStep guards against synchronous redraws requested from platform
 	// event callbacks while a frame is already being produced. Resizing on
 	// macOS re-enters Step from inside a callback, so this is load-bearing.
@@ -1597,8 +1602,8 @@ func (w *Window) Destroy() {
 //     returns its dirty Rect; the union is merged into dirtyRegion.
 //  2. If dirtyRegion is empty, return without painting — the CPU image
 //     buffer and front framebuffer retain the previous frame, so the
-//     screen is stable. Paired with WaitEventsTimeout + SwapInterval(1),
-//     idle CPU stays near zero.
+//     screen is stable. A window with nothing changing is not even
+//     Stepped: App.Run sleeps until an event or deadline (see idle.go).
 //  3. Otherwise Measure/Layout the tree, then route Draw through a
 //     clipCanvas scoped to dirtyRegion. Only pixels inside the clip are
 //     touched; widgets outside the region are effectively no-ops at the
@@ -1614,6 +1619,7 @@ func (w *Window) Step() {
 	}
 	w.inStep = true
 	defer func() { w.inStep = false }()
+	w.framePainted = false
 
 	// Multi-window discipline: each Window owns an independent GL
 	// context (optionally shared via NewSharedWindow). The renderer's
@@ -1634,6 +1640,11 @@ func (w *Window) Step() {
 	viewport := w.noteWindowSize(winW, winH)
 	w.resizeTo(viewport)
 	now := time.Now()
+	// A reached RequestTickAt deadline is spent; the Tickables that asked
+	// for it re-request during the tick walk below if they need another.
+	if !w.tickAt.IsZero() && !now.Before(w.tickAt) {
+		w.tickAt = time.Time{}
+	}
 	// Close a grace-pending tooltip before the overlay tick loop so
 	// removing it doesn't mutate the slice ranged below.
 	w.tickTooltip(now)
@@ -1714,6 +1725,11 @@ func (w *Window) Step() {
 			// every primitive agree; a partial repaint then reproduces the
 			// full repaint exactly.
 			clip = snapRectOutward(clip, scaleX, scaleY)
+			// Everything below is clipped to clip, so only those pixels
+			// need to reach the GPU.
+			if glr, ok := w.renderer.(*GLRenderer); ok {
+				glr.SetDamage(physicalRect(clip, scaleX, scaleY))
+			}
 		}
 		// Route everything through clipCanvas so draws outside the dirty
 		// region are elided. Clear only repaints the clipped area; it no
@@ -1768,6 +1784,7 @@ func (w *Window) Step() {
 	w.renderer.End()
 	w.present()
 	w.dirtyRegion = Rect{}
+	w.framePainted = true
 }
 
 // present hands the finished frame to the platform.

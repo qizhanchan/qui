@@ -74,7 +74,7 @@
 
 - `PostJob` / `TryPostJob` / `PostPriorityJob` 主线程队列；`IdleState`。
 - `QUI_DEBUG_THREAD=1` 快速失败 UI 线程归属检查。
-- `Tickable` / `Animator` / `Focusable` / `IMEClient` 约定。
+- `Tickable` / `Animator` / `Focusable` / `IMEClient` 约定；`Window.RequestTickAt` 供需要唤醒空闲循环的 Tickable 使用（按需帧调度，`App.SetMaxIdleWait`）。
 
 **AI 原生内省**
 
