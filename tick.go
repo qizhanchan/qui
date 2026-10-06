@@ -4,9 +4,11 @@ import "time"
 
 // Tickable is implemented by widgets that need per-frame state updates
 // (cursor blink, ongoing animations, hover timers). Tick returns the
-// region of the window that should be redrawn this frame. An empty Rect
-// means no change. A non-empty Rect is unioned into the window's dirty
-// region and only those pixels are re-rasterized.
+// region of the WINDOW that should be redrawn this frame, in window
+// coordinates — map a widget-space rect with RectInWindow (a bare Bounds()
+// is off by the scroll offset inside a ScrollView). An empty Rect means no
+// change. A non-empty Rect is unioned into the window's dirty region and
+// only those pixels are re-rasterized.
 //
 // Widgets that do not animate simply do not implement this interface.
 type Tickable interface {

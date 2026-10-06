@@ -283,8 +283,8 @@ func SetTheme(t Theme) {
 // plumbing, then unsubscribes during Destroy.
 //
 // A widget that subscribes should do so while attached and unsubscribe when
-// detached (TreeLifecycle's OnAttach / OnDetach), or use
-// SubscribeThemeWhileAttached, which does exactly that.
+// detached (TreeLifecycle's OnAttach / OnDetach), or the subscription keeps
+// it reachable after it leaves the tree.
 func SubscribeTheme(fn func()) func() {
 	if fn == nil {
 		return func() {}

@@ -2,7 +2,6 @@ package qui
 
 import (
 	"errors"
-	"slices"
 )
 
 // ErrWindowOwnershipUnsupported is returned by SetOwner / ShowAsSheet on a
@@ -18,9 +17,9 @@ type windowLifecycle struct {
 	// (Close, a parent closing, SIGINT/SIGTERM).
 	forceClose bool
 
-	onActivate []func(active bool)
-	onMove     []func(x, y int)
-	onMinimize []func(minimized bool)
+	onActivate hookList[func(active bool)]
+	onMove     hookList[func(x, y int)]
+	onMinimize hookList[func(minimized bool)]
 	lastPos    Point
 	posKnown   bool
 	minimized  bool
@@ -110,41 +109,41 @@ func (w *Window) closeVetoed() bool {
 // OnActivate registers fn to run when the window becomes (true) or stops
 // being (false) the key window — the OS-level focus, not widget focus. Use
 // it to dim a custom title bar or pause work while in the background.
-func (w *Window) OnActivate(fn func(active bool)) {
+func (w *Window) OnActivate(fn func(active bool)) (remove func()) {
 	if w == nil || fn == nil {
-		return
+		return func() {}
 	}
 	w.assertUIThread("Window.OnActivate")
-	w.life.onActivate = append(w.life.onActivate, fn)
+	return w.life.onActivate.add(fn)
 }
 
 // OnMove registers fn to run when the window's top-left moves, in global
 // logical coordinates. Never fires where the platform has no absolute
 // position (Wayland).
-func (w *Window) OnMove(fn func(x, y int)) {
+func (w *Window) OnMove(fn func(x, y int)) (remove func()) {
 	if w == nil || fn == nil {
-		return
+		return func() {}
 	}
 	w.assertUIThread("Window.OnMove")
-	if len(w.life.onMove) == 0 && w.plat != nil {
+	if w.life.onMove.len() == 0 && w.plat != nil {
 		if x, y, ok := w.plat.pos(); ok {
 			w.life.lastPos, w.life.posKnown = Point{X: float32(x), Y: float32(y)}, true
 		}
 	}
-	w.life.onMove = append(w.life.onMove, fn)
+	return w.life.onMove.add(fn)
 }
 
 // OnMinimize registers fn to run when the window is minimized (true) or
 // restored from the Dock / taskbar (false).
-func (w *Window) OnMinimize(fn func(minimized bool)) {
+func (w *Window) OnMinimize(fn func(minimized bool)) (remove func()) {
 	if w == nil || fn == nil {
-		return
+		return func() {}
 	}
 	w.assertUIThread("Window.OnMinimize")
-	if len(w.life.onMinimize) == 0 {
+	if w.life.onMinimize.len() == 0 {
 		w.life.minimized = w.IsMinimized()
 	}
-	w.life.onMinimize = append(w.life.onMinimize, fn)
+	return w.life.onMinimize.add(fn)
 }
 
 // IsMinimized reports whether the window is currently minimized.
@@ -159,7 +158,7 @@ func (w *Window) IsMinimized() bool {
 }
 
 func (w *Window) noteActivation(active bool) {
-	for _, fn := range slices.Clone(w.life.onActivate) {
+	for _, fn := range w.life.onActivate.snapshot() {
 		fn(active)
 	}
 }
@@ -171,21 +170,21 @@ func (w *Window) pollLifecycle() {
 	if w == nil || w.plat == nil {
 		return
 	}
-	if len(w.life.onMove) > 0 {
+	if w.life.onMove.len() > 0 {
 		if x, y, ok := w.plat.pos(); ok {
 			p := Point{X: float32(x), Y: float32(y)}
 			if !w.life.posKnown || p != w.life.lastPos {
 				w.life.lastPos, w.life.posKnown = p, true
-				for _, fn := range slices.Clone(w.life.onMove) {
+				for _, fn := range w.life.onMove.snapshot() {
 					fn(x, y)
 				}
 			}
 		}
 	}
-	if len(w.life.onMinimize) > 0 {
+	if w.life.onMinimize.len() > 0 {
 		if m := w.IsMinimized(); m != w.life.minimized {
 			w.life.minimized = m
-			for _, fn := range slices.Clone(w.life.onMinimize) {
+			for _, fn := range w.life.onMinimize.snapshot() {
 				fn(m)
 			}
 		}

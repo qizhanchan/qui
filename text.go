@@ -727,6 +727,29 @@ func TextXHeightCenterY(rect Rect, fontSpec Font) float32 {
 	return baseline - xHeight/2
 }
 
+// TextCaretBand returns the vertical band a caret — or a selection
+// highlight — should span for one line of text drawn into rect with
+// DrawText: the face's ascent above the baseline DrawText places, and its
+// descent below. That is the text's own line box, so a caret in a tall
+// field stays text-sized instead of running edge to edge. Clamped to rect.
+func TextCaretBand(rect Rect, fontSpec Font) (y, h float32) {
+	metrics := GetFontFaceFor(fontSpec).Metrics()
+	capHeight := float32(metrics.CapHeight.Ceil())
+	if capHeight <= 0 {
+		capHeight = float32(metrics.Ascent.Ceil() - metrics.Descent.Ceil())
+	}
+	ascent, descent := float32(metrics.Ascent)/64, float32(metrics.Descent)/64
+	if ascent <= 0 {
+		return rect.Y, rect.H
+	}
+	baseline := rect.Y + (rect.H+capHeight)/2
+	top, bottom := max(baseline-ascent, rect.Y), min(baseline+descent, rect.Y+rect.H)
+	if bottom <= top {
+		return rect.Y, rect.H
+	}
+	return top, bottom - top
+}
+
 func splitLogicalLines(text string) []string {
 	lines := strings.Split(text, "\n")
 	for i := range lines {

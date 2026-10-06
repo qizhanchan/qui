@@ -70,6 +70,12 @@ type eventState struct {
 	phase         EventPhase
 	target        Widget
 	currentTarget Widget
+	// releaseHit is what lies under the pointer at a MouseUp, recorded
+	// before mouse capture redirects the release to the pressed widget.
+	// releaseHitSet distinguishes "hit nothing" from "not recorded"
+	// (an event that never went through Window.dispatch).
+	releaseHit    Widget
+	releaseHitSet bool
 }
 
 // baseEvent carries the dispatch state pointer. Embedded into every
@@ -197,7 +203,27 @@ type MouseEvent struct {
 	ScrollPhase GesturePhase
 }
 
-func (e MouseEvent) Type() EventType      { return e.eventType }
+func (e MouseEvent) Type() EventType { return e.eventType }
+
+// ReleasedOver reports whether a MouseUp was released over w or one of its
+// descendants. Mouse capture delivers the release to the widget that took
+// the press even when the pointer has wandered off it, so click semantics
+// check this: a press dragged off a control and released elsewhere is a
+// cancelled click (DOM: click fires on the common ancestor of the press and
+// release targets). True for a release that was not routed through
+// Window.dispatch (a widget's Handle called directly), so such callers keep
+// their old behavior.
+func (e MouseEvent) ReleasedOver(w Widget) bool {
+	if e.eventType != EventMouseUp || e.shared == nil || !e.shared.releaseHitSet {
+		return true
+	}
+	for cur := e.shared.releaseHit; cur != nil; cur = cur.Parent() {
+		if cur == w {
+			return true
+		}
+	}
+	return false
+}
 func (e MouseEvent) Timestamp() time.Time { return e.When }
 
 // eventInWidgetSpace returns event with its positional fields mapped from

@@ -50,6 +50,11 @@ type InlineItem struct {
 	Decoration      TextDecoration
 	DecorationPaint DecorationPaint
 	Href            string
+	// LinkSource identifies which link the run belongs to (the element a
+	// folded <a> came from), so a click can be traced back to it rather
+	// than only to its href. Opaque to the layout; must be comparable —
+	// a pointer. Runs only merge into one fragment when it is equal.
+	LinkSource any
 	// Background, when non-transparent, fills the run's line-ink band
 	// behind the glyphs (rich-text highlight). Participates in same-style
 	// fragment merging like every other style field.
@@ -458,6 +463,7 @@ type InlineFrag struct {
 	Decoration      TextDecoration
 	DecorationPaint DecorationPaint
 	Href            string
+	LinkSource      any
 	Background      Color
 	BaselineShift   float32
 
@@ -538,6 +544,7 @@ type inlineTok struct {
 	deco       TextDecoration
 	decoPaint  DecorationPaint
 	href       string
+	linkSrc    any
 	background Color
 	shift      float32
 	width      float32
@@ -572,6 +579,7 @@ type inlineTok struct {
 	spaceDeco      TextDecoration
 	spaceDecoPaint DecorationPaint
 	spaceHref      string
+	spaceLinkSrc   any
 	spaceBg        Color
 	// Source range of the collapsed whitespace run the joining space
 	// stands for, within the run's LAST contributing item (best-effort:
@@ -1114,6 +1122,7 @@ func placeInlineLine(toks []inlineTok, idxs []int, baseline, mid, justify, ind f
 				t.spaceDeco = prev.spaceDeco
 				t.spaceDecoPaint = prev.spaceDecoPaint
 				t.spaceHref = prev.spaceHref
+				t.spaceLinkSrc = prev.spaceLinkSrc
 				t.spaceBg = prev.spaceBg
 				t.spaceSrcItem = prev.spaceSrcItem
 				t.spaceSrcStart = prev.spaceSrcStart
@@ -1143,6 +1152,7 @@ func placeInlineLine(toks []inlineTok, idxs []int, baseline, mid, justify, ind f
 				Color:         t.color,
 				Background:    t.background,
 				Href:          t.href,
+				LinkSource:    t.linkSrc,
 				BaselineShift: t.shift,
 				Rect:          Rect{X: start, Y: baseline - fa - t.shift, W: end - start, H: fa + fd},
 				SrcItem:       t.srcItem,
@@ -1194,6 +1204,7 @@ func placeInlineLine(toks []inlineTok, idxs []int, baseline, mid, justify, ind f
 				frags[n-1].Decoration == t.spaceDeco &&
 				frags[n-1].DecorationPaint == t.spaceDecoPaint &&
 				frags[n-1].Href == t.spaceHref &&
+				frags[n-1].LinkSource == t.spaceLinkSrc &&
 				frags[n-1].Background == t.spaceBg &&
 				frags[n-1].BaselineShift == 0 {
 				prev := &frags[n-1]
@@ -1218,6 +1229,7 @@ func placeInlineLine(toks []inlineTok, idxs []int, baseline, mid, justify, ind f
 			frags[n-1].Decoration == t.deco &&
 			frags[n-1].DecorationPaint == t.decoPaint &&
 			frags[n-1].Href == t.href &&
+			frags[n-1].LinkSource == t.linkSrc &&
 			frags[n-1].Background == t.background &&
 			frags[n-1].BaselineShift == t.shift {
 			contig := frags[n-1].SrcItem == t.srcItem && frags[n-1].SrcEnd == t.srcStart
@@ -1253,6 +1265,7 @@ func placeInlineLine(toks []inlineTok, idxs []int, baseline, mid, justify, ind f
 			Decoration:      t.deco,
 			DecorationPaint: t.decoPaint,
 			Href:            t.href,
+			LinkSource:      t.linkSrc,
 			Background:      t.background,
 			BaselineShift:   t.shift,
 			Rect:            Rect{X: x, Y: ty, W: w, H: ink},
@@ -1364,6 +1377,7 @@ func tokenizeInline(items []InlineItem, preserve bool) []inlineTok {
 		tok.spaceDeco = spaceSrc.Decoration
 		tok.spaceDecoPaint = spaceSrc.DecorationPaint
 		tok.spaceHref = spaceSrc.Href
+		tok.spaceLinkSrc = spaceSrc.LinkSource
 		tok.spaceBg = spaceSrc.Background
 		tok.spaceSrcItem = spaceSrcItem
 		tok.spaceSrcStart = spaceSrcStart
@@ -1417,6 +1431,7 @@ func tokenizeInline(items []InlineItem, preserve bool) []inlineTok {
 					deco:       it.Decoration,
 					decoPaint:  it.DecorationPaint,
 					href:       it.Href,
+					linkSrc:    it.LinkSource,
 					background: it.Background,
 					shift:      it.BaselineShift,
 					width:      measureRunes(segment, it.Font, nil),
@@ -1467,6 +1482,7 @@ func tokenizePreserve(items []InlineItem) []inlineTok {
 					deco:       it.Decoration,
 					decoPaint:  it.DecorationPaint,
 					href:       it.Href,
+					linkSrc:    it.LinkSource,
 					background: it.Background,
 					shift:      it.BaselineShift,
 					width:      measureRunes(runes[i:i+1], it.Font, nil),
@@ -1488,6 +1504,7 @@ func tokenizePreserve(items []InlineItem) []inlineTok {
 				deco:       it.Decoration,
 				decoPaint:  it.DecorationPaint,
 				href:       it.Href,
+				linkSrc:    it.LinkSource,
 				background: it.Background,
 				shift:      it.BaselineShift,
 				width:      measureRunes(seg, it.Font, nil),
@@ -1705,13 +1722,19 @@ func drawTabLeader(canvas Canvas, f InlineFrag, r Rect) {
 // origin DrawInlineText was called with. ok is false when pt lands off any
 // link fragment.
 func (l InlineLayout) LinkAt(origin Rect, pt Point) (href string, ok bool) {
+	href, _, ok = l.LinkSourceAt(origin, pt)
+	return href, ok
+}
+
+// LinkSourceAt is LinkAt also returning the fragment's LinkSource.
+func (l InlineLayout) LinkSourceAt(origin Rect, pt Point) (href string, source any, ok bool) {
 	for _, line := range l.Lines {
 		for _, f := range line.Frags {
 			r := Rect{X: origin.X + f.Rect.X, Y: origin.Y + f.Rect.Y, W: f.Rect.W, H: f.Rect.H}
 			if f.Href != "" && r.Contains(pt) {
-				return f.Href, true
+				return f.Href, f.LinkSource, true
 			}
 		}
 	}
-	return "", false
+	return "", nil, false
 }

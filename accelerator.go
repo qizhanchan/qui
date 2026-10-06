@@ -35,6 +35,10 @@ type acceleratorEntry struct {
 	fn       func()
 	scope    Widget // nil = window-wide
 	shortcut string // the string as registered, for introspection
+	// enabled, when set, is asked at match time: a binding that reports
+	// false is skipped as if absent, so the key falls through to a lower
+	// binding or keeps flowing (a disabled menu command).
+	enabled func() bool
 }
 
 // NewAcceleratorRegistry returns an empty registry.
@@ -53,6 +57,19 @@ func (r *AcceleratorRegistry) Register(shortcut string, fn func()) error {
 // (other bindings of the same shortcut are untouched).
 func (r *AcceleratorRegistry) Bind(shortcut string, fn func()) (remove func(), err error) {
 	return r.add(shortcut, nil, fn)
+}
+
+// BindIf is Bind for a command that can be unavailable: enabled is asked
+// each time the shortcut is pressed, and while it reports false the
+// binding is skipped as if it weren't registered — another binding of the
+// same key can fire, or the key goes on unconsumed. A disabled menu item's
+// shortcut works this way. A nil enabled behaves like Bind.
+func (r *AcceleratorRegistry) BindIf(shortcut string, enabled func() bool, fn func()) (remove func(), err error) {
+	remove, err = r.add(shortcut, nil, fn)
+	if err == nil && enabled != nil && r != nil && len(r.entries) > 0 && shortcut != "" && fn != nil {
+		r.entries[len(r.entries)-1].enabled = enabled
+	}
+	return remove, err
 }
 
 // RegisterScoped binds fn to shortcut only while the key's target lies
@@ -144,6 +161,9 @@ func (r *AcceleratorRegistry) match(evt KeyEvent, target Widget, scopedOnly bool
 	for i := len(r.entries) - 1; i >= 0; i-- {
 		e := r.entries[i]
 		if e.key != evt.Key || e.mods != evt.Mods {
+			continue
+		}
+		if e.enabled != nil && !e.enabled() {
 			continue
 		}
 		depth := 0

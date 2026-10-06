@@ -70,14 +70,20 @@ type Window struct {
 	// removers stay valid as other entries come and go.
 	eventFilters []eventFilterEntry
 	nextHookID   int64
-	// focusVisible mirrors CSS :focus-visible — true when the current
-	// focus was acquired via keyboard (Tab / Shift+Tab) or programmatic
-	// SetFocus, false when via mouse click. Widgets implementing
-	// focusVisibleAware get told via SetFocusVisible(bool) and use this
-	// to decide whether to paint a focus ring / state-layer halo.
+	// focusVisible mirrors CSS :focus-visible's input-modality heuristic:
+	// true while the user drives with the keyboard (Tab / Shift+Tab, any
+	// key, or no interaction yet), false after a pointer press. Programmatic
+	// SetFocus inherits it — autofocus on a fresh window shows a ring, a
+	// focus() call from a click handler doesn't. Widgets implementing
+	// focusVisibleAware get told via SetFocusVisible(bool) and use this to
+	// decide whether to paint a focus ring / state-layer halo.
 	focusVisible  bool
 	dragCandidate Widget
 	dragging      bool
+	// dragCancelled marks a drag Escape cancelled while the button was
+	// still down: the release that follows ends that gesture, so it is
+	// flagged AfterDrag rather than read as a click where it lands.
+	dragCancelled bool
 	dragStart     Point
 	// drag is the in-flight drag's payload, hovered target and drag
 	// image. See drag.go.
@@ -239,7 +245,7 @@ type Window struct {
 	// is still pumpable. Handlers fire FIFO; exceptions / panics are
 	// not caught — handlers should be defensive on their own. Cleared
 	// after firing so re-entry doesn't double-invoke.
-	onClose []func()
+	onClose hookList[func()]
 	// life holds close-request vetoes, activation / move / minimize
 	// callbacks and window ownership. See window_lifecycle.go.
 	life windowLifecycle
@@ -247,7 +253,7 @@ type Window struct {
 	// including changes the app did not make (the traffic-light button,
 	// Ctrl+Cmd+F). wasFullscreen is the last observed state; the check is a
 	// per-Step poll that only runs while someone is listening.
-	onFSChange    []func(bool)
+	onFSChange    hookList[func(bool)]
 	wasFullscreen bool
 	// jobs is the cross-goroutine queue drained at the top of each Step.
 	// It is embedded by value so even a zero-value Window can accept the
@@ -356,6 +362,7 @@ func newWindowFromConfig(plat platformApp, cfg platformWindowConfig) (*Window, e
 		lastSize:       Size{W: float32(width), H: float32(height)},
 		windowSize:     Size{W: float32(width), H: float32(height)},
 		zoom:           1,
+		focusVisible:   true, // no pointer interaction yet
 		cursorShape:    CursorDefault,
 	}
 	w.initUIThreadOwnership()
@@ -1483,12 +1490,12 @@ func (w *Window) ShouldClose() bool {
 // Multiple registrations are allowed and fire in registration order.
 // OnClose runs once the close is final; to cancel a close the user asked
 // for (unsaved changes), register OnCloseRequest instead.
-func (w *Window) OnClose(fn func()) {
+func (w *Window) OnClose(fn func()) (remove func()) {
 	if w == nil || fn == nil {
-		return
+		return func() {}
 	}
 	w.assertUIThread("Window.OnClose")
-	w.onClose = append(w.onClose, fn)
+	return w.onClose.add(fn)
 }
 
 // OnFullscreenChange registers fn to run when the window enters or leaves
@@ -1497,24 +1504,24 @@ func (w *Window) OnClose(fn func()) {
 // fullscreen behind the app's back, and a mode that must end with fullscreen
 // (a slideshow) has to see those too. Callbacks run on the UI goroutine
 // during Step; closing the window from inside one is safe.
-func (w *Window) OnFullscreenChange(fn func(fullscreen bool)) {
+func (w *Window) OnFullscreenChange(fn func(fullscreen bool)) (remove func()) {
 	if w == nil || fn == nil {
-		return
+		return func() {}
 	}
 	w.assertUIThread("Window.OnFullscreenChange")
-	if len(w.onFSChange) == 0 {
+	if w.onFSChange.len() == 0 {
 		// Snapshot the state at first registration so listening while
 		// already fullscreen does not immediately fire.
 		w.wasFullscreen = w.IsFullscreen()
 	}
-	w.onFSChange = append(w.onFSChange, fn)
+	return w.onFSChange.add(fn)
 }
 
 // pollFullscreenChange fires the OnFullscreenChange callbacks when the
 // observed state differs from the last poll. Reports whether the window is
 // still alive — a callback may close it, and the caller's frame must stop.
 func (w *Window) pollFullscreenChange() bool {
-	if len(w.onFSChange) == 0 {
+	if w.onFSChange.len() == 0 {
 		return true
 	}
 	fs := w.IsFullscreen()
@@ -1522,9 +1529,7 @@ func (w *Window) pollFullscreenChange() bool {
 		return true
 	}
 	w.wasFullscreen = fs
-	handlers := make([]func(bool), len(w.onFSChange))
-	copy(handlers, w.onFSChange)
-	for _, fn := range handlers {
+	for _, fn := range w.onFSChange.snapshot() {
 		fn(fs)
 	}
 	return w.plat != nil
@@ -1536,8 +1541,8 @@ func (w *Window) pollFullscreenChange() bool {
 // w.Destroy(); also safe to invoke from Destroy directly so manual
 // Destroy() callers get the same lifecycle.
 func (w *Window) runCloseHandlers() {
-	handlers := w.onClose
-	w.onClose = nil
+	handlers := w.onClose.snapshot()
+	w.onClose.clear()
 	for _, fn := range handlers {
 		fn()
 	}
@@ -1821,17 +1826,28 @@ func (w *Window) dispatch(event Event) {
 		return
 	}
 
+	// Escape cancels a drag in progress (the platform convention): the
+	// source gets DragEnd with Accepted false, the target under the cursor
+	// DragLeave, and the release drops nothing. The key is consumed.
+	if ke, ok := event.(KeyEvent); ok && ke.eventType == EventKeyDown && ke.Key == KeyEscape && w.dragging {
+		w.cancelDrag()
+		w.dragCancelled = true
+		return
+	}
+
 	// Drag is synthesized from mouse events but dispatched out-of-band
 	// (directly to the drag source/target) so it isn't affected by
 	// phased routing.
 	if me, ok := event.(MouseEvent); ok {
 		switch me.eventType {
 		case EventMouseDown:
+			w.dragCancelled = false
 			w.handleDragStartCandidate(me)
 		case EventMouseMove:
 			w.handleDragMove(me)
 		case EventMouseUp:
-			dragged := w.dragging
+			dragged := w.dragging || w.dragCancelled
+			w.dragCancelled = false
 			w.handleDragEnd(me)
 			if dragged {
 				// The release that ended a drag keeps flowing (pressed
@@ -1846,6 +1862,11 @@ func (w *Window) dispatch(event Event) {
 	// Focus change happens on MouseDown, before the event is dispatched
 	// into widgets — so a just-focused widget can see the MouseDown too.
 	if me, ok := event.(MouseEvent); ok && me.eventType == EventMouseDown {
+		// Any press switches the modality to pointer, even one that moves
+		// no focus, so a focus move a click handler makes programmatically
+		// doesn't light up a keyboard ring. The widget focused now keeps
+		// its own visible state until focus moves.
+		w.focusVisible = false
 		w.updateFocusFromMouse(me)
 	}
 
@@ -1853,7 +1874,16 @@ func (w *Window) dispatch(event Event) {
 	// so TextArea et al. don't need to opt-out. A future "consumesTab"
 	// interface could let specific widgets (code editors) intercept
 	// Tab for their own use.
+	tabHookRan := false
 	if ke, ok := event.(KeyEvent); ok && ke.eventType == EventKeyDown && ke.Key == KeyTab {
+		// The focused widget's OnKeyDown hooks see Tab before it navigates
+		// — an autocomplete accepts its suggestion on Tab.
+		if f := w.focused; f != nil && !w.keyTargetBehindModal(f) {
+			tabHookRan = true
+			if runKeyHook(f, event) {
+				return
+			}
+		}
 		// A focused widget (or ancestor) implementing TabConsumer can keep
 		// Tab for itself; otherwise Tab navigates focus.
 		if !w.tabConsumedByFocus(ke.Mods&ModShift != 0) {
@@ -1889,6 +1919,7 @@ func (w *Window) dispatch(event Event) {
 
 	// Determine target for phased dispatch.
 	target := w.eventTarget(event)
+	hit := target
 	if target == nil {
 		target = w.root
 	}
@@ -1953,6 +1984,9 @@ func (w *Window) dispatch(event Event) {
 				target = w.mouseCaptured
 			}
 		case EventMouseUp:
+			if st := me.state(); st != nil {
+				st.releaseHit, st.releaseHitSet = hit, true
+			}
 			if w.mouseCaptured != nil {
 				target = w.mouseCaptured
 			}
@@ -2007,7 +2041,7 @@ func (w *Window) dispatch(event Event) {
 	// Target phase. An OnKeyDown hook gets the key before the widget.
 	state.phase = PhaseTarget
 	state.currentTarget = target
-	if runKeyHook(target, event) {
+	if !(tabHookRan && target == w.focused) && runKeyHook(target, event) {
 		state.stopped = true
 		return
 	}

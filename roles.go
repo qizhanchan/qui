@@ -259,6 +259,15 @@ func WidgetTextState(w Widget) (TextState, bool) {
 type AXOption struct {
 	Label    string `json:"label"`
 	Selected bool   `json:"selected,omitempty"`
+	// Value is what the app identifies the option by, when it differs
+	// from Label (a <option value>, a SelectOption.Value) — stable across
+	// languages, so an agent can pick by it with the type action.
+	Value string `json:"value,omitempty"`
+	// Disabled options can't be picked (an <option disabled>, an
+	// <optgroup> heading row).
+	Disabled bool `json:"disabled,omitempty"`
+	// Group is the heading the option is listed under, if any.
+	Group string `json:"group,omitempty"`
 }
 
 // Optioned is implemented by widgets presenting a fixed set of choices

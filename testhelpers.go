@@ -314,7 +314,7 @@ func NewTestWindow(size Size) *Window {
 	// windowSize mirrors lastSize so WindowSize / viewport derivation are
 	// meaningful without a platform window: at zoom=1 they are the same
 	// number, and SetZoom can then derive a viewport from something real.
-	return &Window{lastSize: size, windowSize: size, zoom: 1}
+	return &Window{lastSize: size, windowSize: size, zoom: 1, focusVisible: true}
 }
 
 // DispatchTestEvent routes an event through Window's normal dispatch

@@ -206,7 +206,30 @@ func PaintBoundsInWindow(w Widget) Rect {
 	if w == nil {
 		return Rect{}
 	}
-	r := PaintBoundsOf(w)
+	return ancestorsToWindow(w, PaintBoundsOf(w))
+}
+
+// RectInWindow maps r — a rect in w's OWN coordinate space, the space its
+// Bounds live in — to the window region it paints at: through w's own
+// paint transform and every ancestor's scroll offset, clip and transform,
+// exactly as PaintBoundsInWindow does for the whole widget. Use it wherever
+// a widget hands a dirty rect to the window: what a Tickable returns, what
+// InvalidateRect marks. A raw Bounds() is right only while nothing above
+// the widget scrolls or transforms — inside a scrolled ScrollView it names
+// content coordinates, and the repaint lands somewhere else entirely.
+func RectInWindow(w Widget, r Rect) Rect {
+	if w == nil {
+		return Rect{}
+	}
+	if t, ok := w.(PaintTransformer); ok {
+		r = t.PaintTransform().TransformRect(r)
+	}
+	return ancestorsToWindow(w, r)
+}
+
+// ancestorsToWindow carries r, already in w's parent-facing paint space,
+// up through w's ancestors to window coordinates.
+func ancestorsToWindow(w Widget, r Rect) Rect {
 	for cur := w; cur != nil; cur = cur.Parent() {
 		parent := cur.Parent()
 		if parent == nil {
@@ -484,13 +507,18 @@ func (b *BaseWidget) Invalidate() {
 	b.window.InvalidateRect(PaintBoundsInWindow(self))
 }
 
-// InvalidateRect marks a widget-local sub-region as dirty.
+// InvalidateRect marks a widget-local sub-region as dirty: r is in the
+// widget's own coordinate space and is mapped to the window (RectInWindow).
 func (b *BaseWidget) InvalidateRect(r Rect) {
 	b.assertUIThread("BaseWidget.InvalidateRect")
 	if b.window == nil {
 		return
 	}
-	b.window.InvalidateRect(r)
+	self := Widget(b)
+	if b.self != nil {
+		self = b.self
+	}
+	b.window.InvalidateRect(RectInWindow(self, r))
 }
 
 // Self returns the outer embedding widget if one has been registered

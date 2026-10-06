@@ -8,9 +8,9 @@ package qui
 // has its own equivalents; these are for native widgets.)
 
 type widgetHooks struct {
-	onFocus []func()
-	onBlur  []func()
-	onKey   []func(KeyEvent) bool
+	onFocus hookList[func()]
+	onBlur  hookList[func()]
+	onKey   hookList[func(KeyEvent) bool]
 }
 
 type hookHost interface {
@@ -26,27 +26,35 @@ func (b *BaseWidget) ensureHooks() *widgetHooks {
 	return b.hooks
 }
 
-// OnFocus registers fn to run after the widget gains keyboard focus.
-func (b *BaseWidget) OnFocus(fn func()) {
-	if fn != nil {
-		b.ensureHooks().onFocus = append(b.ensureHooks().onFocus, fn)
+// OnFocus registers fn to run after the widget gains keyboard focus, and
+// returns the function that removes it (call it when whatever installed
+// the hook goes away, or the closure keeps running).
+func (b *BaseWidget) OnFocus(fn func()) (remove func()) {
+	if fn == nil {
+		return func() {}
 	}
+	return b.ensureHooks().onFocus.add(fn)
 }
 
-// OnBlur registers fn to run after the widget loses keyboard focus.
-func (b *BaseWidget) OnBlur(fn func()) {
-	if fn != nil {
-		b.ensureHooks().onBlur = append(b.ensureHooks().onBlur, fn)
+// OnBlur registers fn to run after the widget loses keyboard focus, and
+// returns its remover.
+func (b *BaseWidget) OnBlur(fn func()) (remove func()) {
+	if fn == nil {
+		return func() {}
 	}
+	return b.ensureHooks().onBlur.add(fn)
 }
 
 // OnKeyDown registers fn to see key-down events aimed at the widget (it is
-// focused) BEFORE the widget's own handling. Returning true consumes the
-// key: the widget never sees it and it doesn't bubble.
-func (b *BaseWidget) OnKeyDown(fn func(KeyEvent) bool) {
-	if fn != nil {
-		b.ensureHooks().onKey = append(b.ensureHooks().onKey, fn)
+// focused) BEFORE the widget's own handling — Tab included, ahead of focus
+// navigation, so an autocomplete can take Tab to accept a suggestion.
+// Returning true consumes the key: the widget never sees it, it doesn't
+// bubble, and Tab doesn't move focus. Returns the hook's remover.
+func (b *BaseWidget) OnKeyDown(fn func(KeyEvent) bool) (remove func()) {
+	if fn == nil {
+		return func() {}
 	}
+	return b.ensureHooks().onKey.add(fn)
 }
 
 func runFocusHooks(w Widget, focused bool) {
@@ -55,11 +63,11 @@ func runFocusHooks(w Widget, focused bool) {
 		return
 	}
 	hooks := h.widgetHooks()
-	list := hooks.onBlur
+	list := &hooks.onBlur
 	if focused {
-		list = hooks.onFocus
+		list = &hooks.onFocus
 	}
-	for _, fn := range append([]func(){}, list...) {
+	for _, fn := range list.snapshot() {
 		fn()
 	}
 }
@@ -73,7 +81,7 @@ func runKeyHook(target Widget, event Event) bool {
 	if !ok || h.widgetHooks() == nil {
 		return false
 	}
-	for _, fn := range append([]func(KeyEvent) bool{}, h.widgetHooks().onKey...) {
+	for _, fn := range h.widgetHooks().onKey.snapshot() {
 		if fn(ke) {
 			return true
 		}
