@@ -109,7 +109,9 @@ func (e *El) handlePaste(ke qui.KeyEvent) bool {
 
 // LinkHandler decides what following a link means. Return true when the
 // app handled href (an in-app route such as "#/settings"); false lets the
-// engine's default run.
+// engine's default run. from is the <a> element — also when its text was
+// folded into a paragraph's inline run — so a router can read its id and
+// data-* attributes.
 type LinkHandler func(href string, from *El) bool
 
 // SetLinkHandler installs the engine's link handler, consulted for every
@@ -119,12 +121,13 @@ type LinkHandler func(href string, from *El) bool
 // `file:` or custom-scheme URLs to the OS by default.
 func (s *StyleEngine) SetLinkHandler(fn LinkHandler) { s.linkHandler = fn }
 
-// followLink resolves a link click.
-func (e *El) followLink(href string) {
+// followLink resolves a link click on e; from is the element the link
+// handler is told about (e itself, or the <a> folded into e's text).
+func (e *El) followLink(href string, from *El) {
 	if href == "" {
 		return
 	}
-	if e.engine != nil && e.engine.linkHandler != nil && e.engine.linkHandler(href, e) {
+	if e.engine != nil && e.engine.linkHandler != nil && e.engine.linkHandler(href, from) {
 		return
 	}
 	if isExternalLink(href) {

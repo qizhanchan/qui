@@ -24,10 +24,9 @@ type ElementDef struct {
 }
 
 var (
-	registryMu    sync.RWMutex
-	elementDefs   = map[string]ElementDef{}
-	propertyDefs  = map[string]PropertyDef{}
-	inheritedProp []string
+	registryMu   sync.RWMutex
+	elementDefs  = map[string]ElementDef{}
+	propertyDefs = map[string]PropertyDef{}
 )
 
 // RegisterElement makes tag (lower-case, conventionally with a dash:
@@ -63,27 +62,51 @@ type PropertyDef struct {
 func RegisterProperty(name string, def PropertyDef) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
-	name = strings.ToLower(name)
-	if _, dup := propertyDefs[name]; !dup && def.Inherited {
-		inheritedProp = append(inheritedProp, name)
-	}
-	propertyDefs[name] = def
+	propertyDefs[strings.ToLower(name)] = def
 }
 
-// inheritRegisteredProps copies inherited registered properties from the
-// parent into m when m doesn't declare them.
+// inheritRegisteredProps resolves registered properties for one element:
+// an inherited property nobody declared takes the parent's value, and the
+// CSS-wide keywords on any registered property resolve the way they do on
+// built-in ones — `inherit` to the parent's value (or Initial at the root),
+// `initial` to the registered Initial, `unset` / `revert` to inherit for
+// an inherited property and Initial otherwise.
 func inheritRegisteredProps(m map[string]string, parent *ComputedStyle) {
-	if parent == nil {
-		return
-	}
 	registryMu.RLock()
 	defer registryMu.RUnlock()
-	for _, name := range inheritedProp {
-		if _, ok := m[name]; ok {
+	parentValue := func(name string) (string, bool) {
+		if parent == nil {
+			return "", false
+		}
+		v, ok := parent.raw[name]
+		return v, ok
+	}
+	for name, def := range propertyDefs {
+		v, declared := m[name]
+		if !declared {
+			if def.Inherited {
+				if pv, ok := parentValue(name); ok {
+					m[name] = pv
+				}
+			}
 			continue
 		}
-		if v, ok := parent.raw[name]; ok {
-			m[name] = v
+		kw := strings.ToLower(strings.TrimSpace(v))
+		if kw == "unset" || kw == "revert" {
+			kw = "initial"
+			if def.Inherited {
+				kw = "inherit"
+			}
+		}
+		switch kw {
+		case "inherit":
+			if pv, ok := parentValue(name); ok {
+				m[name] = pv
+			} else {
+				m[name] = def.Initial
+			}
+		case "initial":
+			m[name] = def.Initial
 		}
 	}
 }

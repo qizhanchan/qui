@@ -505,22 +505,29 @@ func applyFlexItem(w qui.Widget, cs *ComputedStyle) {
 // slider active track. Each is applied only when authored (HasColor /
 // HasAccentColor) so unstyled controls keep their UA look and the
 // native-alignment harness stays intact.
-func applyControlColors(w qui.Widget, cs *ComputedStyle) {
+func applyControlColors(w qui.Widget, cs *ComputedStyle, native **qui.StateStyle) {
 	switch c := w.(type) {
 	case *widgets.Input:
 		if cs.HasColor {
 			qui.UpdateStyle(c, func(style *qui.Style) { style.Foreground = cs.Color })
 		}
-		syncControlStateChrome(&c.States)
+		syncControlStates(&c.States, cs, native)
 	case *widgets.TextArea:
 		if cs.HasColor {
 			qui.UpdateStyle(c, func(style *qui.Style) { style.Foreground = cs.Color })
+		}
+		// TextArea has no state table, only a focus override.
+		c.FocusedStyle = nil
+		if v := focusVariant(cs); v != nil {
+			st := *c.Style()
+			overlayStateChrome(&st, cs, v)
+			c.FocusedStyle = &st
 		}
 	case *widgets.Select:
 		if cs.HasColor {
 			qui.UpdateStyle(c, func(style *qui.Style) { style.Foreground = cs.Color })
 		}
-		syncControlStateChrome(&c.States)
+		syncControlStates(&c.States, cs, native)
 	case *widgets.CheckBox:
 		if cs.HasAccentColor {
 			c.CheckedFillColor = cs.AccentColor
@@ -542,6 +549,91 @@ func applyControlColors(w qui.Widget, cs *ComputedStyle) {
 			c.HandleColor = cs.AccentColor
 			c.StateLayerColor = cs.AccentColor
 		}
+	}
+}
+
+// syncControlStates rebuilds a backing control's interactive state styles
+// for this restyle: start from the control's native states (snapshotted
+// into *native on first use), carry the CSS base chrome into them
+// (syncControlStateChrome), then lay the author's :hover / :focus /
+// :active rules on top. Without that last step `input:focus { border-color }`
+// never painted — focus lives on the backing widget, not the El, so the
+// El's own state styling can't reach it, and the native focus ring won.
+// Starting over from the snapshot each time is what lets a dropped rule
+// (a class change) hand the state back to the native look.
+func syncControlStates(ss *qui.StateStyle, cs *ComputedStyle, native **qui.StateStyle) {
+	if *native == nil {
+		snap := qui.StateStyle{Base: ss.Base}
+		clone := func(p *qui.Style) *qui.Style {
+			if p == nil {
+				return nil
+			}
+			c := *p
+			return &c
+		}
+		snap.Hover, snap.Pressed, snap.Focused = clone(ss.Hover), clone(ss.Pressed), clone(ss.Focused)
+		snap.Disabled, snap.Checked, snap.Errored = clone(ss.Disabled), clone(ss.Checked), clone(ss.Errored)
+		*native = &snap
+	}
+	restore := func(dst **qui.Style, src *qui.Style) {
+		if src == nil {
+			*dst = nil
+			return
+		}
+		c := *src
+		*dst = &c
+	}
+	n := *native
+	restore(&ss.Hover, n.Hover)
+	restore(&ss.Pressed, n.Pressed)
+	restore(&ss.Focused, n.Focused)
+	syncControlStateChrome(ss)
+	overlay := func(slot **qui.Style, v *ComputedStyle) {
+		if v == nil || (!boxDecorationsDiffer(cs, v) && v.Color == cs.Color) {
+			return
+		}
+		if *slot == nil {
+			c := ss.Base
+			*slot = &c
+		}
+		overlayStateChrome(*slot, cs, v)
+	}
+	overlay(&ss.Hover, cs.Hover)
+	overlay(&ss.Focused, focusVariant(cs))
+	overlay(&ss.Pressed, cs.Active)
+}
+
+// focusVariant picks the author's focus styling for a text-entry control.
+// A text field matches :focus-visible on any focus (the CSS heuristic —
+// the user is about to type), so a :focus-visible rule applies just like
+// :focus; when both exist :focus-visible, the narrower one, wins.
+func focusVariant(cs *ComputedStyle) *ComputedStyle {
+	if cs.FocusVisible != nil {
+		return cs.FocusVisible
+	}
+	return cs.Focus
+}
+
+// overlayStateChrome copies onto s the decorations the state variant v
+// changes relative to the resting style base: background, border, text
+// color. Fields v leaves alone keep s's (native) value — a :focus rule that
+// only sets `background` keeps the native focus border.
+func overlayStateChrome(s *qui.Style, base, v *ComputedStyle) {
+	if v.Background != base.Background || v.HasBackground != base.HasBackground {
+		s.Background = v.Background
+	}
+	if v.HasSideBorders {
+		s.BorderWidths = v.SideWidths
+		s.BorderColors = v.SideColors
+	} else if v.BorderColor != base.BorderColor || v.BorderWidth != base.BorderWidth {
+		s.Border = v.BorderColor
+		s.BorderSize = v.BorderWidth
+	}
+	if v.Radius != base.Radius {
+		s.Radius = v.Radius
+	}
+	if v.Color != base.Color {
+		s.Foreground = v.Color
 	}
 }
 

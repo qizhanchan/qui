@@ -170,6 +170,17 @@ func projectEl(el *El, ax *qui.AXNode, layer string) *DOMNode {
 	// constructed) rather than el.backing, so /dom and /tree agree.
 	d.TextState = backingTextState(ax)
 	d.Options = backingOptions(ax)
+	// The backing Select only knows display labels; the submitted
+	// <option value> lives on the element.
+	if len(d.Options) == len(el.selectValues) {
+		opts := append([]qui.AXOption(nil), d.Options...)
+		for i := range opts {
+			if v := el.selectValues[i]; v != opts[i].Label {
+				opts[i].Value = v
+			}
+		}
+		d.Options = opts
+	}
 	if el.displayNone {
 		d.Visible = false
 		d.Display = "none"

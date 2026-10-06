@@ -236,6 +236,25 @@ func (eng *StyleEngine) SetRoot(root *El) {
 	}
 }
 
+// AdoptRoot makes root the engine's tree root and styles it, if the engine
+// has no root yet and root is an *El; otherwise it does nothing. The
+// reactive runtime calls it in the pass that first produces the tree,
+// before that pass's effects run, so h.Mount's initial effects already see
+// computed styles and the widgets custom elements host.
+func (eng *StyleEngine) AdoptRoot(root qui.Widget) {
+	if eng == nil || eng.root != nil {
+		return
+	}
+	el, ok := root.(*El)
+	if !ok {
+		return
+	}
+	eng.SetRoot(el)
+	eng.dirty = nil
+	eng.pending = false
+	eng.Restyle()
+}
+
 // Close releases the engine's global subscriptions. Multi-window apps
 // must call it when a window's tree goes away, or its style engine stays
 // reachable from the locale subscriber list forever.

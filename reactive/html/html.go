@@ -994,10 +994,12 @@ func Mount(window *qui.Window, css string, app func() Node) *reactive.Runtime {
 		return reactive.Empty()
 	})
 	rt.SetHostData(eng)
+	// The first pass hands its root to the engine (StyleEngine.AdoptRoot)
+	// and styles it before running effects. Without a window there is no
+	// host commit, so adopt here.
 	rt.Render()
-	if root, ok := rt.Root().(*htmlcss.El); ok {
-		eng.SetRoot(root)
-		eng.Restyle()
+	if eng.Root() == nil {
+		eng.AdoptRoot(rt.Root())
 	}
 	return rt
 }

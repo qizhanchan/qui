@@ -133,6 +133,11 @@ type El struct {
 	// held here, styled via the shared applyCommon. Non-control elements
 	// leave backing nil and use the box/text path.
 	backing qui.Widget
+	// nativeStates snapshots the backing control's own state styles (the
+	// UA focus ring, disabled look) as built, before any CSS touched them,
+	// so each restyle re-derives :hover / :focus / :active chrome from the
+	// native look rather than from whatever the previous restyle left.
+	nativeStates *qui.StateStyle
 	// <select> option model. selectItems is what the dropdown DISPLAYS;
 	// selectValues is what the form SUBMITS, parallel to it (an option's
 	// `value` attribute, falling back to its text — the HTML rule).
@@ -2163,7 +2168,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		e.ensureBacking()
 		if e.backing != nil {
 			applyCommon(e.backing, cs)
-			applyControlColors(e.backing, cs)
+			applyControlColors(e.backing, cs, &e.nativeStates)
 			// The El — not the backing — is the flex item in the parent's
 			// layout, so flex-grow / width / margin must sit on the El; the
 			// backing then fills the El's width as a flow block. Without this
@@ -2798,7 +2803,7 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 				ib.AddBox(e.elementKids[i], qui.InlineBaseline)
 				continue
 			}
-			e.appendInlineChild(ib, ke, styles[i], cs, "")
+			e.appendInlineChild(ib, ke, styles[i], cs, "", nil)
 		}
 		out = append(out, ib)
 	}
@@ -2901,10 +2906,10 @@ func (e *El) childStyle(c *El, parent *ComputedStyle) *ComputedStyle {
 
 // appendInlineChild folds one child into the inline box: spans for a
 // foldable inline element (recursing into nested inline markup,
-// inheriting an enclosing <a>'s href), an atomic box otherwise.
-// Block-level descendants are break-wrapped onto their own lines
-// (anonymous-block approximation).
-func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *ComputedStyle, href string) {
+// inheriting an enclosing <a>'s href, and the <a> itself as the run's link
+// source), an atomic box otherwise. Block-level descendants are
+// break-wrapped onto their own lines (anonymous-block approximation).
+func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *ComputedStyle, href string, link *El) {
 	if ke.tag == "br" {
 		ib.AddBreak()
 		return
@@ -2918,7 +2923,7 @@ func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *Compu
 			t = collapseInline(t)
 		}
 		if t != "" {
-			ib.AddTextPaint(t, fontFrom(kcs), kcs.Color, kcs.decoration(), kcs.decorationPaint(), href)
+			ib.AddLinkText(t, fontFrom(kcs), kcs.Color, kcs.decoration(), kcs.decorationPaint(), href, linkSource(link))
 		}
 		return
 	}
@@ -2934,22 +2939,31 @@ func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *Compu
 	}
 	if ke.tag == "a" {
 		if v := ke.attrs["href"]; v != "" {
-			href = v
+			href, link = v, ke
 		}
 	}
 	if kcs == nil {
 		kcs = parent
 	}
 	if ke.text != "" {
-		ib.AddTextPaint(ke.text, fontFrom(kcs), kcs.Color, kcs.decoration(), kcs.decorationPaint(), href)
+		ib.AddLinkText(ke.text, fontFrom(kcs), kcs.Color, kcs.decoration(), kcs.decorationPaint(), href, linkSource(link))
 	}
 	for _, k := range ke.elementKids {
 		if kke, ok := k.(*El); ok {
-			e.appendInlineChild(ib, kke, e.childStyle(kke, kcs), kcs, href)
+			e.appendInlineChild(ib, kke, e.childStyle(kke, kcs), kcs, href, link)
 		} else {
 			ib.AddBox(k, qui.InlineBaseline)
 		}
 	}
+}
+
+// linkSource is the LinkSource a folded run carries: the <a> element, or
+// nil (a typed nil *El would not compare equal to a plain nil).
+func linkSource(a *El) any {
+	if a == nil {
+		return nil
+	}
+	return a
 }
 
 // isCanvas reports whether this is a <canvas> element — a replaced leaf
@@ -3897,6 +3911,14 @@ func (e *El) Handle(event qui.Event) bool {
 	if me.AfterDrag {
 		return handled
 	}
+	// A press dragged off the element and released elsewhere is a cancelled
+	// click — the "slide off the Delete button" escape. Mouse capture still
+	// delivers the release here (pointerup above fired); click, double
+	// click, built-in behavior and link navigation do not. An ancestor that
+	// contains both ends of the gesture still gets its click on bubble.
+	if me.Type() == qui.EventMouseUp && !me.ReleasedOver(e) {
+		return handled
+	}
 	if me.Type() == qui.EventMouseUp && me.Button == qui.MouseButtonLeft {
 		acted := false
 		// Double click: two releases close together in time and space. Timed
@@ -3946,13 +3968,19 @@ func (e *El) Handle(event qui.Event) bool {
 	if me.Type() == qui.EventMouseUp && me.Button == qui.MouseButtonLeft {
 		if e.tag == "a" {
 			if href := e.attrs["href"]; href != "" {
-				e.followLink(href)
+				e.followLink(href, e)
 				return true
 			}
 		}
 		for _, ib := range e.inlinePool {
-			if href, ok := ib.LinkAt(qui.Point{X: me.X, Y: me.Y}); ok && href != "" {
-				e.followLink(href)
+			if href, src, ok := ib.LinkSourceAt(qui.Point{X: me.X, Y: me.Y}); ok && href != "" {
+				// The link handler hears about the folded <a> itself, so a
+				// router can read its data-* / id, not only its href.
+				from := e
+				if a, ok := src.(*El); ok && a != nil {
+					from = a
+				}
+				e.followLink(href, from)
 				return true
 			}
 		}

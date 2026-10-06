@@ -115,6 +115,20 @@ func (r *Runtime) flushHostStyles() {
 	}
 }
 
+// hostRootAdopter is an optional capability of the host backend: learn the
+// tree root the moment the first pass produces it. The htmlcss StyleEngine
+// implements it so h.Mount's very first pass is styled before that pass's
+// effects run — an effect reading a custom element's hosted widget or its
+// ComputedStyle on first mount would otherwise see nothing.
+type hostRootAdopter interface{ AdoptRoot(qui.Widget) }
+
+// adoptHostRoot hands root to the host backend, if it wants it.
+func (r *Runtime) adoptHostRoot(root qui.Widget) {
+	if a, ok := r.HostData().(hostRootAdopter); ok && root != nil {
+		a.AdoptRoot(root)
+	}
+}
+
 // NewRuntime creates a runtime without rendering immediately.
 func NewRuntime(window *qui.Window, renderFn func() Element) *Runtime {
 	r := &Runtime{window: window, renderFn: renderFn}
@@ -312,6 +326,10 @@ func (r *Runtime) flushOnePass() {
 			} else if flags.has(FlagPaint) {
 				window.Invalidate()
 			}
+			// After SetRoot, so the tree is window-attached when the host
+			// first styles it (a <select> needs its window), and before
+			// this pass's effects run below.
+			r.adoptHostRoot(root)
 		}
 	}()
 
