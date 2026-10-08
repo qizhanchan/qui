@@ -141,8 +141,10 @@ type PopupTokens struct {
 	TooltipText    Color // chip text (#f2f2f2)
 
 	// Modal dialogs.
-	Scrim        Color   // backdrop behind a modal (rgba(0,0,0,.32))
-	DialogRadius float32 // dialog box corner radius (28)
+	Scrim          Color   // backdrop behind a modal (rgba(0,0,0,.32))
+	DialogRadius   float32 // dialog box corner radius (28)
+	DialogAccent   Color   // dialog text-button label / filled-button fill (#0b57d0)
+	DialogOnAccent Color   // filled dialog button label (#ffffff)
 }
 
 // ElevationSpec is one component of a drop shadow: offset, blur, spread
@@ -287,8 +289,10 @@ func newLightTheme() Theme {
 			TooltipSurface: argbColor(0xff1f1f1f),
 			TooltipText:    argbColor(0xfff2f2f2),
 
-			Scrim:        argbColor(0x52000000), // 32%
-			DialogRadius: 28,
+			Scrim:          argbColor(0x52000000), // 32%
+			DialogRadius:   28,
+			DialogAccent:   argbColor(0xff0b57d0),
+			DialogOnAccent: argbColor(0xffffffff),
 		},
 	}
 	t.Elevation = [6]ElevationLevel{
@@ -410,6 +414,12 @@ func (t *Theme) ResolvedPopup() PopupTokens {
 	}
 	if p.DialogRadius == 0 {
 		p.DialogRadius = t.RadiusLarge
+	}
+	if p.DialogAccent.A == 0 {
+		p.DialogAccent = t.Accent
+	}
+	if p.DialogOnAccent.A == 0 {
+		p.DialogOnAccent = t.AccentText
 	}
 	return p
 }

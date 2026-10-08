@@ -107,6 +107,9 @@ type Dialog struct {
 	titleKey      messageKey
 	window        *Window
 	contentBounds Rect
+	// addedButtons are the AddButton buttons, which the dialog styles
+	// itself (text buttons; the DefaultAction one filled).
+	addedButtons []*Button
 }
 
 // DialogCloseReason says why a dialog closed — passed to CanClose and
@@ -193,17 +196,21 @@ func (d *Dialog) metrics() *DialogMetrics {
 	return &defaultDialogMetrics
 }
 
-// NewDialog creates a plain dialog with the given title and body
-// content. Look: theme-colored rounded box, thin translucent-black
-// scrim, no shadow. For a designed look, set the color knobs, or render
-// a dialog on the htmlcss layer with h.Dialog.
+// NewDialog creates a dialog with the given title and body content in
+// the theme's Workspace (Material 3) look: a theme-colored box with
+// Theme.Popup.DialogRadius corners (28), the Theme.Popup.Scrim backdrop
+// (32% black), no shadow, and AddButton actions drawn as 40px pill text
+// buttons in Theme.Popup.DialogAccent — the DefaultAction one filled.
+// For another look set the color knobs (or the buttons' States after
+// Show), or render a dialog on the htmlcss layer with h.Dialog.
 func NewDialog(title string, content Widget) *Dialog {
+	p := CurrentTheme().ResolvedPopup()
 	d := &Dialog{
 		BaseWidget:      NewBaseWidget(),
 		Title:           title,
 		Content:         content,
-		ScrimColor:      Color{R: 0, G: 0, B: 0, A: 0.32},
-		ContainerRadius: 8,
+		ScrimColor:      p.Scrim,
+		ContainerRadius: p.DialogRadius,
 	}
 	d.SetSelf(d)
 	if content != nil {
@@ -261,8 +268,53 @@ func (d *Dialog) AddButton(text string, onClick func()) *Button {
 		}
 		d.CloseWith(DialogCloseAction)
 	}
+	btn.States = DialogButtonStates(false)
+	d.addedButtons = append(d.addedButtons, btn)
 	d.AddAction(btn)
 	return btn
+}
+
+// DialogButtonStates returns the Workspace (Material 3) dialog button
+// look from the current theme's popup tokens: a 40px pill with a 14px
+// medium label — filled in Theme.Popup.DialogAccent when filled, else a
+// text button in that color with an 8% / 12% hover / press tint. Dialog
+// applies it to its AddButton buttons; use it for AddAction buttons that
+// should match.
+func DialogButtonStates(filled bool) StateStyle {
+	p := CurrentTheme().ResolvedPopup()
+	accent := p.DialogAccent
+	tint := func(a float32) Color { c := accent; c.A = a; return c }
+	base := Style{
+		Foreground: accent,
+		Radius:     20,
+		Padding:    Insets{Top: 10, Right: 12, Bottom: 10, Left: 12},
+		Font:       Font{Size: CurrentTheme().FontBase, Weight: FontWeightMedium},
+	}
+	hover, pressed := base, base
+	hover.Background, pressed.Background = tint(0.08), tint(0.12)
+	if filled {
+		base.Background, base.Foreground = accent, p.DialogOnAccent
+		base.Padding.Left, base.Padding.Right = 24, 24
+		hover, pressed = base, base
+		hover.Background = LerpColor(accent, p.DialogOnAccent, 0.08)
+		pressed.Background = LerpColor(accent, p.DialogOnAccent, 0.12)
+	}
+	focused := hover
+	disabled := base
+	// #1f1f1f at 38% / 12% over the white dialog surface, opaque.
+	disabled.Foreground = Color{R: 0.667, G: 0.667, B: 0.667, A: 1}
+	if filled {
+		disabled.Background = Color{R: 0.894, G: 0.894, B: 0.894, A: 1}
+	}
+	return StateStyle{Base: base, Hover: &hover, Pressed: &pressed, Focused: &focused, Disabled: &disabled}
+}
+
+// styleAddedButtons re-derives the AddButton buttons' look, filling the
+// one that is the DefaultAction.
+func (d *Dialog) styleAddedButtons() {
+	for _, b := range d.addedButtons {
+		b.States = DialogButtonStates(Widget(b) == d.DefaultAction)
+	}
 }
 
 // AddAction appends any widget to the action row. It never closes the
@@ -399,6 +451,7 @@ func (d *Dialog) ChildList() []Widget {
 // Height bypasses that band for that axis — the only clamp is the
 // window-edge clamp in Layout.
 func (d *Dialog) Measure(available Size) Size {
+	d.styleAddedButtons()
 	m := d.metrics()
 	var boxW float32
 	if d.Width > 0 {
@@ -477,6 +530,7 @@ func (d *Dialog) boxHeight(boxW float32) float32 {
 }
 
 func (d *Dialog) Layout(rect Rect) {
+	d.styleAddedButtons()
 	d.BaseWidget.Layout(rect)
 	m := d.metrics()
 

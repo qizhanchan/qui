@@ -109,6 +109,7 @@ func openSettingsDialog(window *qui.Window) {
 		volSlider.SetValue(50)
 		errLabel.SetText("")
 	})
+	reset.States = widgets.DialogButtonStates(false) // match AddButton's look
 	dlg.AddAction(reset)
 
 	dlg.AddButton("Cancel", nil)
@@ -124,6 +125,7 @@ func openSettingsDialog(window *qui.Window) {
 			name.Text, notifications, darkMode, volume)
 		dlg.CloseWith(widgets.DialogCloseAction)
 	}
+	save.States = widgets.DialogButtonStates(true) // the filled default action
 	dlg.AddAction(save)
 	dlg.DefaultAction = save // Enter presses Save, also from the name field
 	dlg.InitialFocus = name
