@@ -87,7 +87,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | `font-size` | ✅ | px/em/rem/pt/% |
 | `font-weight` | ✅ | bold/normal/lighter + numeric |
 | `font-style` | ✅ | italic |
-| `font-family` | ✅ | first family |
+| `font-family` | ✅ | first installed (registered) family of the list; a generic keyword ends the search; none installed → first name |
 | `font` (shorthand) | ✅ | `expandFont` |
 | `line-height` | ✅ | unitless multiple / length |
 | `text-align` | ✅ | start/center/end/**justify**. Justify stretches only soft-wrapped lines; it flows through the root `JustifyExtra` + `Font.WordSpacing` channel on both plain (Label) and inline (InlineBox) paths, so drawing/selection/hit-testing agree. Rich-text spans do not participate |

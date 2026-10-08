@@ -87,7 +87,7 @@
 | `font-size` | ✅ | px/em/rem/pt/% |
 | `font-weight` | ✅ | bold/normal/lighter + 数值 |
 | `font-style` | ✅ | italic |
-| `font-family` | ✅ | 取第一个 family |
+| `font-family` | ✅ | 取列表中第一个已安装（已注册）的 family；遇到通用族关键字即停止；都未安装时取第一个 |
 | `font`（简写） | ✅ | `expandFont` |
 | `line-height` | ✅ | 无单位倍数 / 长度 |
 | `text-align` | ✅ | start/center/end/**justify**。justify 只拉伸软换行行；经 root `JustifyExtra` + `Font.WordSpacing` 通道贯穿 plain（Label）与 inline（InlineBox）两条路径，绘制 / 选择 / 命中一致。富文本 spans 不参与 |
