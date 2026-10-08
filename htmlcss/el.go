@@ -179,6 +179,8 @@ type El struct {
 	// computed text color. Composes with element children via nesting
 	// (an icon <span> next to a text <span> inside a button).
 	iconSrc qui.VectorSource
+	// iconUntinted keeps iconSrc's own colours (SetIconUntinted).
+	iconUntinted bool
 	iconImg *svgImage
 
 	// Drag & drop reorder: an El marked draggable becomes the drag source
@@ -710,10 +712,22 @@ func (e *El) SetFocused(focused bool) {
 // SetIcon renders src as this element's content (an svgImage leaf). No-op
 // when the source is unchanged so a re-render doesn't force a restyle.
 func (e *El) SetIcon(src qui.VectorSource) {
-	if e.iconSrc == src {
+	if e.iconSrc == src && !e.iconUntinted {
 		return
 	}
 	e.iconSrc = src
+	e.iconUntinted = false
+	e.markDirty()
+}
+
+// SetIconUntinted is SetIcon for a multi-colour vector (a product logo):
+// it draws in its own colours rather than tinted with the text color.
+func (e *El) SetIconUntinted(src qui.VectorSource) {
+	if e.iconSrc == src && e.iconUntinted {
+		return
+	}
+	e.iconSrc = src
+	e.iconUntinted = true
 	e.markDirty()
 }
 
@@ -2447,12 +2461,16 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 			if cs.HasHeight {
 				h = cs.Height
 			}
+			tint := cs.Color
+			if e.iconUntinted {
+				tint = qui.Color{} // zero tint = the vector's own colours
+			}
 			if e.iconImg == nil {
-				e.iconImg = newSVGImage(e.iconSrc, w, h, cs.Color)
+				e.iconImg = newSVGImage(e.iconSrc, w, h, tint)
 			} else {
 				e.iconImg.src = e.iconSrc
 				e.iconImg.w, e.iconImg.h = w, h
-				e.iconImg.tint = cs.Color
+				e.iconImg.tint = tint
 			}
 		case e.text != "":
 			// Text content (leaf, or leading text next to element children):
@@ -3586,7 +3604,7 @@ func (e *El) applyStateText(av *ancestorVariant) {
 	if e.markerShape != nil {
 		e.markerShape.color = color
 	}
-	if e.iconImg != nil {
+	if e.iconImg != nil && !e.iconUntinted {
 		e.iconImg.tint = color
 	}
 	if si, ok := e.imgWidget.(*svgImage); ok {

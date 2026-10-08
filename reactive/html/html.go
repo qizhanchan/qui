@@ -135,6 +135,7 @@ type Builder struct {
 
 	// icon + drag/drop
 	icon       qui.VectorSource
+	iconColors bool // keep the icon's own colours (no tint)
 	draggable  bool
 	dragKey    string
 	dragHandle bool
@@ -335,6 +336,20 @@ func (b *Builder) OnCommit(fn func(string)) *Builder { b.onCommit = fn; return b
 // element's content. Compose an icon + label by nesting an icon element
 // beside a text element inside a button.
 func (b *Builder) Icon(src qui.VectorSource) *Builder { b.icon = src; return b }
+
+// IconUntinted is Icon for a multi-colour glyph — a product logo, a
+// flag, an illustration: the vector keeps its own colours instead of
+// being collapsed to the text colour (no `color: transparent` trick).
+//
+//	h.Span().IconUntinted(logo).Class("ws-logo")
+func (b *Builder) IconUntinted(src qui.VectorSource) *Builder {
+	b.icon, b.iconColors = src, true
+	return b
+}
+
+// Untinted keeps the element's icon (set by Icon, IconUntinted or a
+// VectorSource argument such as h.Icon(logo)) in its own colours.
+func (b *Builder) Untinted() *Builder { b.iconColors = true; return b }
 
 // Draggable marks the element as a drag source, identified by key (read by
 // a drop target's OnDrop handler).
@@ -572,7 +587,11 @@ func (b *Builder) Build() reactive.Element {
 			el.SetOnDragOver(bb.onDragOver)
 			el.SetOnDragEnd(bb.onDragEnd)
 			if bb.icon != nil {
-				el.SetIcon(bb.icon)
+				if bb.iconColors {
+					el.SetIconUntinted(bb.icon)
+				} else {
+					el.SetIcon(bb.icon)
+				}
 			}
 			if bb.id != "" {
 				el.SetElementID(bb.id)
