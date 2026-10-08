@@ -340,3 +340,34 @@ func TestTooltipAtProviderFallsBackToWidgetTooltip(t *testing.T) {
 		t.Fatalf("expected the widget-level tooltip; got %+v", w.tooltipView)
 	}
 }
+
+// Google-style placement: the chip is centred under its control, 5 px
+// below it, 24 px tall, and clamped on screen near either edge.
+func TestTooltipCentredUnderControl(t *testing.T) {
+	w := &Window{lastSize: Size{W: 800, H: 600}}
+	target := newPhaseSpy("t", Rect{X: 300, Y: 70, W: 30, H: 30}, nil)
+	target.SetTooltip("Bold (⌘B)")
+	w.hoverPath = []Widget{target}
+	w.updateTooltipFromHover(310, 80)
+	b := w.tooltipView.Bounds()
+	if c := b.X + b.W/2; c < 314.5 || c > 315.5 {
+		t.Errorf("tooltip centre x = %v, want 315 (control centre)", c)
+	}
+	if b.Y != 105 {
+		t.Errorf("tooltip top = %v, want 105 (5 px under the control)", b.Y)
+	}
+	// 3 px padding above and below one text line (24 px with the 18 px
+	// line of the default 12 px face).
+	if want := w.tooltipView.lineHeight(w.tooltipView.font) + 6; b.H < want-0.5 || b.H > want+0.5 {
+		t.Errorf("tooltip height = %v, want line + 6 = %v", b.H, want)
+	}
+	// At the left edge it shifts right to stay on screen.
+	w2 := &Window{lastSize: Size{W: 800, H: 600}}
+	edge := newPhaseSpy("e", Rect{X: 0, Y: 70, W: 20, H: 30}, nil)
+	edge.SetTooltip("A long tooltip near the window edge")
+	w2.hoverPath = []Widget{edge}
+	w2.updateTooltipFromHover(5, 80)
+	if b := w2.tooltipView.Bounds(); b.X < 4 {
+		t.Errorf("tooltip ran off the left edge: x=%v", b.X)
+	}
+}
