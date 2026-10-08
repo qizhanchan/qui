@@ -34,6 +34,10 @@ type ComputedStyle struct {
 	Italic                         bool
 	FontFamily                     string
 	LineHeight                     float32 // multiplier over font size
+	// LineHeightOwn reports a line-height declared on this element itself
+	// (not inherited). Form controls use only their own: a browser's UA
+	// sheet resets theirs to normal.
+	LineHeightOwn bool
 	TextAlign                      qui.TextAlign
 	// LetterSpacing / WordSpacing (px) are CSS tracking, inherited; they flow
 	// into qui.Font so the root text engine measures + paints them.
@@ -696,11 +700,14 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	if v, ok := m["font-family"]; ok {
 		cs.FontFamily = firstFontFamily(v)
 	}
+	cs.LineHeightOwn = false
 	if v, ok := m["line-height"]; ok {
 		if lh, ok := parseFloat(strings.TrimSpace(v)); ok && !strings.ContainsAny(v, "px%rem") {
 			cs.LineHeight = lh // unitless multiplier
+			cs.LineHeightOwn = true
 		} else if px, ok := parseLength(v, fs, fs); ok && fs > 0 {
 			cs.LineHeight = px / fs
+			cs.LineHeightOwn = true
 		}
 	}
 	if v, ok := m["text-align"]; ok {

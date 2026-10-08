@@ -2178,6 +2178,15 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		e.ensureBacking()
 		if e.backing != nil {
 			applyCommon(e.backing, cs)
+			// A control's own line-height sizes its text line (padded
+			// raw-HTML fields grow to border + padding + line); an
+			// inherited one does not apply (UA: line-height normal).
+			qui.UpdateStyle(e.backing, func(st *qui.Style) {
+				st.LineHeight = 0
+				if cs.LineHeightOwn {
+					st.LineHeight = cs.LineHeight
+				}
+			})
 			applyControlColors(e.backing, cs, &e.nativeStates)
 			// The El — not the backing — is the flex item in the parent's
 			// layout, so flex-grow / width / margin must sit on the El; the
@@ -2561,6 +2570,12 @@ func (e *El) hoistControlLayout(cs *ComputedStyle) {
 	est := e.Style()
 	bst := e.backing.Style()
 	extraH, _ := cs.boxSizingExtra()
+
+	// The El is an anonymous wrapper here: the control's padding, border
+	// and height are the backing's. widgets.DefaultStyle()'s Padding
+	// {4,6,4,6} used to stay on the El, an inset CSS could not remove
+	// (a `height: 28px` toolbar <select> measured 36).
+	est.Padding = qui.Insets{}
 
 	// --- outer width: El owns it; backing fills it (clear on backing) ---
 	est.Width = 0
