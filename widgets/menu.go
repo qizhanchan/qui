@@ -1,6 +1,8 @@
 package widgets
 
 import (
+	"time"
+
 	. "github.com/qizhanchan/qui"
 )
 
@@ -747,10 +749,27 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 	// panel's own content for a Panel row).
 	rows := make([]Widget, 0, len(items))
 
+	// openSub / openSubIdx track the submenu this menu currently shows
+	// (opened by click, Right or hover) so another row can replace it.
+	var openSub *Popup
+	openSubIdx := -1
+	closeOpenSub := func() {
+		if openSub != nil {
+			sub := openSub
+			openSub, openSubIdx = nil, -1
+			sub.Close()
+		}
+	}
+	// hovered is the row under the pointer (-1: none — the pointer is in
+	// a submenu or outside); hoverGen invalidates superseded timers.
+	hovered := -1
+	hoverGen := 0
+
 	// closeChain dismisses this popup AND everything it was opened from.
 	// It walks the chain through the parent's own closeChain rather than
 	// calling parent.Close() once, which only ever unwound one level.
 	closeChain := func() {
+		closeOpenSub()
 		if popup != nil {
 			popup.Close()
 		}
@@ -783,6 +802,10 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 		}
 		onSelect := func() {
 			if it.Submenu != nil {
+				if openSub != nil && openSub.IsShown() && openSubIdx == idx {
+					return // already showing this row's submenu
+				}
+				closeOpenSub()
 				// Open submenu anchored to this row's right edge. In the
 				// Workspace layout the panel rises by its own padding so its
 				// first row lines up with the row that opened it.
@@ -800,19 +823,46 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 					}
 				}
 				sub := showMenuPopup(window, popup, closeChain, right, y, it.Submenu, subStyle)
+				if sub == nil {
+					return
+				}
+				openSub, openSubIdx = sub, idx
+				// The pointer may travel back over this menu while the
+				// submenu is up: route it to these rows (hover switches /
+				// closes the submenu, a click picks the row).
+				parentPopup := popup
+				sub.passThrough = func(pt Point) Widget {
+					if parentPopup == nil || !parentPopup.IsShown() {
+						return nil
+					}
+					if parentPopup.Bounds().Contains(pt) {
+						return parentPopup.HitTest(pt)
+					}
+					if parentPopup.passThrough != nil {
+						return parentPopup.passThrough(pt)
+					}
+					return nil
+				}
+				v, isItem := itemWidgets[idx].(*menuItemView)
 				// The opening row keeps its highlight while its submenu is up.
-				if v, ok := itemWidgets[idx].(*menuItemView); ok && sub != nil {
+				if isItem {
 					v.setSubmenuOpen(true)
-					prev := sub.OnClose
-					sub.OnClose = func() {
-						if prev != nil {
-							prev()
-						}
+				}
+				prev := sub.OnClose
+				sub.OnClose = func() {
+					if prev != nil {
+						prev()
+					}
+					if isItem {
 						v.setSubmenuOpen(false)
+					}
+					if openSub == sub {
+						openSub, openSubIdx = nil, -1
 					}
 				}
 				return
 			}
+			closeOpenSub()
 			if it.Checkable {
 				it.Checked = !it.Checked
 			}
@@ -821,11 +871,42 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 			}
 			closeChain()
 		}
+		// Google-style hover: resting on a row for menuHoverDelay opens
+		// its submenu, or closes a sibling's. Moving on to the submenu
+		// before the delay leaves hovered at -1, which keeps it open.
+		onHover := func(in bool) {
+			if !in {
+				if hovered == idx {
+					hovered = -1
+				}
+				return
+			}
+			hovered = idx
+			hoverGen++
+			gen := hoverGen
+			afterMenuHoverDelay(window, func() {
+				if gen != hoverGen || hovered != idx || popup == nil || !popup.IsShown() {
+					return
+				}
+				if openSub != nil && openSub.IsShown() && openSubIdx == idx {
+					return
+				}
+				if it.Submenu != nil && !it.Disabled {
+					onSelect() // closes any sibling submenu, opens this one
+					return
+				}
+				closeOpenSub()
+			})
+		}
 		var row Widget
 		if it.Content != nil {
-			row = newMenuContentRow(it, st, onSelect)
+			cr := newMenuContentRow(it, st, onSelect)
+			cr.onHover = onHover
+			row = cr
 		} else {
-			row = newMenuItemWidget(it, st, onSelect)
+			iv := newMenuItemWidget(it, st, onSelect)
+			iv.onHover = onHover
+			row = iv
 		}
 		itemWidgets = append(itemWidgets, row)
 		rows = append(rows, row)
@@ -855,8 +936,38 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 	}
 	list.isSub = parent != nil
 	popup = NewPopup(list)
+	// A menu that closes takes its open submenu with it (callers chain
+	// their own OnClose after this one).
+	popup.OnClose = closeOpenSub
 	list.closeSelf = popup.Close
 	return popup, list
+}
+
+// MenuHoverDelay is how long the pointer rests on a menu row before its
+// submenu opens (or a sibling's submenu closes) — Google's menus use
+// ~218 ms. Zero acts at once (tests).
+var MenuHoverDelay = 218 * time.Millisecond
+
+// afterMenuHoverDelay runs fn on the UI thread once MenuHoverDelay has
+// elapsed.
+func afterMenuHoverDelay(w *Window, fn func()) {
+	if MenuHoverDelay <= 0 || w == nil {
+		fn()
+		return
+	}
+	time.AfterFunc(MenuHoverDelay, func() { w.PostJob(fn) })
+}
+
+func notifyMenuHover(fn func(bool), e MouseEvent) {
+	if fn == nil {
+		return
+	}
+	switch e.Type() {
+	case EventMouseEnter:
+		fn(true)
+	case EventMouseLeave:
+		fn(false)
+	}
 }
 
 // newMenuItemWidget builds a list-item row for a menu entry. The
@@ -897,6 +1008,9 @@ type menuItemView struct {
 	pressed     bool
 	subOpen     bool // this row's submenu is showing
 	onSelect    func()
+	// onHover reports pointer enter (true) / leave (false) — the hover
+	// open / close of submenus. Fires for disabled rows too.
+	onHover func(in bool)
 }
 
 func (v *menuItemView) setSubmenuOpen(on bool) {
@@ -973,6 +1087,7 @@ func (v *menuItemView) Handle(event Event) bool {
 	if !ok {
 		return false
 	}
+	notifyMenuHover(v.onHover, e)
 	if !v.Enabled() {
 		return false
 	}
@@ -1233,6 +1348,7 @@ type menuContentRow struct {
 	hovering    bool
 	highlighted bool
 	onSelect    func()
+	onHover     func(in bool)
 }
 
 func newMenuContentRow(item *MenuItem, st menuStyle, onSelect func()) *menuContentRow {
@@ -1279,7 +1395,11 @@ func (r *menuContentRow) HitTest(p Point) Widget {
 
 func (r *menuContentRow) Handle(event Event) bool {
 	e, ok := event.(MouseEvent)
-	if !ok || !r.Enabled() {
+	if !ok {
+		return false
+	}
+	notifyMenuHover(r.onHover, e)
+	if !r.Enabled() {
 		return false
 	}
 	switch e.Type() {
@@ -1917,6 +2037,14 @@ func (mb *MenuBar) OpenMenu(idx int) {
 	}
 	mb.open, mb.openIdx = popup, idx
 	trigger.Invalidate()
+	MenuBarHoverSwitch(popup, func(p Point) func() {
+		for j, m := range mb.menus {
+			if j != idx && m.trigger.Enabled() && InteractionBoundsOf(m.trigger).Contains(p) {
+				return func() { mb.OpenMenu(j) }
+			}
+		}
+		return nil
+	})
 	prev := popup.OnClose
 	popup.OnClose = func() {
 		if prev != nil {
@@ -1927,6 +2055,56 @@ func (mb *MenuBar) OpenMenu(idx int) {
 		}
 		trigger.Invalidate()
 	}
+}
+
+// MenuBarHoverSwitch makes an open menu-bar dropdown follow the pointer
+// across the bar, the way desktop and Google menu bars do: while popup is
+// shown, a pointer move onto a point for which hit returns a non-nil open
+// func closes popup and runs open (which shows the other menu). hit is
+// called with window coordinates and should return nil over the trigger
+// of the menu that is already open. The watcher goes away with popup.
+func MenuBarHoverSwitch(popup *Popup, hit func(p Point) (open func())) {
+	if popup == nil || hit == nil || popup.window == nil {
+		return
+	}
+	w := popup.window
+	remove := w.AddEventFilter(func(e Event) bool {
+		me, ok := e.(MouseEvent)
+		if !ok || me.Type() != EventMouseMove || !popup.IsShown() {
+			return false
+		}
+		// Over the dropdown (or one of its submenus) the menu keeps the
+		// pointer, even where it overlaps a trigger.
+		if top := w.WidgetAt(Point{X: me.X, Y: me.Y}); top != nil && top != Widget(popup) {
+			if _, isPopup := top.(*Popup); !isPopup && overlayRootIsPopup(top) {
+				return false
+			}
+		}
+		open := hit(Point{X: me.X, Y: me.Y})
+		if open == nil {
+			return false
+		}
+		popup.Close()
+		open()
+		return false
+	})
+	prev := popup.OnClose
+	popup.OnClose = func() {
+		remove()
+		if prev != nil {
+			prev()
+		}
+	}
+}
+
+// overlayRootIsPopup reports whether w sits inside a Popup's content.
+func overlayRootIsPopup(w Widget) bool {
+	for p := w; p != nil; p = p.Parent() {
+		if _, ok := p.(*Popup); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // CloseMenu closes the open dropdown, if any.

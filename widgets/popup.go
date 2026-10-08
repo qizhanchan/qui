@@ -70,6 +70,12 @@ type Popup struct {
 
 	window       *Window
 	removeFilter func()
+
+	// passThrough, when set, resolves points OUTSIDE the popup before the
+	// catch-all outside-click capture: a submenu routes the pointer to the
+	// menus it was opened from, so hovering (or clicking) a parent row
+	// reaches that row while the submenu is still up.
+	passThrough func(Point) Widget
 }
 
 // SetResizeHandler installs a window-resize handler. When set, a window
@@ -419,6 +425,11 @@ func (p *Popup) HitTest(point Point) Widget {
 				return hit
 			}
 			return p
+		}
+	}
+	if p.passThrough != nil {
+		if hit := p.passThrough(point); hit != nil {
+			return hit
 		}
 	}
 	if p.DismissOnOutsideClick && !p.ClickThrough {
