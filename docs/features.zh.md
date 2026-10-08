@@ -62,7 +62,7 @@
 
 **主题**
 
-- 全局设计 token `Theme`：表面阶梯、文字角色、强调色、边框、语义色、高度阴影、状态不透明度、间距 / 圆角 / 字体 / 过渡比例尺。
+- 全局设计 token `Theme`：表面阶梯、文字角色、强调色、边框、语义色、高度阴影、状态不透明度、间距 / 圆角 / 字体 / 过渡比例尺，以及浮层用的 `Popup` token（菜单、select 列表、tooltip、遮罩、对话框——默认 Google Workspace / Material 3 外观）。
 - `SetTheme` 失效；实时读取 `CurrentTheme()`；供缓存使用的 `ThemeGeneration()`；可退订的 `SubscribeTheme`。用基线颜色构建的原生控件会跟随主题切换。只有一套浅色配色；深色界面用 CSS。
 - 每个窗口可配置 tooltip（`SetTooltipStyle`：颜色、字体、内边距、宽度、显示延迟、宽限期）。
 
