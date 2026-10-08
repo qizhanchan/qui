@@ -148,6 +148,10 @@ type Window struct {
 	overlayLayers map[Widget]OverlayLayer
 	// afterLayout holds AfterLayout callbacks for the next layout pass.
 	afterLayout []func()
+	// afterFrame holds work that must observe a finished frame — agent
+	// captures (see synchronouslyAfterFrame). Step runs it on the way out,
+	// after this frame's jobs, ticks, layout and paint.
+	afterFrame []func()
 	// exitingOverlays were removed from the stack but are still painting
 	// an exit animation (OverlayExiter). They take no input.
 	exitingOverlays []Widget
@@ -1591,6 +1595,7 @@ func (w *Window) Destroy() {
 	w.overlayFocusScopes = nil
 	w.overlayLayers = nil
 	w.exitingOverlays = nil
+	w.afterFrame = nil
 	if root != nil {
 		DetachWidgetTree(root)
 	}
@@ -1630,6 +1635,9 @@ func (w *Window) Step() {
 	}
 	w.inStep = true
 	defer func() {
+		// Whatever path the frame took — painted, nothing to paint, ended
+		// early — work waiting on a finished frame sees it now.
+		w.runAfterFrame()
 		w.inStep = false
 		w.noteAnimatorActivity(time.Now())
 	}()
@@ -1799,6 +1807,19 @@ func (w *Window) Step() {
 	w.present()
 	w.dirtyRegion = Rect{}
 	w.framePainted = true
+}
+
+// runAfterFrame runs the work queued for the end of this Step. Work queued
+// while it runs waits for the next Step's end.
+func (w *Window) runAfterFrame() {
+	if len(w.afterFrame) == 0 {
+		return
+	}
+	fns := w.afterFrame
+	w.afterFrame = nil
+	for _, fn := range fns {
+		fn()
+	}
 }
 
 // present hands the finished frame to the platform.

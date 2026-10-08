@@ -78,16 +78,16 @@ func (r *GLRenderer) Snapshot() *image.RGBA {
 }
 
 // Snapshot returns the latest rendered frame for this window, or nil
-// if the window's renderer is not a GLRenderer or no frame exists
-// yet. Convenience wrapper that lets callers reach the snapshot
-// without holding a renderer reference.
+// if the window's renderer keeps no frame (it has no Snapshot method, as
+// GLRenderer does) or no frame exists yet. Convenience wrapper that lets
+// callers reach the snapshot without holding a renderer reference.
 func (w *Window) Snapshot() *image.RGBA {
 	if w == nil {
 		return nil
 	}
 	w.assertUIThread("Window.Snapshot")
-	if gl, ok := w.renderer.(*GLRenderer); ok {
-		return gl.Snapshot()
+	if s, ok := w.renderer.(interface{ Snapshot() *image.RGBA }); ok {
+		return s.Snapshot()
 	}
 	return nil
 }

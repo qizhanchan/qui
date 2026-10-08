@@ -167,7 +167,7 @@ h.Button("Save").T("qui.save")                   // reactive/html DSL
 - `roles.go` —— 角色常量，以及可选的 `Roled`/`Named`/`Valued` 接口；
 - `accessibility.go` —— AX 树（浮层是平级的顶层子树）；
 - `selector.go` —— CSS 属性风格的选择器语法（`#id`、`[role=]`、`[name*=]`、`:nth`、`:visible`、`:focused`、`:layer(modal)`）；
-- `snapshot*.go` —— 缩放与带标注的 PNG；`SnapshotScaled/Region/Annotated` 通过主线程任务队列串行化，因此 agent goroutine 的截图绝不会与进行中的帧竞争（不要在活动窗口的主 goroutine 里调用它们）；
+- `snapshot*.go` —— 缩放与带标注的 PNG；`SnapshotScaled/Region/Annotated` 通过主线程任务队列串行化，因此 agent goroutine 的截图绝不会与进行中的帧竞争；并且在取出该任务的那一次 Step 结束时（该帧的任务、布局与绘制都完成之后）才读取缓冲区，所以截图不会比请求时的状态更旧（不要在活动窗口的主 goroutine 里调用它们）；
 - `actions.go` —— 按选择器定位的同步 Click/Type/Drag/…，遵守模态阻塞与滚动到可见；
 - `wait.go` —— `WaitIdle`、`WaitOverlay`；
 - `recording.go` —— 事件监听器；

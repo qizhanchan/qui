@@ -36,11 +36,15 @@ import (
 // Concurrency: the copy is serialized through the main-thread job
 // queue (same discipline as Click/Type), so a capture taken from an
 // agent HTTP handler never races a frame the rasterizer is painting.
+// The copy is taken at the END of the Step that drains that job, so the
+// capture is current: it includes jobs queued ahead of it (a
+// collaborator's edit), input dispatched since the last frame, and a
+// repaint an occluded window had not been given a frame for.
 // Consequently do NOT call this from the main goroutine of a live
 // window (animators, event handlers) — use Snapshot there.
 func (w *Window) SnapshotScaled(scale float32) *image.RGBA {
 	var img *image.RGBA
-	_ = w.synchronously(func() error {
+	_ = w.synchronouslyAfterFrame(func() error {
 		img = w.snapshotScaledInline(scale)
 		return nil
 	})
@@ -71,7 +75,7 @@ func (w *Window) snapshotScaledInline(scale float32) *image.RGBA {
 // only on a live window.
 func (w *Window) SnapshotRegion(r Rect, scale float32) *image.RGBA {
 	var img *image.RGBA
-	_ = w.synchronously(func() error {
+	_ = w.synchronouslyAfterFrame(func() error {
 		img = w.snapshotRegionInline(r, scale)
 		return nil
 	})
@@ -161,7 +165,7 @@ type AnnotateOptions struct {
 // either) — off-main-goroutine callers only on a live window.
 func (w *Window) SnapshotAnnotated(opts AnnotateOptions) *image.RGBA {
 	var img *image.RGBA
-	_ = w.synchronously(func() error {
+	_ = w.synchronouslyAfterFrame(func() error {
 		img = w.snapshotAnnotatedInline(opts)
 		return nil
 	})

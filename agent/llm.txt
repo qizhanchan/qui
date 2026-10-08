@@ -99,6 +99,9 @@ GET /screenshot?scale=0.5
    overlay widget bounds + id/role/name labels — one PNG that
    shows the UI and tells you how to address it. annotate=1 also
    honors &onlyLeaves=1, &onlyFocusable=1, &highlight=<selector>.
+   The capture is taken at the end of the next frame, after it has
+   applied queued work and repainted, so it is current even for a
+   window that is behind others or not key.
 
 GET /screenshot?region=x,y,w,h&scale=1
    Sub-region in logical coordinates; useful when you want to

@@ -167,7 +167,7 @@ Root files:
 - `roles.go` — role constants plus the optional `Roled`/`Named`/`Valued` interfaces;
 - `accessibility.go` — the AX tree (overlays are peer top-level subtrees);
 - `selector.go` — the CSS-attribute selector grammar (`#id`, `[role=]`, `[name*=]`, `:nth`, `:visible`, `:focused`, `:layer(modal)`);
-- `snapshot*.go` — scaled and annotated PNGs; `SnapshotScaled/Region/Annotated` serialize through the main-thread job queue so agent-goroutine captures never race a frame in progress (do not call them from the main goroutine of a live window);
+- `snapshot*.go` — scaled and annotated PNGs; `SnapshotScaled/Region/Annotated` serialize through the main-thread job queue so agent-goroutine captures never race a frame in progress, and read the buffer at the end of the Step that drains them — after that frame's jobs, layout and paint — so a capture is never older than the state it was requested against (do not call them from the main goroutine of a live window);
 - `actions.go` — selector-targeted synchronous Click/Type/Drag/… that respect modal blocking and scroll-into-view;
 - `wait.go` — `WaitIdle`, `WaitOverlay`;
 - `recording.go` — event listeners;

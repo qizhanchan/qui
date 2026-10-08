@@ -375,6 +375,23 @@ func (w *Window) Drag(from, to string, opts DragOptions) error {
 // present (production) or inline (test). Returns whatever fn
 // returned. Blocks up to actionTimeout in the production path.
 func (w *Window) synchronously(fn func() error) error {
+	return w.onUIThread(fn, false)
+}
+
+// synchronouslyAfterFrame is synchronously for work that reads the
+// finished frame — screenshots. Its job is queued the same way, but fn
+// runs at the end of the Step that drains it: after every job drained
+// with it (from either lane), the ticks, the layout pass and the paint.
+// Run straight from the job, a capture reads the buffer before the Step
+// paints, so it returns the frame from before a just-queued edit or
+// before input dispatched since the last frame — and, on a surface that
+// stops signalling frames while its window is occluded, from before
+// anything dirtied since the window was covered.
+func (w *Window) synchronouslyAfterFrame(fn func() error) error {
+	return w.onUIThread(fn, true)
+}
+
+func (w *Window) onUIThread(fn func() error, afterFrame bool) error {
 	if w == nil {
 		return errors.New("qui: nil window")
 	}
@@ -392,7 +409,15 @@ func (w *Window) synchronously(fn func() error) error {
 	// Synchronous framework work must not use the bounded normal lane:
 	// dropping it would strand the caller until actionTimeout. The priority
 	// lane is unbounded and reserved for exactly these continuations.
-	w.PostPriorityJob(func() { done <- fn() })
+	w.PostPriorityJob(func() {
+		run := func() { done <- fn() }
+		if afterFrame && w.inStep {
+			w.afterFrame = append(w.afterFrame, run)
+			return
+		}
+		// Not inside a frame (DrainJobsForTest): nothing to wait for.
+		run()
+	})
 	select {
 	case err := <-done:
 		return err

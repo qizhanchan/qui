@@ -137,7 +137,7 @@ func (w *Window) RequestTickAt(at time.Time) {
 // deadline while it waits on one, pumpForever when it is idle.
 func (w *Window) nextFrameWait(now time.Time) time.Duration {
 	if w.framePainted || !w.dirtyRegion.IsEmpty() ||
-		w.PendingJobs() > 0 || len(w.afterLayout) > 0 || w.overlayResizePending ||
+		w.PendingJobs() > 0 || len(w.afterLayout) > 0 || len(w.afterFrame) > 0 || w.overlayResizePending ||
 		(w.root != nil && w.root.IsLayoutDirty()) {
 		return frameInterval
 	}
