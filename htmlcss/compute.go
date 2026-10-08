@@ -1574,12 +1574,46 @@ func parseFontWeight(v string, cur qui.FontWeight) qui.FontWeight {
 	return cur
 }
 
+// firstFontFamily resolves a CSS font-family list the way a browser
+// does: the first family that is actually installed (registered with
+// qui via SetDefaultFont / LoadFontVariant*) wins, so
+// `"Google Sans", Roboto, Arial, sans-serif` lands on Roboto when only
+// Roboto is registered. A generic family keyword (sans-serif, serif,
+// system-ui, ...) that is not itself registered ends the search — it
+// means "the default face", which is what the engine falls back to
+// anyway. When nothing in the list is installed the first entry is
+// returned unchanged, so the computed value still names what the author
+// asked for (and renders with the default face).
 func firstFontFamily(v string) string {
 	parts := strings.Split(v, ",")
-	if len(parts) == 0 {
-		return ""
+	first := ""
+	for i, p := range parts {
+		name := strings.Trim(strings.TrimSpace(p), "'\"")
+		if i == 0 {
+			first = name
+		}
+		if name == "" {
+			continue
+		}
+		if qui.FontFamilyRegistered(name) {
+			return name
+		}
+		if isGenericFontFamily(name) {
+			break
+		}
 	}
-	return strings.Trim(strings.TrimSpace(parts[0]), "'\"")
+	return first
+}
+
+// isGenericFontFamily reports CSS generic family keywords.
+func isGenericFontFamily(name string) bool {
+	switch strings.ToLower(name) {
+	case "serif", "sans-serif", "monospace", "cursive", "fantasy",
+		"system-ui", "ui-sans-serif", "ui-serif", "ui-monospace", "ui-rounded",
+		"-apple-system", "blinkmacsystemfont", "math", "emoji", "fangsong":
+		return true
+	}
+	return false
 }
 
 func parseTextAlign(v string) qui.TextAlign {
