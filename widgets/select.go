@@ -992,44 +992,19 @@ func (cb *Select) toggleDropdown() {
 	}
 }
 
-// openDropdown shows the menu panel anchored below the trigger: a
-// raised container with a level-2 shadow and a small corner radius.
-// Items are 48 px tall via menuItemView (the shared menu row widget),
-// with TextBodyLarge label text and the currently-selected option
-// flagged Selected so it picks up the selected-row tint.
-//
-// Two Select-specific overrides on top of defaultMenuStyle:
-//   - leadingSpace = cbLeadingSpace (16) so dropdown text X aligns
-//     with the trigger's leading text X — visual continuity when the
-//     panel opens.
-//   - selectedBg = SurfaceStrong. A <select>'s active option reads as
-//     a slightly deeper surface tone rather than an accent-tinted row,
-//     which is what the web reference renders and what the pixel diff
-//     against it is calibrated to.
+// openDropdown shows the option list anchored below the trigger as a
+// Workspace (Material 3) menu — the same panel, rows, hover and shadow as
+// every other live menu (themedMenuStyle), with the current option marked
+// by a ✓ in the icon column (the way the Docs font / zoom dropdowns mark
+// theirs). The palette follows the current theme's popup tokens; an
+// explicit DropdownColors then overrides field-by-field.
 func (cb *Select) openDropdown() {
 	w := cb.win()
 	if w == nil || cb.isOpen {
 		return
 	}
 	cb.syncItemsFromOptions() // pick up a locale change
-	st := defaultMenuStyle()
-	// Match the trigger's actual leading inset so the dropdown text X
-	// aligns with the selected-value text X — this follows the compact
-	// (8 px) inset for a plain/HTML select and the roomier (16 px) inset once
-	// a floating Label opts the trigger into the tall geometry.
-	lead, _ := cb.horizontalPad()
-	st.leadingSpace = lead
-	st.trailingSpace = cbTrailingSpace
-	if cb.native() {
-		// Raw HTML <select> dropdown: compact option rows, not the
-		// roomier 48 px menu list-item height.
-		st.itemHeight = htmlSelMenuItemH
-	}
-	// Base the palette on the CURRENT theme so the dropdown surface +
-	// selected row track the app's palette (a retinted <select> follows
-	// SetTheme) instead of the hardcoded plain-blue default. An explicit
-	// DropdownColors then overrides field-by-field.
-	st.ApplyColors(themedMenuColors())
+	st := themedMenuStyle()
 	st.ApplyColors(cb.DropdownColors)
 
 	items := make([]*MenuItem, 0, len(cb.Items))

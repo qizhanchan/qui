@@ -30,8 +30,9 @@ import (
 //
 // `Selected` is orthogonal to `Checkable`/`Checked`: it marks the row
 // as "current value" for radio-style menus (select dropdowns, picked
-// option in a chooser). The row gets the selected-row tint but no ✓
-// glyph. Use it when one item out of N is the active choice.
+// option in a chooser). Live (Workspace-style) menus mark it with the ✓
+// in the icon column; the plain MenuPanel look tints the row instead.
+// Use it when one item out of N is the active choice.
 type MenuItem struct {
 	Label     string
 	Shortcut  string // displayed on the right (also harvested by MenuBar.AcceleratorRegistry)
@@ -1019,9 +1020,10 @@ func (v *menuItemView) Draw(canvas Canvas) {
 	selected := v.item.Selected || (v.item.Checkable && v.item.Checked)
 	showCheckGlyph := v.item.Checkable && v.item.Checked
 	if st.labelInset > 0 {
-		// Workspace menus mark a checked row with the ✓ alone; only a
-		// radio-style current value (Selected) is tinted.
-		selected = v.item.Selected
+		// Workspace menus mark both a checked row and a radio-style
+		// current value (Selected — a <select>'s option) with the ✓ alone.
+		selected = false
+		showCheckGlyph = (v.item.Checkable && v.item.Checked) || v.item.Selected
 	}
 
 	// Selected row: paint secondary-container backdrop. Otherwise the
@@ -1294,7 +1296,7 @@ func (r *menuContentRow) Handle(event Event) bool {
 
 func (r *menuContentRow) Draw(canvas Canvas) {
 	r.style.refreshColors()
-	if r.item.Selected {
+	if r.item.Selected && r.style.labelInset <= 0 {
 		canvas.FillRect(r.Bounds(), r.style.selectedBg)
 	}
 	if r.Enabled() && (r.hovering || r.highlighted) {
@@ -1305,6 +1307,11 @@ func (r *menuContentRow) Draw(canvas Canvas) {
 		}
 	}
 	r.Container.Draw(canvas)
+	if st := r.style; r.item.Selected && st.labelInset > 0 {
+		b := r.Bounds()
+		col := Rect{X: b.X + st.iconInset, Y: b.Y + (b.H-st.iconSize)/2, W: st.iconSize, H: st.iconSize}
+		drawMenuCheck(canvas, col, st.iconSize, flattenOver(st.fg, st.bg))
+	}
 }
 
 // newMenuSeparator returns a thin horizontal divider widget that does

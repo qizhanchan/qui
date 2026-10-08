@@ -28,7 +28,8 @@ type popupPalette struct {
 
 func (e *El) popupPalette() popupPalette {
 	th := qui.CurrentTheme()
-	p := popupPalette{Surface: th.SurfaceOverlay, Text: th.Text, Border: th.BorderStrong, Accent: th.Accent}
+	pt := th.ResolvedPopup()
+	p := popupPalette{Surface: pt.MenuSurface, Text: pt.MenuText, Border: th.BorderStrong, Accent: th.Accent}
 	cs := e.lastCS
 	if cs == nil {
 		return p

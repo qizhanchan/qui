@@ -299,31 +299,33 @@ func TestSelectDrawsTextInsidePadding(t *testing.T) {
 	}
 }
 
-func TestSelectDropdownTextAlignsWithTriggerText(t *testing.T) {
+// The dropdown is a Workspace (GM3) menu: option labels start at the
+// menu's 38 px label inset (the ✓ column for the current option sits to
+// their left), not under the trigger's text.
+func TestSelectDropdownUsesWorkspaceMenuInset(t *testing.T) {
 	w := NewTestWindow(Size{W: 500, H: 500})
 	cb := NewSelect(w, []string{"0.5x", "1x"}, nil)
 	cb.SelectedIdx = 1
 	cb.Layout(Rect{X: 10, Y: 20, W: 220, H: 64})
-
-	var triggerCanvas RecordingCanvas
-	cb.Draw(&triggerCanvas)
-	if len(triggerCanvas.Texts) != 1 {
-		t.Fatalf("trigger DrawText calls = %d, want 1", len(triggerCanvas.Texts))
-	}
 
 	cb.openDropdown()
 	if cb.popup == nil {
 		t.Fatal("dropdown should open")
 	}
 	content := cb.popup.Content.(*menuListView).content
-	row := content.ChildAt(0).(*menuItemView)
-	var rowCanvas RecordingCanvas
-	row.Draw(&rowCanvas)
-	if len(rowCanvas.Texts) != 1 {
-		t.Fatalf("row DrawText calls = %d, want 1", len(rowCanvas.Texts))
-	}
-	if rowCanvas.Texts[0].X != triggerCanvas.Texts[0].X {
-		t.Errorf("dropdown text X = %v, want trigger text X %v", rowCanvas.Texts[0].X, triggerCanvas.Texts[0].X)
+	for i := 0; i < 2; i++ {
+		row := content.ChildAt(i).(*menuItemView)
+		var rowCanvas RecordingCanvas
+		row.Draw(&rowCanvas)
+		if len(rowCanvas.Texts) != 1 {
+			t.Fatalf("row %d DrawText calls = %d, want 1", i, len(rowCanvas.Texts))
+		}
+		if got, want := rowCanvas.Texts[0].X, row.Bounds().X+38; got != want {
+			t.Errorf("row %d text X = %v, want %v (38 px inset)", i, got, want)
+		}
+		if got := row.Bounds().H; got != 32 {
+			t.Errorf("row %d height = %v, want 32", i, got)
+		}
 	}
 }
 
