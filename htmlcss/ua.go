@@ -11,12 +11,17 @@ import "sync"
 // joins the UA origin (tier 0), so ANY author rule overrides it whatever
 // its specificity — a bare `h2 { … }` in the app beats the shell's
 // `.q-dialog-title` — while among themselves its rules cascade normally
-// over the tag defaults. Interactive-state pseudos (:hover …) are not
-// supported here: whether state variants are computed at all is decided
-// by the author sheet.
+// over the tag defaults. Interactive-state pseudos on the subject
+// (:hover, :focus, :focus-visible, :active) work too: a node a framework
+// state rule can match gets its state variants computed even when the
+// author sheet has no state rules of its own (see frameworkStateWants).
 var frameworkCSS struct {
 	mu    sync.RWMutex
 	rules []Rule
+	// stateSels are the framework selectors gated on a subject state;
+	// hover / focus / focusVisible / active summarize them.
+	stateSels                         []Selector
+	hover, focus, focusVisible, active bool
 }
 
 // RegisterFrameworkCSS appends css to the framework stylesheet. Call it
@@ -26,7 +31,49 @@ func RegisterFrameworkCSS(css string) {
 	sheet := ParseCSS(css)
 	frameworkCSS.mu.Lock()
 	frameworkCSS.rules = append(frameworkCSS.rules, sheet.Rules...)
+	for _, rule := range sheet.Rules {
+		for _, sel := range rule.Selectors {
+			h, f, a := sel.stateGates()
+			fv := sel.usesFocusVisible()
+			if h || f || a || fv {
+				frameworkCSS.stateSels = append(frameworkCSS.stateSels, sel)
+				frameworkCSS.hover = frameworkCSS.hover || h
+				frameworkCSS.focus = frameworkCSS.focus || f
+				frameworkCSS.focusVisible = frameworkCSS.focusVisible || fv
+				frameworkCSS.active = frameworkCSS.active || a
+			}
+		}
+	}
 	frameworkCSS.mu.Unlock()
+}
+
+// frameworkStateWants reports which state variants n needs for the
+// framework's own state rules: for each state, whether some framework
+// state selector matches n in that state. Cheap — only the (few) state
+// selectors are tried — so nodes no framework state rule targets pay
+// nothing extra.
+func frameworkStateWants(n *Node) (hover, focus, focusVisible, active bool) {
+	frameworkCSS.mu.RLock()
+	defer frameworkCSS.mu.RUnlock()
+	if len(frameworkCSS.stateSels) == 0 {
+		return
+	}
+	try := func(want bool, st selectorState) bool {
+		if !want {
+			return false
+		}
+		for _, sel := range frameworkCSS.stateSels {
+			if sel.matches(n, st) {
+				return true
+			}
+		}
+		return false
+	}
+	hover = try(frameworkCSS.hover, selectorState{hover: true})
+	focus = try(frameworkCSS.focus, selectorState{focus: true})
+	focusVisible = try(frameworkCSS.focusVisible, selectorState{focus: true, focusVisible: true})
+	active = try(frameworkCSS.active, selectorState{hover: true, active: true})
+	return
 }
 
 // frameworkDecls returns the framework rules' declarations matching n,

@@ -307,20 +307,21 @@ func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedSty
 	// variant(s) too — the built widget swaps to them while the element is
 	// hovered / focused / pressed. Each variant inherits from the parent's
 	// resting style, matching how the base does.
-	if sheet.HasHover {
+	fwHover, fwFocus, fwFocusVisible, fwActive := frameworkStateWants(n)
+	if sheet.HasHover || fwHover {
 		// The subject's hover propagates to ancestor compounds in matching
 		// (hovering an element hovers its ancestors), so `.row:hover .del`
 		// also lands in .del's own Hover variant — and `.a:hover .b:hover`
 		// works when the cursor is on .b.
 		base.Hover = interpret(n, mergedDecls(n, sheet, selectorState{hover: true}), parent)
 	}
-	if sheet.HasFocus {
+	if sheet.HasFocus || fwFocus {
 		base.Focus = interpret(n, mergedDecls(n, sheet, selectorState{focus: true}), parent)
 	}
-	if sheet.HasFocusVisible {
+	if sheet.HasFocusVisible || fwFocusVisible {
 		base.FocusVisible = interpret(n, mergedDecls(n, sheet, selectorState{focus: true, focusVisible: true}), parent)
 	}
-	if sheet.HasActive {
+	if sheet.HasActive || fwActive {
 		// A pressed element is conventionally also hovered; both states
 		// propagate to ancestor compounds in matching, keeping `.btn:hover`
 		// under an `.btn:active` press and `.row:hover .btn:active` while
