@@ -257,7 +257,11 @@ func feedPathCommands(ad rasterx.Adder, cmds []PathCommand) {
 				curX, curY = endX, endY
 				break
 			}
-			cx, cy := rasterx.FindEllipseCenter(&rx, &ry, rotRad, curX, curY, endX, endY, sweep, !largeArc)
+			// rasterx's "sweep" argument has the opposite polarity to the
+			// SVG flag (oksvg passes sweep==0 too): handing it the SVG
+			// value picks the wrong of the two candidate centres, so every
+			// non-semicircle arc bulged outwards as its complement.
+			cx, cy := rasterx.FindEllipseCenter(&rx, &ry, rotRad, curX, curY, endX, endY, !sweep, !largeArc)
 			pts := []float64{rx, ry, rotDeg, float64(c.Args[3]), float64(c.Args[4]), endX, endY}
 			lx, ly := rasterx.AddArc(pts, cx, cy, curX, curY, ad)
 			curX, curY = lx, ly
