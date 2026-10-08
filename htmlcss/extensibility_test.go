@@ -176,3 +176,20 @@ type memClipboard struct{ text string }
 
 func (m *memClipboard) Get() string  { return m.text }
 func (m *memClipboard) Set(s string) { m.text = s }
+
+// A popup text color alone (for light select lists) must not reach the
+// dark tooltip chip: that drew #1f1f1f text on the #1f1f1f chip.
+func TestPopupColorAloneLeavesTooltipText(t *testing.T) {
+	win, _, _ := mountLive(t, `:root { --popup-color: #1f1f1f; }`, func(eng *StyleEngine) *El {
+		return eng.NewEl("div")
+	})
+	if st := win.TooltipStyle(); st.Text != (qui.Color{}) || st.Background != (qui.Color{}) {
+		t.Fatalf("tooltip picked up the list palette: %+v", st)
+	}
+	win2, _, _ := mountLive(t, `:root { --popup-color: #1f1f1f; --tooltip-color: #ffffff; }`, func(eng *StyleEngine) *El {
+		return eng.NewEl("div")
+	})
+	if st := win2.TooltipStyle(); st.Text != (qui.Color{R: 1, G: 1, B: 1, A: 1}) {
+		t.Fatalf("--tooltip-color ignored: %+v", st)
+	}
+}

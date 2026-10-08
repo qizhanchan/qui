@@ -135,9 +135,19 @@ func (s *StyleEngine) applyTooltipStyle() {
 			}
 		}
 	}
-	pick(&st.Background, "tooltip-background", "popup-background")
-	pick(&st.Text, "tooltip-color", "popup-color")
-	pick(&st.Border, "tooltip-border", "popup-border")
+	// --tooltip-* style the chip one by one. The --popup-* palette (menus,
+	// select lists) only carries over as a whole, when it names a surface:
+	// the default chip is dark, so borrowing just a list's text color
+	// (--popup-color: #1f1f1f) painted dark text on the dark chip.
+	popupNames := func(n string) []string {
+		if _, ok := cs.ColorVar("popup-background"); ok {
+			return []string{"tooltip-" + n, "popup-" + n}
+		}
+		return []string{"tooltip-" + n}
+	}
+	pick(&st.Background, popupNames("background")...)
+	pick(&st.Text, popupNames("color")...)
+	pick(&st.Border, popupNames("border")...)
 	// Leave an app-set tooltip style alone unless the stylesheet speaks
 	// (or spoke before and has stopped: then clear what it set).
 	if any || s.tooltipStyled {
