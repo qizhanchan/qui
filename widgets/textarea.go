@@ -52,6 +52,12 @@ type TextArea struct {
 	cursorVisible     bool  // current cursor visibility state
 	OnChange          func(text string)
 
+	// DrawOverlay, when set, paints app decoration over the text (spelling
+	// squiggles): it runs in Draw after the text and the preedit underline
+	// and before the caret, clipped to the content rect, in window
+	// coordinates. Pair it with RangeRects to locate text.
+	DrawOverlay func(canvas Canvas)
+
 	// FocusedStyle, when non-nil, replaces the resting chrome (background,
 	// border, radius, text color) while the field holds focus. Nil keeps
 	// the built-in focus look: a slightly lifted background and an accent
@@ -231,6 +237,10 @@ func (t *TextArea) Draw(canvas Canvas) {
 			textColor)
 	}
 
+	if t.DrawOverlay != nil {
+		t.DrawOverlay(canvas)
+	}
+
 	// Draw cursor whenever focused. Blink toggling happens in Tick, so
 	// this path only reads cursorVisible without side effects. While
 	// composing, ignore blink so the IME anchor stays visible.
@@ -332,32 +342,45 @@ func (t *TextArea) drawSelection(canvas Canvas, content Rect) {
 	if t.selStart < 0 || t.selStart == t.selEnd {
 		return
 	}
+	selColor := SelectionHighlight(t)
+	for _, r := range t.rangeRects(content, t.selStart, t.selEnd) {
+		canvas.FillRect(r, selColor)
+	}
+}
 
-	start := t.selStart
-	end := t.selEnd
+// RangeRects returns the boxes covering runes [start, end) of Text in
+// window coordinates, after scrolling: one box per visual line (a line of
+// mixed-direction text yields one box per visual run, as the selection
+// highlight does). Lines scrolled outside the content rect are omitted.
+// The in-flight IME preedit is ignored — offsets index Text.
+func (t *TextArea) RangeRects(start, end int) []Rect {
+	content, _, _ := t.visibleContentRect(t.Bounds())
+	return t.rangeRects(content, start, end)
+}
+
+func (t *TextArea) rangeRects(content Rect, start, end int) []Rect {
 	if start > end {
 		start, end = end, start
 	}
-
+	if start < 0 {
+		start = 0
+	}
+	if start == end {
+		return nil
+	}
 	runes := []rune(t.Text)
 	lineHeight := t.lineHeight()
 	lines := t.visualLines(runes, content.W)
-	if len(lines) == 0 {
-		return
-	}
-
-	selColor := SelectionHighlight(t)
-
+	var out []Rect
 	for i, line := range lines {
 		y := content.Y - t.scrollY + float32(i)*lineHeight
 		if y+lineHeight <= content.Y || y >= content.Y+content.H {
 			continue
 		}
-		lineSelStart := start
+		lineSelStart, lineSelEnd := start, end
 		if lineSelStart < line.start {
 			lineSelStart = line.start
 		}
-		lineSelEnd := end
 		if lineSelEnd > line.end {
 			lineSelEnd = line.end
 		}
@@ -371,12 +394,10 @@ func (t *TextArea) drawSelection(canvas Canvas, content Rect) {
 			if !t.wrapEnabled() {
 				startX -= t.scrollX
 			}
-			canvas.FillRect(
-				Rect{X: startX, Y: y, W: segment.Width, H: lineHeight},
-				selColor,
-			)
+			out = append(out, Rect{X: startX, Y: y, W: segment.Width, H: lineHeight})
 		}
 	}
+	return out
 }
 
 func (t *TextArea) drawScrollbars(canvas Canvas, content Rect, showX, showY bool) {
@@ -695,6 +716,10 @@ func (t *TextArea) handleBarDrag(e MouseEvent) {
 	}
 	t.clampScroll(content)
 }
+
+// OffsetAt returns the rune offset into Text nearest window point p (the
+// caret position a click there would place), accounting for scrolling.
+func (t *TextArea) OffsetAt(p Point) int { return t.positionFromPoint(p) }
 
 func (t *TextArea) positionFromPoint(p Point) int {
 	content, _, _ := t.visibleContentRect(t.Bounds())
