@@ -51,6 +51,7 @@ package html
 
 import (
 	"errors"
+	"strings"
 	"strconv"
 
 	"github.com/qizhanchan/qui"
@@ -949,6 +950,12 @@ type MenuItem struct {
 	// widgets, not h nodes: a menu popup is a native overlay, not part of
 	// the styled element tree.
 	Panel func(close func()) qui.Widget
+	// Icon is drawn in the menu's leading icon column, tinted with the
+	// row's text color (any qui.VectorSource — e.g. an icons glyph).
+	Icon qui.VectorSource
+	// ID is a stable identifier for the row widget (agent `#id`
+	// selectors, tests).
+	ID string
 }
 
 // toWidgetMenuItems lowers DSL menu rows to the native widget model,
@@ -969,6 +976,8 @@ func toWidgetMenuItems(items []MenuItem) []*qw.MenuItem {
 			Checked:   it.Checked,
 			Submenu:   toWidgetMenuItems(it.Submenu),
 			Panel:     it.Panel,
+			Icon:      it.Icon,
+			ID:        it.ID,
 		})
 	}
 	return mi
@@ -977,12 +986,70 @@ func toWidgetMenuItems(items []MenuItem) []*qw.MenuItem {
 // AnchorMenu pops a native menu anchored below an element — the payload
 // for a click handler on a menu-trigger button. Capture the element with
 // Builder.Ref. No-op before the element is window-attached.
+//
+// A trigger that sits directly in a menu bar — a parent element with
+// role="menubar" or class "menubar" — opens a menu-bar dropdown instead
+// (see MenuBarMenu). While the menu is open the trigger carries
+// aria-expanded="true", so CSS can style the open state:
+//
+//	.menu-btn[aria-expanded="true"] { background: #ededed; }
 func AnchorMenu(el *htmlcss.El, items []MenuItem) {
+	if inMenuBar(el) {
+		MenuBarMenu(el, items)
+		return
+	}
 	if win, ok := menuWindow(el, items); ok {
 		// Live anchor: re-read el.Bounds() on each re-place so the menu
 		// follows its trigger across a window resize (the element is a
 		// retained widget whose bounds refresh in the layout pass).
-		qw.ShowContextMenuForAnchorFunc(win, func() qui.Rect { return el.Bounds() }, toWidgetMenuItems(items))
+		markExpanded(el, qw.ShowContextMenuForAnchorFunc(win, func() qui.Rect { return el.Bounds() }, toWidgetMenuItems(items)))
+	}
+}
+
+// MenuBarMenu pops items as a menu-bar dropdown under el: flush with the
+// trigger's bottom edge, at least the theme's top-level menu width, with a
+// square top-left corner joining the open trigger (widgets.
+// ShowMenuBarDropdown). el carries aria-expanded="true" while it is open.
+func MenuBarMenu(el *htmlcss.El, items []MenuItem) {
+	if win, ok := menuWindow(el, items); ok {
+		markExpanded(el, qw.ShowMenuBarDropdown(win, func() qui.Rect { return el.Bounds() }, toWidgetMenuItems(items)))
+	}
+}
+
+// inMenuBar reports whether el's parent element is a menu bar.
+func inMenuBar(el *htmlcss.El) bool {
+	if el == nil {
+		return false
+	}
+	p, ok := el.Parent().(*htmlcss.El)
+	if !ok || p == nil {
+		return false
+	}
+	if role, _ := p.Attr("role"); role == "menubar" {
+		return true
+	}
+	class, _ := p.Attr("class")
+	for _, c := range strings.Fields(class) {
+		if c == "menubar" {
+			return true
+		}
+	}
+	return false
+}
+
+// markExpanded sets aria-expanded="true" on the trigger while popup is
+// open and removes it when the popup closes.
+func markExpanded(el *htmlcss.El, popup *qw.Popup) {
+	if el == nil || popup == nil {
+		return
+	}
+	el.SetAttr("aria-expanded", "true")
+	prev := popup.OnClose
+	popup.OnClose = func() {
+		if prev != nil {
+			prev()
+		}
+		el.RemoveAttr("aria-expanded")
 	}
 }
 

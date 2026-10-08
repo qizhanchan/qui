@@ -9,11 +9,14 @@ import (
 // clickable items. The helpers below construct those popups with
 // consistent styling, keyboard navigation, and auto-close-on-select.
 //
-// Visual defaults: a raised container with a small corner radius and a
-// level-2 shadow; 48 px rows with a body-large label; hover and pressed
-// rendered as a state layer over the row (8% / 12%); checked and
-// radio-selected rows carry a neutral tint of the row's own text color.
-// Every one of those colors is overridable through MenuColors.
+// Visual defaults (live popups) follow the Google Workspace editors'
+// Material 3 menus: a white panel with a 4 px radius and a soft
+// 0 2px 6px 2px shadow, 6 px vertical padding, 32 px rows with a 14 px
+// label starting 38 px in (an 18 px icon / check column sits 12 px from
+// the left), right-aligned 14 px medium shortcuts at 38% grey, a filled
+// submenu arrow, a 10% hover fill and 17 px separator blocks with a
+// full-width hairline. The tokens live in Theme.Popup (see PopupTokens);
+// colors are also overridable per menu through MenuColors.
 
 // MenuItem is a single clickable entry in a menu.
 //
@@ -132,23 +135,23 @@ type MenuColors struct {
 
 // Default menu typography + row height. Every menu popup (context menus,
 // menu-bar dropdowns, the sheet-list-style anchored menus, and the Select
-// dropdown) reads these, so an app makes ALL its menus compact once at
-// startup via SetMenuMetrics — mirroring how jetbrainsmono.Use() swaps
-// the global default font. Defaults are body-large (16px) labels,
-// label (14px) shortcuts, 48px rows.
+// dropdown) reads these, so an app retunes ALL its menus once at startup
+// via SetMenuMetrics — mirroring how jetbrainsmono.Use() swaps the global
+// default font. Defaults are the Workspace editors' compact menu: body
+// (14px) labels, label (14px medium) shortcuts, 32px rows.
 var (
-	menuLabelRole    = TextBodyLarge
+	menuLabelRole    = TextBody
 	menuShortcutRole = TextLabel
-	menuItemHeight   = float32(48)
+	menuItemHeight   = float32(32)
 )
 
 // SetMenuMetrics overrides the default menu typography + row height for
 // every popup created afterward. Pass itemHeight <= 0 to keep the current
 // height. Intended to be called once at startup (not per-window state, so
-// it is safe as a package-level default). Example — a compact,
-// Google-Sheets-style menu matching a 14px menu bar:
+// it is safe as a package-level default). Example — the roomier Material 3
+// list-menu look (16px labels, 48px rows):
 //
-//	widgets.SetMenuMetrics(qui.TextBody, qui.TextLabelSmall, 32)
+//	widgets.SetMenuMetrics(qui.TextBodyLarge, qui.TextLabel, 48)
 func SetMenuMetrics(labelRole, shortcutRole TextRole, itemHeight float32) {
 	menuLabelRole = labelRole
 	menuShortcutRole = shortcutRole
@@ -185,8 +188,33 @@ type menuStyle struct {
 	dividerInset  float32
 	shortcutGap   float32
 	radius        float32
-	elevation     int // Theme.Elevation index for the popup shadow; 0 = flat
+	elevation     int // Theme.Elevation index for the popup shadow; 0 = shadow (below) or flat
 	iconW         float32
+
+	// shadow is a single drop shadow painted when elevation is 0 (the
+	// Workspace menu's 0 2px 6px 2px). Zero = flat.
+	shadow ElevationSpec
+	// corners, when set, overrides radius per corner for the panel fill —
+	// a menu-bar dropdown's square top-left corner joining its trigger.
+	corners CornerRadii
+	// minWidth floors the panel width (top-level Workspace menus are 320).
+	minWidth float32
+	// labelInset > 0 switches rows to the Workspace column layout: the
+	// label always starts labelInset px in, and the check mark or icon is
+	// drawn iconSize px square, iconInset px from the row's left edge.
+	// Zero keeps the collapsing gutter/icon columns (Select, MenuPanel).
+	labelInset float32
+	iconInset  float32
+	iconSize   float32
+	// hoverColor, when it has alpha, is the hovered / highlighted row fill,
+	// painted as-is (instead of stateColor at Theme.HoverOpacity).
+	hoverColor Color
+	// sepHeight is a separator row's height (the line sits in its middle);
+	// zero = 9.
+	sepHeight float32
+	// filledArrow draws the submenu indicator as a small solid ► (the
+	// Workspace glyph) instead of a stroked chevron.
+	filledArrow bool
 
 	// navigate, set by a MenuBar, switches to the previous (-1) or next
 	// (+1) top-level menu: Left in a top-level dropdown, Right on a row
@@ -284,39 +312,74 @@ func defaultMenuStyle() menuStyle {
 	return withPlainMenuColors(st)
 }
 
-// themedMenuColors builds a menu palette from the current theme — a
-// raised surface, body text, and a hairline divider. The selected /
-// checked row is a NEUTRAL tint (the text color blended into the
-// surface) rather than an accent-derived fill: apps commonly retint the
-// accent and surface but leave secondary roles at the baseline, so an
-// accent-derived selection leaked a foreign hue into menus whose theme
-// was otherwise recolored. Read fresh at open time so a live theme swap
-// retints the next menu; shared by the context-menu popups and the
-// Select dropdown. Callers wanting a designed selection color pass
+// themedMenuColors builds a menu palette from the current theme's popup
+// tokens (Theme.Popup, resolved through Theme.ResolvedPopup) — a white
+// panel, near-black text, 38% shortcuts and a hairline divider. The
+// selected row is a NEUTRAL tint rather than an accent-derived fill: apps
+// commonly retint the accent and surface but leave secondary roles at the
+// baseline, so an accent-derived selection leaked a foreign hue into menus
+// whose theme was otherwise recolored. Read fresh at open time so a live
+// theme swap retints the next menu; shared by the context-menu popups and
+// the Select dropdown. Callers wanting a designed selection color pass
 // MenuColors through the *Styled entry points.
 func themedMenuColors() MenuColors {
-	t := CurrentTheme()
+	p := CurrentTheme().ResolvedPopup()
 	return MenuColors{
-		Background:      t.SurfaceRaised,
-		Foreground:      t.Text,
-		ForegroundMuted: t.TextMuted,
-		Divider:         t.Border,
-		SelectedBg:      LerpColor(t.SurfaceRaised, t.Text, 0.12),
-		SelectedFg:      t.Text,
-		StateLayer:      t.Text,
+		Background:      p.MenuSurface,
+		Foreground:      p.MenuText,
+		ForegroundMuted: p.MenuTextMuted,
+		Divider:         p.MenuDivider,
+		SelectedBg:      p.MenuSelected,
+		SelectedFg:      p.MenuText,
+		StateLayer:      p.MenuText,
 	}
 }
 
-// themedMenuStyle is defaultMenuStyle re-tinted from the current theme,
-// with a level-2 popup shadow — the base for every live menu popup
-// so menus, submenus, and menu-bar dropdowns follow the app's palette
-// without any per-call palette. Explicit callers layer overrides on top
-// via styledMenuStyle.
+// themedMenuStyle is the base for every live menu popup — menus,
+// submenus, context menus and menu-bar dropdowns: the Workspace menu
+// geometry (see the package comment) in the current theme's popup tokens.
+// Explicit callers layer overrides on top via styledMenuStyle.
 func themedMenuStyle() menuStyle {
 	st := defaultMenuStyle()
 	st.ApplyColors(themedMenuColors())
-	st.elevation = 2
+	p := CurrentTheme().ResolvedPopup()
+	st.leadingSpace = 12
+	st.trailingSpace = 15
+	st.shortcutGap = 24
+	st.submenuW = 24
+	st.menuPadV = 6
+	st.dividerInset = 0
+	st.sepHeight = 17
+	st.radius = p.MenuRadius
+	st.elevation = 0
+	st.shadow = p.MenuShadow
+	st.hoverColor = p.MenuHover
+	st.labelInset = 38
+	st.iconInset = 12
+	st.iconSize = 18
+	st.filledArrow = true
 	return st
+}
+
+// topLevelMenuStyle is themedMenuStyle with the top-level panel floor
+// (Theme.Popup.MenuMinWidth) — context menus and menu-bar dropdowns.
+// Submenus and anchored dropdowns keep their natural width.
+func topLevelMenuStyle() menuStyle {
+	st := themedMenuStyle()
+	st.minWidth = CurrentTheme().ResolvedPopup().MenuMinWidth
+	return st
+}
+
+// flattenOver returns c composited over an opaque bg as an opaque color.
+// Text is drawn opaque (see menuItemView.Draw): a translucent token such
+// as the 38% shortcut grey is resolved against the row surface here.
+func flattenOver(c, bg Color) Color {
+	if c.A >= 1 || bg.A <= 0 {
+		return c
+	}
+	solid := c
+	solid.A = 1
+	return LerpColor(bg, solid, c.A)
 }
 
 // MenuPanel builds the visual surface of a menu with the plain HTML
@@ -356,7 +419,7 @@ func MenuPanelStyled(items []*MenuItem, colors MenuColors, elevation int) Widget
 // outside click, Esc, or any selection. Keyboard navigation
 // (Up/Down/Enter/Left/Right) is active once the popup is shown.
 func ShowContextMenu(window *Window, x, y float32, items []*MenuItem) *Popup {
-	return showContextMenuStyled(window, x, y, items, themedMenuStyle())
+	return showContextMenuStyled(window, x, y, items, topLevelMenuStyle())
 }
 
 // ShowContextMenuStyled is ShowContextMenu with a caller palette +
@@ -364,7 +427,9 @@ func ShowContextMenu(window *Window, x, y float32, items []*MenuItem) *Popup {
 // style. Zero-A fields in colors resolve from the current theme (the
 // base themedMenuStyle); elevation <= 0 keeps the themed level-2 shadow.
 func ShowContextMenuStyled(window *Window, x, y float32, items []*MenuItem, colors MenuColors, elevation int) *Popup {
-	return showContextMenuStyled(window, x, y, items, styledMenuStyle(colors, elevation))
+	st := styledMenuStyle(colors, elevation)
+	st.minWidth = CurrentTheme().ResolvedPopup().MenuMinWidth
+	return showContextMenuStyled(window, x, y, items, st)
 }
 
 // styledMenuStyle overlays a caller palette + elevation on the themed
@@ -505,10 +570,41 @@ func showContextMenuForAnchor(window *Window, anchorFn func() Rect, items []*Men
 }
 
 func showAnchoredPopup(window *Window, popup *Popup, focus Widget, anchorFn func() Rect, size Size) *Popup {
+	return showAnchoredPopupGap(window, popup, focus, anchorFn, size, 2, false)
+}
+
+// ShowMenuBarDropdown opens items as a menu-bar dropdown under the trigger
+// whose live bounds anchorFn returns: flush against the trigger's bottom
+// edge, at least Theme.Popup.MenuMinWidth wide, with a square top-left
+// corner so panel and (open) trigger read as one shape — the Workspace
+// editors' File / Edit / … menus. It flips above, all corners round, when
+// there's no room below. Returns the popup so callers can force-close it.
+func ShowMenuBarDropdown(window *Window, anchorFn func() Rect, items []*MenuItem) *Popup {
+	return showMenuBarDropdown(window, anchorFn, items, topLevelMenuStyle())
+}
+
+func showMenuBarDropdown(window *Window, anchorFn func() Rect, items []*MenuItem, st menuStyle) *Popup {
+	if window == nil || anchorFn == nil {
+		return nil
+	}
+	if st.minWidth == 0 {
+		st.minWidth = CurrentTheme().ResolvedPopup().MenuMinWidth
+	}
+	popup, list := buildMenuPopupStyled(window, nil, nil, items, st)
+	if popup == nil {
+		return nil
+	}
+	size := list.Measure(window.Size())
+	return showAnchoredPopupGap(window, popup, list, anchorFn, size, 0, true)
+}
+
+// showAnchoredPopupGap is showAnchoredPopup with the anchor gap spelled
+// out. menuBar squares the panel's top-left corner while it hangs below
+// the anchor (see ShowMenuBarDropdown).
+func showAnchoredPopupGap(window *Window, popup *Popup, focus Widget, anchorFn func() Rect, size Size, gap float32, menuBar bool) *Popup {
 	if window == nil || popup == nil || anchorFn == nil {
 		return nil
 	}
-	const gap float32 = 2
 	lv, scrollable := focus.(*menuListView)
 
 	// place computes flip-aware geometry from the CURRENT anchor + window
@@ -541,6 +637,14 @@ func showAnchoredPopup(window *Window, popup *Popup, focus Widget, anchorFn func
 				y = anchor.Y - s.H - gap
 			}
 			x = clampMenuX(winSize.W, anchor.X, s.W)
+		}
+		if menuBar && lv != nil {
+			if y >= anchor.Y+anchor.H && x == anchor.X {
+				r := lv.style.radius
+				lv.style.corners = CornerRadii{TL: 0, TR: r, BR: r, BL: r}
+			} else {
+				lv.style.corners = CornerRadii{}
+			}
 		}
 		if firstShow {
 			popup.showAtSize(window, x, y, s)
@@ -601,6 +705,9 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 	// submenus inherit the palette but re-decide their own gutter from
 	// their own items.
 	subStyle := st
+	// A submenu is never a top-level panel: natural width, all corners round.
+	subStyle.minWidth = 0
+	subStyle.corners = CornerRadii{}
 
 	// Reserve the gutter column only when at least one item is Checkable
 	// — Selected (radio-style) items use bg tint alone, no ✓ glyph, so
@@ -621,6 +728,11 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 			st.iconW = 24
 			break
 		}
+	}
+	if st.labelInset > 0 {
+		// Workspace layout: one fixed icon / check column, label at
+		// labelInset whether or not any row has an icon.
+		st.gutterW, st.iconW = 0, 0
 	}
 
 	var popup *Popup
@@ -666,9 +778,34 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 		}
 		onSelect := func() {
 			if it.Submenu != nil {
-				// Open submenu anchored to this row's right edge.
+				// Open submenu anchored to this row's right edge. In the
+				// Workspace layout the panel rises by its own padding so its
+				// first row lines up with the row that opened it.
 				row := itemWidgets[idx].Bounds()
-				showMenuPopup(window, popup, closeChain, row.X+row.W, row.Y, it.Submenu, subStyle)
+				y := row.Y
+				if subStyle.labelInset > 0 {
+					y -= subStyle.menuPadV
+				}
+				// Open off the PANEL's right edge, not the row's: a scrolling
+				// menu's rows stop short of its scrollbar.
+				right := row.X + row.W
+				if list != nil {
+					if lb := list.Bounds(); lb.W > 0 {
+						right = lb.X + lb.W
+					}
+				}
+				sub := showMenuPopup(window, popup, closeChain, right, y, it.Submenu, subStyle)
+				// The opening row keeps its highlight while its submenu is up.
+				if v, ok := itemWidgets[idx].(*menuItemView); ok && sub != nil {
+					v.setSubmenuOpen(true)
+					prev := sub.OnClose
+					sub.OnClose = func() {
+						if prev != nil {
+							prev()
+						}
+						v.setSubmenuOpen(false)
+					}
+				}
 				return
 			}
 			if it.Checkable {
@@ -699,6 +836,11 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 	content.Style().BorderSize = 0
 	content.Style().Padding = Insets{Top: st.menuPadV, Right: 0, Bottom: st.menuPadV, Left: 0}
 	content.Style().Radius = st.radius
+	if !st.corners.IsZero() {
+		// Container paints a uniform radius only; menuListView.Draw fills
+		// the per-corner panel itself.
+		content.Style().Background = Color{}
+	}
 
 	list = newMenuListView(content, items, closeChain, st)
 	list.rows = rows
@@ -748,7 +890,15 @@ type menuItemView struct {
 	hovering    bool
 	highlighted bool // keyboard highlight
 	pressed     bool
+	subOpen     bool // this row's submenu is showing
 	onSelect    func()
+}
+
+func (v *menuItemView) setSubmenuOpen(on bool) {
+	if v.subOpen != on {
+		v.subOpen = on
+		v.Invalidate()
+	}
 }
 
 func newMenuItemView(item *MenuItem, st menuStyle, onSelect func()) *menuItemView {
@@ -783,6 +933,9 @@ func (v *menuItemView) shortcutFont() Font { return ThemeFont(v.style.shortcutRo
 func (v *menuItemView) Measure(available Size) Size {
 	labelW, _ := TextMetrics(v.item.DisplayLabel(), v.labelFont())
 	w := v.style.leadingSpace + v.style.gutterW + v.style.iconW + labelW + v.style.trailingSpace
+	if v.style.labelInset > 0 {
+		w = v.style.labelInset + labelW + v.style.trailingSpace
+	}
 	if v.item.Shortcut != "" {
 		sw, _ := TextMetrics(v.item.Shortcut, v.shortcutFont())
 		w += v.style.shortcutGap + sw
@@ -877,9 +1030,12 @@ func (v *menuItemView) Draw(canvas Canvas) {
 	// Disabled rows skip the layer entirely — menus don't focus disabled
 	// items, so there is nothing to give feedback for.
 	if v.Enabled() {
-		if v.pressed {
+		switch {
+		case st.hoverColor.A > 0 && (v.pressed || v.hovering || v.highlighted || v.subOpen):
+			canvas.FillRect(b, st.hoverColor)
+		case v.pressed:
 			DrawStateLayer(canvas, b, 0, st.stateColor, CurrentTheme().PressedOpacity)
-		} else if v.hovering || v.highlighted {
+		case v.hovering || v.highlighted || v.subOpen:
 			DrawStateLayer(canvas, b, 0, st.stateColor, CurrentTheme().HoverOpacity)
 		}
 	}
@@ -897,6 +1053,14 @@ func (v *menuItemView) Draw(canvas Canvas) {
 	shortcutColor := st.fgMuted
 	if selected {
 		shortcutColor = st.selectedFg
+	}
+	{
+		bg := st.bg
+		if selected {
+			bg = st.selectedBg
+		}
+		labelColor = flattenOver(labelColor, bg)
+		shortcutColor = flattenOver(shortcutColor, bg)
 	}
 	if !v.Enabled() {
 		// Disabled label text sits at 38% of full contrast.
@@ -917,7 +1081,17 @@ func (v *menuItemView) Draw(canvas Canvas) {
 	// Layout the row left-to-right.
 	cursor := b.X + st.leadingSpace
 
-	if st.gutterW > 0 {
+	if st.labelInset > 0 {
+		// Workspace layout: the check mark (or else the icon) in the
+		// fixed column, the label at labelInset.
+		col := Rect{X: b.X + st.iconInset, Y: b.Y + (b.H-st.iconSize)/2, W: st.iconSize, H: st.iconSize}
+		if showCheckGlyph {
+			drawMenuCheck(canvas, col, st.iconSize, labelColor)
+		} else if v.item.Icon != nil {
+			canvas.DrawVector(v.item.Icon, col, labelColor)
+		}
+		cursor = b.X + st.labelInset
+	} else if st.gutterW > 0 {
 		gutter := Rect{X: cursor, Y: b.Y, W: st.gutterW, H: b.H}
 		if showCheckGlyph {
 			iconColor := labelColor
@@ -948,8 +1122,12 @@ func (v *menuItemView) Draw(canvas Canvas) {
 		// Right-align trailing content (shortcut text first, then chevron).
 		rightCursor := b.X + b.W - st.trailingSpace
 		if v.item.Submenu != nil {
-			chev := Rect{X: rightCursor - st.submenuW, Y: b.Y, W: st.submenuW, H: b.H}
-			drawMenuChevron(canvas, chev, 18, labelColor)
+			if st.filledArrow {
+				drawMenuArrow(canvas, b.X+b.W-menuArrowInset, b.Y+b.H/2, labelColor)
+			} else {
+				chev := Rect{X: rightCursor - st.submenuW, Y: b.Y, W: st.submenuW, H: b.H}
+				drawMenuChevron(canvas, chev, 18, labelColor)
+			}
 			rightCursor -= st.submenuW
 		}
 		if v.item.Shortcut != "" {
@@ -1004,6 +1182,18 @@ func drawMenuChevron(canvas Canvas, slot Rect, size float32, color Color) {
 	}, color, 1.5)
 }
 
+// menuArrowInset is the gap between a submenu arrow's tip and the row's
+// right edge in the Workspace layout.
+const menuArrowInset float32 = 10
+
+// drawMenuArrow fills the Workspace submenu indicator: a small solid ►
+// (5 x 8) whose tip sits at (tipX, midY).
+func drawMenuArrow(canvas Canvas, tipX, midY float32, color Color) {
+	const w, h = 5, 8
+	p := NewPath().MoveTo(tipX-w, midY-h/2).LineTo(tipX, midY).LineTo(tipX-w, midY+h/2).Close()
+	canvas.DrawShape(ShapePath{Path: p}, DefaultPaint(color))
+}
+
 // newMenuPanelRow wraps MenuItem.Panel content in a menu row: the menu's
 // own vertical padding, the label column's leading inset, and nothing else.
 // A plain Container is deliberate — it implements neither menuActivatable
@@ -1041,6 +1231,9 @@ func newMenuContentRow(item *MenuItem, st menuStyle, onSelect func()) *menuConte
 	r.SetSelf(r)
 	r.SetEnabled(!item.Disabled)
 	r.Style().Padding = Insets{Left: st.leadingSpace + st.gutterW + st.iconW, Right: st.trailingSpace}
+	if st.labelInset > 0 {
+		r.Style().Padding.Left = st.labelInset
+	}
 	r.SetMinSize(menuMinWidth, st.itemHeight)
 	if item.ID != "" {
 		r.SetID(item.ID)
@@ -1100,7 +1293,11 @@ func (r *menuContentRow) Draw(canvas Canvas) {
 		canvas.FillRect(r.Bounds(), r.style.selectedBg)
 	}
 	if r.Enabled() && (r.hovering || r.highlighted) {
-		DrawStateLayer(canvas, r.Bounds(), 0, r.style.stateColor, CurrentTheme().HoverOpacity)
+		if r.style.hoverColor.A > 0 {
+			canvas.FillRect(r.Bounds(), r.style.hoverColor)
+		} else {
+			DrawStateLayer(canvas, r.Bounds(), 0, r.style.stateColor, CurrentTheme().HoverOpacity)
+		}
 	}
 	r.Container.Draw(canvas)
 }
@@ -1136,7 +1333,11 @@ func (v *menuSeparatorView) Measure(available Size) Size {
 	// space the parent flex offered (e.g. the showcase's full row),
 	// because Container's vertical-flex crossMax took max across all
 	// children including this one.
-	return Size{W: menuMinWidth, H: 9} // 4 px gap + 1 px line + 4 px gap
+	h := v.style.sepHeight
+	if h <= 0 {
+		h = 9 // 4 px gap + 1 px line + 4 px gap
+	}
+	return Size{W: menuMinWidth, H: h}
 }
 
 func (v *menuSeparatorView) Draw(canvas Canvas) {
@@ -1146,7 +1347,7 @@ func (v *menuSeparatorView) Draw(canvas Canvas) {
 	v.style.refreshColors()
 	line := Rect{
 		X: b.X + v.style.dividerInset,
-		Y: b.Y + (b.H-1)/2,
+		Y: b.Y + float32(int((b.H-1)/2)),
 		W: b.W - 2*v.style.dividerInset,
 		H: 1,
 	}
@@ -1298,6 +1499,9 @@ func (lv *menuListView) Measure(available Size) Size {
 	// below the trigger, not the whole window — see placeMenuY). When the list
 	// is taller than the budget it wraps in a ScrollView capped to it.
 	nat := lv.content.Measure(Size{W: available.W, H: 1 << 20})
+	if nat.W < lv.style.minWidth {
+		nat.W = lv.style.minWidth
+	}
 	if available.H > 0 && nat.H > available.H {
 		if lv.scroll == nil {
 			lv.scroll = NewScrollView()
@@ -1359,12 +1563,21 @@ func (lv *menuListView) Draw(canvas Canvas) {
 	}
 	if lv.style.elevation > 0 {
 		DrawElevation(canvas, lv.Bounds(), lv.style.radius, lv.style.elevation)
+	} else if lv.style.shadow != (ElevationSpec{}) {
+		canvas.DrawShadow(lv.Bounds(), lv.style.radius, lv.style.shadow, CurrentTheme().Shadow)
 	}
 	lv.content.Style().Background = lv.style.bg
+	if c := lv.style.corners; !c.IsZero() {
+		// Per-corner panel (a menu-bar dropdown's square top-left): fill
+		// it here, and let the content paint transparent over it.
+		p := NewPath().AddRRectCorners(lv.Bounds(), c.TL, c.TR, c.BR, c.BL)
+		canvas.DrawShape(ShapePath{Path: p}, DefaultPaint(lv.style.bg))
+		lv.content.Style().Background = Color{}
+	}
 	if lv.scroll != nil {
 		// The ScrollView clips + scrolls the content; give its viewport the
 		// same surface color so the menu reads as one panel.
-		lv.scroll.Style().Background = lv.style.bg
+		lv.scroll.Style().Background = lv.content.Style().Background
 		lv.scroll.Draw(canvas)
 		return
 	}
@@ -1555,7 +1768,7 @@ func NewMenuBar(window *Window) *MenuBar {
 	mb.SetSelf(mb)
 	mb.Style().Background = Color{R: 0.95, G: 0.95, B: 0.95, A: 1}
 	mb.Style().Foreground = Color{R: 0.10, G: 0.10, B: 0.10, A: 1}
-	mb.Style().Padding = Insets{Top: 2, Right: 4, Bottom: 2, Left: 4}
+	mb.Style().Padding = Insets{Top: 4, Right: 4, Bottom: 4, Left: 4}
 	return mb
 }
 
@@ -1589,7 +1802,7 @@ func (mb *MenuBar) AddMenuKey(key, label string, items []*MenuItem) {
 	if key != "" {
 		entry.trigger.SetTextKey(key)
 	}
-	mb.styleTrigger(entry.trigger)
+	mb.styleTrigger(entry.trigger, false)
 	mb.menus = append(mb.menus, entry)
 	mb.AddChild(entry.trigger)
 	mb.rebindAccelerators()
@@ -1623,23 +1836,38 @@ func (mb *MenuBar) SetMenuItems(i int, items []*MenuItem) {
 	}
 }
 
-// styleTrigger applies TriggerStyle, or the flat look derived from the
-// bar's style.
-func (mb *MenuBar) styleTrigger(b *Button) {
+// styleTrigger applies TriggerStyle, or the flat Workspace menubar look
+// derived from the bar's style: 14px captions with 2/7 px padding and a
+// 4 px radius, flat on the bar, filled Theme.Popup.MenuBarHover while
+// hovered or while its dropdown is open.
+func (mb *MenuBar) styleTrigger(b *Button, open bool) {
 	if mb.TriggerStyle.Base.Foreground.A > 0 {
 		b.States = mb.TriggerStyle
 		return
 	}
-	b.States.Base.BorderSize = 0
-	b.States.Base.Radius = 2
-	b.States.Base.Padding = Insets{Top: 4, Right: 10, Bottom: 4, Left: 10}
-	b.States.Base.Background = themed(mb.Style().Background)
-	b.States.Base.Foreground = themed(mb.Style().Foreground)
+	p := CurrentTheme().ResolvedPopup()
+	base := b.States.Base
+	base.BorderSize = 0
+	base.Radius = p.MenuRadius
+	base.Padding = Insets{Top: 2, Right: 7, Bottom: 2, Left: 7}
+	base.Font.Size = CurrentTheme().FontBase
+	base.Background = themed(mb.Style().Background)
+	base.Foreground = themed(mb.Style().Foreground)
+	hover := base
+	hover.Background = p.MenuBarHover
+	if open {
+		base = hover
+	}
+	pressed := hover
+	b.States.Base = base
+	b.States.Hover = &hover
+	b.States.Pressed = &pressed
+	b.States.Focused = nil
 }
 
 func (mb *MenuBar) Draw(canvas Canvas) {
-	for _, m := range mb.menus {
-		mb.styleTrigger(m.trigger)
+	for i, m := range mb.menus {
+		mb.styleTrigger(m.trigger, mb.open != nil && mb.openIdx == i)
 	}
 	// The constructor's plain bar colors follow SetTheme (see themed);
 	// colors the app set pass through. Swapped in for this draw only so
@@ -1659,19 +1887,20 @@ func (mb *MenuBar) OpenMenu(idx int) {
 	}
 	mb.CloseMenu()
 	entry := mb.menus[idx]
-	st := themedMenuStyle()
+	st := topLevelMenuStyle()
 	st.ApplyColors(mb.DropdownColors)
 	if mb.DropdownElevation > 0 {
 		st.elevation = mb.DropdownElevation
 	}
 	n := len(mb.menus)
 	st.navigate = func(dir int) { mb.OpenMenu((idx + dir + n) % n) }
-	anchor := InteractionBoundsOf(entry.trigger)
-	popup := showContextMenuStyled(w, anchor.X, anchor.Y+anchor.H+2, entry.Items, st)
+	trigger := entry.trigger
+	popup := showMenuBarDropdown(w, func() Rect { return InteractionBoundsOf(trigger) }, entry.Items, st)
 	if popup == nil {
 		return
 	}
 	mb.open, mb.openIdx = popup, idx
+	trigger.Invalidate()
 	prev := popup.OnClose
 	popup.OnClose = func() {
 		if prev != nil {
@@ -1680,6 +1909,7 @@ func (mb *MenuBar) OpenMenu(idx int) {
 		if mb.open == popup {
 			mb.open, mb.openIdx = nil, -1
 		}
+		trigger.Invalidate()
 	}
 }
 
