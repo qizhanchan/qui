@@ -79,6 +79,9 @@ type shapingFontmap []*gtfont.Face
 
 func (m shapingFontmap) ResolveFace(r rune) *gtfont.Face {
 	for _, face := range m {
+		if shapingFallbackSkipsRune(face.Font, r) {
+			continue
+		}
 		if _, ok := face.NominalGlyph(r); ok {
 			return face
 		}
@@ -591,6 +594,9 @@ func shapingFaceLocked(source *opentype.Font, spec Font) (*gtfont.Face, bool) {
 		parsed = faces[0].Font
 		textShapingState.fonts[source] = parsed
 		textShapingState.sources[parsed] = source
+	}
+	if source == uiSymbolFallback.Load() {
+		uiSymbolShapingFont.Store(parsed)
 	}
 	face := gtfont.NewFace(parsed)
 	face.SetPpem(ppem, ppem)

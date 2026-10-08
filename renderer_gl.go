@@ -988,6 +988,10 @@ func GetFontFacesFor(spec Font) []font.Face {
 		if err != nil {
 			return
 		}
+		if parsed == uiSymbolFallback.Load() {
+			chain = append(chain, uiSymbolFace{fallback})
+			return
+		}
 		chain = append(chain, fallback)
 	}
 	for _, parsed := range fontFallbacks {
@@ -1019,6 +1023,14 @@ func populateAutoFallbacksUnlocked() {
 		return
 	}
 	autoFallbacksInit = true
+	// Keyboard symbols (⌘ ⇧ ⌥ ...) from the platform UI face, ahead of the
+	// general symbol font whose versions are drawn on a smaller em. Only
+	// consulted for those runes — see font_uisymbols.go.
+	if f, src := probeUISymbolFontUnlocked(); f != nil {
+		autoFallbacks = append(autoFallbacks, f)
+		autoFallbackSources = append(autoFallbackSources, src)
+		uiSymbolFallback.Store(f)
+	}
 	if f, src := probeSymbolFontUnlocked(); f != nil {
 		autoFallbacks = append(autoFallbacks, f)
 		autoFallbackSources = append(autoFallbackSources, src)
@@ -1105,6 +1117,8 @@ func clearAutoFallbacksUnlocked() {
 	autoFallbacks = nil
 	autoFallbackSources = nil
 	autoFallbacksInit = false
+	uiSymbolFallback.Store(nil)
+	uiSymbolShapingFont.Store(nil)
 	clearFontFaceCachesUnlocked()
 }
 

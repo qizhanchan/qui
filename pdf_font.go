@@ -169,6 +169,9 @@ func fontChainForSpec(spec Font) []*opentype.Font {
 // font covers r, it returns the primary font with GID 0 (notdef).
 func resolveRune(chain []*opentype.Font, r rune, buf *sfnt.Buffer) (*opentype.Font, sfnt.GlyphIndex, int) {
 	for _, f := range chain {
+		if fallbackSkipsRune(f, r) {
+			continue
+		}
 		gid, err := f.GlyphIndex(buf, r)
 		if err != nil || gid == 0 {
 			continue
