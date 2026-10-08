@@ -4172,6 +4172,19 @@ func (e *El) pressFromKeyboard(mods qui.Modifiers) bool {
 	return acted
 }
 
+// Click runs the element's click behavior as if it had been clicked —
+// the author OnClick handlers, then the built-in control behavior — and
+// reports whether anything acted. A disabled element does nothing.
+func (e *El) Click() bool {
+	if e == nil {
+		return false
+	}
+	if _, disabled := e.attrs["disabled"]; disabled {
+		return false
+	}
+	return e.pressFromKeyboard(0)
+}
+
 // runBuiltinClick performs the built-in click behavior of a form control —
 // opening the color palette, opening the file dialog, or submitting/resetting
 // the enclosing form — and reports whether it acted. It is invoked DIRECTLY

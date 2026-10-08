@@ -1010,10 +1010,47 @@ func AnchorMenu(el *htmlcss.El, items []MenuItem) {
 // trigger's bottom edge, at least the theme's top-level menu width, with a
 // square top-left corner joining the open trigger (widgets.
 // ShowMenuBarDropdown). el carries aria-expanded="true" while it is open.
+//
+// While it is open, moving the pointer onto another trigger in the same
+// menu bar (a sibling element of el) switches to that trigger's menu by
+// clicking it, so a bar of h.Button triggers whose OnClick calls
+// AnchorMenu slides between menus like a native menu bar.
 func MenuBarMenu(el *htmlcss.El, items []MenuItem) {
 	if win, ok := menuWindow(el, items); ok {
-		markExpanded(el, qw.ShowMenuBarDropdown(win, func() qui.Rect { return el.Bounds() }, toWidgetMenuItems(items)))
+		popup := qw.ShowMenuBarDropdown(win, func() qui.Rect { return el.Bounds() }, toWidgetMenuItems(items))
+		markExpanded(el, popup)
+		qw.MenuBarHoverSwitch(popup, func(p qui.Point) func() {
+			if s := menuBarSiblingAt(el, p); s != nil {
+				return func() { s.Click() }
+			}
+			return nil
+		})
 	}
+}
+
+// menuBarSiblingAt returns the menu-bar trigger (a sibling element of el,
+// not el itself) under p, if any.
+func menuBarSiblingAt(el *htmlcss.El, p qui.Point) *htmlcss.El {
+	bar, ok := el.Parent().(*htmlcss.El)
+	if !ok || bar == nil {
+		return nil
+	}
+	for _, c := range bar.ChildList() {
+		s, ok := c.(*htmlcss.El)
+		if !ok || s == el || !s.Bounds().Contains(p) {
+			continue
+		}
+		if s.Tag() != "button" {
+			if role, _ := s.Attr("role"); role != "menuitem" && role != "button" {
+				continue
+			}
+		}
+		if _, disabled := s.Attr("disabled"); disabled {
+			continue
+		}
+		return s
+	}
+	return nil
 }
 
 // inMenuBar reports whether el's parent element is a menu bar.
