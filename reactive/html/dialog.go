@@ -11,7 +11,7 @@ import (
 // absorbed — the portal is modal either way).
 type ModalOptions struct {
 	// Backdrop is the scrim painted behind the content. Zero = the
-	// default translucent black; NoBackdrop paints none.
+	// theme's Popup.Scrim (32% black); NoBackdrop paints none.
 	Backdrop   qui.Color
 	NoBackdrop bool
 
@@ -29,7 +29,9 @@ type ModalOptions struct {
 	Label string
 }
 
-var defaultScrim = qui.Color{R: 0, G: 0, B: 0, A: 0.4}
+// defaultScrim is the backdrop when ModalOptions.Backdrop is zero: the
+// theme's Popup.Scrim (32% black on the light theme), read at call time.
+func defaultScrim() qui.Color { return qui.CurrentTheme().ResolvedPopup().Scrim }
 
 // ModalPortalWith is ModalPortal with every knob exposed: the scrim, and
 // which of backdrop click / Escape / Enter do what.
@@ -42,7 +44,7 @@ var defaultScrim = qui.Color{R: 0, G: 0, B: 0, A: 0.4}
 func ModalPortalWith(opts ModalOptions, child Node) Node {
 	backdrop := opts.Backdrop
 	if backdrop == (qui.Color{}) {
-		backdrop = defaultScrim
+		backdrop = defaultScrim()
 	}
 	if opts.NoBackdrop {
 		backdrop = qui.Color{}
@@ -99,10 +101,12 @@ type DialogProps struct {
 //	  div.q-dialog-body
 //	  footer.q-dialog-actions
 //
-// The built-in look comes from framework-origin CSS: any author rule
-// beats it, whatever its specificity, and the custom properties
-// --q-dialog-bg / --q-dialog-fg / --q-dialog-radius / --q-dialog-shadow
-// theme it without restating the rules. Render it conditionally:
+// The built-in look is the Google Workspace (Material 3) dialog (see
+// dialogCSS), from framework-origin CSS: any author rule beats it,
+// whatever its specificity, and the custom properties --q-dialog-bg /
+// --q-dialog-fg / --q-dialog-radius / --q-dialog-shadow / --q-dialog-accent
+// theme it without restating the rules. The LAST action is drawn as the
+// filled default button. Render it conditionally:
 //
 //	if open {
 //		dlg = h.Dialog(h.DialogProps{
@@ -172,26 +176,77 @@ func Dialog(p DialogProps) Node {
 }
 
 // dialogCSS is the Dialog shell's built-in look (framework origin — see
-// htmlcss.RegisterFrameworkCSS).
+// htmlcss.RegisterFrameworkCSS): the Google Workspace (Material 3) dialog —
+// a white 28px-radius box with no shadow over a 32% scrim, a 24/32 title,
+// 40px pill actions (text buttons in the accent, the LAST action a filled
+// accent button — the default action by convention: Cancel, OK) and
+// outlined 4px fields with a 2px accent focus border. Custom properties
+// re-theme it without restating rules: --q-dialog-bg, --q-dialog-fg,
+// --q-dialog-radius, --q-dialog-shadow, --q-dialog-accent (button / focus
+// / checkbox colour) and --q-dialog-on-accent (filled button label).
+// Give an action the class q-dialog-text-button to keep it a text button
+// even when it is last.
 const dialogCSS = `
 .q-dialog {
 	display: flex; flex-direction: column;
 	min-width: 280px; max-width: 560px;
 	background: var(--q-dialog-bg, #ffffff);
-	color: var(--q-dialog-fg, #1a1a1a);
-	border-radius: var(--q-dialog-radius, 8px);
-	box-shadow: var(--q-dialog-shadow, 0 8px 28px rgba(0,0,0,0.28));
+	color: var(--q-dialog-fg, #1f1f1f);
+	border-radius: var(--q-dialog-radius, 28px);
+	box-shadow: var(--q-dialog-shadow, none);
+	accent-color: var(--q-dialog-accent, #0b57d0);
+	font-size: 14px;
 }
 .q-dialog-header {
 	display: flex; flex-direction: row; align-items: center; gap: 8px;
-	padding: 20px 24px 0 24px;
+	padding: 24px 24px 0 24px;
 }
-.q-dialog-title { flex: 1; margin: 0; font-size: 20px; font-weight: bold; }
-.q-dialog-close { padding: 0 8px; font-size: 22px; }
+.q-dialog-title {
+	flex: 1; margin: 0;
+	font-size: 24px; line-height: 32px; font-weight: normal;
+}
+.q-dialog-close {
+	width: 32px; height: 32px; padding: 0;
+	border: none; border-radius: 16px; background: transparent;
+	color: #444746; font-size: 22px;
+}
+.q-dialog-close:hover { background: rgba(68,71,70,0.08); }
+.q-dialog-close:active { background: rgba(68,71,70,0.12); }
 .q-dialog-body { padding: 16px 24px; }
 .q-dialog-actions {
-	display: flex; flex-direction: row; justify-content: flex-end; gap: 8px;
-	padding: 8px 24px 20px 24px;
+	display: flex; flex-direction: row; justify-content: flex-end; align-items: center; gap: 8px;
+	padding: 8px 24px 24px 24px;
+}
+.q-dialog-actions button {
+	height: 40px; padding: 0 12px;
+	border: none; border-radius: 20px; background: transparent;
+	color: var(--q-dialog-accent, #0b57d0);
+	font-size: 14px; font-weight: 500;
+}
+.q-dialog-actions button:hover { background: rgba(11,87,208,0.08); }
+.q-dialog-actions button:active { background: rgba(11,87,208,0.12); }
+.q-dialog-actions button:disabled { background: transparent; color: rgba(31,31,31,0.38); }
+.q-dialog-actions button:last-child {
+	padding: 0 24px;
+	background: var(--q-dialog-accent, #0b57d0);
+	color: var(--q-dialog-on-accent, #ffffff);
+}
+.q-dialog-actions button:last-child:hover { background: #1e64d4; }
+.q-dialog-actions button:last-child:active { background: #286bd6; }
+.q-dialog-actions button:last-child:disabled { background: rgba(31,31,31,0.12); color: rgba(31,31,31,0.38); }
+.q-dialog-actions button.q-dialog-text-button { padding: 0 12px; background: transparent; color: var(--q-dialog-accent, #0b57d0); }
+.q-dialog-actions button.q-dialog-text-button:hover { background: rgba(11,87,208,0.08); }
+.q-dialog-body input:not([type=checkbox]):not([type=radio]),
+.q-dialog-body select,
+.q-dialog-body textarea {
+	border: 1px solid #747775; border-radius: 4px;
+	background: #ffffff; color: #1f1f1f;
+	font-size: 14px;
+}
+.q-dialog-body input:focus,
+.q-dialog-body select:focus,
+.q-dialog-body textarea:focus {
+	border-color: var(--q-dialog-accent, #0b57d0); border-width: 2px;
 }
 `
 

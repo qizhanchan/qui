@@ -65,9 +65,10 @@ func TestDialogShellStructureRoleAndCSS(t *testing.T) {
 	if got := box.Style().Background; got != (qui.Color{A: 1}) {
 		t.Errorf("author div background did not override framework CSS: %+v", got)
 	}
-	// The framework look applies where the author is silent.
-	if got := box.Style().Radius; got != 8 {
-		t.Errorf("framework radius = %v, want 8", got)
+	// The framework look (the Workspace / GM3 28px box) applies where the
+	// author is silent.
+	if got := box.Style().Radius; got != 28 {
+		t.Errorf("framework radius = %v, want 28", got)
 	}
 }
 
