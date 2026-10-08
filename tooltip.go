@@ -6,9 +6,11 @@ import (
 )
 
 // TooltipStyle configures a window's built-in hover tooltip. Zero fields
-// keep the default: theme colors, the default font, 5/8px padding, a 4px
-// radius, a 360px wrap width, a 6px gap, no show delay and a 250ms grace
-// period. Set it with Window.SetTooltipStyle — per window, so a dark
+// keep the default: the theme's tooltip chip (Theme.Popup.TooltipSurface /
+// TooltipText, no border — a dark Workspace-style chip on the light
+// theme), the default font at the theme's small size (12px), 4/8px
+// padding, a 4px radius, a 360px wrap width, a 6px gap, no show delay and
+// a 250ms grace period. Set it with Window.SetTooltipStyle — per window, so a dark
 // stylesheet can give its tooltips dark chrome.
 type TooltipStyle struct {
 	Padding  Insets
@@ -17,7 +19,7 @@ type TooltipStyle struct {
 	MaxWidth float32
 	Gap      float32
 	// Background, Text and Border override the theme tokens
-	// (SurfaceOverlay, Text, BorderStrong) when non-zero.
+	// (Theme.Popup.TooltipSurface / TooltipText; no border) when non-zero.
 	Background, Text, Border Color
 	// Delay is how long the pointer must rest on a widget before its
 	// tooltip shows. Moving from one tooltipped widget to the next while a
@@ -154,7 +156,10 @@ func newTooltipView(text string, st TooltipStyle) *tooltipView {
 		selStart:   -1,
 	}
 	// Colors are theme-driven (see colors()); only geometry lives in style.
-	t.style.Padding = Insets{Top: 5, Right: 8, Bottom: 5, Left: 8}
+	if small := CurrentTheme().FontSmall; small > 0 {
+		t.font.Size = small
+	}
+	t.style.Padding = Insets{Top: 4, Right: 8, Bottom: 4, Left: 8}
 	t.style.Radius = 4
 	if st.Padding != (Insets{}) {
 		t.style.Padding = st.Padding
@@ -169,18 +174,18 @@ func newTooltipView(text string, st TooltipStyle) *tooltipView {
 }
 
 // colors resolves the tooltip's background / text / border from the
-// current theme: the lightest surface in the ladder with a gray outline,
-// which is what a tooltip chip looks like on qui's light baseline.
+// current theme's popup tokens: a borderless dark chip with light text on
+// the light baseline (Theme.Popup.TooltipSurface / TooltipText). A zero
+// border means none.
 //
 // qui ships a light scheme only — a dark UI is an app concern expressed
 // in CSS on the htmlcss layer, not a second global theme (see theme.go).
 // So this reads tokens straight through instead of branching on the
 // surface's luminance; retinting the theme retints the tooltip with it.
 func (t *tooltipView) colors() (bg, fg, border Color) {
-	th := CurrentTheme()
-	fg = th.Text
-	bg = th.SurfaceOverlay
-	border = th.BorderStrong
+	p := CurrentTheme().ResolvedPopup()
+	fg = p.TooltipText
+	bg = p.TooltipSurface
 	if o := t.override; o.Background != (Color{}) {
 		bg = o.Background
 	}
@@ -243,6 +248,9 @@ func (t *tooltipView) Measure(Size) Size {
 func (t *tooltipView) Draw(canvas Canvas) {
 	font, padding, radius := t.scaled()
 	bg, fg, border := t.colors()
+	// Recorded so SelectionHighlight sees the chip's real surface and
+	// picks a light selection over the dark default chip.
+	t.style.Background = bg
 	rect := t.Bounds()
 	if radius > 0 {
 		canvas.FillRoundedRect(rect, radius, bg)
@@ -252,7 +260,7 @@ func (t *tooltipView) Draw(canvas Canvas) {
 	// 1 px border, inset by half its width so the stroke stays
 	// fully inside the tooltip bounds rather than bleeding half outside.
 	bw := float32(1)
-	if bw > 0 {
+	if border.A > 0 {
 		h := bw / 2
 		canvas.StrokeRoundedRect(rect.Inset(Insets{Top: h, Right: h, Bottom: h, Left: h}), radius, border, bw)
 	}
