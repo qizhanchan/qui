@@ -243,6 +243,11 @@ const dialogCSS = `
 	background: #ffffff; color: #1f1f1f;
 	font-size: 14px;
 }
+.q-dialog-body input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=range]),
+.q-dialog-body select {
+	padding: 7px 15px;
+	font-size: 16px; line-height: 24px;
+}
 .q-dialog-body input:focus,
 .q-dialog-body select:focus,
 .q-dialog-body textarea:focus {
