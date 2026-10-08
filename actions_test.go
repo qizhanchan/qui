@@ -586,3 +586,24 @@ func TestClickAtWith_CarriesModifiers(t *testing.T) {
 		t.Errorf("mods = %v after a plain ClickAt, want none", target.mods)
 	}
 }
+
+// HoverAt moves the pointer to a raw point even while a dismiss-on-outside
+// popup covers the window — the way a user slides from one open menu-bar
+// menu onto the next trigger.
+func TestHoverAt_SwitchesMenuBarMenuUnderPopup(t *testing.T) {
+	w := qui.NewTestWindow(qui.Size{W: 600, H: 400})
+	mb := widgets.NewMenuBar(w)
+	mb.AddMenu("File", []*widgets.MenuItem{{Label: "New"}})
+	mb.AddMenu("Edit", []*widgets.MenuItem{{Label: "Copy"}})
+	w.SetRoot(mb)
+	mb.Layout(qui.Rect{W: 600, H: 30})
+	mb.Trigger(0).Layout(qui.Rect{X: 0, Y: 0, W: 60, H: 26})
+	mb.Trigger(1).Layout(qui.Rect{X: 60, Y: 0, W: 60, H: 26})
+	mb.OpenMenu(0)
+	if err := w.HoverAt(90, 13, qui.ClickOptions{}); err != nil {
+		t.Fatalf("HoverAt: %v", err)
+	}
+	if mb.OpenIndex() != 1 {
+		t.Fatalf("open menu = %d after hovering Edit, want 1", mb.OpenIndex())
+	}
+}

@@ -246,6 +246,18 @@ func (w *Window) ClickAtWith(x, y float32, opts ClickOptions) error {
 	})
 }
 
+// HoverAt moves the pointer to the raw window point (x, y) without
+// resolving a selector or checking reachability — the hover counterpart
+// of ClickAt. It drives pointer-follow behaviour that a selector hover
+// refuses as "blocked by a popup": an open menu-bar dropdown switching
+// to the trigger under the pointer, a submenu opening on hover.
+func (w *Window) HoverAt(x, y float32, opts ClickOptions) error {
+	return w.synchronously(func() error {
+		w.dispatchHoverAt(Point{X: x, Y: y}, opts.Modifiers)
+		return nil
+	})
+}
+
 // DragAt synthesizes a left-button drag between two raw window points:
 // MouseDown at (x0,y0), steps interpolated MouseMove events, MouseUp at
 // (x1,y1). The point-based counterpart to ClickAt, for drag handles that

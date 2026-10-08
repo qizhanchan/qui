@@ -137,6 +137,13 @@ POST /act     Content-Type: application/json
                                          //   "modifiers" apply here too
                                          //   (Cmd+click a link drawn
                                          //   inside a canvas)
+                                         //   Same for action=hover:
+                                         //   moves the pointer to the
+                                         //   raw point (no popup
+                                         //   reachability check), e.g.
+                                         //   onto another menu-bar
+                                         //   trigger while a menu is
+                                         //   open.
      "x2": 0, "y2": 0,                   // with action=drag and no
                                          //   from/to, drags (x,y) ->
                                          //   (x2,y2) in raw window

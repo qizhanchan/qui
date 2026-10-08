@@ -386,7 +386,11 @@ func (s *Server) handleAct(w http.ResponseWriter, r *http.Request) {
 	case "rightclick":
 		actErr = s.window.RightClick(req.Target, qui.ClickOptions{Modifiers: mods, ScrollIntoView: siv})
 	case "hover":
-		actErr = s.window.Hover(req.Target, qui.ClickOptions{Modifiers: mods, ScrollIntoView: siv})
+		if req.Target == "" && req.X != nil && req.Y != nil {
+			actErr = s.window.HoverAt(*req.X, *req.Y, qui.ClickOptions{Modifiers: mods})
+		} else {
+			actErr = s.window.Hover(req.Target, qui.ClickOptions{Modifiers: mods, ScrollIntoView: siv})
+		}
 	case "focus":
 		actErr = s.window.Focus(req.Target)
 	case "blur":
@@ -465,7 +469,7 @@ func requireTarget(action, target string, hasPoint bool) error {
 		return nil
 	case "drag":
 		return nil // uses from / to, validated by the action layer
-	case "click":
+	case "click", "hover":
 		if hasPoint {
 			return nil
 		}
