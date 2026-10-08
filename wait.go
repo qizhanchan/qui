@@ -23,9 +23,13 @@ type IdleState struct {
 	DirtyRegion     Rect `json:"dirtyRegion"`
 	LayoutDirty     bool `json:"layoutDirty"`
 	ActiveAnimators int  `json:"activeAnimators"`
-	ActiveTickables int  `json:"activeTickables"`
-	PendingJobs     int  `json:"pendingJobs"`
-	OverlayCount    int  `json:"overlayCount"`
+	// QuietAnimators are registered animators that have not painted a
+	// frame for a while (see idle.go). They are excluded from
+	// ActiveAnimators and do not block IsIdle.
+	QuietAnimators  int `json:"quietAnimators"`
+	ActiveTickables int `json:"activeTickables"`
+	PendingJobs     int `json:"pendingJobs"`
+	OverlayCount    int `json:"overlayCount"`
 }
 
 // IsIdle reports whether all repaint-driving signals are zero.
@@ -65,10 +69,15 @@ func (w *Window) IdleState() IdleState {
 	if w.root != nil {
 		layoutDirty = w.root.IsLayoutDirty()
 	}
+	active, quiet := len(w.animators), 0
+	if w.animatorsQuiet(time.Now()) {
+		active, quiet = 0, active
+	}
 	return IdleState{
 		DirtyRegion:     w.dirtyRegion,
 		LayoutDirty:     layoutDirty,
-		ActiveAnimators: len(w.animators),
+		ActiveAnimators: active,
+		QuietAnimators:  quiet,
 		ActiveTickables: tickables,
 		PendingJobs:     w.PendingJobs(),
 		OverlayCount:    len(w.overlays),

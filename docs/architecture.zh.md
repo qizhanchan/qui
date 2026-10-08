@@ -32,6 +32,8 @@ reactive/html ──► reactive ──► 根 qui
 - **等待某个时刻**——在一段静默后才变化的 `Tickable`（光标闪烁）在 `Tick` 中调用 `Window.RequestTickAt(t)`；tooltip 的延迟也按同样方式跟踪：在最早的那个时刻唤醒；
 - **空闲**——一直阻塞，直到操作系统事件或跨 goroutine 唤醒（`PostJob`、`WakeEventLoop`、菜单动作）。空闲的应用不消耗 CPU。
 
+已注册的动画器只在持续产出帧时才算“正在变化”。一个从不报告完成、却也不改变任何东西的 `Animator`——典型例子是在 `Tick` 里排空 goroutine→UI 队列——否则会让循环永远钉在 60 Hz。连续 0.5 秒 tick 却没有绘制任何帧之后，仅靠动画器只能换来每 250 ms 一次的轮询（它们仍会被 tick，因此这类代码依然可用，只是延迟有上限），它们不再阻止 `IdleState.IsIdle`（以 `QuietAnimators` 报告），并且每种这样的动画器类型会记录一次日志。任何一次绘制都会恢复全速节奏。应用侧的正确做法是用 `PostJob` 交付 goroutine 的结果，用 `RequestTickAt` 在已知时刻唤醒。
+
 AppKit 可能在等待期间、没有任何输入事件的情况下投递的平台回调（Dock 最小化、全屏过渡结束、程序化移动）会提前结束等待，从而轮询类状态（`OnMove`、`OnMinimize`、全屏）依然能被察觉。`App.SetMaxIdleWait(d)` 为早于 `RequestTickAt` 的第三方 `Tickable` 限制最长睡眠时间；更推荐直接修正该 `Tickable`。
 
 控件树、焦点、浮层、布局元数据、渲染状态和直接内省都属于这个 UI goroutine。跨 goroutine 的代码必须使用 `Window.PostJob` / `TryPostJob` / `PostPriorityJob`；agent 的读取侧代码使用 `*Synced` API。`QUI_DEBUG_THREAD=1` 为生产窗口打开快速失败线程归属检查（`Window.EnableUIThreadChecks` 可在测试或自定义宿主中选择性开启）。游离的控件可以在其他线程构造，但一旦挂载，其状态就归 UI 线程所有。

@@ -126,6 +126,30 @@ func TestSelectItemSelectionClosesDropdown(t *testing.T) {
 	}
 }
 
+// ItemColors tints individual dropdown rows (e.g. an HTTP-method picker) while
+// unset entries keep the menu's default foreground.
+func TestSelectItemColorsTintRows(t *testing.T) {
+	w := NewTestWindow(Size{W: 500, H: 500})
+	cb := NewSelect(w, []string{"GET", "POST", "DELETE"}, nil)
+	cb.ItemColors = []Color{{G: 1, A: 1}, {}, {R: 1, A: 1}}
+	cb.Layout(Rect{X: 0, Y: 0, W: 120, H: 30})
+
+	cb.openDropdown()
+	if cb.popup == nil {
+		t.Fatal("dropdown did not open")
+	}
+	content := cb.popup.Content.(*menuListView).content
+	for i, want := range cb.ItemColors {
+		v, ok := content.ChildAt(i).(*menuItemView)
+		if !ok {
+			t.Fatalf("row %d is %T, want *menuItemView", i, content.ChildAt(i))
+		}
+		if v.item.Foreground != want {
+			t.Errorf("row %d (%q) Foreground = %+v, want %+v", i, v.item.Label, v.item.Foreground, want)
+		}
+	}
+}
+
 func TestSelectArrowKeysQuickSelect(t *testing.T) {
 	called := 0
 	cb := NewSelect(nil, []string{"A", "B", "C"}, func(_ int, _ string) {

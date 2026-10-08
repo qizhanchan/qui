@@ -1,7 +1,10 @@
 package qui
 
 import (
+	"fmt"
+	"log"
 	"math"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -28,9 +31,26 @@ import (
 //
 // App.SetMaxIdleWait caps the sleep for apps whose own Tickables predate
 // RequestTickAt.
+//
+// A registered Animator counts as "changing" only while frames keep coming.
+// One that never reports done yet changes nothing — typically a goroutine→UI
+// queue drained from Tick — would otherwise hold the loop at display cadence
+// forever. After animatorQuietGrace without a painted frame, animators alone
+// only buy a poll every animatorQuietPoll, they stop counting against
+// IdleState.IsIdle, and each such animator type is logged once. Any paint
+// restores full cadence.
 
 // frameInterval is the cadence while a window is changing.
 const frameInterval = time.Second / 60
+
+// animatorQuietGrace is how long registered animators may tick without a
+// frame being painted before the loop stops treating them as animating.
+// animatorQuietPoll is how often quiet animators are still ticked, so an
+// animator that polls for work keeps working, at a bounded latency.
+const (
+	animatorQuietGrace = 500 * time.Millisecond
+	animatorQuietPoll  = 250 * time.Millisecond
+)
 
 // pumpForever asks the platform to block until an event or a wake arrives.
 const pumpForever = time.Duration(math.MaxInt64)
@@ -116,12 +136,18 @@ func (w *Window) RequestTickAt(at time.Time) {
 // Step: frameInterval while it is changing, the distance to its earliest
 // deadline while it waits on one, pumpForever when it is idle.
 func (w *Window) nextFrameWait(now time.Time) time.Duration {
-	if w.framePainted || len(w.animators) > 0 || !w.dirtyRegion.IsEmpty() ||
+	if w.framePainted || !w.dirtyRegion.IsEmpty() ||
 		w.PendingJobs() > 0 || len(w.afterLayout) > 0 || w.overlayResizePending ||
 		(w.root != nil && w.root.IsLayoutDirty()) {
 		return frameInterval
 	}
 	wait := pumpForever
+	if len(w.animators) > 0 {
+		wait = frameInterval
+		if w.animatorsQuiet(now) {
+			wait = animatorQuietPoll
+		}
+	}
 	consider := func(at time.Time) {
 		if at.IsZero() {
 			return
@@ -143,4 +169,43 @@ func (w *Window) nextFrameWait(now time.Time) time.Duration {
 		consider(w.tooltipCloseAt)
 	}
 	return wait
+}
+
+// animatorsQuiet reports whether the registered animators have been ticking
+// for at least animatorQuietGrace without the window painting a frame.
+func (w *Window) animatorsQuiet(now time.Time) bool {
+	return len(w.animators) > 0 && !w.animQuietSince.IsZero() &&
+		now.Sub(w.animQuietSince) >= animatorQuietGrace
+}
+
+// noteAnimatorActivity runs at the end of every Step: a painted frame (or
+// no animators at all) ends a quiet stretch, an unpainted one starts or
+// extends it.
+func (w *Window) noteAnimatorActivity(now time.Time) {
+	if len(w.animators) == 0 || w.framePainted {
+		w.animQuietSince = time.Time{}
+		return
+	}
+	if w.animQuietSince.IsZero() {
+		w.animQuietSince = now
+		return
+	}
+	if w.animatorsQuiet(now) {
+		warnQuietAnimators(w.animators)
+	}
+}
+
+// quietAnimatorTypes dedups the quiet-animator warning per concrete type.
+var quietAnimatorTypes sync.Map
+
+func warnQuietAnimators(animators []Animator) {
+	for _, a := range animators {
+		name := fmt.Sprintf("%T", a)
+		if _, seen := quietAnimatorTypes.LoadOrStore(name, struct{}{}); seen {
+			continue
+		}
+		log.Printf("qui: animator %s ticks without ever painting; polling it every %v instead of every frame. "+
+			"Return done=true once it is finished; hand work from goroutines to the UI with Window.PostJob, "+
+			"and wait for a moment with Window.RequestTickAt.", name, animatorQuietPoll)
+	}
 }

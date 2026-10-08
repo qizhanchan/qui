@@ -206,6 +206,9 @@ type Window struct {
 	// painted, which buys the window another frame (see idle.go).
 	tickAt       time.Time
 	framePainted bool
+	// animQuietSince starts a stretch of Steps that ticked animators but
+	// painted nothing; zero while the window paints or has no animators.
+	animQuietSince time.Time
 	// inStep guards against synchronous redraws requested from platform
 	// event callbacks while a frame is already being produced. Resizing on
 	// macOS re-enters Step from inside a callback, so this is load-bearing.
@@ -579,6 +582,12 @@ func rectsNearlyEqual(a, b Rect, eps float32) bool {
 // Tick is invoked once per frame; when Tick reports done=true the
 // animator is removed. Register forces an immediate paint so the
 // first Tick observes a non-zero elapsed on frame 2.
+//
+// Animators keep the loop at display cadence only while frames are being
+// painted. One that stays registered without changing anything is
+// throttled to a slow poll after a short grace and logged (see idle.go):
+// drain goroutine results with PostJob rather than from a Tick, and wake
+// for a known moment with RequestTickAt.
 func (w *Window) RegisterAnimator(a Animator) {
 	if w == nil || a == nil {
 		return
@@ -1620,7 +1629,10 @@ func (w *Window) Step() {
 		return
 	}
 	w.inStep = true
-	defer func() { w.inStep = false }()
+	defer func() {
+		w.inStep = false
+		w.noteAnimatorActivity(time.Now())
+	}()
 	w.framePainted = false
 
 	// Multi-window discipline: each Window owns an independent GL

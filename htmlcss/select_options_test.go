@@ -146,6 +146,23 @@ func TestSelectDisabledOptionsAndOptgroupHeadings(t *testing.T) {
 	}
 }
 
+// SetSelectItemColors forwards per-option text colors to the backing Select so
+// an HTML <select> can tint its dropdown rows individually (e.g. HTTP methods).
+func TestSelectItemColorsReachBacking(t *testing.T) {
+	win := qui.NewTestWindow(qui.Size{W: 400, H: 300})
+	res := RenderDoc(
+		`<body><select id="s"><option>GET</option><option>DELETE</option></select></body>`,
+		``,
+		Options{Window: win},
+	)
+	el, sel := selectWidget(t, res.ByID["s"])
+	colors := []qui.Color{{G: 1, A: 1}, {R: 1, A: 1}}
+	el.SetSelectItemColors(colors)
+	if len(sel.ItemColors) != 2 || sel.ItemColors[0] != colors[0] || sel.ItemColors[1] != colors[1] {
+		t.Errorf("backing ItemColors = %+v, want %+v", sel.ItemColors, colors)
+	}
+}
+
 // The color swatch must submit what the user PICKED, not its initial value.
 func TestColorInputSubmitsPickedValue(t *testing.T) {
 	res := RenderDoc(

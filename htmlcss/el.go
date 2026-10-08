@@ -147,6 +147,7 @@ type El struct {
 	selectItems        []string
 	selectValues       []string
 	selectDisabled     []bool
+	selectItemColors   []qui.Color
 	defaultSelectedIdx int
 	checked            bool
 	selectedIdx        int
@@ -1454,6 +1455,7 @@ func (e *El) ensureBacking() {
 		}
 		sel := widgets.NewSelect(win, e.selectItems, e.onSelect)
 		sel.SetItemDisabled(e.selectDisabled)
+		sel.ItemColors = e.selectItemColors
 		sel.SelectedIdx = e.selectedIdx
 		e.backing = sel
 	case "input":
@@ -1827,6 +1829,18 @@ func (e *El) SetSelectDisabled(disabled []bool) {
 	e.selectDisabled = disabled
 	if sel, ok := e.backing.(*widgets.Select); ok {
 		sel.SetItemDisabled(disabled)
+	}
+}
+
+// SetSelectItemColors tints the dropdown rows, parallel to the option labels
+// (a zero-alpha entry keeps the dropdown's default foreground). This is the
+// CSS-layer equivalent of a per-option `color`, used by colour-coded selectors
+// such as an HTTP-method picker.
+func (e *El) SetSelectItemColors(colors []qui.Color) {
+	e.selectItemColors = colors
+	if sel, ok := e.backing.(*widgets.Select); ok {
+		sel.ItemColors = colors
+		sel.Invalidate()
 	}
 }
 

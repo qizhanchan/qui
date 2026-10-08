@@ -1,7 +1,10 @@
 package qui
 
 import (
+	"bytes"
 	"image"
+	"log"
+	"strings"
 	"testing"
 	"time"
 )
@@ -54,6 +57,114 @@ func TestWorkInFlightKeepsFramesComing(t *testing.T) {
 				t.Errorf("wait = %v, want one frame", got)
 			}
 		})
+	}
+}
+
+type paintingAnimator struct{}
+
+func (paintingAnimator) Tick(time.Time) (Rect, bool) { return Rect{W: 10, H: 10}, false }
+func (paintingAnimator) Stop()                       {}
+
+// settle Steps until a frame paints nothing.
+func settle(t *testing.T, w *Window) {
+	t.Helper()
+	for i := 0; i < 5; i++ {
+		w.Step()
+		if !w.framePainted {
+			return
+		}
+	}
+	t.Fatal("window never settled")
+}
+
+// An Animator that never finishes and never paints — a goroutine→UI queue
+// drained from Tick — must not hold the loop at display cadence forever.
+func TestQuietAnimatorIsThrottledToAPoll(t *testing.T) {
+	w := newWindowOnFake(newFakePlatformWindow())
+	a := &countingAnimator{}
+	w.animators = append(w.animators, a)
+	settle(t, w)
+	start := w.animQuietSince
+	if start.IsZero() {
+		t.Fatal("an unpainted Step with animators did not start a quiet stretch")
+	}
+
+	if got := w.nextFrameWait(start); got != frameInterval {
+		t.Fatalf("within the grace: wait = %v, want one frame", got)
+	}
+	later := start.Add(animatorQuietGrace)
+	if got := w.nextFrameWait(later); got != animatorQuietPoll {
+		t.Fatalf("past the grace: wait = %v, want the %v poll", got, animatorQuietPoll)
+	}
+	// A deadline sooner than the poll still wins.
+	w.RequestTickAt(later.Add(40 * time.Millisecond))
+	if got := w.nextFrameWait(later); got != 40*time.Millisecond {
+		t.Fatalf("with a deadline: wait = %v, want 40ms", got)
+	}
+	w.tickAt = time.Time{}
+
+	// Quiet animators are still ticked when the window Steps.
+	ticks := a.ticks
+	w.Step()
+	if a.ticks != ticks+1 {
+		t.Fatalf("quiet animator was not ticked")
+	}
+	// Any paint ends the stretch and restores full cadence.
+	w.Invalidate()
+	w.Step()
+	if !w.animQuietSince.IsZero() {
+		t.Fatal("a painted frame did not end the quiet stretch")
+	}
+	if got := w.nextFrameWait(later); got != frameInterval {
+		t.Fatalf("after a paint: wait = %v, want one frame", got)
+	}
+}
+
+func TestPaintingAnimatorNeverGoesQuiet(t *testing.T) {
+	w := newWindowOnFake(newFakePlatformWindow())
+	w.animators = append(w.animators, paintingAnimator{})
+	for i := 0; i < 5; i++ {
+		w.Step()
+	}
+	if !w.animQuietSince.IsZero() {
+		t.Fatal("an animator that paints every frame was marked quiet")
+	}
+	if got := w.nextFrameWait(time.Now().Add(time.Hour)); got != frameInterval {
+		t.Fatalf("wait = %v, want one frame", got)
+	}
+}
+
+// WaitIdle must not hang on an animator that stays registered doing nothing.
+func TestQuietAnimatorDoesNotBlockIdle(t *testing.T) {
+	w := newWindowOnFake(newFakePlatformWindow())
+	w.animators = append(w.animators, &countingAnimator{})
+	settle(t, w)
+	if s := w.IdleState(); s.IsIdle() || s.ActiveAnimators != 1 {
+		t.Fatalf("within the grace: %+v, want one active animator", s)
+	}
+	w.animQuietSince = time.Now().Add(-animatorQuietGrace)
+	s := w.IdleState()
+	if !s.IsIdle() || s.ActiveAnimators != 0 || s.QuietAnimators != 1 {
+		t.Fatalf("past the grace: %+v, want idle with one quiet animator", s)
+	}
+}
+
+type loggedQuietAnimator struct{ countingAnimator }
+
+func TestQuietAnimatorIsLoggedOncePerType(t *testing.T) {
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(prev)
+
+	w := newWindowOnFake(newFakePlatformWindow())
+	w.animators = append(w.animators, &loggedQuietAnimator{}, &loggedQuietAnimator{})
+	settle(t, w)
+	w.animQuietSince = time.Now().Add(-animatorQuietGrace)
+	w.Step()
+	w.Step()
+	if n := strings.Count(buf.String(), "loggedQuietAnimator"); n != 1 {
+		t.Fatalf("logged %d times, want once:\n%s", n, buf.String())
 	}
 }
 

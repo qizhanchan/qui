@@ -67,6 +67,11 @@ type MenuItem struct {
 	// and Enter to pick, OnClick then close. (Panel, by contrast, hands the
 	// row over entirely.)
 	Content func() Widget
+	// Foreground, when it has alpha, overrides the row's text color (label,
+	// icon, check glyph). Lets a menu tint rows individually — e.g. a
+	// method chooser colouring GET green and DELETE red. A selected row's
+	// backdrop tint still paints; disabled rows still dim it.
+	Foreground Color
 }
 
 // DisplayLabel is the label the row shows: LabelKey resolved through the
@@ -883,6 +888,11 @@ func (v *menuItemView) Draw(canvas Canvas) {
 	labelColor := st.fg
 	if selected {
 		labelColor = st.selectedFg
+	}
+	// A per-row Foreground overrides the palette (but disabled rows still
+	// dim it below), so a menu can colour rows individually.
+	if v.item.Foreground.A > 0 {
+		labelColor = v.item.Foreground
 	}
 	shortcutColor := st.fgMuted
 	if selected {

@@ -55,7 +55,12 @@ type Select struct {
 	// slice leaves the rest enabled). Set it through SetItemDisabled — see
 	// there for the rendering contract.
 	ItemDisabled []bool
-	SelectedIdx  int
+	// ItemColors tints each dropdown row's text, parallel to Items (a
+	// zero-alpha entry keeps the dropdown's default foreground; a shorter
+	// slice leaves the rest untinted). For colour-coded vocabularies such
+	// as an HTTP-method picker.
+	ItemColors  []Color
+	SelectedIdx int
 	// Label is the floating label — rests in the content area at
 	// body-large size when the field is unselected + unfocused, floats up
 	// to body-small when selected or focused. Outlined variant cuts a
@@ -1047,6 +1052,9 @@ func (cb *Select) openDropdown() {
 				cb.selectIndex(idx)
 				cb.closeDropdown()
 			},
+		}
+		if idx < len(cb.ItemColors) {
+			item.Foreground = cb.ItemColors[idx]
 		}
 		if cb.RenderOption != nil {
 			selected := idx == cb.SelectedIdx

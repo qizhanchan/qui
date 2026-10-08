@@ -100,14 +100,15 @@ type Builder struct {
 	onCommit func(string)
 
 	// form-control extras
-	onToggle       func(bool)
-	checked        *bool
-	onSelect       func(int, string)
-	selectItems    []string
-	selectedIdx    *int
-	optionValues   []string
-	optionDisabled []bool
-	suggestions    []string
+	onToggle         func(bool)
+	checked          *bool
+	onSelect         func(int, string)
+	selectItems      []string
+	selectItemColors []qui.Color
+	selectedIdx      *int
+	optionValues     []string
+	optionDisabled   []bool
+	suggestions      []string
 
 	// element ref: called with the element after every render, with nil
 	// on unmount; refTo is the UseRef flavor.
@@ -240,6 +241,11 @@ func (b *Builder) OptionValues(values ...string) *Builder { b.optionValues = val
 // OptionDisabled marks unselectable options, parallel to Options (HTML
 // `<option disabled>`). Disabled rows still show, greyed and inert.
 func (b *Builder) OptionDisabled(disabled ...bool) *Builder { b.optionDisabled = disabled; return b }
+
+// ItemColors tints each <select> dropdown row's text, parallel to the option
+// list (a zero-alpha Color leaves that row in the dropdown's default
+// foreground). Use it for colour-coded choices such as an HTTP-method picker.
+func (b *Builder) ItemColors(colors ...qui.Color) *Builder { b.selectItemColors = colors; return b }
 
 // Selected sets a <select>'s current index (controlled).
 func (b *Builder) Selected(i int) *Builder { b.selectedIdx = &i; return b }
@@ -565,6 +571,7 @@ func (b *Builder) Build() reactive.Element {
 				el.SetSelectOptions(bb.selectItems)
 				el.SetSelectValues(bb.optionValues)
 				el.SetSelectDisabled(bb.optionDisabled)
+				el.SetSelectItemColors(bb.selectItemColors)
 				el.SetOnSelect(bb.onSelect)
 				if bb.selectedIdx != nil {
 					el.SetSelectedIndex(*bb.selectedIdx)

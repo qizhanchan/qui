@@ -170,7 +170,8 @@ POST /act     Content-Type: application/json
      "focusChange": {"from": "<path>", "to": "<path>"} | null,
      "diagnostics": [...],
      "idleState": { dirtyRegion, layoutDirty, activeAnimators,
-                    activeTickables, pendingJobs, overlayCount }
+                    quietAnimators, activeTickables, pendingJobs,
+                    overlayCount }
    }
 
 Modifiers: shift, ctrl, alt (== option), cmd (== super / meta).
@@ -386,6 +387,8 @@ WAITING — synchronize with the UI
 GET /wait?for=idle&timeoutMs=2000
    Blocks until the window has no pending repaints, animators,
    tickables, or queued jobs for two consecutive observations.
+   Animators that have not painted for 0.5 s are reported as
+   quietAnimators and do not hold the wait open.
    Use after an action to ensure subsequent /tree / /screenshot
    reflect the post-action state.
 
