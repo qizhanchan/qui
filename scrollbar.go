@@ -77,13 +77,13 @@ type ScrollbarColors struct {
 }
 
 // DefaultScrollbarColors derives the bar colors by mixing the theme's
-// Text toward its Surface: a faint track and a mid-gray thumb that darkens
-// while dragged. Opaque results, because the rounded-rect fill doesn't
-// alpha-blend.
+// Text toward its Surface: a barely-there track and a mid-gray thumb that
+// darkens while dragged (the thin rounded Chrome / Workspace bar). Opaque
+// results, because the rounded-rect fill doesn't alpha-blend.
 func DefaultScrollbarColors() ScrollbarColors {
 	th := CurrentTheme()
 	return ScrollbarColors{
-		Track:       LerpColor(th.Surface, th.Text, 0.08),
+		Track:       LerpColor(th.Surface, th.Text, 0.03),
 		Thumb:       LerpColor(th.Surface, th.Text, 0.30),
 		ThumbActive: LerpColor(th.Surface, th.Text, 0.45),
 	}
@@ -110,15 +110,30 @@ func VBarDraw(canvas Canvas, track, thumb Rect, dragging bool) {
 	VBarDrawColors(canvas, track, thumb, dragging, ScrollbarColors{})
 }
 
-// VBarDrawColors is VBarDraw with a palette (zero fields = theme).
+// VBarDrawColors is VBarDraw with a palette (zero fields = theme). The
+// thumb paints as a pill inset 2 px from the track's long edges (a 6 px
+// bar in the 10 px track); the hit area stays the full track width.
 func VBarDrawColors(canvas Canvas, track, thumb Rect, dragging bool, c ScrollbarColors) {
 	c = c.Resolve()
-	canvas.FillRoundedRect(track, 2, c.Track)
+	canvas.FillRect(track, c.Track)
 	color := c.Thumb
 	if dragging {
 		color = c.ThumbActive
 	}
-	canvas.FillRoundedRect(thumb, 2, color)
+	const inset = 2
+	pill := thumb
+	if track.W <= track.H {
+		if pill.W > 2*inset+2 {
+			pill.X, pill.W = pill.X+inset, pill.W-2*inset
+		}
+	} else if pill.H > 2*inset+2 {
+		pill.Y, pill.H = pill.Y+inset, pill.H-2*inset
+	}
+	r := pill.W
+	if pill.H < r {
+		r = pill.H
+	}
+	canvas.FillRoundedRect(pill, r/2, color)
 }
 
 // ClampScroll returns scrollY constrained to [0, max(0, contentH - viewH)].
