@@ -104,6 +104,45 @@ type Theme struct {
 	// === Transition defaults ==========================================
 	TransitionShort  Duration // ~200ms — hover / focus fades
 	TransitionMedium Duration // ~300ms — enter / exit
+
+	// === Floating chrome ==============================================
+	// Popup styles the surfaces that float over the app — menus, tooltips,
+	// the modal scrim and dialog box. Kept apart from the surface ladder
+	// so an app that retints its page / text tokens still gets crisp,
+	// neutral popups; override fields individually to restyle them.
+	Popup PopupTokens
+}
+
+// PopupTokens is the look of floating chrome: menu panels (menu-bar
+// dropdowns, context menus, submenus, toolbar dropdown menus, <select>
+// lists), tooltips, and modal dialogs. The LightTheme values follow the
+// Google Workspace (Material 3) editors — white menus with a soft shadow,
+// a dark tooltip chip, a 32% scrim and a 28 px dialog box.
+//
+// A zero field falls back to a value derived from the rest of the theme
+// (SurfaceOverlay, Text, Border, …), so a Theme built from scratch still
+// paints sensible popups.
+type PopupTokens struct {
+	// Menus.
+	MenuSurface      Color         // panel fill (#ffffff)
+	MenuText         Color         // row label, icon, check and arrow (#1f1f1f)
+	MenuTextMuted    Color         // shortcut text (rgba(31,31,31,.38))
+	MenuDivider      Color         // separator line (#c4c7c5)
+	MenuHover        Color         // hovered / keyboard-highlighted row, painted as-is (rgba(31,31,31,.10))
+	MenuSelected     Color         // current value in a radio-style chooser (e.g. a <select> list)
+	MenuShadow       ElevationSpec // panel drop shadow (0 2px 6px 2px @ 15%)
+	MenuRadius       float32       // panel corner radius (4)
+	MenuMinWidth     float32       // floor for top-level menus: menu-bar dropdowns and context menus (320)
+	MenuBarHover     Color         // menu-bar trigger hovered / open (#ededed)
+	MenuBarText      Color         // menu-bar trigger caption (#1f1f1f)
+
+	// Tooltips.
+	TooltipSurface Color // chip fill (#1f1f1f)
+	TooltipText    Color // chip text (#f2f2f2)
+
+	// Modal dialogs.
+	Scrim        Color   // backdrop behind a modal (rgba(0,0,0,.32))
+	DialogRadius float32 // dialog box corner radius (28)
 }
 
 // ElevationSpec is one component of a drop shadow: offset, blur, spread
@@ -231,6 +270,26 @@ func newLightTheme() Theme {
 
 		TransitionShort:  Duration(200_000_000),
 		TransitionMedium: Duration(300_000_000),
+
+		Popup: PopupTokens{
+			MenuSurface:      argbColor(0xffffffff),
+			MenuText:         argbColor(0xff1f1f1f),
+			MenuTextMuted:    argbColor(0x611f1f1f), // 38%
+			MenuDivider:      argbColor(0xffc4c7c5),
+			MenuHover:        argbColor(0x1a1f1f1f), // 10%
+			MenuSelected:     argbColor(0xffe4e4e4),
+			MenuShadow:       ElevationSpec{Y: 2, Blur: 6, Spread: 2, Opacity: 0.15},
+			MenuRadius:       4,
+			MenuMinWidth:     320,
+			MenuBarHover:     argbColor(0xffededed),
+			MenuBarText:      argbColor(0xff1f1f1f),
+
+			TooltipSurface: argbColor(0xff1f1f1f),
+			TooltipText:    argbColor(0xfff2f2f2),
+
+			Scrim:        argbColor(0x52000000), // 32%
+			DialogRadius: 28,
+		},
 	}
 	t.Elevation = [6]ElevationLevel{
 		0: {},
@@ -300,4 +359,57 @@ func SubscribeTheme(fn func()) func() {
 			}
 		}
 	}
+}
+
+// ResolvedPopup returns t.Popup with every zero field filled from the rest
+// of the theme, so popup painters never see an unset token: a Theme built
+// from scratch (rather than copied from LightTheme) still gets a white-ish
+// menu in its own text color, a hairline divider and a shadow.
+func (t *Theme) ResolvedPopup() PopupTokens {
+	p := t.Popup
+	if p.MenuSurface.A == 0 {
+		p.MenuSurface = t.SurfaceOverlay
+	}
+	if p.MenuText.A == 0 {
+		p.MenuText = t.Text
+	}
+	if p.MenuTextMuted.A == 0 {
+		p.MenuTextMuted = t.TextMuted
+	}
+	if p.MenuDivider.A == 0 {
+		p.MenuDivider = t.Border
+	}
+	if p.MenuHover.A == 0 {
+		c := p.MenuText
+		c.A *= t.HoverOpacity
+		p.MenuHover = c
+	}
+	if p.MenuSelected.A == 0 {
+		p.MenuSelected = LerpColor(p.MenuSurface, p.MenuText, 0.12)
+	}
+	if p.MenuShadow == (ElevationSpec{}) {
+		p.MenuShadow = ElevationSpec{Y: 2, Blur: 6, Spread: 2, Opacity: 0.15}
+	}
+	if p.MenuRadius == 0 {
+		p.MenuRadius = t.RadiusSmall
+	}
+	if p.MenuBarHover.A == 0 {
+		p.MenuBarHover = LerpColor(t.Surface, t.Text, t.HoverOpacity)
+	}
+	if p.MenuBarText.A == 0 {
+		p.MenuBarText = t.Text
+	}
+	if p.TooltipSurface.A == 0 {
+		p.TooltipSurface = t.Text
+	}
+	if p.TooltipText.A == 0 {
+		p.TooltipText = t.Surface
+	}
+	if p.Scrim.A == 0 {
+		p.Scrim = Color{A: 0.32}
+	}
+	if p.DialogRadius == 0 {
+		p.DialogRadius = t.RadiusLarge
+	}
+	return p
 }
