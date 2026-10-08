@@ -190,7 +190,9 @@ func (s *Server) handleScreenshot(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	annotate := q.Get("annotate") == "1" || q.Get("annotate") == "true"
-	var img any
+	// Typed so a nil snapshot (no frame yet, or a blocked main loop) is
+	// caught below; a nil *image.RGBA inside an `any` is not == nil.
+	var img *image.RGBA
 	if rgn := q.Get("region"); rgn != "" {
 		var x, y, ww, h float32
 		_, err := fmt.Sscanf(rgn, "%g,%g,%g,%g", &x, &y, &ww, &h)
@@ -214,13 +216,12 @@ func (s *Server) handleScreenshot(w http.ResponseWriter, r *http.Request) {
 	} else {
 		img = s.window.SnapshotScaled(scale)
 	}
-	rgba, ok := img.(image.Image)
-	if img == nil || !ok || rgba == nil {
+	if img == nil {
 		http.Error(w, "no frame available", http.StatusServiceUnavailable)
 		return
 	}
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, rgba); err != nil {
+	if err := png.Encode(&buf, img); err != nil {
 		http.Error(w, "png encode: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
