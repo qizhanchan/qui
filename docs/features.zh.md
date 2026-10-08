@@ -58,6 +58,7 @@
 - 测量、绘制、PDF、换行、命中测试、选择和编辑器 caret 共享同一套整形簇。
 - 行内流（`inline.go`、`widgets.InlineBox`）：文字与原子行内盒在共享行上按基线对齐。
 - 富样式 run（`text_rich.go`）、跨控件文字选择、CJK 换行与 emoji。
+- 拼写检查（`spell.go`）：`SpellChecker`（`Check` 返回按 rune 偏移的 `SpellRange`、`Suggestions`、`Learn`/`Unlearn`），`SystemSpellChecker`（macOS 上为 NSSpellChecker，可在非 UI 线程调用；其他平台不可用），`SetSpellChecker` 覆盖；`DrawDecorationLine` 绘制波浪线等装饰线。
 
 **主题**
 

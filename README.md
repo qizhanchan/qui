@@ -28,7 +28,7 @@ Chinese versions of the top-level documents live alongside the English ones with
 ## Project status
 
 - **Module:** `github.com/qizhanchan/qui` (Go 1.25).
-- **Platforms:** macOS is the fully supported target. Linux / Windows compile and run the core, but native dialogs, IME, emoji and system-tray integration are macOS-only today.
+- **Platforms:** macOS is the fully supported target. Linux / Windows compile and run the core, but native dialogs, IME, emoji, spell checking and system-tray integration are macOS-only today.
 - **Rendering:** the CPU rasterizer is the default and is pure Go; the GPU raster backend (`QUI_GPU_RASTER=1`) is opt-in. Both sit behind the same `Canvas` / `RasterBackend` seam.
 - **Windowing:** GLFW is the default backend; a native AppKit (`cocoa`) backend is also compiled in on macOS and selected at runtime.
 - **Not a complete browser and not a complete design system.** `htmlcss` is a deliberate subset, and qui ships one light theme of design tokens — a designed look belongs in a stylesheet.

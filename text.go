@@ -567,6 +567,14 @@ func drawDecorationRun(canvas Canvas, deco TextDecoration, x, w, top, lineHeight
 	}
 }
 
+// DrawDecorationLine strokes one text-decoration line spanning [x, x+w]
+// whose top is at y, in the given style. Apps use it for custom
+// decorations such as spell-check squiggles (DecorationWavy strokes a
+// ShapePath; the other styles fill axis-aligned rects).
+func DrawDecorationLine(canvas Canvas, style DecorationLineStyle, x, y, w, thickness float32, color Color) {
+	drawDecoLine(canvas, style, x, y, w, thickness, color)
+}
+
 // drawDecoLine strokes a single decoration line [x, x+w] whose top is at y,
 // honoring the CSS text-decoration-style (solid / double / dotted / dashed /
 // wavy). Solid/double/dotted/dashed use axis-aligned fills (crisp, cheap);

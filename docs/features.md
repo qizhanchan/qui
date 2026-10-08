@@ -58,6 +58,7 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 - Shared shaped clusters across measurement, drawing, PDF, wrapping, hit testing, selection and editor carets.
 - Inline flow (`inline.go`, `widgets.InlineBox`): text and atomic inline boxes on shared lines with baseline alignment.
 - Rich styled runs (`text_rich.go`), text selection across widgets, CJK line breaking and emoji.
+- Spell checking (`spell.go`): `SpellChecker` (`Check` → rune-offset `SpellRange`s, `Suggestions`, `Learn`/`Unlearn`), `SystemSpellChecker` (NSSpellChecker on macOS, safe off the UI thread; unavailable elsewhere), `SetSpellChecker` override; `DrawDecorationLine` paints wavy squiggles and other decoration lines.
 
 **Theme**
 
