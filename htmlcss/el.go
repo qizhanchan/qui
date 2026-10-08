@@ -127,6 +127,8 @@ type El struct {
 	hostsWidget bool
 	onStyle     func(cs *ComputedStyle)
 	userData    map[string]any
+	// onLayout runs after every layout of the element (SetOnLayout).
+	onLayout func(*El)
 
 	// Control backing: leaf form tags (input / textarea / checkbox via
 	// <input type=checkbox> / select) render through a real editing widget
@@ -3588,6 +3590,9 @@ func (e *El) Layout(rect qui.Rect) {
 		e.updateScrollContentAt(rect.W - e.Style().Padding.Horizontal())
 	}
 	e.Box.Layout(rect)
+	if e.onLayout != nil {
+		e.onLayout(e)
+	}
 	e.maybeAutofocus()
 	if e.onFileDrop != nil && e.fileDropRelease == nil {
 		e.syncFileDropRetain()

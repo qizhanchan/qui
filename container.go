@@ -381,6 +381,14 @@ func establishesAbsCB(w Widget) bool {
 func (c *Container) Measure(available Size) Size {
 	c.assertUIThread("Container.Measure")
 	padding := c.style.Padding
+	// A max-width caps the width the content is laid out in, not just the
+	// reported size: a wrapping row (flex-wrap) or wrapping text measured at
+	// the full offer would report one line's height and then wrap into more
+	// lines than that once clamped (CSS: max-width bounds the used width
+	// BEFORE the content flows).
+	if mw := widgetMaxSize(c).W; mw > 0 && available.W > mw {
+		available.W = mw
+	}
 	// Out-of-flow (position:absolute/fixed) children don't contribute to the
 	// container's intrinsic size — measure only in-flow children.
 	children := c.inFlowChildren()

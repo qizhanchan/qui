@@ -174,6 +174,15 @@ func (e *El) ComputedStyle() *ComputedStyle { return e.lastCS }
 // its computed style — map CSS onto native setters, read a --var.
 func (e *El) SetOnStyle(fn func(cs *ComputedStyle)) { e.onStyle = fn }
 
+// SetOnLayout installs fn to run after every layout of the element, once its
+// own Bounds() and those of all its descendants — including out-of-flow
+// (position:absolute) ones laid out inside it — are final. It is the hook
+// for decisions that depend on measured geometry (how many toolbar groups
+// fit). fn runs inside the layout pass, so it must not mutate the tree
+// synchronously: defer any change with Window().AfterLayout, which lays out
+// again before the frame paints. nil removes it.
+func (e *El) SetOnLayout(fn func(*El)) { e.onLayout = fn }
+
 func (e *El) runStyleHooks(cs *ComputedStyle) {
 	if cs == nil {
 		return

@@ -80,6 +80,7 @@ type Builder struct {
 	class         string
 	attrs         map[string]string
 	onClick       func()
+	onClickEl     func(*htmlcss.El)
 	onClickMods   func(mods qui.Modifiers)
 	onContextMenu func(x, y float32)
 	onMouseEnter  func()
@@ -125,6 +126,7 @@ type Builder struct {
 	onFormSubmit  func(map[string]string)
 	canvasPaint   func(qui.Canvas, htmlcss.CanvasContext)
 	onStyle       func(*htmlcss.ComputedStyle)
+	onLayout      func(*htmlcss.El)
 
 	// leaf: a native widget hosted as this element's content (Leaf)
 	leafCreate func() qui.Widget
@@ -169,6 +171,14 @@ func (b *Builder) Attr(k, v string) *Builder {
 
 // OnClick installs a click handler.
 func (b *Builder) OnClick(fn func()) *Builder { b.onClick = fn; return b }
+
+// OnClickEl is OnClick with the clicked element — what a dropdown trigger
+// needs to anchor its menu. Unlike capturing the element in a shared
+// UseRef, it stays correct when the same builder is mounted twice (a
+// toolbar button that also appears in the toolbar's overflow panel): each
+// mounted copy hands over itself. Both handlers fire when both are
+// installed (OnClick first).
+func (b *Builder) OnClickEl(fn func(el *htmlcss.El)) *Builder { b.onClickEl = fn; return b }
 
 // OnClickMods is OnClick with the keyboard modifiers held at click time —
 // what a row in a multi-selectable list needs so Shift can extend and Cmd
@@ -435,6 +445,14 @@ func (b *Builder) OnDraw(fn func(cv qui.Canvas, ctx htmlcss.CanvasContext)) *Bui
 // something imperative.
 func (b *Builder) OnStyle(fn func(cs *htmlcss.ComputedStyle)) *Builder { b.onStyle = fn; return b }
 
+// OnLayout runs fn after every layout of the element, once its bounds and
+// its descendants' bounds are final (htmlcss.El.SetOnLayout) — including
+// layouts caused only by a window resize, which no render or layout effect
+// sees. fn runs inside the layout pass: read geometry there, and defer any
+// state change with el.Window().AfterLayout (the window lays out again
+// before painting).
+func (b *Builder) OnLayout(fn func(el *htmlcss.El)) *Builder { b.onLayout = fn; return b }
+
 // BindText binds the element's text to a signal (updates skip reconcile).
 func (b *Builder) BindText(sig *reactive.Signal[string]) *Builder { b.bindText = sig; return b }
 
@@ -504,6 +522,7 @@ func (b *Builder) Build() reactive.Element {
 			el.SetOnFileDrop(bb.onFileDrop)
 			el.SetOnPaste(bb.onPaste)
 			el.SetOnStyle(bb.onStyle)
+			el.SetOnLayout(bb.onLayout)
 			if bb.onFormSubmit != nil || bb.tag == "form" {
 				el.SetOnFormSubmit(bb.onFormSubmit)
 			}
@@ -522,7 +541,17 @@ func (b *Builder) Build() reactive.Element {
 					*bb.refTo = el
 				}
 			}()
-			el.SetOnClick(bb.onClick)
+			onClick := bb.onClick
+			if onClickEl := bb.onClickEl; onClickEl != nil {
+				plain := bb.onClick
+				onClick = func() {
+					if plain != nil {
+						plain()
+					}
+					onClickEl(el)
+				}
+			}
+			el.SetOnClick(onClick)
 			el.SetOnClickMods(bb.onClickMods)
 			el.SetOnContextMenu(bb.onContextMenu)
 			el.SetSuggestions(bb.suggestions)

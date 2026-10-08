@@ -216,6 +216,7 @@ theme := ThemeCtx.Use()           // consume at any depth (subscribes; marks con
 - **Fragment** (`reactive.Fragment` / `h.Frag`): a component returns several siblings that participate directly in the parent layout, with no wrapping container.
 - **Portal** (`h.Portal` / `h.ModalPortal(onDismiss, node)` / `h.ModalPortalWith(opts, node)`): declarative overlay. `h.If(open, h.ModalPortal(...))` is a modal with a scrim, click/Esc dismissal and a focus trap; `ModalPortalWith` sets the scrim, which gestures dismiss, and an `OnEnter` default action. Escape and Enter are handled on the way back up, so focused content (a textarea's newline, an inline editor's cancel) gets them first. Portal content cascades from where it is declared — it inherits custom properties and matches ancestor selectors like `.app.dark .x` even though it lives in the overlay stack. Overlay invalidation is handled locally in the portal and does not bubble to the main tree.
 - **Popover** (`h.Popover(anchorEl, h.PopoverOptions{...}, node)` / `h.PopoverAt(rectFn, ...)`, or `reactive.PortalAnchored`): content placed beside an anchor, flipped to the other side when it doesn't fit, clamped into the window, and re-placed whenever the anchor moves. Capture the anchor with `.RefTo(ref)`.
+- **Toolbar** (`h.Toolbar(h.ToolbarOptions{Class, DividerClass, MoreClass, MoreIcon, OnPanelClose}, h.ToolGroup(key, items...), ...)`): a one-row toolbar of keyed groups that, when it runs out of width, keeps the leading groups that fit and moves the rest behind a trailing "⋮ More" button whose popover shows them (Google Docs style). The fit is recomputed from measured widths on every layout of the row, a window resize included (`.OnLayout`), so no breakpoints. Overflowed groups stay mounted but hidden (visibility:hidden, out of flow), so address controls with `:visible` / `:layer(...)`, and anchor dropdown menus with `.OnClickEl(func(el){...})` rather than a shared `UseRef` — the panel renders a second copy of each overflowed item. `.NoDivider()` joins a group to the previous one.
 - **Dialog** (`h.Dialog(h.DialogProps{Title, Body, Actions, OnDismiss, OnConfirm, CloseButton, Class})`): the ready-made dialog shell on top of `ModalPortalWith` — `div.q-dialog > header.q-dialog-header(.q-dialog-title, .q-dialog-close) + .q-dialog-body + footer.q-dialog-actions`. Its look is framework-origin CSS that any author rule overrides; `--q-dialog-bg/-fg/-radius/-shadow` theme it. Buttons are Tab-reachable and press on Enter/Space; give the opening field `.Autofocus()`.
 - **ErrorBoundary** (`reactive.ErrorBoundary(key, child, fallback)`): catches **render/reconcile panics** in a subtree (which would kill the process in a Go GUI), switching to a fallback + retry. A panic in the fallback itself propagates; panics in event handlers/effects are out of scope.
 
@@ -230,11 +231,13 @@ container   Div / Section / Header / Footer / Nav / Main / Ul / Ol / Form
 text        Span / P / H1..H6 / Li / Button / Label / A(text, href)
 forms       Input() / Checkbox() / Textarea() / Select(items...)
               → .Value/.OnInput/.OnSubmit/.Checked/.OnToggle/.Options/.Selected/.OnSelect
-common      .Class/.ID/.Key/.Attr/.Text/.Children/.OnClick/.OnContextMenu/.Icon
+common      .Class/.ID/.Key/.Attr/.Text/.Children/.OnClick/.OnClickEl/.OnContextMenu/.Icon
+layout      .OnLayout(fn(el)) — after every layout, bounds final; defer changes with AfterLayout
 drag        .Draggable(key)/.DragHandle/.OnDrop/.OnDragOver/.OnDragEnd
 condition   If / Nothing / Frag / ForEach / El(rawElement)
 signals     .BindText/.BindClass; Show(key, sig, build) / For(key, sig, render) / ForWith
 overlay     Portal / ModalPortal(onDismiss, node) / ModalPortalWith(opts, node) / Dialog(props)
+toolbar     Toolbar(opts, ToolGroup(key, items...), ...) — overflow into a "⋮ More" popover
             ContextMenu(window, x, y, items)
 focus       .Autofocus(); El.RequestFocus()
 ```
