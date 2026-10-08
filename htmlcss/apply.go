@@ -587,7 +587,23 @@ func syncControlStates(ss *qui.StateStyle, cs *ComputedStyle, native **qui.State
 	restore(&ss.Hover, n.Hover)
 	restore(&ss.Pressed, n.Pressed)
 	restore(&ss.Focused, n.Focused)
+	restore(&ss.Disabled, n.Disabled)
 	syncControlStateChrome(ss)
+	// :disabled (attribute-driven, so already folded into cs when the
+	// control is disabled): the control's own color and border rules beat
+	// the native dimmed look, as author rules beat a browser's UA sheet.
+	if d := ss.Disabled; d != nil {
+		if cs.ColorOwn {
+			d.Foreground = cs.Color
+		}
+		if cs.HasSideBorders {
+			d.BorderWidths = cs.SideWidths
+			d.BorderColors = cs.SideColors
+		} else if cs.HasBorder {
+			d.Border = cs.BorderColor
+			d.BorderSize = cs.BorderWidth
+		}
+	}
 	overlay := func(slot **qui.Style, v *ComputedStyle) {
 		if v == nil || (!boxDecorationsDiffer(cs, v) && v.Color == cs.Color) {
 			return

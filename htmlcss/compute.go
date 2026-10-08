@@ -20,6 +20,10 @@ type ComputedStyle struct {
 	// inheritance chain. Form controls only override their native text
 	// color when it was authored — otherwise they keep the UA black.
 	HasColor bool
+	// ColorOwn reports a `color` declared on this element itself (not
+	// inherited). A disabled form control keeps its dimmed UA text unless
+	// its own rules set a color — author rules beat the UA :disabled color.
+	ColorOwn bool
 	// AccentColor is CSS `accent-color` (inherited): the fill for form
 	// controls' active parts — checkbox tick box, radio dot, switch track,
 	// slider active track. Lets a dark stylesheet retint controls whose
@@ -663,9 +667,11 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	fs := cs.FontSize
 
 	// --- color ---
+	cs.ColorOwn = false
 	if v, ok := m["color"]; ok {
 		if c, ok := parseColor(v); ok {
 			cs.Color, cs.HasColor = c, true
+			cs.ColorOwn = true
 		}
 	}
 	// --- accent-color (inherited; "auto" falls back to the native default) ---

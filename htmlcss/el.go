@@ -2163,6 +2163,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		e.flowKids = nil
 		applyBox(&e.Box, cs, e.isStyleRoot())
 		e.ensureCanvas(cs)
+		e.applyHostedControlStyle(cs)
 		e.LayoutEngine = qui.FlowLayout{}
 		if e.hostsWidget {
 			e.LayoutEngine = hostFillLayout{}
@@ -4554,4 +4555,76 @@ func (e *El) textualName() string {
 		return collapseText(e.text)
 	}
 	return e.text
+}
+
+// ControlStyleTarget is the CSS hook for a natively built form control —
+// a widgets.Input / widgets.Select / widgets.TextArea constructed in Go
+// and hosted in a styled tree (h.Leaf, El.SetHostedWidget). A hosted
+// widget implementing it hands back the control that should be styled
+// like an <input>'s backing: the hosting element's font, color,
+// background, border, radius and padding move onto the control, and its
+// :hover / :focus / :focus-visible / :active rules (and :disabled color /
+// border) become the control's state styles. The element itself then
+// paints no box of its own. Return nil to opt out for this restyle.
+//
+//	func (fb *FormulaBar) ControlStyleTarget() qui.Widget { return fb.input }
+//
+//	.formulabar-field { border: 1px solid transparent; padding: 2px 6px; }
+//	.formulabar-field:hover { border-color: #747775; }
+//	.formulabar-field:focus { border-color: #0b57d0; }
+type ControlStyleTarget interface {
+	ControlStyleTarget() qui.Widget
+}
+
+// applyHostedControlStyle runs the ControlStyleTarget hook for a hosted
+// widget (see there).
+func (e *El) applyHostedControlStyle(cs *ComputedStyle) {
+	host, ok := e.canvasWidget.(ControlStyleTarget)
+	if !ok {
+		return
+	}
+	target := host.ControlStyleTarget()
+	if target == nil {
+		return
+	}
+	qui.UpdateStyle(target, func(st *qui.Style) {
+		st.Font = fontFrom(cs)
+		if cs.HasColor {
+			st.Foreground = cs.Color
+		}
+		if cs.HasBackground {
+			st.Background = cs.Background
+		}
+		if cs.HasSideBorders {
+			st.BorderWidths = cs.SideWidths
+			st.BorderColors = cs.SideColors
+			st.BorderStyle = cs.BorderStyle
+		} else if cs.HasBorder {
+			st.BorderSize = cs.BorderWidth
+			st.Border = cs.BorderColor
+			st.BorderStyle = cs.BorderStyle
+		}
+		if cs.Radius > 0 {
+			st.Radius = cs.Radius
+		}
+		if !cs.Corners.IsZero() {
+			st.Corners = cs.Corners
+		}
+		st.Padding = cs.Padding
+		st.LineHeight = 0
+		if cs.LineHeightOwn {
+			st.LineHeight = cs.LineHeight
+		}
+	})
+	applyControlColors(target, cs, &e.nativeStates)
+	// The chrome now lives on the control; the element is its frame only.
+	qui.UpdateStyle(e, func(st *qui.Style) {
+		st.Padding = qui.Insets{}
+		st.BorderSize = 0
+		st.Border = qui.Color{}
+		st.BorderWidths = qui.Insets{}
+		st.Background = qui.Color{}
+		st.Radius = 0
+		st.Corners = qui.CornerRadii{}
+	})
 }

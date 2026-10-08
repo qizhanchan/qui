@@ -470,7 +470,7 @@ func layoutView(cs *ComputedStyle) *ComputedStyle {
 	}
 	v := *cs
 	v.Hidden = false // visibility:hidden keeps its box
-	v.Color, v.HasColor = qui.Color{}, false
+	v.Color, v.HasColor, v.ColorOwn = qui.Color{}, false, false
 	v.AccentColor, v.HasAccentColor = qui.Color{}, false
 	v.ScrollbarThumb, v.ScrollbarTrack, v.HasScrollbarColor = qui.Color{}, qui.Color{}, false
 	v.Underline, v.LineThrough, v.Overline = false, false, false
