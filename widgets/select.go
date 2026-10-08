@@ -388,6 +388,27 @@ func (cb *Select) native() bool {
 	return cb.Label == "" && !cb.Dense
 }
 
+// nativeInsets is the raw-HTML <select>'s horizontal geometry: the text's
+// leading inset, the trailing area reserved for the arrow, and the arrow's
+// gap from the right edge. UA values unless padding is authored, in which
+// case the text starts at border + padding-left and the arrow sits
+// border + padding-right in (never tighter than the UA gap).
+func (cb *Select) nativeInsets() (lead, trail, arrowGap float32) {
+	pad, ok := nativeBoxPadding(&cb.States.Base)
+	if !ok {
+		return htmlSelLeadPad, htmlSelTrailPad, htmlSelArrowGap
+	}
+	bw := cb.States.Base.BorderSize
+	lead = bw + pad.Left
+	arrowGap = bw + pad.Right
+	if arrowGap < htmlSelArrowGap {
+		arrowGap = htmlSelArrowGap
+	}
+	// Same text-to-arrow spacing as the UA layout (23 = 8 gap + 8 arrow + 7).
+	trail = arrowGap + htmlSelArrowW + (htmlSelTrailPad - htmlSelArrowGap - htmlSelArrowW)
+	return lead, trail, arrowGap
+}
+
 // SetItems swaps the dropdown's options. Closes any open popup (items
 // were captured in the old item-widgets). If the current selection
 // lands out of range it resets to -1.
@@ -618,7 +639,8 @@ func (cb *Select) hasLabel() bool {
 // trigger, matching Input.Dense.
 func (cb *Select) horizontalPad() (float32, float32) {
 	if cb.native() {
-		return htmlSelLeadPad, htmlSelArrowGap
+		lead, _, gap := cb.nativeInsets()
+		return lead, gap
 	}
 	if cb.compact() {
 		return 8, cbTrailingSpace
@@ -641,13 +663,21 @@ func (cb *Select) inputBounds() Rect {
 	if cb.native() {
 		// Raw HTML <select>: text inset by border+padding, right side
 		// reserves htmlSelTrailPad for the chevron.
-		lead := htmlSelLeadPad
-		top := htmlControlPadY
-		w := b.W - lead - htmlSelTrailPad
+		lead, trail, _ := cb.nativeInsets()
+		top, bottom := htmlControlPadY, htmlControlPadY
+		if pad, ok := nativeBoxPadding(&cb.States.Base); ok {
+			bw := cb.States.Base.BorderSize
+			top, bottom = bw+pad.Top, bw+pad.Bottom
+		}
+		w := b.W - lead - trail
 		if w < 0 {
 			w = 0
 		}
-		return Rect{X: b.X + lead, Y: b.Y + top, W: w, H: b.H - 2*top}
+		h := b.H - top - bottom
+		if h < 0 {
+			h = 0
+		}
+		return Rect{X: b.X + lead, Y: b.Y + top, W: w, H: h}
 	}
 	lead, trail := cb.horizontalPad()
 	top := cbNoLabelTopSpace
@@ -716,11 +746,16 @@ func (cb *Select) Measure(available Size) Size {
 	if cb.native() {
 		// Raw HTML <select>: width fits the widest option + arrow area,
 		// height is the baseline control box. No 200 px floor.
-		width := maxTextW + htmlSelLeadPad + htmlSelTrailPad
+		lead, trail, _ := cb.nativeInsets()
+		width := maxTextW + lead + trail
 		if available.W > 0 && width > available.W {
 			width = available.W
 		}
-		return Size{W: width, H: htmlControlHeight}
+		height := htmlControlHeight
+		if pad, ok := nativeBoxPadding(&cb.States.Base); ok {
+			height = nativePaddedHeight(&cb.States.Base, pad)
+		}
+		return Size{W: width, H: height}
 	}
 	lead, trail := cb.horizontalPad()
 	width := maxTextW + lead + trail + cbTrailingIconSize
@@ -902,7 +937,8 @@ func (cb *Select) drawChevron(canvas Canvas, field Rect, color Color) {
 func (cb *Select) drawNativeChevron(canvas Canvas, field Rect) {
 	baseW := htmlSelArrowW
 	triH := htmlSelArrowH
-	cx := field.X + field.W - htmlSelArrowGap - baseW/2
+	_, _, gap := cb.nativeInsets()
+	cx := field.X + field.W - gap - baseW/2
 	cy := field.Y + (field.H-triH)/2
 	color := Color{R: 0.2, G: 0.2, B: 0.2, A: 1} // #333
 	steps := int(triH)

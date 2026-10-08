@@ -308,6 +308,10 @@ func (t *Input) horizontalPad() (float32, float32) {
 	switch {
 	case t.native():
 		lead, trail = htmlControlPadX, htmlControlPadX
+		if pad, ok := nativeBoxPadding(&t.States.Base); ok {
+			bw := t.States.Base.BorderSize
+			lead, trail = bw+pad.Left, bw+pad.Right
+		}
 	case t.compact():
 		lead, trail = 8, 8
 	}
@@ -495,9 +499,14 @@ func (t *Input) inputBounds() Rect {
 	top := tfNoLabelTopSpace
 	bottom := tfNoLabelBottomSpace
 	if t.native() {
-		// Raw HTML <input>: text inset by border(1) + UA padding(1).
+		// Raw HTML <input>: text inset by border(1) + UA padding(1), or
+		// by border + the authored padding.
 		top = htmlControlPadY
 		bottom = htmlControlPadY
+		if pad, ok := nativeBoxPadding(&t.States.Base); ok {
+			bw := t.States.Base.BorderSize
+			top, bottom = bw+pad.Top, bw+pad.Bottom
+		}
 	} else if t.compact() {
 		// The 16+16 vertical padding is sized for the 56 px form field.
 		// Inside a 40-dp dense row that leaves only 8 px for the input —
@@ -661,6 +670,12 @@ func (t *Input) Measure(available Size) Size {
 		// clipped (border 1 + padding 1 on each side = 4 px of chrome).
 		width = htmlInputWidth
 		height = htmlControlHeight
+		if pad, ok := nativeBoxPadding(&t.States.Base); ok {
+			// Authored padding: border + padding + a text line (a GM3
+			// outlined field's `padding: 7px 15px` makes it ~40 px).
+			height = nativePaddedHeight(&t.States.Base, pad)
+			break
+		}
 		// Grow only when an inherited font is larger than the baseline, so
 		// the default 14 px field stays the exact 22 px UA box.
 		if fs := t.States.Base.Font.Size; fs > htmlControlFontSize {

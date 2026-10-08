@@ -138,3 +138,32 @@ func themedStyle(s *Style) *Style {
 	out.Border = themed(s.Border)
 	return &out
 }
+
+// nativeBoxPadding reports a raw-HTML control's authored padding (CSS
+// `padding` on an <input> / <select>, or Style().Padding set in Go).
+// The zero value means "UA geometry": the fixed htmlControlPad* insets and
+// the 22 px box. Once set, the text sits at border + padding and the box
+// grows to fit it, as a browser lays the control out.
+func nativeBoxPadding(st *Style) (Insets, bool) {
+	p := st.Padding
+	return p, p != (Insets{})
+}
+
+// nativePaddedHeight is the box height of a padded raw-HTML control:
+// border + padding + one line of text (Style.LineHeight when set, else
+// 1.3 em), never below the UA box.
+func nativePaddedHeight(st *Style, pad Insets) float32 {
+	fs := st.Font.Size
+	if fs <= 0 {
+		fs = htmlControlFontSize
+	}
+	line := fs * 1.3
+	if st.LineHeight > 0 {
+		line = fs * st.LineHeight
+	}
+	h := 2*st.BorderSize + pad.Top + pad.Bottom + line
+	if h < htmlControlHeight {
+		h = htmlControlHeight
+	}
+	return h
+}
