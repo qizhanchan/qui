@@ -1018,6 +1018,11 @@ func (v *menuItemView) Draw(canvas Canvas) {
 	// Checkable path — Selected items get the tint alone.
 	selected := v.item.Selected || (v.item.Checkable && v.item.Checked)
 	showCheckGlyph := v.item.Checkable && v.item.Checked
+	if st.labelInset > 0 {
+		// Workspace menus mark a checked row with the ✓ alone; only a
+		// radio-style current value (Selected) is tinted.
+		selected = v.item.Selected
+	}
 
 	// Selected row: paint secondary-container backdrop. Otherwise the
 	// menu's surface-container shows through (the surrounding Container
