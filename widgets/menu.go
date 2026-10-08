@@ -487,6 +487,10 @@ func placeMenuY(winH, triggerTop, triggerBottom, natH float32) (top, budget floa
 		return triggerBottom, natH
 	case natH <= above:
 		return triggerTop - natH, natH
+	case triggerTop == triggerBottom && natH <= winH-2*edge:
+		// A point (context) menu has no trigger to keep clear: rather
+		// than scroll, slide it up until it fits, as a browser does.
+		return winH - edge - natH, natH
 	case above >= below:
 		return triggerTop - above, above // spans [edge, triggerTop]
 	default:
