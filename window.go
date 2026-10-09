@@ -98,6 +98,12 @@ type Window struct {
 	// the matching MouseUp reaches it even if the cursor has since moved
 	// off. Standard "mouse capture" semantics: set on down, cleared on up.
 	mouseCaptured Widget
+	// pressOrphaned is set when the widget holding mouse capture is removed
+	// from the window while the button is still down — typically a menu row
+	// that acts on MouseDown and closes its popup. The release that follows
+	// belongs to nothing: delivered by hit test instead it would land on
+	// whatever was under the popup and fire that element's click.
+	pressOrphaned bool
 	// gestureTarget is mouse capture's equivalent for multi-touch: the
 	// widget that received a gesture's Began keeps every Changed/Ended
 	// even if the fingers drift outside its bounds. See gesture.go.
@@ -2085,6 +2091,7 @@ func (w *Window) dispatch(event Event) {
 		switch me.eventType {
 		case EventMouseDown:
 			w.mouseCaptured = target
+			w.pressOrphaned = false
 			w.beginTextSelectionDrag(target, me)
 		case EventMouseMove:
 			// A widget drag (handled out-of-band above) owns the gesture:
@@ -2103,6 +2110,16 @@ func (w *Window) dispatch(event Event) {
 				target = w.mouseCaptured
 			}
 		case EventMouseUp:
+			if w.pressOrphaned {
+				// The press's target left the window mid-gesture (see
+				// pressOrphaned). Its release is dropped rather than
+				// re-targeted by hit test — DOM semantics: no click fires
+				// on an element the press never reached.
+				w.pressOrphaned = false
+				w.mouseCaptured = nil
+				w.endTextSelectionDrag()
+				return
+			}
 			if st := me.state(); st != nil {
 				st.releaseHit, st.releaseHitSet = hit, true
 			}

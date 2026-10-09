@@ -266,6 +266,7 @@ func (w *Window) releaseSubtreeInteractions(root Widget) {
 	}
 	if widgetIsDescendant(w.mouseCaptured, root) {
 		w.mouseCaptured = nil
+		w.pressOrphaned = true
 	}
 	if widgetIsDescendant(w.gestureTarget, root) {
 		w.gestureTarget = nil
