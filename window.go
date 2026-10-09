@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -210,6 +211,10 @@ type Window struct {
 	// painted, which buys the window another frame (see idle.go).
 	tickAt       time.Time
 	framePainted bool
+	// glRedraw is a pending RequestGLRedraw: a frame that only replays
+	// retained GL draws (gl_retained.go). Atomic because any goroutine may
+	// request one.
+	glRedraw atomic.Bool
 	// animQuietSince starts a stretch of Steps that ticked animators but
 	// painted nothing; zero while the window paints or has no animators.
 	animQuietSince time.Time
@@ -1697,7 +1702,14 @@ func (w *Window) Step() {
 	// clipped to the mutated widget's rect.
 	w.lastSize = viewport
 	w.layoutPass()
+	// A RequestGLRedraw is satisfied by any frame: a painted one replays
+	// retained GL draws anyway, so only a frame with nothing dirty needs
+	// the GL-only path.
+	glOnly := w.glRedraw.Swap(false)
 	if w.dirtyRegion.IsEmpty() {
+		if glOnly {
+			w.redrawGLOnly()
+		}
 		return
 	}
 	fbWidth, fbHeight := w.plat.framebufferSize()

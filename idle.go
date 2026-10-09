@@ -136,7 +136,7 @@ func (w *Window) RequestTickAt(at time.Time) {
 // Step: frameInterval while it is changing, the distance to its earliest
 // deadline while it waits on one, pumpForever when it is idle.
 func (w *Window) nextFrameWait(now time.Time) time.Duration {
-	if w.framePainted || !w.dirtyRegion.IsEmpty() ||
+	if w.framePainted || !w.dirtyRegion.IsEmpty() || w.glRedrawPending() ||
 		w.PendingJobs() > 0 || len(w.afterLayout) > 0 || len(w.afterFrame) > 0 || w.overlayResizePending ||
 		(w.root != nil && w.root.IsLayoutDirty()) {
 		return frameInterval

@@ -46,6 +46,14 @@ type GLRenderer struct {
 	// frame upload just what changed instead of the whole framebuffer.
 	texSrc *image.RGBA
 	damage image.Rectangle
+	// damageNone marks a frame known to have changed no CPU pixels (a
+	// RequestGLRedraw frame), as opposed to an empty damage, which means
+	// "unknown" and uploads everything.
+	damageNone bool
+
+	// retained holds the GL draws that persist across frames that do not
+	// repaint their area. See gl_retained.go.
+	retained retainedGLSet
 
 	// GPU compositing path (DrawTexture). A separate program that
 	// doesn't Y-flip by default so FBO textures composite correctly;
@@ -241,6 +249,14 @@ func (r *GLRenderer) End() {
 	if r.backend != nil {
 		r.backend.End()
 	}
+	r.composite()
+}
+
+// composite is the GL half of a frame: clear, raw-GL hooks and deferred
+// draws, then the 2D layer on top. Shared by End and by the GL-only
+// RequestGLRedraw frame (redrawRetained), which re-composites the
+// previous frame's 2D layer without re-rasterizing it.
+func (r *GLRenderer) composite() {
 	state := GLState{
 		FramebufferSize: Size{W: float32(r.img.Rect.Dx()), H: float32(r.img.Rect.Dy())},
 		LogicalSize:     r.logicalSize,
@@ -256,6 +272,11 @@ func (r *GLRenderer) End() {
 	if r.preHook != nil {
 		r.preHook(state)
 	}
+	// Retained draws whose owners were not drawn this frame and whose area
+	// this frame left alone: their content is still meant to be on screen.
+	for _, fn := range r.retained.carryOver(r.damage, r.damageNone) {
+		fn(state)
+	}
 	// Deferred widget GL draws (GLViewport scene render, etc.).
 	for _, fn := range r.deferredGL {
 		fn(state)
@@ -265,6 +286,7 @@ func (r *GLRenderer) End() {
 		r.deferredGL[i] = nil
 	}
 	r.deferredGL = r.deferredGL[:0]
+	r.retained.endFrame()
 
 	// Re-establish the 2D blit state — user code above may have
 	// left blend/depth/cull/vao in arbitrary configurations.
@@ -315,6 +337,7 @@ func (r *GLRenderer) End() {
 	}
 	// Damage describes one frame; the next must report its own.
 	r.damage = image.Rectangle{}
+	r.damageNone = false
 }
 
 // SetDamage tells the renderer which framebuffer pixels (physical, in
@@ -334,7 +357,13 @@ func (r *GLRenderer) SetDamage(rect image.Rectangle) {
 // frame, a resize, the GPU backend borrowed it) or the damage is unknown,
 // otherwise just the damaged pixels plus a one-pixel guard band.
 func (r *GLRenderer) textureUploadRect(img *image.RGBA) image.Rectangle {
-	if r.texSrc != img || r.damage.Empty() {
+	if r.texSrc != img {
+		return img.Rect
+	}
+	if r.damageNone {
+		return image.Rectangle{}
+	}
+	if r.damage.Empty() {
 		return img.Rect
 	}
 	return r.damage.Inset(-1).Intersect(img.Rect)

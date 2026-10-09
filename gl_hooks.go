@@ -21,6 +21,11 @@ package qui
 //
 // GLViewport combines (1) + (2): render a scene into an FBO, then
 // DrawTexture that FBO onto its widget bounds.
+//
+// A QueueGLDraw closure lives for one frame. Content that must stay on
+// screen while other parts of the window repaint — and that another
+// goroutine updates — uses RetainedGLCanvas.QueueRetainedGLDraw plus
+// Window.RequestGLRedraw instead (gl_retained.go).
 
 // GLState carries framebuffer/window sizing info to raw GL callbacks.
 // It deliberately doesn't expose the *Window or *GLRenderer so
