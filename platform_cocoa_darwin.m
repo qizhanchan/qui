@@ -90,6 +90,9 @@ static NSCursor* quiCocoaCursorFor(int shape) {
 @interface QuiView : NSView <NSTextInputClient>
 @property (nonatomic, assign) uintptr_t handle;
 @property (nonatomic, assign) int cursorShape;
+// customCursor, when set, overrides cursorShape: an image cursor or the
+// transparent stand-in for qui.CursorHidden (cursor_darwin.m).
+@property (nonatomic, strong) NSCursor* customCursor;
 @end
 
 @implementation QuiView
@@ -105,8 +108,12 @@ static NSCursor* quiCocoaCursorFor(int shape) {
 // click, so a user can press a button in one motion.
 - (BOOL)acceptsFirstMouse:(NSEvent*)event { return YES; }
 
+- (NSCursor*)quiCurrentCursor {
+    return self.customCursor ? self.customCursor : quiCocoaCursorFor(self.cursorShape);
+}
+
 - (void)resetCursorRects {
-    [self addCursorRect:[self bounds] cursor:quiCocoaCursorFor(self.cursorShape)];
+    [self addCursorRect:[self bounds] cursor:[self quiCurrentCursor]];
 }
 
 - (NSPoint)quiLocation:(NSEvent*)event {
@@ -835,9 +842,30 @@ void quiCocoaSetCursor(uintptr_t handle, int shape) {
         QuiWindowBox* box = quiBox(handle);
         if (box == nil) return;
         box.view.cursorShape = shape;
+        box.view.customCursor = nil;
         // Set immediately for the current position, and refresh the
         // cursor rect so re-entering the view keeps the new shape.
         [quiCocoaCursorFor(shape) set];
+        [box.window invalidateCursorRectsForView:box.view];
+    }
+}
+
+// quiCocoaSetCursorObject shows an NSCursor made by quiCursorCreate (an
+// image cursor, or the transparent one standing in for a hidden pointer).
+// The view keeps its own strong reference, so the caller's may be released
+// independently. A cursor rect rather than [NSCursor hide] for hiding:
+// AppKit then restores the arrow by itself when the pointer leaves the
+// view, with no hide/unhide count to keep balanced.
+void quiCocoaSetCursorObject(uintptr_t handle, void* cursor) {
+    @autoreleasepool {
+        QuiWindowBox* box = quiBox(handle);
+        if (box == nil || cursor == NULL) return;
+        box.view.customCursor = (__bridge NSCursor*)cursor;
+        NSPoint inWindow = [box.window mouseLocationOutsideOfEventStream];
+        NSPoint inView = [box.view convertPoint:inWindow fromView:nil];
+        if (NSPointInRect(inView, [box.view bounds])) {
+            [box.view.customCursor set];
+        }
         [box.window invalidateCursorRectsForView:box.view];
     }
 }

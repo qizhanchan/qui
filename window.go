@@ -32,6 +32,11 @@ const (
 	CursorResizeEW
 	// CursorResizeNS is a vertical resize cursor.
 	CursorResizeNS
+	// CursorHidden hides the pointer while it is over the widget that
+	// resolves to it; it reappears over anything resolving to another
+	// shape, or outside the window. See cursor_image.go, which also has
+	// image cursors (NewImageCursor).
+	CursorHidden
 )
 
 // Window is one OS window plus the widget tree it renders. The OS half
@@ -736,10 +741,10 @@ func (w *Window) Cursor() CursorShape {
 
 func isSupportedCursorShape(shape CursorShape) bool {
 	switch shape {
-	case CursorDefault, CursorText, CursorCrosshair, CursorHand, CursorResizeEW, CursorResizeNS:
+	case CursorDefault, CursorText, CursorCrosshair, CursorHand, CursorResizeEW, CursorResizeNS, CursorHidden:
 		return true
 	default:
-		return false
+		return IsImageCursor(shape)
 	}
 }
 

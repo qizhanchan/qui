@@ -24,3 +24,9 @@ func glfwNativeWindow(_ *glfw.Window) unsafe.Pointer { return nil }
 // synthesis in gesture.go, so this is a degradation (no scroll phase, no
 // two-finger rotation) rather than a hole.
 func (w *glfwWindow) installGestures() {}
+
+// glfwImageCursor builds a GLFW cursor from the image's 1x rendition —
+// GLFW takes images at one pixel per screen pixel here.
+func glfwImageCursor(shape CursorShape, ic *imageCursor) *glfw.Cursor {
+	return glfw.CreateCursor(ic.at1x(), int(ic.hotX), int(ic.hotY))
+}

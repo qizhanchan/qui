@@ -40,6 +40,7 @@ void   quiCocoaSetShouldClose(uintptr_t handle, int value);
 
 void quiCocoaGetCursorPos(uintptr_t handle, double* x, double* y);
 void quiCocoaSetCursor(uintptr_t handle, int shape);
+void quiCocoaSetCursorObject(uintptr_t handle, void* cursor);
 void quiCocoaSetDropEnabled(uintptr_t handle, int enabled);
 int  quiCocoaCurrentMods(void);
 
@@ -358,6 +359,12 @@ func (w *cocoaWindow) cursorPos() (float64, float64) {
 }
 
 func (w *cocoaWindow) setCursor(shape CursorShape) {
+	// Image cursors and the hidden pointer are NSCursor objects shared by
+	// every window (cursor_darwin.go); the rest are AppKit's own.
+	if ns := nativeNSCursor(shape); ns != nil {
+		C.quiCocoaSetCursorObject(w.cid(), ns)
+		return
+	}
 	C.quiCocoaSetCursor(w.cid(), C.int(cocoaCursorShape(shape)))
 }
 

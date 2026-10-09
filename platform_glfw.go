@@ -145,6 +145,8 @@ type glfwWindow struct {
 	handle  *glfw.Window
 	handler platformHandler
 	cursors map[CursorShape]*glfw.Cursor
+	// cursorHidden mirrors GLFW's cursor mode (CursorHidden is a mode).
+	cursorHidden bool
 	// pending carries the modifier/phase snapshot the darwin bridge took
 	// off the real NSEvent just before GLFW's own scrollWheel: ran. See
 	// platform_glfw_gesture_darwin.m and scrollContext.
@@ -247,15 +249,47 @@ func (w *glfwWindow) destroy() {
 func (w *glfwWindow) cursorPos() (float64, float64) { return w.handle.GetCursorPos() }
 
 func (w *glfwWindow) setCursor(shape CursorShape) {
+	// Hidden is a cursor MODE in GLFW, not an image: the pointer vanishes
+	// over the content area and comes back when it leaves the window.
+	if shape == CursorHidden {
+		if !w.cursorHidden {
+			w.handle.SetInputMode(glfw.CursorMode, glfw.CursorHidden)
+			w.cursorHidden = true
+		}
+		return
+	}
+	if w.cursorHidden {
+		w.handle.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
+		w.cursorHidden = false
+	}
 	if w.cursors == nil {
 		w.cursors = map[CursorShape]*glfw.Cursor{}
 	}
 	cur, ok := w.cursors[shape]
 	if !ok {
-		cur = glfw.CreateStandardCursor(glfwCursorShape(shape))
+		if ic := lookupImageCursor(shape); ic != nil {
+			cur = glfwImageCursor(shape, ic)
+		} else {
+			cur = glfw.CreateStandardCursor(glfwCursorShape(shape))
+		}
+		if cur == nil {
+			cur = glfw.CreateStandardCursor(glfw.ArrowCursor)
+		}
 		w.cursors[shape] = cur
 	}
 	w.handle.SetCursor(cur)
+}
+
+// releaseCursor implements platformCursorReleaser: GLFW cursors are
+// created per window, so a released image cursor is destroyed here.
+// glfwDestroyCursor resets any window still showing it to the arrow.
+func (w *glfwWindow) releaseCursor(shape CursorShape) {
+	if cur, ok := w.cursors[shape]; ok {
+		delete(w.cursors, shape)
+		if cur != nil {
+			cur.Destroy()
+		}
+	}
 }
 
 func glfwCursorShape(shape CursorShape) glfw.StandardCursor {

@@ -2,6 +2,14 @@
 
 package qui
 
+/*
+#cgo CFLAGS: -x objective-c -fobjc-arc
+#cgo LDFLAGS: -framework Cocoa
+
+int quiGLFWCursorAdopt(void* glfwCursor, void* nsCursor);
+*/
+import "C"
+
 import (
 	"unsafe"
 
@@ -21,4 +29,22 @@ func glfwNativeWindow(handle *glfw.Window) unsafe.Pointer {
 		return nil
 	}
 	return unsafe.Pointer(handle.GetCocoaWindow())
+}
+
+// glfwImageCursor builds a GLFW cursor for an image cursor. glfwCreateCursor
+// maps one image pixel to one point, so a high-density image (scale > 1)
+// would come out twice the size: the GLFW cursor is created from the 1x
+// downsample, then its NSCursor is swapped for the full-resolution one
+// (cursor_darwin.m). If the swap is refused the 1x cursor still works.
+func glfwImageCursor(shape CursorShape, ic *imageCursor) *glfw.Cursor {
+	cur := glfw.CreateCursor(ic.at1x(), int(ic.hotX), int(ic.hotY))
+	if cur == nil || ic.scale == 1 {
+		return cur
+	}
+	if ns := nativeNSCursor(shape); ns != nil {
+		// go-gl's Cursor is struct{ data *C.GLFWcursor }.
+		data := *(*unsafe.Pointer)(unsafe.Pointer(cur))
+		C.quiGLFWCursorAdopt(data, ns)
+	}
+	return cur
 }

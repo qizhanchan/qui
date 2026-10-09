@@ -15,6 +15,7 @@ package main
 import (
 	"fmt"
 	"image"
+	"image/color"
 	"log"
 	"os"
 	"sync/atomic"
@@ -85,6 +86,23 @@ func main() {
 		}
 	}
 
+	// Cursor over the picture: arrow, hidden (the remote draws its own),
+	// or a custom image cursor like a mirrored remote pointer — a 2x
+	// image, so it is crisp on Retina.
+	remoteCursor, err := qui.NewImageCursorScaled(ringCursor(48), 2, 12, 12)
+	if err != nil {
+		log.Fatal(err)
+	}
+	cursorNames := []string{"arrow", "hidden", "image"}
+	cursorShapes := []qui.CursorShape{qui.CursorDefault, qui.CursorHidden, remoteCursor}
+	cursorIdx := 0
+	cursorBtn := widgets.NewButton("Cursor: arrow", nil)
+	cursorBtn.OnClick = func() {
+		cursorIdx = (cursorIdx + 1) % len(cursorShapes)
+		fv.SetCursorShape(cursorShapes[cursorIdx])
+		setText(cursorBtn, "Cursor: "+cursorNames[cursorIdx])
+	}
+
 	fv.OnEvent(func(e qui.Event) bool {
 		if me, ok := e.(qui.MouseEvent); ok && me.Type() == qui.EventMouseMove {
 			x, y, inside := fv.MapToFrame(qui.Point{X: me.X, Y: me.Y})
@@ -101,7 +119,7 @@ func main() {
 	fv.OnPresent(func(p media.PresentInfo) { lastLatency.Store(int64(p.Latency())) })
 
 	controls := qui.NewContainer(qui.FlexLayout{Direction: qui.Horizontal, Gap: 8, AlignItems: qui.AlignCenter},
-		srcBtn, fitBtn, pauseBtn, pointer)
+		srcBtn, fitBtn, pauseBtn, cursorBtn, pointer)
 	root := qui.NewContainer(qui.FlexLayout{Direction: qui.Vertical, Gap: 8},
 		controls, fv, status)
 	root.Style().Padding = qui.Insets{Top: 10, Right: 10, Bottom: 10, Left: 10}
@@ -181,4 +199,25 @@ func paint(pix []byte, stride, w, h, n int, bgra bool) {
 func setText(b *widgets.Button, s string) {
 	b.Text = s
 	b.InvalidateLayout()
+}
+
+// ringCursor draws an n×n ring with a dot — a stand-in for a remote
+// pointer image.
+func ringCursor(n int) *image.NRGBA {
+	img := image.NewNRGBA(image.Rect(0, 0, n, n))
+	c := float64(n-1) / 2
+	for y := 0; y < n; y++ {
+		for x := 0; x < n; x++ {
+			dx, dy := float64(x)-c, float64(y)-c
+			d := dx*dx + dy*dy
+			r := float64(n) / 2
+			switch {
+			case d < (r*0.15)*(r*0.15):
+				img.SetNRGBA(x, y, color.NRGBA{R: 255, G: 255, B: 255, A: 255})
+			case d < (r*0.95)*(r*0.95) && d > (r*0.7)*(r*0.7):
+				img.SetNRGBA(x, y, color.NRGBA{R: 255, G: 200, B: 0, A: 255})
+			}
+		}
+	}
+	return img
 }
