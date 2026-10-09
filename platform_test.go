@@ -292,7 +292,7 @@ func TestHandlerTranslatesInputToEvents(t *testing.T) {
 	}
 
 	// Scroll carries phase through untouched.
-	w.onScroll(5, 5, 0, -2, ModShift, GesturePhaseMomentum)
+	w.onScroll(5, 5, 0, -2, ModShift, GesturePhaseMomentum, true)
 	if len(spy.scrolls) != 1 {
 		t.Fatalf("expected 1 scroll event, got %d", len(spy.scrolls))
 	}

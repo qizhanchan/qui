@@ -149,6 +149,7 @@ static NSCursor* quiCocoaCursorFor(int shape) {
 - (void)scrollWheel:(NSEvent*)event {
     double dx = [event scrollingDeltaX];
     double dy = [event scrollingDeltaY];
+    const int precise = [event hasPreciseScrollingDeltas] ? 1 : 0;
     // Precise (trackpad / Magic Mouse) deltas are in points; line-based
     // (wheel) deltas are in lines. Scale the former down by the same
     // 0.1 factor GLFW uses so scroll distance per gesture is unchanged
@@ -168,7 +169,7 @@ static NSCursor* quiCocoaCursorFor(int shape) {
 
     NSPoint p = [self quiLocation:event];
     quiCocoaOnScroll(self.handle, p.x, p.y, dx, dy,
-                     quiCocoaModsOf([event modifierFlags]), phase);
+                     quiCocoaModsOf([event modifierFlags]), phase, precise);
 }
 
 // --- gestures ---
@@ -420,10 +421,28 @@ static void quiCocoaMinimalMenu(void) {
 // A prohibited/accessory process must NOT activate itself. For an input
 // method that is not cosmetic: activating would pull focus off the app the
 // user is typing into at the exact moment the input method loads.
+// QuiAppDelegate routes -[NSApplication terminate:] (Cmd+Q, Dock → Quit,
+// logout) to Go when the app registered App.OnQuitRequest, so the app can
+// shut down through its own Run loop instead of AppKit calling exit().
+@interface QuiAppDelegate : NSObject <NSApplicationDelegate>
+@end
+
+@implementation QuiAppDelegate
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
+    return quiCocoaShouldTerminate() ? NSTerminateNow : NSTerminateCancel;
+}
+@end
+
+static QuiAppDelegate* gQuiAppDelegate;
+
 int quiCocoaInit(int policy) {
     @autoreleasepool {
         gQuiWindows = [[NSMutableDictionary alloc] init];
         [NSApplication sharedApplication];
+        if ([NSApp delegate] == nil) {
+            gQuiAppDelegate = [[QuiAppDelegate alloc] init];
+            [NSApp setDelegate:gQuiAppDelegate];
+        }
         NSApplicationActivationPolicy nsPolicy;
         switch (policy) {
             case 1:  nsPolicy = NSApplicationActivationPolicyAccessory;  break;

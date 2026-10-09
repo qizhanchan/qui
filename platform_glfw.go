@@ -451,7 +451,7 @@ func (w *glfwWindow) installCallbacks() {
 		}
 		mods, phase := w.takeScrollContext()
 		x, y := w.handle.GetCursorPos()
-		hh.onScroll(x, y, xoff, yoff, mods, phase)
+		hh.onScroll(x, y, xoff, yoff, mods, phase, phase != GesturePhaseNone)
 	})
 
 	w.handle.SetKeyCallback(func(_ *glfw.Window, key glfw.Key, scancode int, action glfw.Action, mods glfw.ModifierKey) {

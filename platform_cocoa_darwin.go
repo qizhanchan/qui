@@ -603,13 +603,21 @@ func quiCocoaOnMouseButton(id C.uintptr_t, button, down, mods C.int) {
 }
 
 //export quiCocoaOnScroll
-func quiCocoaOnScroll(id C.uintptr_t, x, y, dx, dy C.double, mods, phase C.int) {
+func quiCocoaOnScroll(id C.uintptr_t, x, y, dx, dy C.double, mods, phase, precise C.int) {
 	w := lookupCocoaWindow(uintptr(id))
 	if w == nil || w.handler == nil {
 		return
 	}
 	w.handler.onScroll(float64(x), float64(y), float64(dx), float64(dy),
-		mapNSMods(mods), mapNSGesturePhase(phase))
+		mapNSMods(mods), mapNSGesturePhase(phase), precise != 0)
+}
+
+//export quiCocoaShouldTerminate
+func quiCocoaShouldTerminate() C.int {
+	if runQuitRequest() {
+		return 0
+	}
+	return 1
 }
 
 //export quiCocoaOnGesture

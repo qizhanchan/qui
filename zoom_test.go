@@ -261,7 +261,7 @@ func TestScrollDeltasScaleWithZoomSoVisualSpeedIsConstant(t *testing.T) {
 	w.SetRoot(probe)
 
 	w.SetZoom(2)
-	w.onScroll(400, 300, 0, 10, 0, GesturePhaseChanged)
+	w.onScroll(400, 300, 0, 10, 0, GesturePhaseChanged, true)
 	if probe.lastDeltaY != 5 {
 		t.Errorf("scroll delta 10 under 2× arrived as %v, want 5 — "+
 			"a notch should cover the same visible distance at any zoom", probe.lastDeltaY)

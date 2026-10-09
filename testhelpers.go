@@ -487,7 +487,7 @@ func (w *Window) IngestScrollForTest(x, y, dx, dy float32, mods Modifiers, phase
 		return
 	}
 	w.assertUIThread("Window.IngestScrollForTest")
-	w.ingestScroll(x, y, dx, dy, mods, phase)
+	w.ingestScroll(x, y, dx, dy, mods, phase, phase != GesturePhaseNone)
 }
 
 // NewDragEvent builds a synthetic DragEvent (EventDragStart/Move/End/Drop)

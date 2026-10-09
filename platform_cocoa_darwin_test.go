@@ -168,17 +168,17 @@ func (p *dropProbe) onFileDrop(paths []string, x, y float64) {
 // silentHandler satisfies platformHandler by ignoring everything.
 type silentHandler struct{}
 
-func (silentHandler) onMouseMove(float64, float64, Modifiers)                              {}
-func (silentHandler) onMouseButton(MouseButton, bool, Modifiers)                           {}
-func (silentHandler) onScroll(float64, float64, float64, float64, Modifiers, GesturePhase) {}
-func (silentHandler) onGesture(EventType, GesturePhase, float32, float32, Modifiers)       {}
-func (silentHandler) onKey(Key, int, bool, bool, Modifiers)                                {}
-func (silentHandler) onChar(rune)                                                          {}
-func (silentHandler) onFocus(bool)                                                         {}
-func (silentHandler) onResize(int, int)                                                    {}
-func (silentHandler) onFramebufferResize(int, int)                                         {}
-func (silentHandler) onRefresh()                                                           {}
-func (silentHandler) onFileDrop([]string, float64, float64)                                {}
+func (silentHandler) onMouseMove(float64, float64, Modifiers)                                    {}
+func (silentHandler) onMouseButton(MouseButton, bool, Modifiers)                                 {}
+func (silentHandler) onScroll(float64, float64, float64, float64, Modifiers, GesturePhase, bool) {}
+func (silentHandler) onGesture(EventType, GesturePhase, float32, float32, Modifiers)             {}
+func (silentHandler) onKey(Key, int, bool, bool, Modifiers)                                      {}
+func (silentHandler) onChar(rune)                                                                {}
+func (silentHandler) onFocus(bool)                                                               {}
+func (silentHandler) onResize(int, int)                                                          {}
+func (silentHandler) onFramebufferResize(int, int)                                               {}
+func (silentHandler) onRefresh()                                                                 {}
+func (silentHandler) onFileDrop([]string, float64, float64)                                      {}
 
 func TestCocoaModifierKeysUpDown(t *testing.T) {
 	// Left Shift pressed while right Shift is already held: the device bit

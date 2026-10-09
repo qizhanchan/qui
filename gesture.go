@@ -44,22 +44,23 @@ const (
 // non-darwin platform gets zoom at all). If nobody consumes the pinch,
 // the plain scroll is dispatched unchanged — so existing Ctrl+scroll
 // behaviors keep working and nothing is silently swallowed.
-func (w *Window) ingestScroll(x, y, dx, dy float32, mods Modifiers, phase GesturePhase) {
+func (w *Window) ingestScroll(x, y, dx, dy float32, mods Modifiers, phase GesturePhase, precise bool) {
 	if dy != 0 && isPinchModifier(mods) {
 		if w.synthesizePinch(x, y, dy, mods) {
 			return
 		}
 	}
 	w.dispatch(MouseEvent{
-		baseEvent:   baseEvent{shared: &eventState{}},
-		eventType:   EventScroll,
-		When:        time.Now(),
-		X:           x,
-		Y:           y,
-		DeltaX:      dx,
-		DeltaY:      dy,
-		Mods:        mods,
-		ScrollPhase: phase,
+		baseEvent:     baseEvent{shared: &eventState{}},
+		eventType:     EventScroll,
+		When:          time.Now(),
+		X:             x,
+		Y:             y,
+		DeltaX:        dx,
+		DeltaY:        dy,
+		Mods:          mods,
+		ScrollPhase:   phase,
+		PreciseScroll: precise,
 	})
 }
 

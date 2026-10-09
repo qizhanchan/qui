@@ -280,7 +280,7 @@ type platformHandler interface {
 	// onScroll carries modifiers and phase, which most raw platform
 	// callbacks omit — obtaining them is the backend's problem, not the
 	// engine's. phase is GesturePhaseNone where unavailable.
-	onScroll(x, y, dx, dy float64, mods Modifiers, phase GesturePhase)
+	onScroll(x, y, dx, dy float64, mods Modifiers, phase GesturePhase, precise bool)
 	// onGesture delivers multi-touch. dScale is a magnification fraction
 	// (increment, not cumulative), dRotation is degrees.
 	onGesture(kind EventType, phase GesturePhase, dScale, dRotation float32, mods Modifiers)

@@ -201,6 +201,13 @@ type MouseEvent struct {
 	// Named ScrollPhase rather than Phase because baseEvent already
 	// promotes a Phase() method for the capture/target/bubble stage.
 	ScrollPhase GesturePhase
+
+	// PreciseScroll is set for EventScroll when the device reports
+	// pixel-precise deltas (trackpad, Magic Mouse, smooth-scrolling mice)
+	// rather than wheel lines. Such deltas arrive pre-scaled by 0.1 (see
+	// the platform layer), so a consumer converting to pixels multiplies
+	// them by 10, while line deltas need a per-line distance instead.
+	PreciseScroll bool
 }
 
 func (e MouseEvent) Type() EventType { return e.eventType }

@@ -52,10 +52,10 @@ func (w *Window) onMouseButton(btn MouseButton, down bool, mods Modifiers) {
 // notch should move the content the same visible distance whatever the
 // zoom, which means fewer viewport units when zoomed in. Scaling only the
 // position would make scrolling accelerate as the user zooms.
-func (w *Window) onScroll(x, y, dx, dy float64, mods Modifiers, phase GesturePhase) {
+func (w *Window) onScroll(x, y, dx, dy float64, mods Modifiers, phase GesturePhase, precise bool) {
 	vx, vy := w.toViewport(x, y)
 	ddx, ddy := w.toViewport(dx, dy)
-	w.ingestScroll(vx, vy, ddx, ddy, mods, phase)
+	w.ingestScroll(vx, vy, ddx, ddy, mods, phase, precise)
 }
 
 func (w *Window) onGesture(kind EventType, phase GesturePhase, dScale, dRotation float32, mods Modifiers) {
