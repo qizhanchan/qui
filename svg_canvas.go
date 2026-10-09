@@ -374,8 +374,7 @@ func (c *SVGCanvas) DrawText(text string, rect Rect, color Color, font Font) {
 	if text == "" {
 		return
 	}
-	face := GetFontFaceFor(font)
-	metrics := face.Metrics()
+	metrics := fontMetricsFor(font)
 	capHeight := float32(metrics.CapHeight.Ceil())
 	if capHeight <= 0 {
 		capHeight = float32(metrics.Ascent.Ceil() - metrics.Descent.Ceil())

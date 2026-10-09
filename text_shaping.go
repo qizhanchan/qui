@@ -551,7 +551,7 @@ func makeShapedLine(runs shaping.Line, text, shapeText []rune, direction di.Dire
 	}
 }
 
-func shapeSingleLine(text []rune, fontSpec Font, direction TextDirection) (*shapedLine, bool) {
+func shapeSingleLineUncached(text []rune, fontSpec Font, direction TextDirection) (*shapedLine, bool) {
 	paragraph, ok := shapeParagraph(text, fontSpec, direction)
 	if !ok {
 		return nil, false

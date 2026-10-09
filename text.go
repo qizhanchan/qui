@@ -246,6 +246,12 @@ type textLayoutCacheKey struct {
 	// change, so this is belt-and-braces against a stale entry surviving
 	// a race between the bump and an in-flight measurement.
 	localeGen uint64
+	// Tracking and small caps change advances (and so widths and wrap
+	// points) without changing the face, so fontCacheKey — the face-chain
+	// key — leaves them out; the layout memo must not.
+	letterSpacing float32
+	wordSpacing   float32
+	smallCaps     bool
 }
 
 var (
@@ -283,7 +289,8 @@ func BuildTextLayout(text string, fontSpec Font, opts TextLayoutOptions) TextLay
 	if keySpec.Size <= 0 {
 		keySpec.Size = 14
 	}
-	key := textLayoutCacheKey{text: text, font: makeFontCacheKey(keySpec), opts: opts, localeGen: LocaleGeneration()}
+	key := textLayoutCacheKey{text: text, font: makeFontCacheKey(keySpec), opts: opts, localeGen: LocaleGeneration(),
+		letterSpacing: fontSpec.LetterSpacing, wordSpacing: fontSpec.WordSpacing, smallCaps: fontSpec.SmallCaps}
 	textLayoutCacheMu.Lock()
 	if cached, ok := textLayoutCache[key]; ok {
 		textLayoutCacheMu.Unlock()
@@ -533,7 +540,7 @@ func drawDecorationRun(canvas Canvas, deco TextDecoration, x, w, top, lineHeight
 	if deco == 0 || w <= 0 {
 		return
 	}
-	m := GetFontFaceFor(fontSpec).Metrics()
+	m := fontMetricsFor(fontSpec)
 	ascent := float32(m.Ascent.Ceil())
 	descent := float32(m.Descent.Ceil())
 	if ascent <= 0 {
@@ -695,8 +702,7 @@ func trackFor(r rune, fontSpec Font) float32 {
 // substitutions/positioning, bidi ordering, spacing and emoji clusters.
 // Height comes from the font face metrics.
 func TextMetrics(text string, fontSpec Font) (width, height float32) {
-	face := GetFontFaceFor(fontSpec)
-	lineHeight := float32(face.Metrics().Height.Ceil())
+	lineHeight := float32(fontMetricsFor(fontSpec).Height.Ceil())
 	lines := splitLogicalLines(text)
 	if len(lines) == 0 {
 		return 0, 0
@@ -726,7 +732,7 @@ func TextMetrics(text string, fontSpec Font) (width, height float32) {
 // Falls back to the rect's own center when the face reports no usable
 // cap/x-height metrics.
 func TextXHeightCenterY(rect Rect, fontSpec Font) float32 {
-	metrics := GetFontFaceFor(fontSpec).Metrics()
+	metrics := fontMetricsFor(fontSpec)
 	capHeight, xHeight := float32(metrics.CapHeight.Ceil()), float32(metrics.XHeight)/64
 	if capHeight <= 0 || xHeight <= 0 {
 		return rect.Y + rect.H/2
@@ -741,7 +747,7 @@ func TextXHeightCenterY(rect Rect, fontSpec Font) float32 {
 // descent below. That is the text's own line box, so a caret in a tall
 // field stays text-sized instead of running edge to edge. Clamped to rect.
 func TextCaretBand(rect Rect, fontSpec Font) (y, h float32) {
-	metrics := GetFontFaceFor(fontSpec).Metrics()
+	metrics := fontMetricsFor(fontSpec)
 	capHeight := float32(metrics.CapHeight.Ceil())
 	if capHeight <= 0 {
 		capHeight = float32(metrics.Ascent.Ceil() - metrics.Descent.Ceil())
@@ -767,8 +773,8 @@ func splitLogicalLines(text string) []string {
 }
 
 func measureRunes(runes []rune, fontSpec Font, faces []font.Face) float32 {
-	if paragraph, ok := shapeParagraph(runes, fontSpec, TextDirectionAuto); ok {
-		return paragraph.advance
+	if advance, ok := paragraphAdvance(runes, fontSpec); ok {
+		return advance
 	}
 	var w float32
 	for i := 0; i < len(runes); {
@@ -925,7 +931,7 @@ func textVisualOverhang(fontSpec Font) float32 {
 	if !fontSpec.Italic {
 		return 0
 	}
-	lineHeight := float32(GetFontFaceFor(fontSpec).Metrics().Height.Ceil())
+	lineHeight := float32(fontMetricsFor(fontSpec).Height.Ceil())
 	if lineHeight <= 0 {
 		return 0
 	}

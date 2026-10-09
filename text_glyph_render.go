@@ -17,24 +17,49 @@ func (c imageCanvas) drawShapedLine(line *shapedLine, rect Rect, color Color, fo
 	if line == nil || len(line.runs) == 0 || c.backend == nil {
 		return
 	}
-	metrics := GetFontFaceFor(fontSpec).Metrics()
-	capHeight := float32(metrics.CapHeight.Ceil())
-	if capHeight <= 0 {
-		capHeight = float32(metrics.Ascent.Ceil() - metrics.Descent.Ceil())
-	}
+	capHeight := shapedLineCapHeight(fontSpec)
 	baseline := rect.Y + (rect.H+capHeight)/2
 	c.drawShapedLineAtBaseline(line, rect.X, baseline, color, fontSpec)
 }
 
-func (c imageCanvas) drawShapedLineAtBaseline(line *shapedLine, x, baseline float32, color Color, fontSpec Font) {
-	path := NewPath()
-	penX := x
-	metrics := GetFontFaceFor(fontSpec).Metrics()
+func shapedLineCapHeight(fontSpec Font) float32 {
+	metrics := fontMetricsFor(fontSpec)
 	capHeight := float32(metrics.CapHeight.Ceil())
 	if capHeight <= 0 {
 		capHeight = float32(metrics.Ascent.Ceil() - metrics.Descent.Ceil())
 	}
+	return capHeight
+}
+
+func (c imageCanvas) drawShapedLineAtBaseline(line *shapedLine, x, baseline float32, color Color, fontSpec Font) {
+	capHeight := shapedLineCapHeight(fontSpec)
 	visual := visualRunOrder(line.runs)
+	if bl, mode, ok := c.glyphMaskTarget(); ok {
+		// Glyph-mask cache route (see text_glyph_cache.go). Emoji are
+		// blitted first, as the Path route does (it fills the outline
+		// path only after walking the whole line).
+		penX := x
+		for _, runIndex := range visual {
+			for _, glyph := range line.runs[runIndex].Glyphs {
+				if glyph.GlyphID == gtfont.EmptyGlyph {
+					drawEmojiGlyph(c, line, glyph, penX, baseline, capHeight, fontSpec)
+				}
+				penX += fixedToPx(glyph.Advance)
+			}
+		}
+		c.drawShapedLineMasks(bl, mode, line, visual, x, baseline, color, fontSpec)
+		if fontSpec.Bold {
+			// Synthetic bold: second pass one logical px right, through
+			// the same Translate the Path route uses.
+			depth := c.Save()
+			c.Translate(1, 0)
+			c.drawShapedLineMasks(bl, mode, line, visual, x, baseline, color, fontSpec)
+			c.RestoreTo(depth)
+		}
+		return
+	}
+	path := NewPath()
+	penX := x
 	for _, runIndex := range visual {
 		run := &line.runs[runIndex]
 		for _, glyph := range run.Glyphs {
@@ -134,9 +159,18 @@ func appendGlyphOutline(path *Path, run *shaping.Output, glyph shaping.Glyph, pe
 		}
 		return x, y
 	}
+	// Font contours are implicitly closed, while flatten/fillPolygon do
+	// not auto-close a subpath. Close each contour explicitly so one whose
+	// last segment stops short of its start can never leave an unbalanced
+	// edge crossing (non-zero fill leaking sideways along a subscan).
+	open := false
 	for _, segment := range outline.Segments {
 		switch segment.Op {
 		case gtot.SegmentOpMoveTo:
+			if open {
+				path.Close()
+			}
+			open = true
 			x, y := point(segment.Args[0])
 			path.MoveTo(x, y)
 		case gtot.SegmentOpLineTo:
@@ -152,5 +186,8 @@ func appendGlyphOutline(path *Path, run *shaping.Output, glyph shaping.Glyph, pe
 			x, y := point(segment.Args[2])
 			path.CubicTo(c1x, c1y, c2x, c2y, x, y)
 		}
+	}
+	if open {
+		path.Close()
 	}
 }

@@ -215,8 +215,7 @@ func (c *pdfCanvas) drawTextRuns(text string, rect Rect, color Color, fontSpec F
 	if size <= 0 {
 		size = 14
 	}
-	face := GetFontFaceFor(fontSpec)
-	m := face.Metrics()
+	m := fontMetricsFor(fontSpec)
 	ascent := m.Ascent.Ceil()
 	descent := m.Descent.Ceil()
 	lineH := m.Height.Ceil()
@@ -318,7 +317,7 @@ func (c *pdfCanvas) emitShapedTextLine(line *shapedLine, x, baseline float32, fo
 	if line == nil {
 		return
 	}
-	metrics := GetFontFaceFor(fontSpec).Metrics()
+	metrics := fontMetricsFor(fontSpec)
 	capHeight := float32(metrics.CapHeight.Ceil())
 	if capHeight <= 0 {
 		capHeight = float32(metrics.Ascent.Ceil() - metrics.Descent.Ceil())

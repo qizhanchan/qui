@@ -263,6 +263,11 @@ func clearFontFaceCachesUnlocked() {
 	// every memoized measurement.
 	invalidateTextLayoutCache()
 	invalidateShapingFontCache()
+	invalidateFontMetricsCache()
+	invalidateShapeCaches()
+	// Glyph masks are keyed by *gtfont.Face; a registry swap makes those
+	// faces unreachable, so drop their masks rather than let them age out.
+	glyphCache.reset()
 }
 
 // FontFace bundles one weight/style of a font family for SetDefaultFont.
