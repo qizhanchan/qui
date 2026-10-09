@@ -137,6 +137,13 @@ func compileShader(src string, shaderType uint32) (uint32, error) {
 // convention so the picture renders right-side-up under qui's
 // y-down 2D coord system).
 func drawRectTexture(texName uint32, physDst qui.Rect, fb qui.Size, texSize qui.Size, flipY bool) {
+	drawRectTextureSrc(texName, qui.Rect{W: texSize.W, H: texSize.H}, physDst, fb, texSize, flipY)
+}
+
+// drawRectTextureSrc is drawRectTexture sampling only src (texel
+// coordinates, top-left origin in image space) — how FrameView crops a
+// FitCover overflow without a scissor.
+func drawRectTextureSrc(texName uint32, src, physDst qui.Rect, fb qui.Size, texSize qui.Size, flipY bool) {
 	if !gRectDrawer.ensureInit() {
 		return
 	}
@@ -151,14 +158,14 @@ func drawRectTexture(texName uint32, physDst qui.Rect, fb qui.Size, texSize qui.
 	y1 := 1 - (physDst.Y+physDst.H)/fb.H*2
 
 	// RECTANGLE UVs in texel space.
-	tw, th := texSize.W, texSize.H
+	th := texSize.H
 	var uTop, uBot, uLeft, uRight float32
-	uLeft, uRight = 0, tw
+	uLeft, uRight = src.X, src.X+src.W
 	if flipY {
-		// Image is stored top-down; top of dst → V=0.
-		uTop, uBot = 0, th
+		// Image is stored top-down; top of dst → V=src.Y.
+		uTop, uBot = src.Y, src.Y+src.H
 	} else {
-		uTop, uBot = th, 0
+		uTop, uBot = th-src.Y, th-(src.Y+src.H)
 	}
 
 	verts := [...]float32{

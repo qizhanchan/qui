@@ -153,6 +153,18 @@ func (r *GLRenderer) ForgetRetainedGLDraw(key any) {
 	r.retained.forget(key)
 }
 
+// ForgetRetainedGLDraw drops key's retained draw from this window's
+// renderer (see GLRenderer.ForgetRetainedGLDraw). UI thread.
+func (w *Window) ForgetRetainedGLDraw(key any) {
+	if w == nil {
+		return
+	}
+	w.assertUIThread("Window.ForgetRetainedGLDraw")
+	if glr, ok := w.renderer.(*GLRenderer); ok {
+		glr.ForgetRetainedGLDraw(key)
+	}
+}
+
 // redrawRetained produces a frame that replays the retained GL draws and
 // re-composites the CPU image left by the last painted frame, without
 // rasterizing or uploading any CPU pixels. Returns false when there is
