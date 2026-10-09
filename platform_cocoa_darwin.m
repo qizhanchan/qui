@@ -209,6 +209,15 @@ static NSCursor* quiCocoaCursorFor(int shape) {
                   quiCocoaModsOf([event modifierFlags]));
 }
 
+// Modifier keys never produce keyDown:/keyUp:, only flagsChanged:. The raw
+// flags go to Go, which tells down from up per key (left vs right) — see
+// cocoaModifierKeyDown.
+- (void)flagsChanged:(NSEvent*)event {
+    quiCocoaOnFlagsChanged(self.handle, (int)[event keyCode],
+                           (uint64_t)[event modifierFlags],
+                           quiCocoaModsOf([event modifierFlags]));
+}
+
 // --- NSTextInputClient ---
 //
 // These are intentionally minimal: the real IME behavior is installed
@@ -448,6 +457,14 @@ void quiCocoaPump(double seconds) {
                                                    inMode:NSDefaultRunLoopMode
                                                   dequeue:YES];
             if (event == nil) break;
+            // AppKit swallows the keyUp of a Command-chord (Cmd+C's C) in
+            // -[NSApplication sendEvent:], so the view would see the key
+            // go down but never up. Hand it to the key window directly —
+            // the same workaround GLFW installs as a local monitor.
+            if ([event type] == NSEventTypeKeyUp &&
+                ([event modifierFlags] & NSEventModifierFlagCommand)) {
+                [[NSApp keyWindow] sendEvent:event];
+            }
             [NSApp sendEvent:event];
             // Block at most once per pump; drain whatever else is already
             // queued so a burst of motion events doesn't cost a frame each.
@@ -888,6 +905,10 @@ void quiCocoaSetDropEnabled(uintptr_t handle, int enabled) {
 
 int quiCocoaCurrentMods(void) {
     return quiCocoaModsOf([NSEvent modifierFlags]);
+}
+
+int quiCocoaCapsLock(void) {
+    return ([NSEvent modifierFlags] & NSEventModifierFlagCapsLock) ? 1 : 0;
 }
 
 // --- clipboard -------------------------------------------------------

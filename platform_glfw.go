@@ -78,6 +78,9 @@ func (glfwApp) newWindow(cfg platformWindowConfig) (platformWindow, error) {
 	// near zero.
 	glfw.SwapInterval(1)
 	w := &glfwWindow{handle: handle}
+	// Report Caps Lock / Num Lock in key callbacks' mods, so KeyEvent
+	// can carry the Caps Lock state.
+	handle.SetInputMode(glfw.LockKeyMods, glfw.True)
 	w.installCallbacks()
 	// Native gestures (and exact scroll modifiers/phase) come from a
 	// platform bridge that patches GLFW's own view class — see
@@ -147,6 +150,9 @@ type glfwWindow struct {
 	cursors map[CursorShape]*glfw.Cursor
 	// cursorHidden mirrors GLFW's cursor mode (CursorHidden is a mode).
 	cursorHidden bool
+	// capsOn is the Caps Lock state from the last key callback's lock
+	// modifiers (GLFW_LOCK_KEY_MODS is enabled in newWindow).
+	capsOn bool
 	// pending carries the modifier/phase snapshot the darwin bridge took
 	// off the real NSEvent just before GLFW's own scrollWheel: ran. See
 	// platform_glfw_gesture_darwin.m and scrollContext.
@@ -313,6 +319,9 @@ func glfwCursorShape(shape CursorShape) glfw.StandardCursor {
 // key and button events but not with motion or scroll, and scroll needs
 // them to decide zoom-versus-scroll — so poll rather than trust a value
 // tracked from the last keystroke, which a wheel turn can outlive.
+// capsLock implements platformLockState.
+func (w *glfwWindow) capsLock() bool { return w.capsOn }
+
 func (w *glfwWindow) currentMods() Modifiers {
 	pressed := func(keys ...glfw.Key) bool {
 		for _, k := range keys {
@@ -446,6 +455,14 @@ func (w *glfwWindow) installCallbacks() {
 			return
 		}
 		down := action == glfw.Press || action == glfw.Repeat
+		w.capsOn = mods&glfw.ModCapsLock != 0
+		// GLFW reports Caps Lock as a press when it turns on and a release
+		// when it turns off (from flagsChanged on macOS) — the documented
+		// KeyCapsLock contract. The lock bit in mods lags that event, so
+		// take the state from the action itself.
+		if key == glfw.KeyCapsLock {
+			w.capsOn = down
+		}
 		hh.onKey(mapKey(key), scancode, down, action == glfw.Repeat, mapMods(mods))
 	})
 
@@ -667,9 +684,52 @@ func mapKey(key glfw.Key) Key {
 		return KeyRightBracket
 	case glfw.KeyBackslash:
 		return KeyBackslash
-	default:
-		return KeyUnknown
+	case glfw.KeyGraveAccent:
+		return KeyGrave
+	case glfw.KeyLeftShift:
+		return KeyLeftShift
+	case glfw.KeyRightShift:
+		return KeyRightShift
+	case glfw.KeyLeftControl:
+		return KeyLeftControl
+	case glfw.KeyRightControl:
+		return KeyRightControl
+	case glfw.KeyLeftAlt:
+		return KeyLeftAlt
+	case glfw.KeyRightAlt:
+		return KeyRightAlt
+	case glfw.KeyLeftSuper:
+		return KeyLeftSuper
+	case glfw.KeyRightSuper:
+		return KeyRightSuper
+	case glfw.KeyCapsLock:
+		return KeyCapsLock
+	case glfw.KeyMenu:
+		return KeyMenu
+	case glfw.KeyNumLock:
+		return KeyNumLock
+	case glfw.KeyKPDecimal:
+		return KeyKPDecimal
+	case glfw.KeyKPDivide:
+		return KeyKPDivide
+	case glfw.KeyKPMultiply:
+		return KeyKPMultiply
+	case glfw.KeyKPSubtract:
+		return KeyKPSubtract
+	case glfw.KeyKPAdd:
+		return KeyKPAdd
+	case glfw.KeyKPEqual:
+		return KeyKPEqual
+	case glfw.KeyKPEnter:
+		return KeyEnter
 	}
+	switch {
+	case key >= glfw.KeyF13 && key <= glfw.KeyF20:
+		return KeyF13 + Key(key-glfw.KeyF13)
+	case key >= glfw.KeyKP0 && key <= glfw.KeyKP9:
+		return KeyKP0 + Key(key-glfw.KeyKP0)
+	}
+	return KeyUnknown
 }
 
 func mapMods(mods glfw.ModifierKey) Modifiers {

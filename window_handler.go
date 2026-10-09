@@ -62,7 +62,7 @@ func (w *Window) onGesture(kind EventType, phase GesturePhase, dScale, dRotation
 	w.ingestGesture(kind, phase, dScale, dRotation, mods)
 }
 
-func (w *Window) onKey(k Key, scancode int, down, _ bool, mods Modifiers) {
+func (w *Window) onKey(k Key, scancode int, down, repeat bool, mods Modifiers) {
 	w.lastMods = mods
 	eventType := EventKeyDown
 	if !down {
@@ -75,7 +75,27 @@ func (w *Window) onKey(k Key, scancode int, down, _ bool, mods Modifiers) {
 		Key:       k,
 		ScanCode:  scancode,
 		Mods:      mods,
+		Repeat:    repeat && down,
+		CapsLock:  w.CapsLockOn(),
 	})
+}
+
+// platformLockState is implemented by backends that can report the Caps
+// Lock state.
+type platformLockState interface {
+	capsLock() bool
+}
+
+// CapsLockOn reports whether Caps Lock is on, as far as the platform
+// backend knows (false where it cannot tell).
+func (w *Window) CapsLockOn() bool {
+	if w == nil {
+		return false
+	}
+	if p, ok := w.plat.(platformLockState); ok {
+		return p.capsLock()
+	}
+	return false
 }
 
 func (w *Window) onChar(r rune) {

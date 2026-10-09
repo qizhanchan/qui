@@ -53,11 +53,16 @@ func TestCocoaKeyTableIsInjectiveExceptForEnter(t *testing.T) {
 }
 
 func TestCocoaKeyTableRejectsUnknownCodes(t *testing.T) {
-	// 0x3B is Left Control — a modifier. Modifiers arrive via the mods
-	// bitmask, not as keys, and must not be mistaken for a character key.
-	for _, code := range []int{0x3B, 0x38, 0x37, 0x3A, 0xFF, -1} {
+	for _, code := range []int{0xFF, -1} {
 		if got := mapCocoaKey(code); got != KeyUnknown {
 			t.Errorf("keycode 0x%02X mapped to %v, want KeyUnknown", code, got)
+		}
+	}
+	// Modifier keycodes map to the modifier keys (they arrive through
+	// flagsChanged:), never to a character key a shortcut could match.
+	for code, want := range map[int]Key{0x3B: KeyLeftControl, 0x38: KeyLeftShift, 0x37: KeyLeftSuper, 0x3A: KeyLeftAlt} {
+		if got := mapCocoaKey(code); got != want {
+			t.Errorf("keycode 0x%02X mapped to %v, want %v", code, got, want)
 		}
 	}
 }
@@ -174,3 +179,41 @@ func (silentHandler) onResize(int, int)                                         
 func (silentHandler) onFramebufferResize(int, int)                                         {}
 func (silentHandler) onRefresh()                                                           {}
 func (silentHandler) onFileDrop([]string, float64, float64)                                {}
+
+func TestCocoaModifierKeysUpDown(t *testing.T) {
+	// Left Shift pressed while right Shift is already held: the device bit
+	// for the LEFT key decides, not the shared NSEventModifierFlagShift.
+	flags := uint64(nsFlagShift | nxDeviceRShift | nxDeviceLShift)
+	if down, ok := cocoaModifierKeyDown(0x38, flags); !ok || !down {
+		t.Fatalf("left shift press = %v,%v", down, ok)
+	}
+	// Left released, right still held: Shift flag still set, left bit gone.
+	flags = uint64(nsFlagShift | nxDeviceRShift)
+	if down, _ := cocoaModifierKeyDown(0x38, flags); down {
+		t.Fatal("left shift release reported as down")
+	}
+	if down, _ := cocoaModifierKeyDown(0x3C, flags); !down {
+		t.Fatal("right shift reported up while held")
+	}
+	if down, _ := cocoaModifierKeyDown(0x37, uint64(nsFlagCommand|nxDeviceLCmd)); !down {
+		t.Fatal("left command")
+	}
+	if down, _ := cocoaModifierKeyDown(0x3E, uint64(nsFlagControl|nxDeviceRCtl)); !down {
+		t.Fatal("right control")
+	}
+	if down, _ := cocoaModifierKeyDown(0x39, nsFlagCapsLock); !down {
+		t.Fatal("caps lock on must be a KeyDown")
+	}
+	if down, _ := cocoaModifierKeyDown(0x39, 0); down {
+		t.Fatal("caps lock off must be a KeyUp")
+	}
+	if _, ok := cocoaModifierKeyDown(0x00, 0); ok {
+		t.Fatal("A is not a modifier key")
+	}
+	for code, want := range map[int]Key{0x38: KeyLeftShift, 0x36: KeyRightSuper, 0x39: KeyCapsLock,
+		0x32: KeyGrave, 0x2B: KeyComma, 0x52: KeyKP0, 0x69: KeyF13} {
+		if got := mapCocoaKey(code); got != want {
+			t.Errorf("mapCocoaKey(%#x) = %v, want %v", code, got, want)
+		}
+	}
+}

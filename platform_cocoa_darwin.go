@@ -43,6 +43,7 @@ void quiCocoaSetCursor(uintptr_t handle, int shape);
 void quiCocoaSetCursorObject(uintptr_t handle, void* cursor);
 void quiCocoaSetDropEnabled(uintptr_t handle, int enabled);
 int  quiCocoaCurrentMods(void);
+int  quiCocoaCapsLock(void);
 
 char* quiCocoaClipboardText(void);
 void  quiCocoaSetClipboardText(const char* text);
@@ -394,6 +395,9 @@ func (w *cocoaWindow) currentMods() Modifiers {
 	return mapNSMods(C.quiCocoaCurrentMods())
 }
 
+// capsLock implements platformLockState.
+func (w *cocoaWindow) capsLock() bool { return C.quiCocoaCapsLock() != 0 }
+
 func (w *cocoaWindow) clipboardText() string {
 	c := C.quiCocoaClipboardText()
 	if c == nil {
@@ -483,6 +487,79 @@ var cocoaKeyCodes = map[int]Key{
 	0x7A: KeyF1, 0x78: KeyF2, 0x63: KeyF3, 0x76: KeyF4,
 	0x60: KeyF5, 0x61: KeyF6, 0x62: KeyF7, 0x64: KeyF8,
 	0x65: KeyF9, 0x6D: KeyF10, 0x67: KeyF11, 0x6F: KeyF12,
+	0x69: KeyF13, 0x6B: KeyF14, 0x71: KeyF15, 0x6A: KeyF16,
+	0x40: KeyF17, 0x4F: KeyF18, 0x50: KeyF19, 0x5A: KeyF20,
+
+	0x2B: KeyComma, 0x2F: KeyPeriod, 0x29: KeySemicolon, 0x27: KeyApostrophe,
+	0x21: KeyLeftBracket, 0x1E: KeyRightBracket, 0x2A: KeyBackslash, 0x32: KeyGrave,
+
+	// Modifier keys arrive through flagsChanged: (cocoaModifierKeyDown).
+	0x38: KeyLeftShift, 0x3C: KeyRightShift,
+	0x3B: KeyLeftControl, 0x3E: KeyRightControl,
+	0x3A: KeyLeftAlt, 0x3D: KeyRightAlt,
+	0x37: KeyLeftSuper, 0x36: KeyRightSuper,
+	0x39: KeyCapsLock, 0x3F: KeyFn, 0x6E: KeyMenu,
+
+	0x52: KeyKP0, 0x53: KeyKP1, 0x54: KeyKP2, 0x55: KeyKP3, 0x56: KeyKP4,
+	0x57: KeyKP5, 0x58: KeyKP6, 0x59: KeyKP7, 0x5B: KeyKP8, 0x5C: KeyKP9,
+	0x41: KeyKPDecimal, 0x4B: KeyKPDivide, 0x43: KeyKPMultiply,
+	0x4E: KeyKPSubtract, 0x45: KeyKPAdd, 0x51: KeyKPEqual, 0x47: KeyNumLock,
+}
+
+// NSEventModifierFlags bits read by cocoaModifierKeyDown. The device-
+// dependent bits (IOKit's NX_DEVICE*KEYMASK, present in the raw flags of
+// every NSEvent) tell left from right, which the device-independent ones
+// cannot — with both Shifts held, releasing one must report a KeyUp for
+// that key only.
+const (
+	nsFlagCapsLock = 1 << 16
+	nsFlagShift    = 1 << 17
+	nsFlagControl  = 1 << 18
+	nsFlagOption   = 1 << 19
+	nsFlagCommand  = 1 << 20
+	nsFlagFunction = 1 << 23
+
+	nxDeviceLCtl   = 0x0001
+	nxDeviceLShift = 0x0002
+	nxDeviceRShift = 0x0004
+	nxDeviceLCmd   = 0x0008
+	nxDeviceRCmd   = 0x0010
+	nxDeviceLAlt   = 0x0020
+	nxDeviceRAlt   = 0x0040
+	nxDeviceRCtl   = 0x2000
+)
+
+// cocoaModifierKeyDown decides whether a flagsChanged event for keyCode
+// is the key going down or up, from the event's raw modifier flags. ok is
+// false for key codes that are not modifier keys.
+func cocoaModifierKeyDown(keyCode int, flags uint64) (down, ok bool) {
+	var bit uint64
+	switch keyCode {
+	case 0x38:
+		bit = nxDeviceLShift
+	case 0x3C:
+		bit = nxDeviceRShift
+	case 0x3B:
+		bit = nxDeviceLCtl
+	case 0x3E:
+		bit = nxDeviceRCtl
+	case 0x3A:
+		bit = nxDeviceLAlt
+	case 0x3D:
+		bit = nxDeviceRAlt
+	case 0x37:
+		bit = nxDeviceLCmd
+	case 0x36:
+		bit = nxDeviceRCmd
+	case 0x39:
+		// Caps Lock reports its lock state, not the key: down = turned on.
+		return flags&nsFlagCapsLock != 0, true
+	case 0x3F:
+		return flags&nsFlagFunction != 0, true
+	default:
+		return false, false
+	}
+	return flags&bit != 0, true
 }
 
 func mapCocoaKey(code int) Key {
@@ -563,6 +640,19 @@ func quiCocoaOnKey(id C.uintptr_t, keyCode, down, repeat, mods C.int) {
 	}
 	w.handler.onKey(mapCocoaKey(int(keyCode)), int(keyCode),
 		down != 0, repeat != 0, mapNSMods(mods))
+}
+
+//export quiCocoaOnFlagsChanged
+func quiCocoaOnFlagsChanged(id C.uintptr_t, keyCode C.int, flags C.uint64_t, mods C.int) {
+	w := lookupCocoaWindow(uintptr(id))
+	if w == nil || w.handler == nil {
+		return
+	}
+	down, ok := cocoaModifierKeyDown(int(keyCode), uint64(flags))
+	if !ok {
+		return
+	}
+	w.handler.onKey(mapCocoaKey(int(keyCode)), int(keyCode), down, false, mapNSMods(mods))
 }
 
 //export quiCocoaOnChar
