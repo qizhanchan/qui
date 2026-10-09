@@ -40,6 +40,21 @@ static NSArray<NSString*>* splitByNewline(const char* cstr) {
     return out;
 }
 
+// -runModal hands key status to the panel and does not give it back: once
+// the panel closes the app is still active but the window it was opened
+// from is neither key nor main, so every keystroke goes nowhere until the
+// user clicks that window. Remember the owner before the modal and make it
+// key again afterwards.
+static NSWindow* quiModalOwner(void) {
+    NSWindow* w = [NSApp keyWindow];
+    return w != nil ? w : [NSApp mainWindow];
+}
+
+static void quiRestoreModalOwner(NSWindow* owner) {
+    if (owner == nil || ![owner isVisible] || [owner isMiniaturized]) return;
+    if (![owner isKeyWindow]) [owner makeKeyAndOrderFront:nil];
+}
+
 // Apply common options that NSOpenPanel and NSSavePanel share
 // (they're both NSSavePanel under the hood).
 static void applyCommonPanelOptions(NSSavePanel* panel,
@@ -77,9 +92,11 @@ char* quiShowOpenPanel(const char* title, const char* message,
         // GLFW's window may not be key when the dialog opens (e.g.
         // called from a just-clicked button). Activate the app so the
         // panel foregrounds instead of appearing behind.
+        NSWindow* owner = quiModalOwner();
         [NSApp activateIgnoringOtherApps:YES];
 
         NSInteger rc = [panel runModal];
+        quiRestoreModalOwner(owner);
         if (rc != NSModalResponseOK) return strdup("");
 
         NSMutableArray<NSString*>* picked = [NSMutableArray array];
@@ -111,9 +128,11 @@ char* quiShowSavePanel(const char* title, const char* message,
             #pragma clang diagnostic pop
         }
 
+        NSWindow* owner = quiModalOwner();
         [NSApp activateIgnoringOtherApps:YES];
 
         NSInteger rc = [panel runModal];
+        quiRestoreModalOwner(owner);
         if (rc != NSModalResponseOK) return strdup("");
         NSString* p = panel.URL.path;
         return copyNSStringToHeap(p != nil ? p : @"");
@@ -142,8 +161,10 @@ int quiShowAlert(const char* title, const char* message,
             }
         }
 
+        NSWindow* owner = quiModalOwner();
         [NSApp activateIgnoringOtherApps:YES];
         NSModalResponse rc = [alert runModal];
+        quiRestoreModalOwner(owner);
         // NSAlert numbers buttons starting at NSAlertFirstButtonReturn
         // (1000). Subtract to get a stable 0-based index mirroring the
         // order buttons were added.
