@@ -86,6 +86,14 @@ func (b *cpuBackend) PushLayer(physBounds, clip image.Rectangle, paint Paint) {
 	outer := b.activeImg()
 	// Clamp allocation to the outer target's bounds so we never
 	// allocate outside the parent — critical for nested SaveLayer chains.
+	// Inside a degenerate (fully clipped) layer there is no target at all:
+	// nothing nested can show, so nest another no-op frame. Without this a
+	// clipped thumbnail (ClipPath layer) holding a translucent picture
+	// (SaveLayer) panicked on the nil target while the filmstrip scrolled.
+	if outer == nil {
+		b.layers.push(layerFrame{paint: paint})
+		return
+	}
 	physBounds = physBounds.Intersect(outer.Bounds())
 	if physBounds.Empty() {
 		// Degenerate — push a no-op frame so PopLayer still balances.
