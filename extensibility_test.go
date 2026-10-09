@@ -464,3 +464,42 @@ func TestTooltipDelay(t *testing.T) {
 		t.Fatal("tooltip not shown after its delay")
 	}
 }
+
+func TestAcceleratorClaims(t *testing.T) {
+	win := NewTestWindow(Size{W: 200, H: 200})
+	win.SetRoot(newKeySpy())
+	if win.acceleratorClaims(KeyM, ModSuper) {
+		t.Fatal("no registry: nothing to claim")
+	}
+	fired, enabled := 0, true
+	reg := win.Accelerators()
+	_, _ = reg.BindIf("Cmd+M", func() bool { return enabled }, func() { fired++ })
+	if !win.acceleratorClaims(KeyM, ModSuper) {
+		t.Fatal("bound Cmd+M not claimed")
+	}
+	if fired != 0 {
+		t.Fatal("claiming must not run the binding")
+	}
+	if win.acceleratorClaims(KeyM, ModSuper|ModShift) || win.acceleratorClaims(KeyH, ModSuper) {
+		t.Fatal("claimed a chord that is not bound")
+	}
+	enabled = false
+	if win.acceleratorClaims(KeyM, ModSuper) {
+		t.Fatal("disabled binding claimed")
+	}
+	enabled = true
+
+	// Behind a modal a window-wide binding would not fire, so the key is
+	// left to the menu; a binding scoped inside the modal is still claimed.
+	modal := newKeySpyModal()
+	modal.Layout(Rect{W: 200, H: 200})
+	win.PushOverlay(modal)
+	if win.acceleratorClaims(KeyM, ModSuper) {
+		t.Fatal("window-wide binding claimed behind a modal")
+	}
+	_, _ = reg.RegisterScoped("Cmd+Enter", modal, func() {})
+	win.SetFocus(modal)
+	if !win.acceleratorClaims(KeyEnter, ModSuper) {
+		t.Fatal("binding scoped inside the modal not claimed")
+	}
+}

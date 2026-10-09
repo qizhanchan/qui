@@ -42,3 +42,12 @@ func quiRawKeyboardChars(id C.uintptr_t, text *C.char, mods C.int) {
 	}
 	w.onRawChars(C.GoString(text), mapNSMods(mods))
 }
+
+//export quiAcceleratorClaims
+func quiAcceleratorClaims(id C.uintptr_t, keyCode C.int, mods C.int) C.int {
+	w := lookupIMEWindow(uintptr(id))
+	if w == nil || !w.acceleratorClaims(mapCocoaKey(int(keyCode)), mapNSMods(mods)) {
+		return 0
+	}
+	return 1
+}

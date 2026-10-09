@@ -342,6 +342,18 @@ func (w *Window) AcceleratorRegistry() *AcceleratorRegistry {
 	return w.accels
 }
 
+// acceleratorClaims reports whether a KeyDown of key+mods would fire one of
+// the window's accelerators, with the same target and modal rules as
+// dispatch. The macOS key monitor asks it before AppKit's menu bar sees a
+// key equivalent: a shortcut the app bound itself (Cmd+M for New slide)
+// must not be taken by a stock menu item (GLFW's Window ▸ Minimize).
+func (w *Window) acceleratorClaims(key Key, mods Modifiers) bool {
+	if w == nil || w.accels == nil || w.rawKeyboardTarget() != nil {
+		return false
+	}
+	return w.accels.find(key, mods, w.focused, w.topModalIndex() >= 0) >= 0
+}
+
 // NewWindow creates a new Window with a default no-op renderer.
 func NewWindow(title string, width, height int) (*Window, error) {
 	return NewSharedWindow(title, width, height, nil)

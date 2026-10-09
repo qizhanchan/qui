@@ -156,11 +156,27 @@ func (r *AcceleratorRegistry) match(evt KeyEvent, target Widget, scopedOnly bool
 	if r == nil || evt.Type() != EventKeyDown {
 		return false
 	}
+	best := r.find(evt.Key, evt.Mods, target, scopedOnly)
+	if best < 0 {
+		return false
+	}
+	if fn := r.entries[best].fn; fn != nil {
+		fn()
+	}
+	return true
+}
+
+// find is the index of the entry match would run for key+mods aimed at
+// target, or -1. It runs nothing but the entries' enabled checks.
+func (r *AcceleratorRegistry) find(key Key, mods Modifiers, target Widget, scopedOnly bool) int {
+	if r == nil {
+		return -1
+	}
 	best := -1
 	bestDepth := -1
 	for i := len(r.entries) - 1; i >= 0; i-- {
 		e := r.entries[i]
-		if e.key != evt.Key || e.mods != evt.Mods {
+		if e.key != key || e.mods != mods {
 			continue
 		}
 		if e.enabled != nil && !e.enabled() {
@@ -180,13 +196,7 @@ func (r *AcceleratorRegistry) match(evt KeyEvent, target Widget, scopedOnly bool
 			best, bestDepth = i, depth
 		}
 	}
-	if best < 0 {
-		return false
-	}
-	if fn := r.entries[best].fn; fn != nil {
-		fn()
-	}
-	return true
+	return best
 }
 
 // scopeDepth reports whether target lies in scope's subtree, and scope's

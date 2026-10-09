@@ -174,7 +174,9 @@ static void quiKeyDown(id self, SEL _cmd, NSEvent* event) {
 //     straight to the content view's keyDown:/keyUp: and swallowed —
 //     Cmd+Q / Cmd+W / Cmd+H become ordinary keystrokes for the target.
 //     The escape chord (mode 2) is left alone so menus and accelerators
-//     still see it.
+//     still see it. Outside raw mode the same monitor gives a Command
+//     chord bound as a window accelerator (quiAcceleratorClaims) to the
+//     view first, so a stock menu item cannot take the app's own shortcut.
 //  2. interpretKeyEvents: on the content view class. Both backends call it
 //     from keyDown: to feed the input method; in raw mode it instead
 //     discards any composition and reports [event characters] directly as
@@ -227,9 +229,21 @@ static void quiInstallRawKeyMonitor(void) {
         if (view == nil) return event;
         NSNumber* handleNum = objc_getAssociatedObject(view, kQuiHandleKey);
         if (handleNum == nil) return event;
-        int mode = quiRawKeyboardMode((uintptr_t)[handleNum unsignedLongValue],
-                                      (int)[event keyCode], quiNSModsOf([event modifierFlags]));
-        if (mode == 0) return event;
+        uintptr_t handle = (uintptr_t)[handleNum unsignedLongValue];
+        int mods = quiNSModsOf([event modifierFlags]);
+        int mode = quiRawKeyboardMode(handle, (int)[event keyCode], mods);
+        if (mode == 0) {
+            // A Command chord the app bound as a qui accelerator goes to
+            // the view before the menu bar's key-equivalent pass: GLFW's
+            // stock Window menu would otherwise turn the app's Cmd+M into
+            // Minimize. Unbound chords (Cmd+Q, Cmd+H) still reach the menu.
+            if ([event type] == NSEventTypeKeyDown && (mods & 8) &&
+                quiAcceleratorClaims(handle, (int)[event keyCode], mods)) {
+                [view keyDown:event];
+                return nil;
+            }
+            return event;
+        }
         // The escape chord: a menu item bound to it wins; otherwise it goes
         // to the view like any key and qui's dispatch runs the escape
         // action. Not left to AppKit's own routing: chords like
