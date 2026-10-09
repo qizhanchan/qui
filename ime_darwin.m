@@ -162,6 +162,106 @@ static void quiKeyDown(id self, SEL _cmd, NSEvent* event) {
     quiIMESetPreedit((uintptr_t)[handleNum unsignedLongValue], (char*)"", 0);
 }
 
+// -------------------------------------------------------------------
+// Raw keyboard capture (qui.RawKeyboardTarget, keyboard_raw.go).
+//
+// Two hooks, both asking Go per keystroke whether the window is in raw
+// mode (quiRawKeyboardMode / quiRawKeyboardActive, keyboard_raw_darwin.go):
+//
+//  1. A process-wide local event monitor for keyDown/keyUp. Local
+//     monitors run at the top of -[NSApplication sendEvent:], BEFORE key
+//     equivalents reach the main menu, so in raw mode the event is handed
+//     straight to the content view's keyDown:/keyUp: and swallowed —
+//     Cmd+Q / Cmd+W / Cmd+H become ordinary keystrokes for the target.
+//     The escape chord (mode 2) is left alone so menus and accelerators
+//     still see it.
+//  2. interpretKeyEvents: on the content view class. Both backends call it
+//     from keyDown: to feed the input method; in raw mode it instead
+//     discards any composition and reports [event characters] directly as
+//     raw CharEvents — no marked text, no candidate window, no
+//     press-and-hold accent menu.
+// -------------------------------------------------------------------
+
+static int quiNSModsOf(NSEventModifierFlags flags) {
+    int mods = 0;
+    if (flags & NSEventModifierFlagShift)   mods |= 1;
+    if (flags & NSEventModifierFlagControl) mods |= 2;
+    if (flags & NSEventModifierFlagOption)  mods |= 4;
+    if (flags & NSEventModifierFlagCommand) mods |= 8;
+    return mods;
+}
+
+static void (*gPrevInterpretKeyEvents)(id, SEL, NSArray*) = NULL;
+static void quiInterpretKeyEvents(id self, SEL _cmd, NSArray* events) {
+    NSNumber* handleNum = objc_getAssociatedObject(self, kQuiHandleKey);
+    if (handleNum != nil && quiRawKeyboardActive((uintptr_t)[handleNum unsignedLongValue])) {
+        NSNumber* marked = objc_getAssociatedObject(self, kQuiHasMarkedKey);
+        if (marked != nil && [marked boolValue]) {
+            [[self inputContext] discardMarkedText];
+            objc_setAssociatedObject(self, kQuiHasMarkedKey, @NO, OBJC_ASSOCIATION_RETAIN);
+            quiIMESetPreedit((uintptr_t)[handleNum unsignedLongValue], (char*)"", 0);
+        }
+        for (NSEvent* ev in events) {
+            if ([ev type] != NSEventTypeKeyDown) continue;
+            NSString* chars = [ev characters];
+            if ([chars length] == 0) continue;
+            const char* utf8 = [chars UTF8String];
+            if (utf8 == NULL) continue;
+            quiRawKeyboardChars((uintptr_t)[handleNum unsignedLongValue], (char*)utf8,
+                                quiNSModsOf([ev modifierFlags]));
+        }
+        return;
+    }
+    if (gPrevInterpretKeyEvents) gPrevInterpretKeyEvents(self, _cmd, events);
+}
+
+static id gRawKeyMonitor = nil;
+
+static void quiInstallRawKeyMonitor(void) {
+    if (gRawKeyMonitor != nil) return;
+    gRawKeyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskKeyDown | NSEventMaskKeyUp)
+                                                           handler:^NSEvent*(NSEvent* event) {
+        NSWindow* window = [event window];
+        if (window == nil) return event;
+        NSView* view = [window contentView];
+        if (view == nil) return event;
+        NSNumber* handleNum = objc_getAssociatedObject(view, kQuiHandleKey);
+        if (handleNum == nil) return event;
+        int mode = quiRawKeyboardMode((uintptr_t)[handleNum unsignedLongValue],
+                                      (int)[event keyCode], quiNSModsOf([event modifierFlags]));
+        if (mode == 0) return event;
+        // The escape chord: a menu item bound to it wins; otherwise it goes
+        // to the view like any key and qui's dispatch runs the escape
+        // action. Not left to AppKit's own routing: chords like
+        // Ctrl+Option+Escape are eaten by NSWindow's key-equivalent pass
+        // (Escape → cancelOperation:) before keyDown: would see them.
+        if (mode == 2 && [event type] == NSEventTypeKeyDown &&
+            [[NSApp mainMenu] performKeyEquivalent:event]) {
+            return nil;
+        }
+        if ([event type] == NSEventTypeKeyDown) {
+            [view keyDown:event];
+        } else {
+            [view keyUp:event];
+        }
+        return nil;
+    }];
+}
+
+// quiRawKeyCaptured reports whether the raw-keyboard monitor delivers this
+// event itself, so the cocoa backend's Command-keyUp workaround must not
+// deliver it a second time.
+int quiRawKeyCaptured(void* eventPtr) {
+    NSEvent* event = (__bridge NSEvent*)eventPtr;
+    NSWindow* window = [event window];
+    NSView* view = [window contentView];
+    if (view == nil) return 0;
+    NSNumber* handleNum = objc_getAssociatedObject(view, kQuiHandleKey);
+    if (handleNum == nil) return 0;
+    return quiRawKeyboardMode((uintptr_t)[handleNum unsignedLongValue],
+                              (int)[event keyCode], quiNSModsOf([event modifierFlags])) != 0;
+}
+
 // Replacement: firstRectForCharacterRange:actualRange:
 // The OS uses this to position the candidate-selection popup next to
 // the current caret. We ask the Go side for Qui's caret rect (window
@@ -261,5 +361,20 @@ void quiInstallIME(void* nsWindowPtr, uintptr_t handle) {
             }
         }
     }
+    // Wrap interpretKeyEvents: (inherited from NSResponder): class_addMethod
+    // adds the override to this class only, and the saved IMP is the
+    // inherited one, so non-raw input keeps the stock IME path.
+    {
+        Method _m = class_getInstanceMethod(cls, @selector(interpretKeyEvents:));
+        if (_m) {
+            gPrevInterpretKeyEvents = (void (*)(id, SEL, NSArray*))method_getImplementation(_m);
+            const char* _types = method_getTypeEncoding(_m);
+            if (!class_addMethod(cls, @selector(interpretKeyEvents:),
+                                 (IMP)quiInterpretKeyEvents, _types)) {
+                method_setImplementation(_m, (IMP)quiInterpretKeyEvents);
+            }
+        }
+    }
+    quiInstallRawKeyMonitor();
     #undef QUI_INSTALL
 }

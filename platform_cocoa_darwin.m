@@ -10,6 +10,8 @@
 
 // Defined below; the window delegate needs it before its definition.
 void quiCocoaWake(void);
+// ime_darwin.m: whether the raw-keyboard monitor delivers this event.
+int quiRawKeyCaptured(void* event);
 
 // -------------------------------------------------------------------
 // Native Cocoa implementation of the platform seam (see platform.go).
@@ -462,7 +464,8 @@ void quiCocoaPump(double seconds) {
             // go down but never up. Hand it to the key window directly —
             // the same workaround GLFW installs as a local monitor.
             if ([event type] == NSEventTypeKeyUp &&
-                ([event modifierFlags] & NSEventModifierFlagCommand)) {
+                ([event modifierFlags] & NSEventModifierFlagCommand) &&
+                !quiRawKeyCaptured((__bridge void*)event)) {
                 [[NSApp keyWindow] sendEvent:event];
             }
             [NSApp sendEvent:event];

@@ -103,7 +103,43 @@ func main() {
 		setText(cursorBtn, "Cursor: "+cursorNames[cursorIdx])
 	}
 
+	// Raw keyboard: while on and the picture is focused, every key —
+	// Cmd+Q included — arrives here with its native code, as a viewer
+	// would forward it. Ctrl+Alt+Escape (the default escape chord) turns it
+	// back off.
+	keyLog := widgets.NewLabel("keys: -")
+	rawBtn := widgets.NewButton("Raw keys: off", nil)
+	setRaw := func(on bool) {
+		fv.SetRawKeyboard(on)
+		if on {
+			setText(rawBtn, "Raw keys: on")
+			window.SetFocus(fv)
+		} else {
+			setText(rawBtn, "Raw keys: off")
+		}
+	}
+	rawBtn.OnClick = func() { setRaw(!fv.WantsRawKeyboard()) }
+	window.OnRawKeyboardEscape(func() {
+		setRaw(false)
+		keyLog.SetText("keys: escaped raw mode")
+		logKey("escape chord")
+	})
+
 	fv.OnEvent(func(e qui.Event) bool {
+		switch ev := e.(type) {
+		case qui.KeyEvent:
+			dir := "down"
+			if ev.Type() == qui.EventKeyUp {
+				dir = "up"
+			}
+			msg := fmt.Sprintf("key %s code=0x%02X mods=%d", dir, ev.ScanCode, ev.Mods)
+			keyLog.SetText("keys: " + msg)
+			logKey(msg)
+			return fv.WantsRawKeyboard()
+		case qui.CharEvent:
+			logKey(fmt.Sprintf("char %q raw=%v", ev.Rune, ev.Raw))
+			return fv.WantsRawKeyboard()
+		}
 		if me, ok := e.(qui.MouseEvent); ok && me.Type() == qui.EventMouseMove {
 			x, y, inside := fv.MapToFrame(qui.Point{X: me.X, Y: me.Y})
 			if inside {
@@ -119,13 +155,14 @@ func main() {
 	fv.OnPresent(func(p media.PresentInfo) { lastLatency.Store(int64(p.Latency())) })
 
 	controls := qui.NewContainer(qui.FlexLayout{Direction: qui.Horizontal, Gap: 8, AlignItems: qui.AlignCenter},
-		srcBtn, fitBtn, pauseBtn, cursorBtn, pointer)
+		srcBtn, fitBtn, pauseBtn, cursorBtn, rawBtn, pointer)
 	root := qui.NewContainer(qui.FlexLayout{Direction: qui.Vertical, Gap: 8},
-		controls, fv, status)
+		controls, fv, keyLog, status)
 	root.Style().Padding = qui.Insets{Top: 10, Right: 10, Bottom: 10, Left: 10}
 	window.SetRoot(root)
 
 	setupDump(window, pointer, &paused)
+	setupKeyTest(app, window, func() { setRaw(true) }, func() { window.SetFocus(fv) })
 
 	if srv, err := agent.BindEnv(window); err == nil && srv != nil {
 		window.OnClose(func() { _ = srv.Stop() })
@@ -220,4 +257,47 @@ func ringCursor(n int) *image.NRGBA {
 		}
 	}
 	return img
+}
+
+// keyTrace is set by FRAMEVIEW_KEYTEST: key events are logged to stderr.
+var keyTrace = os.Getenv("FRAMEVIEW_KEYTEST") != ""
+
+func logKey(s string) {
+	if keyTrace {
+		log.Print(s)
+	}
+}
+
+// setupKeyTest (FRAMEVIEW_KEYTEST=1, macOS) turns raw mode on, posts real
+// AppKit key events — Cmd+Q, 'a', the escape chord, then 'b' — and quits:
+// the log shows which reached the view, and the app surviving Cmd+Q shows
+// the menu never saw it.
+func setupKeyTest(app *qui.App, window *qui.Window, rawOn, focus func()) {
+	if !keyTrace {
+		return
+	}
+	go func() {
+		time.Sleep(time.Second)
+		window.PostJob(focus)
+		window.PostJob(rawOn)
+		time.Sleep(300 * time.Millisecond)
+		keys := []struct {
+			code  int
+			chars string
+			flags uint
+		}{
+			{0x0C, "q", nsCmd},             // Cmd+Q
+			{0x00, "a", 0},                 // a
+			{0x35, "\x1b", nsCtrl | nsAlt}, // escape chord
+			{0x0B, "b", 0},                 // b, raw mode now off
+		}
+		for _, k := range keys {
+			postSyntheticKey(k.code, k.chars, k.flags, true)
+			postSyntheticKey(k.code, k.chars, k.flags, false)
+			time.Sleep(200 * time.Millisecond)
+		}
+		time.Sleep(500 * time.Millisecond)
+		log.Print("keytest done")
+		window.PostJob(app.Quit)
+	}()
 }

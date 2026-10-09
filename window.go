@@ -242,6 +242,8 @@ type Window struct {
 	kind WindowKind
 	// cursorShape is the last cursor style requested by widgets.
 	cursorShape CursorShape
+	// raw is the raw keyboard capture configuration (keyboard_raw.go).
+	raw rawKeyboardState
 	// accels is an optional registry of Cmd-S / Ctrl-Z style shortcuts
 	// consulted AFTER normal widget dispatch. See AcceleratorRegistry.
 	accels *AcceleratorRegistry
@@ -1895,6 +1897,28 @@ func (w *Window) dispatch(event Event) {
 		return
 	}
 
+	// Raw keyboard capture (keyboard_raw.go): the escape chord is taken
+	// here; every other key skips focus navigation, cross-widget copy and
+	// accelerators below.
+	raw := false
+	switch e := event.(type) {
+	case KeyEvent:
+		// The escape chord's KeyUp is taken even when the escape action
+		// just turned raw mode off.
+		if e.eventType == EventKeyUp && w.raw.escDown != KeyUnknown && e.Key == w.raw.escDown {
+			w.raw.escDown = KeyUnknown
+			return
+		}
+		if w.rawKeyboardTarget() != nil {
+			if w.handleRawEscape(e) {
+				return
+			}
+			raw = true
+		}
+	case CharEvent:
+		raw = w.rawKeyboardTarget() != nil
+	}
+
 	// Escape cancels a drag in progress (the platform convention): the
 	// source gets DragEnd with Accepted false, the target under the cursor
 	// DragLeave, and the release drops nothing. The key is consumed.
@@ -1944,7 +1968,7 @@ func (w *Window) dispatch(event Event) {
 	// interface could let specific widgets (code editors) intercept
 	// Tab for their own use.
 	tabHookRan := false
-	if ke, ok := event.(KeyEvent); ok && ke.eventType == EventKeyDown && ke.Key == KeyTab {
+	if ke, ok := event.(KeyEvent); ok && ke.eventType == EventKeyDown && ke.Key == KeyTab && !raw {
 		// The focused widget's OnKeyDown hooks see Tab before it navigates
 		// — an autocomplete accepts its suggestion on Tab.
 		if f := w.focused; f != nil && !w.keyTargetBehindModal(f) {
@@ -2011,7 +2035,7 @@ func (w *Window) dispatch(event Event) {
 	// Cmd/Ctrl+C is aggregated at the window level (in document order)
 	// before the event reaches the focused widget's own single-widget
 	// Cmd+C. A single-widget selection falls through unchanged.
-	if ke, ok := event.(KeyEvent); ok && ke.eventType == EventKeyDown &&
+	if ke, ok := event.(KeyEvent); ok && ke.eventType == EventKeyDown && !raw &&
 		ke.Key == KeyC && IsCommandMod(ke.Mods) {
 		if w.copyTextSelection() {
 			return
@@ -2020,7 +2044,7 @@ func (w *Window) dispatch(event Event) {
 	// Cross-widget select-all. When a read-only selectable (Label) holds
 	// focus, Cmd/Ctrl+A selects the whole document; editable widgets keep
 	// their own field-scoped select-all (they aren't TextSelectable).
-	if ke, ok := event.(KeyEvent); ok && ke.eventType == EventKeyDown &&
+	if ke, ok := event.(KeyEvent); ok && ke.eventType == EventKeyDown && !raw &&
 		ke.Key == KeyA && IsCommandMod(ke.Mods) {
 		if w.selectAllText() {
 			return
@@ -2131,6 +2155,11 @@ func (w *Window) dispatch(event Event) {
 		if state.stopped {
 			return
 		}
+	}
+
+	// A raw keyboard target owns every key it did not consume as well.
+	if raw {
+		return
 	}
 
 	// Accelerator fallback. Only fires for unhandled KeyDown events so
