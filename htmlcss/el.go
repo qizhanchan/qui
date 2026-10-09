@@ -997,6 +997,10 @@ func (e *El) isFileInput() bool {
 	return e.tag == "input" && e.attrs["type"] == "file"
 }
 
+// colorBarH is the height of the picked-colour bar under an icon
+// <input type=color> (Docs / Sheets text and fill colour buttons).
+const colorBarH = 3
+
 // isColorInput reports whether this is an <input type=color>, rendered as a
 // filled swatch button that opens an in-app color palette popup on click.
 func (e *El) isColorInput() bool {
@@ -2321,8 +2325,12 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 				st.BorderSize = 0
 				st.Border = qui.Color{}
 				if ok {
-					st.BorderWidths = qui.Insets{Bottom: 3}
+					st.BorderWidths = qui.Insets{Bottom: colorBarH}
 					st.BorderColors = qui.SideColors{Bottom: c}
+					// The bar is drawn inside the authored box, over the
+					// bottom padding: borders now inset the content, so give
+					// the bar's height back or the icon would shrink by it.
+					st.Padding.Bottom = max(0, cs.Padding.Bottom-colorBarH)
 				}
 			})
 		} else {
@@ -3257,12 +3265,12 @@ func (e *El) setContainerChildren(kids []qui.Widget) {
 // --- events + accessibility ---
 
 // contentWidth returns this element's inner content width (bounds minus
-// padding), or 0 when the element hasn't been laid out yet.
+// border and padding), or 0 when the element hasn't been laid out yet.
 func (e *El) contentWidth() float32 {
 	// The scroll host's padding lives on the inner box (see applyComputed),
 	// so the ScrollView fills the element's full width; the inner box's own
 	// padding then insets its children.
-	cw := e.Bounds().W - e.Style().Padding.Horizontal()
+	cw := e.Bounds().W - e.Style().ContentInsets().Horizontal()
 	if cw < 0 {
 		return 0
 	}
@@ -3621,7 +3629,7 @@ func (e *El) applyStateText(av *ancestorVariant) {
 // differs, so the resulting InvalidateLayout can't loop.
 func (e *El) Layout(rect qui.Rect) {
 	if e.overflowScroll && e.scrollView != nil {
-		e.updateScrollContentAt(rect.W - e.Style().Padding.Horizontal())
+		e.updateScrollContentAt(rect.W - e.Style().ContentInsets().Horizontal())
 	}
 	e.Box.Layout(rect)
 	if e.onLayout != nil {
