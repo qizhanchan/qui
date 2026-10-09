@@ -34,6 +34,7 @@ void   quiCocoaRestore(uintptr_t handle);
 void   quiCocoaFocus(uintptr_t handle);
 void   quiCocoaSetVisible(uintptr_t handle, int visible, int activate);
 int    quiCocoaIsVisible(uintptr_t handle);
+int    quiCocoaIsKey(uintptr_t handle);
 void   quiCocoaSetFullscreen(uintptr_t handle, int on, int x, int y, int w, int h);
 int    quiCocoaShouldClose(uintptr_t handle);
 void   quiCocoaSetShouldClose(uintptr_t handle, int value);
@@ -260,6 +261,9 @@ func (w *cocoaWindow) caps() platformCaps {
 func (w *cocoaWindow) setVisible(visible, activate bool) {
 	C.quiCocoaSetVisible(w.cid(), cBool(visible), cBool(activate))
 }
+
+// isFocused reports whether the window is the key window of the active app.
+func (w *cocoaWindow) isFocused() bool { return C.quiCocoaIsKey(w.cid()) != 0 }
 
 func (w *cocoaWindow) isVisible() bool {
 	return C.quiCocoaIsVisible(w.cid()) != 0

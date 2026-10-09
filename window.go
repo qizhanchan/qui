@@ -244,6 +244,11 @@ type Window struct {
 	cursorShape CursorShape
 	// raw is the raw keyboard capture configuration (keyboard_raw.go).
 	raw rawKeyboardState
+	// keyCapture is system shortcut capture (keyboard_capture.go).
+	keyCapture keyCaptureState
+	// nativeID is the handle the darwin input bridges know this window by
+	// (the IME registry id); 0 when there is none.
+	nativeID uintptr
 	// accels is an optional registry of Cmd-S / Ctrl-Z style shortcuts
 	// consulted AFTER normal widget dispatch. See AcceleratorRegistry.
 	accels *AcceleratorRegistry
@@ -390,6 +395,12 @@ func newWindowFromConfig(plat platformApp, cfg platformWindowConfig) (*Window, e
 		cursorShape:    CursorDefault,
 	}
 	w.initUIThreadOwnership()
+	// Whether the OS window has keyboard focus right now; onFocus tracks
+	// it from here on. Asked, not assumed: a process launched from a
+	// terminal is not necessarily the active app.
+	if f, ok := pw.(interface{ isFocused() bool }); ok {
+		w.keyCapture.osFocused = f.isFocused()
+	}
 	// Force a full paint on the first frame.
 	w.dirtyRegion = Rect{W: float32(width), H: float32(height)}
 	// One handler for every input and lifecycle event — see
@@ -1665,6 +1676,9 @@ func (w *Window) Step() {
 	// in this frame. New jobs posted during drain land in the next
 	// Step — keeps frame time bounded.
 	w.runJobs()
+	// Raw-mode wishes can change in any handler or job; keep the system
+	// key tap in step.
+	w.syncKeyCapture()
 	// Fullscreen can change behind the app's back (traffic-light button,
 	// Ctrl+Cmd+F); a change callback may close this window, ending the frame.
 	if !w.pollFullscreenChange() {

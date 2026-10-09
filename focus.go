@@ -161,6 +161,7 @@ func (w *Window) SetFocus(target Widget) {
 	for _, l := range append([]focusListener(nil), w.focusListeners...) {
 		l.fn()
 	}
+	w.syncKeyCapture()
 }
 
 func (w *Window) noteOverlayFocus(target Widget) {

@@ -667,6 +667,12 @@ int quiCocoaIsVisible(uintptr_t handle) {
     return [box.window isVisible] ? 1 : 0;
 }
 
+int quiCocoaIsKey(uintptr_t handle) {
+    QuiWindowBox* box = quiBox(handle);
+    if (box == nil) return 0;
+    return ([box.window isKeyWindow] && [NSApp isActive]) ? 1 : 0;
+}
+
 void quiCocoaDestroyWindow(uintptr_t handle) {
     @autoreleasepool {
         QuiWindowBox* box = quiBox(handle);

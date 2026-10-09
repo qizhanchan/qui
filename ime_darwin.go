@@ -98,5 +98,6 @@ func (w *Window) installIMEBackend() {
 		return
 	}
 	id := registerIMEWindow(w)
+	w.nativeID = id
 	C.quiInstallIME(nsWindow, C.uintptr_t(id))
 }

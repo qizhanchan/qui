@@ -78,6 +78,7 @@ func (w *Window) onKey(k Key, scancode int, down, repeat bool, mods Modifiers) {
 		Repeat:    repeat && down,
 		CapsLock:  w.CapsLockOn(),
 	})
+	w.syncKeyCapture()
 }
 
 // platformLockState is implemented by backends that can report the Caps
@@ -110,6 +111,8 @@ func (w *Window) onFocus(focused bool) {
 	// App activation can arrive inside an idle wait without an input
 	// event; whatever the focus change dirtied must still get its frame.
 	defer wakeIfBlocked()
+	w.keyCapture.osFocused = focused
+	defer w.syncKeyCapture()
 	w.noteActivation(focused)
 	w.dispatch(FocusEvent{
 		baseEvent: baseEvent{shared: &eventState{}},

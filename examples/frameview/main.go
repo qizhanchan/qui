@@ -119,6 +119,23 @@ func main() {
 		}
 	}
 	rawBtn.OnClick = func() { setRaw(!fv.WantsRawKeyboard()) }
+	// System shortcuts (Cmd+Tab, Cmd+Space, Ctrl+arrows) too — needs the
+	// Accessibility permission; only active while raw mode is.
+	captureOn := false
+	captureBtn := widgets.NewButton("System keys: off", nil)
+	captureBtn.OnClick = func() {
+		if err := window.SetSystemKeyCapture(!captureOn); err != nil {
+			keyLog.SetText("keys: " + err.Error())
+			logKey("capture: " + err.Error())
+			return
+		}
+		captureOn = !captureOn
+		if captureOn {
+			setText(captureBtn, "System keys: on")
+		} else {
+			setText(captureBtn, "System keys: off")
+		}
+	}
 	window.OnRawKeyboardEscape(func() {
 		setRaw(false)
 		keyLog.SetText("keys: escaped raw mode")
@@ -155,7 +172,7 @@ func main() {
 	fv.OnPresent(func(p media.PresentInfo) { lastLatency.Store(int64(p.Latency())) })
 
 	controls := qui.NewContainer(qui.FlexLayout{Direction: qui.Horizontal, Gap: 8, AlignItems: qui.AlignCenter},
-		srcBtn, fitBtn, pauseBtn, cursorBtn, rawBtn, pointer)
+		srcBtn, fitBtn, pauseBtn, cursorBtn, rawBtn, captureBtn, pointer)
 	root := qui.NewContainer(qui.FlexLayout{Direction: qui.Vertical, Gap: 8},
 		controls, fv, keyLog, status)
 	root.Style().Padding = qui.Insets{Top: 10, Right: 10, Bottom: 10, Left: 10}
@@ -259,8 +276,9 @@ func ringCursor(n int) *image.NRGBA {
 	return img
 }
 
-// keyTrace is set by FRAMEVIEW_KEYTEST: key events are logged to stderr.
-var keyTrace = os.Getenv("FRAMEVIEW_KEYTEST") != ""
+// keyTrace (FRAMEVIEW_KEYLOG=1, implied by FRAMEVIEW_KEYTEST) logs every
+// key event the view receives to stderr.
+var keyTrace = os.Getenv("FRAMEVIEW_KEYTEST") != "" || os.Getenv("FRAMEVIEW_KEYLOG") != ""
 
 func logKey(s string) {
 	if keyTrace {
@@ -273,13 +291,17 @@ func logKey(s string) {
 // the log shows which reached the view, and the app surviving Cmd+Q shows
 // the menu never saw it.
 func setupKeyTest(app *qui.App, window *qui.Window, rawOn, focus func()) {
-	if !keyTrace {
+	if os.Getenv("FRAMEVIEW_KEYTEST") == "" {
 		return
 	}
 	go func() {
 		time.Sleep(time.Second)
 		window.PostJob(focus)
 		window.PostJob(rawOn)
+		window.PostJob(func() {
+			err := window.SetSystemKeyCapture(true)
+			log.Printf("SetSystemKeyCapture: err=%v active=%v", err, window.SystemKeyCaptureActive())
+		})
 		time.Sleep(300 * time.Millisecond)
 		keys := []struct {
 			code  int

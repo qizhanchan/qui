@@ -176,6 +176,11 @@ func (w *glfwWindow) isIconified() bool {
 	return w.handle.GetAttrib(glfw.Iconified) == glfw.True
 }
 
+// isFocused reports whether the window has keyboard focus.
+func (w *glfwWindow) isFocused() bool {
+	return w.handle.GetAttrib(glfw.Focused) == glfw.True
+}
+
 func (w *glfwWindow) isVisible() bool {
 	return w.handle.GetAttrib(glfw.Visible) == glfw.True
 }

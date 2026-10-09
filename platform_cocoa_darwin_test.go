@@ -217,3 +217,37 @@ func TestCocoaModifierKeysUpDown(t *testing.T) {
 		}
 	}
 }
+
+func TestCaptureKeyCodeInverse(t *testing.T) {
+	for _, k := range []Key{KeyEscape, KeyA, KeyTab, KeyF12, KeyGrave, KeyEnter} {
+		code := cocoaKeyCodeFor(k)
+		if code < 0 || mapCocoaKey(code) != k {
+			t.Errorf("cocoaKeyCodeFor(%v) = %#x", k, code)
+		}
+	}
+	if nsModsMask(ModControl|ModAlt) != 6 || mapNSMods(6) != ModControl|ModAlt {
+		t.Fatal("nsModsMask is not mapNSMods' inverse")
+	}
+}
+
+func TestInjectCapturedKey(t *testing.T) {
+	w, target, _ := rawFixture(t)
+	w.injectCapturedKey(2, 0x37, false, nsFlagCommand|nxDeviceLCmd, ModSuper, "")   // Cmd down
+	w.injectCapturedKey(0, 0x30, false, nsFlagCommand|nxDeviceLCmd, ModSuper, "\t") // Tab down
+	w.injectCapturedKey(1, 0x30, false, nsFlagCommand|nxDeviceLCmd, ModSuper, "")   // Tab up
+	w.injectCapturedKey(2, 0x37, false, 0, 0, "")                                   // Cmd up
+	w.injectCapturedKey(0, 0x00, false, 0, 0, "a")                                  // a
+	if len(target.keys) != 5 {
+		t.Fatalf("keys = %+v", target.keys)
+	}
+	if target.keys[0].Key != KeyLeftSuper || target.keys[0].Type() != EventKeyDown ||
+		target.keys[1].Key != KeyTab || target.keys[3].Type() != EventKeyUp {
+		t.Fatalf("keys = %+v", target.keys)
+	}
+	if len(target.chars) != 1 || target.chars[0].Rune != 'a' || !target.chars[0].Raw {
+		t.Fatalf("chars = %+v", target.chars)
+	}
+	if len(w.keyCapture.down) != 1 {
+		t.Fatalf("down-key tracking = %v (only 'a' should be held)", w.keyCapture.down)
+	}
+}
