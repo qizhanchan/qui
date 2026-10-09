@@ -22,7 +22,8 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 - DOM-style three-phase dispatch (capture → target → bubble) with `StopPropagation`.
 - Mouse capture, synthesized hover enter/leave, focus on click + Tab cycling, 4px-dead-zone drag/drop.
 - Per-widget coordinate spaces with `WindowPointToLocal` / `LocalPointToWindow` / `InteractionBoundsOf`.
-- Modifier abstraction (`IsCommandMod`) and named-key + text/char events.
+- Modifier abstraction (`IsCommandMod`) and named-key + text/char events. `KeyEvent.ScanCode` is the platform-native key code — the macOS virtual key code (`kVK_*`) on both backends — with `Repeat` and `CapsLock` (kept out of `Mods`; `Window.CapsLockOn`); modifier keys (left/right Shift/Control/Alt/Super), Caps Lock (down = on, up = off), Fn, F13–F20 and the keypad produce KeyDown/KeyUp of their own.
+- Raw keyboard capture: a focused `RawKeyboardTarget` (`WantsRawKeyboard() bool`) gets every key — no input method (printable keys add a `CharEvent` with `Raw` set), no Tab navigation, no accelerators, and on macOS no menu key equivalents (Cmd+Q / Cmd+W reach the widget). One escape chord stays with the app: `SetRawKeyboardEscape` (default `Ctrl+Alt+Escape`), handled by `OnRawKeyboardEscape` or the accelerators. `Window.SetSystemKeyCapture` (macOS, Accessibility permission, off by default) adds Cmd+Tab / Cmd+Space / Ctrl+arrows via a CGEventTap that is active only while the window is key and raw mode is on.
 - Gestures: pinch, rotation, two-finger double-tap; precise scroll phase and modifiers.
 - Modal overlay focus trapping, top-down hit testing, and keyboard containment (keys and window accelerators don't reach the UI behind a modal).
 - `Window.AddEventFilter`: see (and optionally consume) every event before dispatch — command palettes, modal key layers, macro recording.
@@ -51,6 +52,8 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 - Dirty-region painting, `Invalidate` / `InvalidateRect` / `InvalidateLayout` with bounds-change promotion.
 - Offscreen rendering and readback; PDF canvas backend; SVG canvas helper.
 - GL escape hatch: `GPUCanvas.QueueGLDraw`, `GLState`, `ActiveGLRenderer().DrawTexture`, `PhysicalScissor`.
+- Retained GL draws: `RetainedGLCanvas.QueueRetainedGLDraw` keeps GL content on screen through partial repaints of the rest of the window (dropped by the first frame that repaints its area without a re-queue); `Window.RequestGLRedraw` (any goroutine) replays them without re-rasterizing or uploading the 2D layer.
+- Cursors: built-in shapes plus `CursorHidden` and image cursors (`NewImageCursor`, `NewImageCursorScaled` for 2× images, `ReleaseCursor`) on both macOS backends, resolved like any shape (`SetCursorShape`, `CursorProvider`, `CursorAtProvider`).
 
 **Text**
 
@@ -139,7 +142,7 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 | `graphs` | Line / Scatter / Bar / Area / Pie series, value + category axes, legend, tooltip, pan/zoom, theme palette |
 | `svg` | SVG 1.1 subset: parse/build/rasterize (with tint)/serialize; `Document` satisfies `qui.VectorSource` |
 | `scene3d` | Scene graph (nodes, mesh, material, lights, camera), `Viewport` FBO widget, orbit controls, picking, `Vec3Field` |
-| `media` | `AudioPlayer` (service) and `VideoView` (widget) without ffmpeg; AVFoundation backend on macOS |
+| `media` | `AudioPlayer` (service) and `VideoView` (widget) without ffmpeg; AVFoundation backend on macOS. `FrameView` shows frames pushed from any goroutine — `PushCVPixelBuffer` (zero-copy IOSurface → CVOpenGLTextureCache, macOS) or `PushRGBA` — latest-wins with no idle cost, fit modes, `MapToFrame` for input, `Stats` / `OnPresent` for latency, raw keyboard |
 | `webview` | CEF-based embedded browser widget, gated behind `webview_cef`; CPU frame path working, GL/IOSurface path future; JSON-only JS↔Go bridge |
 | `physics` / `p2` / `p3` | Dimension-independent vocabulary plus mirrored 2D/3D engines: swept AABB, spatial hash, contact flags, one-way platforms, sensors |
 | `icons` | ~135 Material Symbols outlined glyphs as `*svg.Document` |
@@ -149,4 +152,4 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 
 - `cmd/qui-agent` — agent CLI client.
 - `cmd/qui-i18n` — catalog extraction, linting and pseudo-locale generation.
-- `examples/` — runnable demos, including the canonical `reactive-html`, the htmlcss showcase (`html-css`), i18n, chrome-tabs, overlay-panel, graphs, svg, media, scene3d and more.
+- `examples/` — runnable demos, including the canonical `reactive-html`, the htmlcss showcase (`html-css`), i18n, chrome-tabs, overlay-panel, graphs, svg, media, frameview, scene3d and more.

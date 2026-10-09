@@ -22,7 +22,8 @@
 - DOM 风格三阶段分发（捕获 → 目标 → 冒泡），支持 `StopPropagation`。
 - 鼠标捕获、合成 hover 进入 / 离开、点击聚焦 + Tab 循环、4px 死区拖放。
 - 每个控件自己的坐标空间，配 `WindowPointToLocal` / `LocalPointToWindow` / `InteractionBoundsOf`。
-- 修饰键抽象（`IsCommandMod`）以及命名键 + 文本 / 字符事件。
+- 修饰键抽象（`IsCommandMod`）以及命名键 + 文本 / 字符事件。`KeyEvent.ScanCode` 是平台原生键码 —— macOS 两个后端上都是虚拟键码（`kVK_*`）—— 另有 `Repeat` 与 `CapsLock`（不放进 `Mods`；`Window.CapsLockOn`）；修饰键（左右 Shift/Control/Alt/Super）、Caps Lock（打开为按下、关闭为抬起）、Fn、F13–F20 与小键盘都有各自的 KeyDown/KeyUp。
+- 原始键盘捕获：获得焦点的 `RawKeyboardTarget`（`WantsRawKeyboard() bool`）收到每一个按键 —— 绕过输入法（可打印键另发 `Raw` 为真的 `CharEvent`）、不做 Tab 导航、不触发快捷键，macOS 上菜单快捷键也不会截走（Cmd+Q / Cmd+W 交给控件）。保留一个退出组合键给应用：`SetRawKeyboardEscape`（默认 `Ctrl+Alt+Escape`），由 `OnRawKeyboardEscape` 或快捷键表处理。`Window.SetSystemKeyCapture`（macOS，需辅助功能权限，默认关闭）通过 CGEventTap 再接管 Cmd+Tab / Cmd+Space / Ctrl+方向键，仅在窗口为 key window 且处于原始模式时生效。
 - 手势：捏合、旋转、双指双击；精确的滚轮阶段与修饰键。
 - 模态浮层困住焦点，自上而下命中测试，并且隔离键盘：按键和窗口快捷键都到不了 modal 背后的界面。
 - `Window.AddEventFilter`：在分发前看到（并可吞掉）每个事件 —— 命令面板、模态按键层、宏录制。
@@ -51,6 +52,8 @@
 - 脏区域绘制，`Invalidate` / `InvalidateRect` / `InvalidateLayout` 及包围盒变化提升。
 - 离屏渲染与回读；PDF 画布后端；SVG 画布辅助。
 - GL 逃生舱：`GPUCanvas.QueueGLDraw`、`GLState`、`ActiveGLRenderer().DrawTexture`、`PhysicalScissor`。
+- 保留式 GL 绘制：`RetainedGLCanvas.QueueRetainedGLDraw` 让 GL 内容在窗口其他部分局部重绘时保持显示（某帧重绘其区域而未重新登记时丢弃）；`Window.RequestGLRedraw`（任意 goroutine）只重放这些绘制，不重新光栅化、不上传 2D 层。
+- 光标：内置形状之外还有 `CursorHidden` 与图像光标（`NewImageCursor`、2× 图像用 `NewImageCursorScaled`、`ReleaseCursor`），macOS 两个后端均支持，与其他形状一样经 `SetCursorShape` / `CursorProvider` / `CursorAtProvider` 解析。
 
 **文字**
 
@@ -139,7 +142,7 @@
 | `graphs` | Line / Scatter / Bar / Area / Pie 系列，数值 + 类别轴，图例、tooltip、平移 / 缩放、主题调色板 |
 | `svg` | SVG 1.1 子集：解析 / 构建 / 光栅化（可染色）/ 序列化；`Document` 满足 `qui.VectorSource` |
 | `scene3d` | 场景图（节点、mesh、材质、灯光、相机）、`Viewport` FBO 控件、轨道控制、拾取、`Vec3Field` |
-| `media` | 不依赖 ffmpeg 的 `AudioPlayer`（服务）与 `VideoView`（控件）；macOS 使用 AVFoundation 后端 |
+| `media` | 不依赖 ffmpeg 的 `AudioPlayer`（服务）与 `VideoView`（控件）；macOS 使用 AVFoundation 后端。`FrameView` 显示从任意 goroutine 推送的帧 —— `PushCVPixelBuffer`（macOS，IOSurface → CVOpenGLTextureCache 零拷贝）或 `PushRGBA` —— 只保留最新帧、空闲零开销，支持适配模式、`MapToFrame` 输入映射、`Stats` / `OnPresent` 延迟统计与原始键盘 |
 | `webview` | 基于 CEF 的内嵌浏览器控件，受 `webview_cef` 门控；CPU 帧路径可用，GL/IOSurface 路径待实现；JS↔Go 桥只传 JSON |
 | `physics` / `p2` / `p3` | 与维度无关的词汇，以及 API 对称的 2D/3D 引擎：扫掠 AABB、空间哈希、接触标志、单向平台、传感器 |
 | `icons` | 约 135 个 Material Symbols 描边字形，为 `*svg.Document` |
@@ -149,4 +152,4 @@
 
 - `cmd/qui-agent` —— agent 命令行客户端。
 - `cmd/qui-i18n` —— 目录提取、检查与伪 locale 生成。
-- `examples/` —— 可运行的示例，包括范例 `reactive-html`、htmlcss 展示（`html-css`）、i18n、chrome-tabs、overlay-panel、graphs、svg、media、scene3d 等。
+- `examples/` —— 可运行的示例，包括范例 `reactive-html`、htmlcss 展示（`html-css`）、i18n、chrome-tabs、overlay-panel、graphs、svg、media、frameview、scene3d 等。
