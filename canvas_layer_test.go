@@ -237,3 +237,27 @@ func TestSnapRectOutwardAlignsToPhysicalPixels(t *testing.T) {
 		t.Errorf("scale 0 should be a no-op, got %+v", out)
 	}
 }
+
+// A layer pushed while fully clipped has no buffer; a SaveLayer nested in it
+// (a translucent picture inside a scrolled-away, rounded-clipped thumbnail)
+// must be a no-op, not a nil dereference — and must leave the canvas usable.
+func TestNestedLayerInsideClippedLayer(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 40, 40))
+	c := NewImageCanvas(img)
+	outer := c.Save()
+	c.ClipRect(Rect{X: 0, Y: 0, W: 10, H: 10})
+	// Entirely outside the clip: the ClipPath layer is degenerate.
+	c.ClipPath(NewPath().AddRRect(Rect{X: 20, Y: 20, W: 15, H: 15}, 4))
+	d := c.SaveLayer(Rect{X: 20, Y: 20, W: 15, H: 15}, Paint{Alpha: 0.5})
+	c.FillRect(Rect{X: 20, Y: 20, W: 15, H: 15}, Color{R: 1, A: 1})
+	c.RestoreTo(d)
+	c.RestoreTo(outer)
+
+	c.FillRect(Rect{X: 0, Y: 0, W: 5, H: 5}, Color{G: 1, A: 1})
+	if got := img.RGBAAt(2, 2); got.G != 255 {
+		t.Errorf("canvas unusable after the nested empty layer: %v", got)
+	}
+	if got := img.RGBAAt(25, 25); got.A != 0 {
+		t.Errorf("clipped content leaked: %v", got)
+	}
+}
