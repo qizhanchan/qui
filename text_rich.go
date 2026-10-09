@@ -343,7 +343,7 @@ func lineBox(fontSpec Font, cssScale, lines float32) float32 {
 // 10pt half a pixel a line, which is two lines a page — enough to disagree
 // with Docs on where a page breaks.
 func NaturalLineHeight(fontSpec Font) float32 {
-	return float32(GetFontFaceFor(fontSpec).Metrics().Height) / 64
+	return float32(fontMetricsFor(fontSpec).Height) / 64
 }
 
 func ellipsizeRichTextLine(line *RichTextLine, maxWidth float32) {

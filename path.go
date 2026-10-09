@@ -423,14 +423,19 @@ func flattenQuad(p0, p1, p2 Point, steps int, out []Point) []Point {
 		steps = 2
 	}
 	inv := 1 / float32(steps)
-	for i := 1; i <= steps; i++ {
+	for i := 1; i < steps; i++ {
 		t := float32(i) * inv
 		u := 1 - t
 		x := u*u*p0.X + 2*u*t*p1.X + t*t*p2.X
 		y := u*u*p0.Y + 2*u*t*p1.Y + t*t*p2.Y
 		out = append(out, Point{X: x, Y: y})
 	}
-	return out
+	// End exactly on the endpoint: float32(steps)*(1/steps) need not be
+	// 1, and an off-by-an-ulp final sample left a sliver gap between
+	// the curve and the contour's start point that pathClose (which
+	// compares the unflattened pen) did not bridge — an unbalanced edge
+	// that leaked non-zero fill sideways along one subscan.
+	return append(out, p2)
 }
 
 func flattenCubic(p0, p1, p2, p3 Point, steps int, out []Point) []Point {
@@ -438,14 +443,19 @@ func flattenCubic(p0, p1, p2, p3 Point, steps int, out []Point) []Point {
 		steps = 2
 	}
 	inv := 1 / float32(steps)
-	for i := 1; i <= steps; i++ {
+	for i := 1; i < steps; i++ {
 		t := float32(i) * inv
 		u := 1 - t
 		x := u*u*u*p0.X + 3*u*u*t*p1.X + 3*u*t*t*p2.X + t*t*t*p3.X
 		y := u*u*u*p0.Y + 3*u*u*t*p1.Y + 3*u*t*t*p2.Y + t*t*t*p3.Y
 		out = append(out, Point{X: x, Y: y})
 	}
-	return out
+	// End exactly on the endpoint: float32(steps)*(1/steps) need not be
+	// 1, and an off-by-an-ulp final sample left a sliver gap between
+	// the curve and the contour's start point that pathClose (which
+	// compares the unflattened pen) did not bridge — an unbalanced edge
+	// that leaked non-zero fill sideways along one subscan.
+	return append(out, p3)
 }
 
 // Compile-time assertion that *Path satisfies the Shape sealing

@@ -3,6 +3,7 @@ package qui
 import (
 	"image"
 	"sync"
+	"sync/atomic"
 
 	xdraw "golang.org/x/image/draw"
 )
@@ -38,6 +39,9 @@ type EmojiProvider interface {
 var (
 	emojiMu       sync.RWMutex
 	emojiProvider EmojiProvider
+	// emojiGeneration changes with every SetEmojiProvider; caches of
+	// shaped text key on it.
+	emojiGeneration atomic.Uint64
 )
 
 // SetEmojiProvider installs the provider used by DrawText for color
@@ -46,6 +50,8 @@ func SetEmojiProvider(p EmojiProvider) {
 	emojiMu.Lock()
 	defer emojiMu.Unlock()
 	emojiProvider = p
+	// Shaped lines embed emoji advances (the provider's bitmap widths).
+	emojiGeneration.Add(1)
 	// Invalidate the per-size emoji cache — new provider produces
 	// different bitmaps.
 	emojiCache = map[emojiKey]image.Image{}

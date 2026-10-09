@@ -2129,7 +2129,7 @@ func (c imageCanvas) drawShapedMultiline(text string, rect Rect, color Color, fo
 			return false
 		}
 	}
-	metrics := GetFontFaceFor(fontSpec).Metrics()
+	metrics := fontMetricsFor(fontSpec)
 	ascent := metrics.Ascent.Ceil()
 	descent := metrics.Descent.Ceil()
 	lineHeight := metrics.Height.Ceil()

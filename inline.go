@@ -1620,11 +1620,11 @@ func isInlineSpace(r rune) bool {
 // page then held 58 lines where Google Docs holds 60, and no amount of
 // fixing the line-height formula could have moved it.
 func inlineAscent(f Font) float32 {
-	return float32(GetFontFaceFor(f).Metrics().Ascent) / 64
+	return float32(fontMetricsFor(f).Ascent) / 64
 }
 
 func inlineDescent(f Font) float32 {
-	return float32(GetFontFaceFor(f).Metrics().Descent) / 64
+	return float32(fontMetricsFor(f).Descent) / 64
 }
 
 // inlineMidRef returns how far above the baseline a font's ink center sits:

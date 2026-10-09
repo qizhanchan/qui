@@ -780,7 +780,7 @@ func drawTextIntoRaw(dst *image.RGBA, text string, rect Rect, col Color, fontSpe
 	}
 	face := GetFontFaceFor(fontSpec)
 	faces := GetFontFacesFor(fontSpec)
-	metrics := face.Metrics()
+	metrics := fontMetricsFor(fontSpec)
 	drawer := font.Drawer{
 		Dst:  dst,
 		Src:  cachedUniform(toPremultipliedRGBA(col)),
