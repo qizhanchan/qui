@@ -380,7 +380,7 @@ func establishesAbsCB(w Widget) bool {
 // to the full window.
 func (c *Container) Measure(available Size) Size {
 	c.assertUIThread("Container.Measure")
-	padding := c.style.Padding
+	padding := c.style.ContentInsets()
 	// A max-width caps the width the content is laid out in, not just the
 	// reported size: a wrapping row (flex-wrap) or wrapping text measured at
 	// the full offer would report one line's height and then wrap into more
@@ -432,8 +432,9 @@ func (c *Container) Layout(rect Rect) {
 	if c.LayoutEngine == nil {
 		return
 	}
-	padding := c.style.Padding
-	content := rect.Inset(padding)
+	// Border + padding: a border is part of the box, so children start
+	// inside it (CSS) instead of under it.
+	content := rect.Inset(c.style.ContentInsets())
 	c.LayoutEngine.Apply(c.inFlowChildren(), content)
 	// If this container is a containing block (a positioned element, or the
 	// root), position the out-of-flow descendants anchored to it now that its

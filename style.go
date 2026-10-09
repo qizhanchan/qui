@@ -432,6 +432,31 @@ func (c CornerRadii) Resolved(uniform float32) CornerRadii {
 }
 
 // BorderStyle selects the stroke pattern for per-side borders.
+// BorderInsets returns the space the border takes on each side: the per-side
+// widths when any is set, else the uniform BorderSize.
+func (s Style) BorderInsets() Insets {
+	if !isZeroInsets(s.BorderWidths) {
+		return s.BorderWidths
+	}
+	if b := s.BorderSize; b > 0 {
+		return Insets{Top: b, Right: b, Bottom: b, Left: b}
+	}
+	return Insets{}
+}
+
+// ContentInsets is the distance from the outer (border) box to the content
+// box: border + padding, as in CSS. Children are laid out inside it — a
+// border is part of the box, never drawn over the content.
+func (s Style) ContentInsets() Insets {
+	b := s.BorderInsets()
+	return Insets{
+		Top:    b.Top + s.Padding.Top,
+		Right:  b.Right + s.Padding.Right,
+		Bottom: b.Bottom + s.Padding.Bottom,
+		Left:   b.Left + s.Padding.Left,
+	}
+}
+
 type BorderStyle uint8
 
 const (
