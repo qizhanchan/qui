@@ -163,16 +163,16 @@ func TestTransformParseTranslate(t *testing.T) {
 }
 
 func TestTransformComposition(t *testing.T) {
-	// "translate(10,0) rotate(90)" — apply translate first then
-	// rotate. A point (1,0) should land at... translate(10,0)(1,0)
-	// = (11,0); rotate(90)(11,0) = (0,11).
+	// "translate(10,0) rotate(90)": the rightmost function applies to the
+	// point first, so (1,0) is rotated to (0,1) and then translated to
+	// (10,1).
 	t1, err := parseTransformAttr("translate(10,0) rotate(90)")
 	if err != nil {
 		t.Fatal(err)
 	}
 	x, y := t1.apply(1, 0)
-	if !approx(x, 0) || !approx(y, 11) {
-		t.Errorf("composed transform output = (%v, %v), want (0, 11)", x, y)
+	if !approx(x, 10) || !approx(y, 1) {
+		t.Errorf("composed transform output = (%v, %v), want (10, 1)", x, y)
 	}
 }
 
@@ -219,5 +219,91 @@ func TestParseSkipsUnknownElements(t *testing.T) {
 	}
 	if _, ok := doc.Root.Children[0].(*Rect); !ok {
 		t.Errorf("expected *Rect after defs+text were skipped, got %T", doc.Root.Children[0])
+	}
+}
+
+// rotate(a cx cy) turns about (cx, cy), and a list applies its rightmost
+// function first.
+func TestTransformRotateAroundAndListOrder(t *testing.T) {
+	cases := []struct {
+		attr         string
+		inX, inY     float32
+		wantX, wantY float32
+	}{
+		{"rotate(90 12 12)", 12, 12, 12, 12},
+		{"rotate(90 12 12)", 20, 12, 12, 20},
+		{"rotate(90)", 1, 0, 0, 1},
+		{"translate(12 12) rotate(90)", 1, 0, 12, 13},
+		{"rotate(90) translate(12 12)", 1, 0, -12, 13},
+		{"translate(5 0) scale(2)", 1, 1, 7, 2},
+		{"scale(2) translate(5 0)", 1, 1, 12, 2},
+	}
+	for _, c := range cases {
+		tr, err := parseTransformAttr(c.attr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		x, y := tr.apply(c.inX, c.inY)
+		if !approx(x, c.wantX) || !approx(y, c.wantY) {
+			t.Errorf("%s (%v,%v) -> (%v,%v), want (%v,%v)", c.attr, c.inX, c.inY, x, y, c.wantX, c.wantY)
+		}
+	}
+	// A shape under rotate(a cx cy) lands where the same shape drawn
+	// pre-rotated does: an ellipse turned 45 degrees about its centre.
+	doc := func(body string) string {
+		return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">` + body + `</svg>`
+	}
+	rot, err := ParseBytes([]byte(doc(`<ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(45 12 12)" fill="black"/>`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	covered := 0
+	img := rot.Rasterize(24, 24, qui.Color{A: 1}).(*image.RGBA)
+	for i := 3; i < len(img.Pix); i += 4 {
+		if img.Pix[i] > 0x80 {
+			covered++
+		}
+	}
+	// pi*10*4 = 125.7 px of area, none of it clipped.
+	if covered < 110 || covered > 140 {
+		t.Errorf("rotated ellipse covers %d px, want ~126", covered)
+	}
+}
+
+// A group's transform and opacity apply once to its children (they used to
+// be applied by both the group's draw and its caller: a translate moved
+// the content twice as far, an opacity was squared).
+func TestGroupTransformAndOpacityApplyOnce(t *testing.T) {
+	doc := func(body string) *Document {
+		d, err := ParseBytes([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="black">` + body + `</svg>`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	px := func(d *Document, x, y int) uint8 {
+		return d.Rasterize(24, 24, qui.Color{A: 1}).(*image.RGBA).Pix[(y*24+x)*4+3]
+	}
+	g := doc(`<g transform="translate(12 12)"><rect x="-8" y="-3" width="16" height="6"/></g>`)
+	for _, p := range [][2]int{{12, 12}, {5, 10}, {18, 13}} {
+		if a := px(g, p[0], p[1]); a < 0xf0 {
+			t.Errorf("group translate: pixel %v alpha %#x, want covered", p, a)
+		}
+	}
+	if a := px(g, 20, 20); a != 0 {
+		t.Errorf("group translate: (20,20) alpha %#x, want empty", a)
+	}
+	// The same bar as a rotated group lands on the rect's own transform.
+	rg := doc(`<g transform="translate(12 12) rotate(90)"><rect x="-8" y="-3" width="16" height="6"/></g>`)
+	if a := px(rg, 12, 5); a < 0xf0 {
+		t.Errorf("rotated group: (12,5) alpha %#x, want covered", a)
+	}
+	if a := px(rg, 5, 12); a != 0 {
+		t.Errorf("rotated group: (5,12) alpha %#x, want empty", a)
+	}
+	// opacity="0.5" on a group: half coverage, not a quarter.
+	og := doc(`<g opacity="0.5"><rect width="24" height="24"/></g>`)
+	if a := px(og, 12, 12); a < 0x78 || a > 0x88 {
+		t.Errorf("group opacity 0.5: alpha %#x, want ~0x80", a)
 	}
 }

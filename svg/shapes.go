@@ -231,15 +231,12 @@ func (p *Polygon) draw(d *rasterx.Dasher, m rasterx.Matrix2D, s resolvedStyle, o
 
 // --- Group draw / encode ------------------------------------------
 
+// draw paints the children under the group's already-composed matrix, style
+// and opacity: drawElement has applied the group's own transform, style and
+// opacity before dispatching here, so they must not be applied again.
 func (g *Group) draw(d *rasterx.Dasher, m rasterx.Matrix2D, s resolvedStyle, opacity float64) {
-	cm := applyElementMatrix(m, g.Transform)
-	cs := resolveStyle(s, g.Style)
-	cop := opacity
-	if g.Style.Opacity.Set {
-		cop = opacity * float64(clampUnit(g.Style.Opacity.V))
-	}
 	for _, child := range g.Children {
-		drawElement(child, d, cm, cs, cop)
+		drawElement(child, d, m, s, opacity)
 	}
 }
 

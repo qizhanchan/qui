@@ -40,8 +40,8 @@ func rasterizeDocument(d *Document, width, height int) *image.RGBA {
 	tx := (float32(width) - vb.W*s) / 2
 	ty := (float32(height) - vb.H*s) / 2
 
-	// Initial matrix: translate(-vb.X, -vb.Y) → scale(s) → translate(tx, ty).
-	// Composed left-to-right per SVG transform semantics.
+	// Initial matrix: a point is moved by (-vb.X, -vb.Y), then scaled by s,
+	// then moved by (tx, ty) (Then applies its receiver first).
 	m := Translate(-vb.X, -vb.Y).Then(Scale(s, s)).Then(Translate(tx, ty))
 
 	scanner := rasterx.NewScannerGV(width, height, img, img.Bounds())
