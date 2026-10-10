@@ -371,3 +371,85 @@ func TestTooltipCentredUnderControl(t *testing.T) {
 		t.Errorf("tooltip ran off the left edge: x=%v", b.X)
 	}
 }
+
+// tooltipCentreX is the horizontal centre of the shown chip.
+func tooltipCentreX(w *Window) float32 {
+	b := w.tooltipView.Bounds()
+	return b.X + b.W/2
+}
+
+// The chip centres on its control whatever the control's width — a wide
+// control puts it mid-control, not at the control's left edge.
+func TestTooltipCentredOnWideControl(t *testing.T) {
+	w := &Window{lastSize: Size{W: 800, H: 600}}
+	target := newPhaseSpy("wide", Rect{X: 200, Y: 40, W: 240, H: 32}, nil)
+	target.SetTooltip("Zoom")
+	w.hoverPath = []Widget{target}
+	// The pointer enters at the control's far left; the chip still centres
+	// on the control, not on the pointer or the left edge.
+	w.updateTooltipFromHover(203, 50)
+	if c := tooltipCentreX(w); c < 319.5 || c > 320.5 {
+		t.Errorf("tooltip centre x = %v, want 320 (control centre)", c)
+	}
+}
+
+// Near the bottom edge the chip flips ABOVE its control, still centred on
+// it and with the same 5 px gap.
+func TestTooltipFlipsAboveNearBottomCentred(t *testing.T) {
+	w := &Window{lastSize: Size{W: 800, H: 600}}
+	target := newPhaseSpy("status", Rect{X: 400, Y: 570, W: 60, H: 26}, nil)
+	target.SetTooltip("Zoom level")
+	w.hoverPath = []Widget{target}
+	w.updateTooltipFromHover(420, 580)
+	b := w.tooltipView.Bounds()
+	if want := float32(570) - 5 - b.H; b.Y != want {
+		t.Errorf("tooltip top = %v, want %v (5 px above the control)", b.Y, want)
+	}
+	if c := tooltipCentreX(w); c < 429.5 || c > 430.5 {
+		t.Errorf("tooltip centre x = %v, want 430 (control centre)", c)
+	}
+}
+
+// A control against the right edge keeps its chip inside the window.
+func TestTooltipClampedAtRightEdge(t *testing.T) {
+	w := &Window{lastSize: Size{W: 800, H: 600}}
+	target := newPhaseSpy("account", Rect{X: 770, Y: 8, W: 30, H: 30}, nil)
+	target.SetTooltip("Google Account: someone@example.com")
+	w.hoverPath = []Widget{target}
+	w.updateTooltipFromHover(785, 20)
+	if b := w.tooltipView.Bounds(); b.X+b.W > 800-4+0.01 || b.X < 4 {
+		t.Errorf("tooltip not kept inside the window: %+v", b)
+	}
+}
+
+// End to end: a real pointer move through the window's dispatch shows the
+// chip centred under the control, and moving to the next control swaps it
+// with the same centring.
+func TestTooltipCentredFromPointerMove(t *testing.T) {
+	w := NewTestWindow(Size{W: 800, H: 600})
+	log := []phaseLogEntry{}
+	a := newPhaseSpy("a", Rect{X: 100, Y: 60, W: 40, H: 30}, &log)
+	b := newPhaseSpy("b", Rect{X: 300, Y: 60, W: 80, H: 30}, &log)
+	a.SetTooltip("Undo")
+	b.SetTooltip("Print")
+	root := newPhaseSpyContainer("root", Rect{X: 0, Y: 0, W: 800, H: 600}, &log, a, b)
+	w.SetRoot(root)
+
+	w.DispatchTestEvent(NewMouseEvent(EventMouseMove, 105, 70, MouseButtonLeft, 0))
+	if w.tooltipView == nil || w.tooltipView.text != "Undo" {
+		t.Fatalf("tooltip after hovering a = %+v", w.tooltipView)
+	}
+	if c := tooltipCentreX(w); c < 119.5 || c > 120.5 {
+		t.Errorf("tooltip centre x = %v, want 120", c)
+	}
+	w.DispatchTestEvent(NewMouseEvent(EventMouseMove, 310, 70, MouseButtonLeft, 0))
+	if w.tooltipView == nil || w.tooltipView.text != "Print" {
+		t.Fatalf("tooltip after hovering b = %+v", w.tooltipView)
+	}
+	if c := tooltipCentreX(w); c < 339.5 || c > 340.5 {
+		t.Errorf("tooltip centre x = %v, want 340", c)
+	}
+	if y := w.tooltipView.Bounds().Y; y != 95 {
+		t.Errorf("tooltip top = %v, want 95", y)
+	}
+}
