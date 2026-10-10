@@ -168,6 +168,7 @@ type ComputedStyle struct {
 	HasTop, HasRight, HasBottom, HasLeft bool
 	ZIndex                               int  // paint order among siblings (0 = default)
 	OverflowClip                         bool // overflow: hidden / clip
+	OverflowClipX, OverflowClipY         bool // per-axis hidden / clip
 	OverflowScroll                       bool // overflow: auto / scroll
 	OverflowScrollX                      bool // horizontal scroll axis
 
@@ -1204,6 +1205,7 @@ func parseOverflow(m map[string]string, cs *ComputedStyle) {
 		clipY, scrollY = classify(v)
 	}
 	cs.OverflowClip = clipX || clipY
+	cs.OverflowClipX, cs.OverflowClipY = clipX, clipY
 	cs.OverflowScroll = scrollX || scrollY
 	// Pick the horizontal ScrollView orientation only when the x-axis
 	// scrolls and the y-axis does not (a block's default scroll is vertical).

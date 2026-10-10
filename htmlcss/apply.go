@@ -516,6 +516,9 @@ func applyControlColors(w qui.Widget, cs *ComputedStyle, native **qui.StateStyle
 		if cs.HasColor {
 			qui.UpdateStyle(c, func(style *qui.Style) { style.Foreground = cs.Color })
 		}
+		// overflow: hidden on a <textarea> hides its scrollbar on that axis
+		// (the text still scrolls with the caret, as in a browser).
+		c.ShowScrollBarX, c.ShowScrollBarY = !cs.OverflowClipX, !cs.OverflowClipY
 		// TextArea has no state table, only per-state overrides; a disabled
 		// element's rules are already in cs (see syncControlStates), so the
 		// resting style carries the disabled look.

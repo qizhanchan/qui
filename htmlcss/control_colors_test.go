@@ -83,3 +83,22 @@ func TestControlColorsDefaultUnchanged(t *testing.T) {
 		t.Errorf("unstyled input foreground = %+v, want native default %+v", got, defIn.Style().Foreground)
 	}
 }
+
+// overflow: hidden on a <textarea> hides its scrollbar per axis; the
+// default keeps both.
+func TestTextAreaOverflowHiddenHidesScrollbars(t *testing.T) {
+	css := `#a { overflow: hidden; } #b { overflow-y: hidden; }`
+	html := `<body><textarea id="a"></textarea><textarea id="b"></textarea><textarea id="c"></textarea></body>`
+	res := RenderDoc(html, css, Options{})
+	for _, tc := range []struct {
+		id   string
+		x, y bool
+	}{{"a", false, false}, {"b", true, false}, {"c", true, true}} {
+		el := res.ByID[tc.id].(*El)
+		el.ensureBacking()
+		ta := el.backing.(*widgets.TextArea)
+		if ta.ShowScrollBarX != tc.x || ta.ShowScrollBarY != tc.y {
+			t.Errorf("#%s scrollbars x=%v y=%v, want x=%v y=%v", tc.id, ta.ShowScrollBarX, ta.ShowScrollBarY, tc.x, tc.y)
+		}
+	}
+}

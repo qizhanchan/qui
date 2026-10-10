@@ -181,15 +181,25 @@ func (t *TextArea) insets() Insets {
 	if !t.BoxModel {
 		return st.Padding
 	}
-	bw := st.BorderSize
+	bw := borderInsets(st)
 	p := st.Padding
 	if p == (Insets{}) {
 		return Insets{
-			Top: max(htmlControlPadY, bw), Right: max(htmlControlPadX, bw),
-			Bottom: max(htmlControlPadY, bw), Left: max(htmlControlPadX, bw),
+			Top: max(htmlControlPadY, bw.Top), Right: max(htmlControlPadX, bw.Right),
+			Bottom: max(htmlControlPadY, bw.Bottom), Left: max(htmlControlPadX, bw.Left),
 		}
 	}
-	return Insets{Top: bw + p.Top, Right: bw + p.Right, Bottom: bw + p.Bottom, Left: bw + p.Left}
+	return Insets{Top: bw.Top + p.Top, Right: bw.Right + p.Right, Bottom: bw.Bottom + p.Bottom, Left: bw.Left + p.Left}
+}
+
+// borderInsets is the border thickness on each side: the per-side widths
+// when any is set (CSS border-top etc.), else the uniform BorderSize.
+func borderInsets(st *Style) Insets {
+	if hasPerSideBorders(st) {
+		return st.BorderWidths
+	}
+	b := st.BorderSize
+	return Insets{Top: b, Right: b, Bottom: b, Left: b}
 }
 
 // barGutter is the CSS padding between the content and the scrollbars,
@@ -199,8 +209,8 @@ func (t *TextArea) barGutter() Insets {
 	if !t.BoxModel {
 		return Insets{}
 	}
-	in, bw := t.insets(), t.Style().BorderSize
-	return Insets{Top: max(in.Top-bw, 0), Right: max(in.Right-bw, 0), Bottom: max(in.Bottom-bw, 0), Left: max(in.Left-bw, 0)}
+	in, bw := t.insets(), borderInsets(t.Style())
+	return Insets{Top: max(in.Top-bw.Top, 0), Right: max(in.Right-bw.Right, 0), Bottom: max(in.Bottom-bw.Bottom, 0), Left: max(in.Left-bw.Left, 0)}
 }
 
 // barSize is the scrollbar thickness.
@@ -247,9 +257,23 @@ func (t *TextArea) Draw(canvas Canvas) {
 	if t.focused && !custom {
 		bg = Color{R: min(bg.R+0.05, 1), G: min(bg.G+0.05, 1), B: min(bg.B+0.05, 1), A: bg.A}
 	}
-	if st.Radius > 0 {
+	// CSS box-shadow (outset) behind the box, farthest layer first.
+	for i := len(st.ExtraShadows) - 1; i >= 0; i-- {
+		if sh := st.ExtraShadows[i]; !sh.IsZero() {
+			canvas.DrawShadow(rect, st.Radius, ElevationSpec{X: sh.X, Y: sh.Y, Blur: sh.Blur, Spread: sh.Spread, Opacity: 1}, sh.Color)
+		}
+	}
+	if sh := st.Shadow; !sh.IsZero() {
+		canvas.DrawShadow(rect, st.Radius, ElevationSpec{X: sh.X, Y: sh.Y, Blur: sh.Blur, Spread: sh.Spread, Opacity: 1}, sh.Color)
+	}
+	perCorner := !st.Corners.IsZero()
+	switch {
+	case perCorner:
+		canvas.DrawShape(ShapePath{Path: cornerPath(rect, st.Corners.Resolved(st.Radius))},
+			Paint{Style: PaintFill, Color: bg, AntiAlias: true})
+	case st.Radius > 0:
 		canvas.FillRoundedRect(rect, st.Radius, bg)
-	} else {
+	default:
 		canvas.FillRect(rect, bg)
 	}
 
@@ -260,12 +284,24 @@ func (t *TextArea) Draw(canvas Canvas) {
 			borderColor = CurrentTheme().Accent
 		}
 	}
-	if st.BorderSize > 0 {
-		if st.Radius > 0 {
-			canvas.StrokeRoundedRect(rect, st.Radius, borderColor, st.BorderSize)
-		} else {
-			canvas.StrokeRect(rect, borderColor, st.BorderSize)
+	switch {
+	case hasPerSideBorders(st):
+		sides := *st
+		if t.focused && !custom {
+			// The built-in focus ring recolours every side.
+			sides.Border, sides.BorderColors = borderColor, SideColors{}
 		}
+		paintPerSideBorders(canvas, rect, &sides)
+	case st.BorderSize <= 0:
+	case perCorner:
+		half := st.BorderSize / 2
+		r := Rect{X: rect.X + half, Y: rect.Y + half, W: rect.W - st.BorderSize, H: rect.H - st.BorderSize}
+		canvas.DrawShape(ShapePath{Path: cornerPath(r, insetCorners(st.Corners.Resolved(st.Radius), half))},
+			Paint{Style: PaintStroke, Color: borderColor, StrokeWidth: st.BorderSize, AntiAlias: true, Join: JoinRound})
+	case st.Radius > 0:
+		canvas.StrokeRoundedRect(rect, st.Radius, borderColor, st.BorderSize)
+	default:
+		canvas.StrokeRect(rect, borderColor, st.BorderSize)
 	}
 
 	content, showScrollX, showScrollY := t.visibleContentRect(rect)
@@ -512,10 +548,12 @@ func (t *TextArea) drawScrollbars(canvas Canvas, content Rect, showX, showY bool
 // the inside of the (rounded) border so a bar never overdraws it.
 func (t *TextArea) drawBoxScrollbars(canvas Canvas, content Rect, showX, showY bool) {
 	st := t.Style()
-	inner := t.Bounds().Inset(Insets{Top: st.BorderSize, Right: st.BorderSize, Bottom: st.BorderSize, Left: st.BorderSize})
+	inner := t.Bounds().Inset(borderInsets(st))
 	id := canvas.Save()
 	defer canvas.RestoreTo(id)
-	if st.Radius > 0 {
+	if !st.Corners.IsZero() {
+		canvas.ClipPath(cornerPath(inner, insetCorners(st.Corners.Resolved(st.Radius), st.BorderSize)))
+	} else if st.Radius > 0 {
 		canvas.ClipPath(NewPath().AddRRect(inner, max(st.Radius-st.BorderSize, 0)))
 	} else {
 		canvas.ClipRect(inner)
