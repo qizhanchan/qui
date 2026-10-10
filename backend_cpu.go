@@ -278,7 +278,11 @@ func (b *cpuBackend) StrokeRoundedRect(rect Rect, radius float32, clip Rect, col
 		radius = maxR
 	}
 	if width > radius {
-		b.FillRoundedRect(rect, radius, clip, color)
+		// The inner contour has max(0, radius-width) = 0 corners: a square
+		// hole inset by width. Painted as four non-overlapping bands of the
+		// outer rounded fill (the corner ring formula below needs an inner
+		// arc).
+		b.strokeThickRoundedRect(rect, radius, clipPix, color, width)
 		return
 	}
 
@@ -318,6 +322,32 @@ func (b *cpuBackend) StrokeRoundedRect(rect Rect, radius float32, clip Rect, col
 	}
 	if !br.Empty() {
 		drawCornerRingAA(img, float32(right)-radius, float32(bottom)-radius, rOuter, rInner, br.Min.X, br.Min.Y, br.Max.X, br.Max.Y, rgba)
+	}
+}
+
+// strokeThickRoundedRect paints a rounded-rect outline whose width exceeds
+// its corner radius: the outer rounded rect minus the rect inset by width
+// (square inner corners). It is the top, bottom, left and right bands of
+// the outer rounded fill, cut on whole pixels so they never overlap — a
+// translucent stroke would otherwise double up where they meet. A box too
+// small to have a hole is just filled.
+func (b *cpuBackend) strokeThickRoundedRect(rect Rect, radius float32, clipPix image.Rectangle, color Color, width float32) {
+	left, top := int(rect.X), int(rect.Y)
+	right, bottom := int(rect.X+rect.W), int(rect.Y+rect.H)
+	w := max(int(width+0.5), 1)
+	if 2*w >= right-left || 2*w >= bottom-top {
+		b.FillRoundedRect(rect, radius, pixelRectToRect(clipPix), color)
+		return
+	}
+	for _, band := range []image.Rectangle{
+		image.Rect(left, top, right, top+w),
+		image.Rect(left, bottom-w, right, bottom),
+		image.Rect(left, top+w, left+w, bottom-w),
+		image.Rect(right-w, top+w, right, bottom-w),
+	} {
+		if band = band.Intersect(clipPix); !band.Empty() {
+			b.FillRoundedRect(rect, radius, pixelRectToRect(band), color)
+		}
 	}
 }
 
@@ -680,6 +710,11 @@ func (b *cpuBackend) DrawVector(src VectorSource, dst Rect, clip Rect, tint Colo
 // pixels aren't discarded.
 func rectToPixelRect(r Rect) image.Rectangle {
 	return image.Rect(int(r.X), int(r.Y), int(r.X+r.W), int(r.Y+r.H))
+}
+
+// pixelRectToRect is the exact float Rect of a whole-pixel rectangle.
+func pixelRectToRect(r image.Rectangle) Rect {
+	return Rect{X: float32(r.Min.X), Y: float32(r.Min.Y), W: float32(r.Dx()), H: float32(r.Dy())}
 }
 
 // drawShadowImplRaw is the extracted body of the pre-refactor
