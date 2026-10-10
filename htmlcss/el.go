@@ -1600,6 +1600,31 @@ func (e *El) ensureBacking() {
 	}
 	e.installEditGuards()
 	e.bindInputChange()
+	e.bindBackingFocus()
+}
+
+// bindBackingFocus forwards the backing control's focus and blur to the
+// element's OnFocus / OnBlur: a form element's focus lives on the control,
+// so El.SetFocused never runs for it. The callbacks are read at call time,
+// so a later SetOnFocus applies without rebinding.
+func (e *El) bindBackingFocus() {
+	hooks, ok := e.backing.(interface {
+		OnFocus(func()) func()
+		OnBlur(func()) func()
+	})
+	if !ok {
+		return
+	}
+	hooks.OnFocus(func() {
+		if e.onFocus != nil {
+			e.onFocus()
+		}
+	})
+	hooks.OnBlur(func() {
+		if e.onBlur != nil {
+			e.onBlur()
+		}
+	})
 }
 
 // installEditGuards enforces the HTML `readonly` and `maxlength` attributes

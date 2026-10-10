@@ -180,6 +180,29 @@ func TestFocusBlurCallbacks(t *testing.T) {
 	}
 }
 
+// On a form element focus lives on the backing control; the element's
+// focus / blur callbacks still fire when the control gains and loses it.
+func TestFocusBlurCallbacksOnInput(t *testing.T) {
+	win := qui.NewTestWindow(qui.Size{W: 300, H: 100})
+	res := RenderDoc(`<body><input id="in"><input id="other"></body>`, ``, Options{})
+	win.SetRoot(res.Root)
+	in := res.ByID["in"].(*El)
+	other := res.ByID["other"].(*El)
+	in.ensureBacking()
+	other.ensureBacking()
+	var focus, blur int
+	in.SetOnFocus(func() { focus++ })
+	in.SetOnBlur(func() { blur++ })
+	win.SetFocus(in.backing)
+	if focus != 1 {
+		t.Errorf("focus fired %d times, want 1", focus)
+	}
+	win.SetFocus(other.backing)
+	if blur != 1 {
+		t.Errorf("blur fired %d times, want 1", blur)
+	}
+}
+
 // A disabled element swallows keys without invoking the handler, mirroring
 // how it already swallows clicks.
 func TestDisabledElementSwallowsKeys(t *testing.T) {
