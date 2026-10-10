@@ -58,11 +58,27 @@ type TextArea struct {
 	// coordinates. Pair it with RangeRects to locate text.
 	DrawOverlay func(canvas Canvas)
 
+	// BoxModel lays the field out like a CSS box (htmlcss sets it on every
+	// <textarea>). Style().Padding is then padding INSIDE the border: the
+	// text starts at border + padding (an unpadded field keeps the UA
+	// inset), and the scrollbars sit in the border's inner edge instead of
+	// over the padding. Without it Padding is the whole inset from the
+	// outer edge, border included, which is what a Go caller that places
+	// the text itself (a cell editor) wants.
+	BoxModel bool
+
 	// FocusedStyle, when non-nil, replaces the resting chrome (background,
 	// border, radius, text color) while the field holds focus. Nil keeps
 	// the built-in focus look: a slightly lifted background and an accent
 	// border.
 	FocusedStyle *Style
+	// HoverStyle, when non-nil, replaces the resting chrome while the
+	// pointer is over the field (and it is neither focused nor disabled).
+	// Nil keeps the resting look.
+	HoverStyle *Style
+	// DisabledStyle, when non-nil, replaces the chrome while the field is
+	// disabled. Nil dims the baseline text and border colors.
+	DisabledStyle *Style
 
 	// IME composition state. preeditText is the in-flight
 	// composed string; preeditCursor is the rune position inside it.
@@ -133,10 +149,15 @@ func (t *TextArea) Measure(available Size) Size {
 		height = 100
 	}
 	if t.AutoSizeWidth {
-		width = max(width, t.naturalContentWidth()+t.Style().Padding.Horizontal())
+		width = max(width, t.naturalContentWidth()+t.insets().Horizontal())
 	}
 	if t.AutoSizeHeight {
-		height = max(height, float32(t.logicalLineCount())*t.lineHeight()+t.Style().Padding.Vertical())
+		height = max(height, float32(t.logicalLineCount())*t.lineHeight()+t.insets().Vertical())
+	}
+	if t.BoxModel {
+		// Two text lines inside the padding and border, as a browser sizes
+		// a default <textarea rows=2>.
+		height = max(height, 2*t.lineHeight()+t.insets().Vertical())
 	}
 	if t.MaxWidth > 0 && width > t.MaxWidth {
 		width = t.MaxWidth
@@ -153,17 +174,75 @@ func (t *TextArea) Measure(available Size) Size {
 	return Size{W: width, H: height}
 }
 
+// insets is the distance from the outer edge to the text on each side (see
+// BoxModel).
+func (t *TextArea) insets() Insets {
+	st := t.Style()
+	if !t.BoxModel {
+		return st.Padding
+	}
+	bw := st.BorderSize
+	p := st.Padding
+	if p == (Insets{}) {
+		return Insets{
+			Top: max(htmlControlPadY, bw), Right: max(htmlControlPadX, bw),
+			Bottom: max(htmlControlPadY, bw), Left: max(htmlControlPadX, bw),
+		}
+	}
+	return Insets{Top: bw + p.Top, Right: bw + p.Right, Bottom: bw + p.Bottom, Left: bw + p.Left}
+}
+
+// barGutter is the CSS padding between the content and the scrollbars,
+// which BoxModel puts against the border's inner edge. Zero otherwise: the
+// bars then sit flush against the content.
+func (t *TextArea) barGutter() Insets {
+	if !t.BoxModel {
+		return Insets{}
+	}
+	in, bw := t.insets(), t.Style().BorderSize
+	return Insets{Top: max(in.Top-bw, 0), Right: max(in.Right-bw, 0), Bottom: max(in.Bottom-bw, 0), Left: max(in.Left-bw, 0)}
+}
+
+// barSize is the scrollbar thickness.
+func (t *TextArea) barSize() float32 {
+	if t.BoxModel {
+		return VBarWidth
+	}
+	return 8
+}
+
+// chrome resolves the style the box paints with right now: disabled, then
+// focused, then hovered, else resting. custom reports that the variant is
+// an author-supplied one (so the built-in focus lift doesn't stack on it).
+func (t *TextArea) chrome() (st *Style, custom bool) {
+	switch {
+	case !t.Enabled():
+		if t.DisabledStyle != nil {
+			return themedStyle(t.DisabledStyle), true
+		}
+		dim := *t.Style()
+		if dim.Foreground == htmlControlText {
+			dim.Foreground = htmlDisabledText
+		}
+		if dim.Border == htmlControlBorder {
+			dim.Border = htmlDisabledBorder
+		}
+		return themedStyle(&dim), true
+	case t.focused && t.FocusedStyle != nil:
+		return themedStyle(t.FocusedStyle), true
+	case !t.focused && t.hovering && t.HoverStyle != nil:
+		return themedStyle(t.HoverStyle), true
+	}
+	return themedStyle(t.Style()), false
+}
+
 func (t *TextArea) Draw(canvas Canvas) {
 	rect := t.Bounds()
 
-	// Chrome: the resting style, or FocusedStyle while focused. Both go
-	// through themedStyle so the native baseline colors follow SetTheme
-	// (like Input); colors an app set itself pass through.
-	st := themedStyle(t.Style())
-	custom := t.focused && t.FocusedStyle != nil
-	if custom {
-		st = themedStyle(t.FocusedStyle)
-	}
+	// Chrome: the resting style, or the disabled / focused / hover variant.
+	// All go through themedStyle so the native baseline colors follow
+	// SetTheme (like Input); colors an app set itself pass through.
+	st, custom := t.chrome()
 	bg := st.Background
 	if t.focused && !custom {
 		bg = Color{R: min(bg.R+0.05, 1), G: min(bg.G+0.05, 1), B: min(bg.B+0.05, 1), A: bg.A}
@@ -182,7 +261,11 @@ func (t *TextArea) Draw(canvas Canvas) {
 		}
 	}
 	if st.BorderSize > 0 {
-		canvas.StrokeRect(rect, borderColor, st.BorderSize)
+		if st.Radius > 0 {
+			canvas.StrokeRoundedRect(rect, st.Radius, borderColor, st.BorderSize)
+		} else {
+			canvas.StrokeRect(rect, borderColor, st.BorderSize)
+		}
 	}
 
 	content, showScrollX, showScrollY := t.visibleContentRect(rect)
@@ -320,7 +403,7 @@ func (t *TextArea) getCursorPosition(content Rect) (x, y float32) {
 }
 
 func (t *TextArea) drawVisibleText(canvas Canvas, text string, content Rect, color Color) {
-	opts := t.Paragraph.LayoutOptions(0)
+	opts := t.layoutOptions()
 	opts.MaxLines = 0
 	opts.Ellipsis = false
 	if t.wrapEnabled() {
@@ -404,6 +487,10 @@ func (t *TextArea) drawScrollbars(canvas Canvas, content Rect, showX, showY bool
 	if !showX && !showY {
 		return
 	}
+	if t.BoxModel {
+		t.drawBoxScrollbars(canvas, content, showX, showY)
+		return
+	}
 	trackColor := Color{R: 0.15, G: 0.15, B: 0.15, A: 1}
 	thumbColor := Color{R: 0.5, G: 0.5, B: 0.5, A: 1}
 
@@ -421,12 +508,34 @@ func (t *TextArea) drawScrollbars(canvas Canvas, content Rect, showX, showY bool
 	}
 }
 
+// drawBoxScrollbars paints the shared thin rounded scrollbar, clipped to
+// the inside of the (rounded) border so a bar never overdraws it.
+func (t *TextArea) drawBoxScrollbars(canvas Canvas, content Rect, showX, showY bool) {
+	st := t.Style()
+	inner := t.Bounds().Inset(Insets{Top: st.BorderSize, Right: st.BorderSize, Bottom: st.BorderSize, Left: st.BorderSize})
+	id := canvas.Save()
+	defer canvas.RestoreTo(id)
+	if st.Radius > 0 {
+		canvas.ClipPath(NewPath().AddRRect(inner, max(st.Radius-st.BorderSize, 0)))
+	} else {
+		canvas.ClipRect(inner)
+	}
+	if showY {
+		VBarDraw(canvas, t.verticalBarTrack(content), t.verticalBarThumb(content), t.barDraggingY)
+	}
+	if showX {
+		VBarDraw(canvas, t.horizontalBarTrack(content), t.horizontalBarThumb(content), t.barDraggingX)
+	}
+}
+
 func (t *TextArea) verticalBarTrack(content Rect) Rect {
-	return Rect{X: content.X + content.W, Y: content.Y, W: 8, H: content.H}
+	g := t.barGutter()
+	return Rect{X: content.X + content.W + g.Right, Y: content.Y - g.Top, W: t.barSize(), H: content.H + g.Top + g.Bottom}
 }
 
 func (t *TextArea) horizontalBarTrack(content Rect) Rect {
-	return Rect{X: content.X, Y: content.Y + content.H, W: content.W, H: 8}
+	g := t.barGutter()
+	return Rect{X: content.X - g.Left, Y: content.Y + content.H + g.Bottom, W: content.W + g.Left + g.Right, H: t.barSize()}
 }
 
 func (t *TextArea) verticalBarThumb(content Rect) Rect {
@@ -1418,8 +1527,18 @@ func (t *TextArea) scrollToCursor() {
 	}
 }
 
-func (t *TextArea) lineHeight() float32 {
+// layoutOptions is the text layout configuration: the paragraph style and,
+// in the box model, the CSS line-height of the field's style.
+func (t *TextArea) layoutOptions() TextLayoutOptions {
 	opts := t.Paragraph.LayoutOptions(0)
+	if t.BoxModel && opts.LineHeightScale == 0 {
+		opts.LineHeightScale = t.Style().LineHeight
+	}
+	return opts
+}
+
+func (t *TextArea) lineHeight() float32 {
+	opts := t.layoutOptions()
 	return BuildTextLayout("M", t.font(), opts).LineHeight
 }
 
@@ -1428,7 +1547,7 @@ func (t *TextArea) wrapEnabled() bool {
 }
 
 func (t *TextArea) visualLines(runes []rune, contentWidth float32) []visualLine {
-	opts := t.Paragraph.LayoutOptions(0)
+	opts := t.layoutOptions()
 	opts.MaxLines = 0
 	opts.Ellipsis = false
 	if t.wrapEnabled() {
@@ -1517,8 +1636,8 @@ func (t *TextArea) clampScroll(content Rect) {
 // visibleContentRect returns the text content rectangle and whether each
 // scrollbar should be painted in the reserved gutter area.
 func (t *TextArea) visibleContentRect(rect Rect) (Rect, bool, bool) {
-	base := rect.Inset(t.Style().Padding)
-	scrollbarSize := float32(8)
+	base := rect.Inset(t.insets())
+	scrollbarSize := t.barSize()
 	showX := false
 	showY := false
 	for i := 0; i < 3; i++ {

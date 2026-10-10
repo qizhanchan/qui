@@ -726,10 +726,11 @@ func (b *gpuBackend) StrokeRoundedRect(rect Rect, radius float32, clip Rect, col
 	if radius > maxR {
 		radius = maxR
 	}
-	// If width >= radius the ring degenerates to a filled rounded rect,
-	// matching the CPU path's branch.
+	// A stroke thicker than the radius has square inner corners, which the
+	// ring shader cannot draw; the CPU path does.
 	if width > radius && radius > 0 {
-		b.FillRoundedRect(rect, radius, clip, color)
+		b.fallback.StrokeRoundedRect(rect, radius, clip, color, width)
+		b.cpuDirty = true
 		return
 	}
 	if radius <= 0 {
