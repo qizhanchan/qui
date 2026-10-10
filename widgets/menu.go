@@ -36,8 +36,13 @@ import (
 // in the icon column; the plain MenuPanel look tints the row instead.
 // Use it when one item out of N is the active choice.
 type MenuItem struct {
-	Label     string
-	Shortcut  string // displayed on the right (also harvested by MenuBar.AcceleratorRegistry)
+	Label    string
+	Shortcut string // displayed on the right (also harvested by MenuBar.AcceleratorRegistry)
+	// Badge is a short caption drawn as a small pill on the row's right,
+	// before the shortcut / submenu arrow — Google's "New" marker on a
+	// freshly added command (11 px medium, blue on light blue; see
+	// Theme.Popup.MenuBadgeText / MenuBadgeSurface). Empty = none.
+	Badge     string
 	OnClick   func()
 	Disabled  bool
 	Separator bool
@@ -753,10 +758,18 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 	// (opened by click, Right or hover) so another row can replace it.
 	var openSub *Popup
 	openSubIdx := -1
+	// Aim tolerance: aimFrom is where the pointer last was on the row whose
+	// submenu is open; pointer / movedAt are its latest position and the time
+	// it last moved. A pointer crossing a sibling row on its way to the
+	// submenu keeps it open (see menuAiming).
+	var aimFrom, pointer Point
+	var aimSet bool
+	var movedAt time.Time
 	closeOpenSub := func() {
 		if openSub != nil {
 			sub := openSub
 			openSub, openSubIdx = nil, -1
+			aimSet = false
 			sub.Close()
 		}
 	}
@@ -827,6 +840,9 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 					return
 				}
 				openSub, openSubIdx = sub, idx
+				if hovered == idx {
+					aimFrom, aimSet = pointer, true
+				}
 				// The pointer may travel back over this menu while the
 				// submenu is up: route it to these rows (hover switches /
 				// closes the submenu, a click picks the row).
@@ -874,6 +890,12 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 		// Google-style hover: resting on a row for menuHoverDelay opens
 		// its submenu, or closes a sibling's. Moving on to the submenu
 		// before the delay leaves hovered at -1, which keeps it open.
+		onMove := func(p Point) {
+			pointer, movedAt = p, time.Now()
+			if openSub != nil && openSubIdx == idx {
+				aimFrom, aimSet = p, true
+			}
+		}
 		onHover := func(in bool) {
 			if !in {
 				if hovered == idx {
@@ -884,11 +906,21 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 			hovered = idx
 			hoverGen++
 			gen := hoverGen
-			afterMenuHoverDelay(window, func() {
+			var settle func()
+			settle = func() {
 				if gen != hoverGen || hovered != idx || popup == nil || !popup.IsShown() {
 					return
 				}
 				if openSub != nil && openSub.IsShown() && openSubIdx == idx {
+					return
+				}
+				// A pointer still travelling toward the open submenu across
+				// this sibling row is not choosing the row: wait for it to
+				// arrive or come to rest.
+				if MenuHoverDelay > 0 && openSub != nil && aimSet &&
+					time.Since(movedAt) < MenuHoverDelay &&
+					menuAiming(aimFrom, pointer, openSub.Bounds()) {
+					afterMenuHoverDelay(window, settle)
 					return
 				}
 				if it.Submenu != nil && !it.Disabled {
@@ -896,16 +928,17 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 					return
 				}
 				closeOpenSub()
-			})
+			}
+			afterMenuHoverDelay(window, settle)
 		}
 		var row Widget
 		if it.Content != nil {
 			cr := newMenuContentRow(it, st, onSelect)
-			cr.onHover = onHover
+			cr.onHover, cr.onMove = onHover, onMove
 			row = cr
 		} else {
 			iv := newMenuItemWidget(it, st, onSelect)
-			iv.onHover = onHover
+			iv.onHover, iv.onMove = onHover, onMove
 			row = iv
 		}
 		itemWidgets = append(itemWidgets, row)
@@ -958,15 +991,43 @@ func afterMenuHoverDelay(w *Window, fn func()) {
 	time.AfterFunc(MenuHoverDelay, func() { w.PostJob(fn) })
 }
 
-func notifyMenuHover(fn func(bool), e MouseEvent) {
-	if fn == nil {
-		return
+// menuAiming reports whether a pointer at cur, which left the row that
+// opened a submenu at from, is on its way to that submenu: cur lies inside
+// the triangle from the departure point to the submenu panel's near edge
+// (the classic cascading-menu "aim" test). Moving across a sibling row
+// inside that triangle must not switch submenus.
+func menuAiming(from, cur Point, sub Rect) bool {
+	edgeX := sub.X
+	if sub.X+sub.W/2 < from.X {
+		edgeX = sub.X + sub.W // the submenu opened to the left
 	}
+	a, b := Point{X: edgeX, Y: sub.Y}, Point{X: edgeX, Y: sub.Y + sub.H}
+	cross := func(p, q, r Point) float32 { return (q.X-p.X)*(r.Y-p.Y) - (q.Y-p.Y)*(r.X-p.X) }
+	d1, d2, d3 := cross(from, a, cur), cross(a, b, cur), cross(b, from, cur)
+	neg := d1 < 0 || d2 < 0 || d3 < 0
+	pos := d1 > 0 || d2 > 0 || d3 > 0
+	return !(neg && pos)
+}
+
+// notifyMenuHover reports a row's pointer enter / leave to onHover and its
+// position (on enter and every move) to onMove — either may be nil.
+func notifyMenuHover(onHover func(bool), onMove func(Point), e MouseEvent) {
 	switch e.Type() {
 	case EventMouseEnter:
-		fn(true)
+		if onMove != nil {
+			onMove(Point{X: e.X, Y: e.Y})
+		}
+		if onHover != nil {
+			onHover(true)
+		}
 	case EventMouseLeave:
-		fn(false)
+		if onHover != nil {
+			onHover(false)
+		}
+	case EventMouseMove:
+		if onMove != nil {
+			onMove(Point{X: e.X, Y: e.Y})
+		}
 	}
 }
 
@@ -1009,8 +1070,10 @@ type menuItemView struct {
 	subOpen     bool // this row's submenu is showing
 	onSelect    func()
 	// onHover reports pointer enter (true) / leave (false) — the hover
-	// open / close of submenus. Fires for disabled rows too.
+	// open / close of submenus. Fires for disabled rows too; onMove reports
+	// the pointer position on enter and every move.
 	onHover func(in bool)
+	onMove  func(p Point)
 }
 
 func (v *menuItemView) setSubmenuOpen(on bool) {
@@ -1059,6 +1122,9 @@ func (v *menuItemView) Measure(available Size) Size {
 		sw, _ := TextMetrics(v.item.Shortcut, v.shortcutFont())
 		w += v.style.shortcutGap + sw
 	}
+	if v.item.Badge != "" {
+		w += menuBadgeGap + menuBadgeSize(v.item.Badge).W
+	}
 	if v.item.Submenu != nil {
 		w += v.style.submenuW
 	}
@@ -1087,7 +1153,7 @@ func (v *menuItemView) Handle(event Event) bool {
 	if !ok {
 		return false
 	}
-	notifyMenuHover(v.onHover, e)
+	notifyMenuHover(v.onHover, v.onMove, e)
 	if !v.Enabled() {
 		return false
 	}
@@ -1244,8 +1310,9 @@ func (v *menuItemView) Draw(canvas Canvas) {
 	}
 	canvas.DrawText(label, labelRect, labelColor, font)
 
-	if v.item.Shortcut != "" || v.item.Submenu != nil {
-		// Right-align trailing content (shortcut text first, then chevron).
+	if v.item.Shortcut != "" || v.item.Submenu != nil || v.item.Badge != "" {
+		// Right-align trailing content (chevron first, then the shortcut
+		// text, then the badge pill).
 		rightCursor := b.X + b.W - st.trailingSpace
 		if v.item.Submenu != nil {
 			if st.filledArrow {
@@ -1266,8 +1333,51 @@ func (v *menuItemView) Draw(canvas Canvas) {
 				H: sh,
 			}
 			canvas.DrawText(v.item.Shortcut, scRect, shortcutColor, sfont)
+			rightCursor -= sw + st.shortcutGap
+		} else if v.item.Badge != "" {
+			rightCursor -= menuBadgeGap
+		}
+		if v.item.Badge != "" {
+			sz := menuBadgeSize(v.item.Badge)
+			drawMenuBadge(canvas, Rect{X: rightCursor - sz.W, Y: b.Y + (b.H-sz.H)/2, W: sz.W, H: sz.H}, v.item.Badge, v.Enabled())
 		}
 	}
+}
+
+// Badge pill geometry (Workspace's "New" marker): 11 px medium caption in
+// a 16 px pill with 6 px side padding, 8 px clear of what it sits beside.
+const (
+	menuBadgeHeight float32 = 16
+	menuBadgePadX   float32 = 6
+	menuBadgeGap    float32 = 8
+)
+
+func menuBadgeFont() Font {
+	f := ThemeFont(TextLabel)
+	f.Size = 11
+	return f
+}
+
+// menuBadgeSize is the pill's size for caption text.
+func menuBadgeSize(text string) Size {
+	w, _ := TextMetrics(text, menuBadgeFont())
+	return Size{W: w + 2*menuBadgePadX, H: menuBadgeHeight}
+}
+
+// drawMenuBadge paints the pill in rect: the theme's badge surface with the
+// caption centred in the badge text color. A disabled row's pill dims with
+// the rest of the row.
+func drawMenuBadge(canvas Canvas, rect Rect, text string, enabled bool) {
+	p := CurrentTheme().ResolvedPopup()
+	fg, bg := p.MenuBadgeText, p.MenuBadgeSurface
+	if !enabled {
+		fg = LerpColor(p.MenuSurface, fg, 0.38)
+		bg = LerpColor(p.MenuSurface, bg, 0.38)
+	}
+	canvas.FillRoundedRect(rect, rect.H/2, bg)
+	font := menuBadgeFont()
+	tw, th := TextMetrics(text, font)
+	canvas.DrawText(text, Rect{X: rect.X + (rect.W-tw)/2, Y: rect.Y + (rect.H-th)/2, W: tw, H: th}, fg, font)
 }
 
 // menuGlyphBox centers a size×size square inside `slot` — the drawing
@@ -1349,6 +1459,7 @@ type menuContentRow struct {
 	highlighted bool
 	onSelect    func()
 	onHover     func(in bool)
+	onMove      func(p Point)
 }
 
 func newMenuContentRow(item *MenuItem, st menuStyle, onSelect func()) *menuContentRow {
@@ -1398,7 +1509,7 @@ func (r *menuContentRow) Handle(event Event) bool {
 	if !ok {
 		return false
 	}
-	notifyMenuHover(r.onHover, e)
+	notifyMenuHover(r.onHover, r.onMove, e)
 	if !r.Enabled() {
 		return false
 	}

@@ -135,6 +135,8 @@ type PopupTokens struct {
 	MenuMinWidth     float32       // floor for top-level menus: menu-bar dropdowns and context menus (320)
 	MenuBarHover     Color         // menu-bar trigger hovered / open (#ededed)
 	MenuBarText      Color         // menu-bar trigger caption (#1f1f1f)
+	MenuBadgeText    Color         // "New" pill label (MenuItem.Badge, #0b57d0)
+	MenuBadgeSurface Color         // "New" pill fill (#d3e3fd)
 
 	// Tooltips.
 	TooltipSurface Color // chip fill (#1f1f1f)
@@ -285,6 +287,8 @@ func newLightTheme() Theme {
 			MenuMinWidth:     320,
 			MenuBarHover:     argbColor(0xffededed),
 			MenuBarText:      argbColor(0xff1f1f1f),
+			MenuBadgeText:    argbColor(0xff0b57d0),
+			MenuBadgeSurface: argbColor(0xffd3e3fd),
 
 			TooltipSurface: argbColor(0xff1f1f1f),
 			TooltipText:    argbColor(0xfff2f2f2),
@@ -402,6 +406,12 @@ func (t *Theme) ResolvedPopup() PopupTokens {
 	}
 	if p.MenuBarText.A == 0 {
 		p.MenuBarText = t.Text
+	}
+	if p.MenuBadgeText.A == 0 {
+		p.MenuBadgeText = t.Accent
+	}
+	if p.MenuBadgeSurface.A == 0 {
+		p.MenuBadgeSurface = LerpColor(p.MenuSurface, p.MenuBadgeText, 0.16)
 	}
 	if p.TooltipSurface.A == 0 {
 		p.TooltipSurface = t.Text

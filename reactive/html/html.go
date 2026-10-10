@@ -956,6 +956,9 @@ func ContextMenu(window *qui.Window, x, y float32, items []MenuItem) {
 type MenuItem struct {
 	Label     string
 	Shortcut  string
+	// Badge is a small pill on the row's right, e.g. "New" (see
+	// widgets.MenuItem.Badge).
+	Badge     string
 	OnClick   func()
 	Disabled  bool
 	Separator bool
@@ -988,6 +991,7 @@ func toWidgetMenuItems(items []MenuItem) []*qw.MenuItem {
 		mi = append(mi, &qw.MenuItem{
 			Label:     it.Label,
 			Shortcut:  it.Shortcut,
+			Badge:     it.Badge,
 			OnClick:   it.OnClick,
 			Disabled:  it.Disabled,
 			Separator: it.Separator,
