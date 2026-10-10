@@ -181,6 +181,22 @@ type InlineLayoutOptions struct {
 	// whole — the break only fires when nothing else can help. No-op unless
 	// Wrap && MaxWidth > 0.
 	BreakLongWords bool
+
+	// BoxLineStrut gives a line that holds only inline boxes (an image on a
+	// line of its own) the BaseFont's line box as well, with the boxes on
+	// its baseline — CSS's strut, and what Google Docs does: a 4pt-tall
+	// image alone in an 11pt paragraph still takes an 11pt line and sits on
+	// its baseline, with the font's descent below. Without it such a line is
+	// exactly as tall as its boxes.
+	BoxLineStrut bool
+
+	// LeadingBelow is a word processor's line spacing: the room a LineSpacing
+	// above one line adds goes BELOW the text instead of half above and half
+	// below (CSS half-leading). Only the face's own line gap stays split.
+	// Google Docs: Arial 11pt at double spacing sets its first baseline
+	// ~14px under the line's top, as at single spacing, and the lines 33.7px
+	// apart.
+	LeadingBelow bool
 }
 
 // TabAlign is how the text following a tab stop sits against it.
@@ -274,10 +290,11 @@ func tabAdvance(x, segW, glyphW float32, opts *InlineLayoutOptions) (float32, Ta
 // token reaches above and below the baseline, plus the ink ascent/descent of
 // the text on it (an empty line falls back to the reference font, since the
 // caret still needs a line to sit on).
-func inlineLineVMetrics(toks []inlineTok, idxs []int, scale, spacing, mid, baseAsc, baseDesc, baseHalf float32) (ascent, descent, inkA, inkD float32) {
+func inlineLineVMetrics(toks []inlineTok, idxs []int, scale, spacing, mid, baseAsc, baseDesc, baseLA, baseLB float32, strut, leadBelow bool) (ascent, descent, inkA, inkD float32) {
+	text := false
 	for _, ti := range idxs {
 		t := toks[ti]
-		ab, bb := t.aboveBelow(scale, spacing, mid)
+		ab, bb := t.aboveBelow(scale, spacing, mid, leadBelow)
 		if ab > ascent {
 			ascent = ab
 		}
@@ -285,6 +302,7 @@ func inlineLineVMetrics(toks []inlineTok, idxs []int, scale, spacing, mid, baseA
 			descent = bb
 		}
 		if !t.box {
+			text = true
 			if fa := inlineAscent(t.font); fa > inkA {
 				inkA = fa
 			}
@@ -294,8 +312,11 @@ func inlineLineVMetrics(toks []inlineTok, idxs []int, scale, spacing, mid, baseA
 		}
 	}
 	if len(idxs) == 0 || (ascent == 0 && descent == 0) {
-		ascent = baseAsc + baseHalf
-		descent = baseDesc + baseHalf
+		ascent = baseAsc + baseLA
+		descent = baseDesc + baseLB
+	} else if strut && !text {
+		ascent = max(ascent, baseAsc+baseLA)
+		descent = max(descent, baseDesc+baseLB)
 	}
 	if inkA == 0 && inkD == 0 {
 		inkA, inkD = baseAsc, baseDesc
@@ -617,9 +638,10 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 	// read as optically centered with the surrounding text.
 	baseAsc := inlineAscent(opts.BaseFont)
 	baseDesc := inlineDescent(opts.BaseFont)
-	baseHalf := inlineHalfLeading(opts.BaseFont, scale, spacing)
+	leadBelow := opts.LeadingBelow
+	baseLA, baseLB := inlineLeading(opts.BaseFont, scale, spacing, leadBelow)
 	mid := inlineMidRef(opts.BaseFont)
-	strut := baseAsc + baseDesc + 2*baseHalf
+	strut := baseAsc + baseDesc + baseLA + baseLB
 
 	// Pass 1 — greedy line breaking into token-index groups. Each line also
 	// records whether it ends "hard" (forced break / end of content) —
@@ -724,7 +746,7 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 		if len(lineIdx) == 0 {
 			ind = opts.FirstIndent
 		}
-		asc, desc, inkA, inkD := inlineLineVMetrics(toks, cur, scale, spacing, mid, baseAsc, baseDesc, baseHalf)
+		asc, desc, inkA, inkD := inlineLineVMetrics(toks, cur, scale, spacing, mid, baseAsc, baseDesc, baseLA, baseLB, opts.BoxLineStrut, leadBelow)
 		lineIdx = append(lineIdx, cur)
 		lineSegs = append(lineSegs, segs)
 		lineSegToks = append(lineSegToks, segToks)
@@ -773,7 +795,7 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 		if noExcl {
 			return false
 		}
-		ab, bb := t.aboveBelow(scale, spacing, mid)
+		ab, bb := t.aboveBelow(scale, spacing, mid, leadBelow)
 		h := ab + bb
 		if h <= curProbeH {
 			return false
@@ -812,11 +834,11 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 			contentW = t.size.W
 		}
 		if len(cur) == 0 {
-			ab, bb := t.aboveBelow(scale, spacing, mid)
+			ab, bb := t.aboveBelow(scale, spacing, mid, leadBelow)
 			startLine(contentW, ab+bb)
 		} else if growProbe(t) {
 			endLine(false)
-			ab, bb := t.aboveBelow(scale, spacing, mid)
+			ab, bb := t.aboveBelow(scale, spacing, mid, leadBelow)
 			startLine(contentW, ab+bb)
 			lineStart = SourcePos{Item: t.srcItem, Off: t.srcStart}
 			srcCursor = lineStart
@@ -916,7 +938,7 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 			}
 			if segW[seg]+gap+contentW > segAvail() {
 				endLine(false)
-				ab, bb := t.aboveBelow(scale, spacing, mid)
+				ab, bb := t.aboveBelow(scale, spacing, mid, leadBelow)
 				startLine(contentW, ab+bb)
 				gap = 0
 				lineStart = SourcePos{Item: t.srcItem, Off: t.srcStart}
@@ -1052,7 +1074,7 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 // aboveBelow returns the token's extent above and below the baseline. mid is
 // the reference font's ink-center offset above the baseline (used to size
 // vertical-align:middle boxes so the line grows symmetrically around them).
-func (t inlineTok) aboveBelow(scale, spacing, mid float32) (above, below float32) {
+func (t inlineTok) aboveBelow(scale, spacing, mid float32, leadBelow bool) (above, below float32) {
 	if t.box {
 		switch t.valign {
 		case InlineMiddle:
@@ -1078,8 +1100,8 @@ func (t inlineTok) aboveBelow(scale, spacing, mid float32) (above, below float32
 	}
 	fa := inlineAscent(t.font)
 	fd := inlineDescent(t.font)
-	half := inlineHalfLeading(t.font, scale, spacing)
-	above, below = fa+half, fd+half
+	la, lb := inlineLeading(t.font, scale, spacing, leadBelow)
+	above, below = fa+la, fd+lb
 	if t.shift > 0 {
 		above += t.shift
 	} else {
@@ -1642,6 +1664,25 @@ func inlineMidRef(f Font) float32 {
 // inlineHalfLeading is the extra half-leading distributed above/below a text
 // run's ink box to reach its scaled line height (0 when line-height is at or
 // below the ink height).
+// inlineLeading is the leading above and below a text line's ink: half each
+// (CSS), or with below set the face's own line gap split and everything line
+// spacing adds past it below the text (a word processor's; see
+// InlineLayoutOptions.LeadingBelow).
+func inlineLeading(f Font, scale, spacing float32, below bool) (above, under float32) {
+	half := inlineHalfLeading(f, scale, spacing)
+	if !below || half == 0 {
+		return half, half
+	}
+	gap := (NaturalLineHeight(f) - inlineAscent(f) - inlineDescent(f)) / 2
+	if gap < 0 {
+		gap = 0
+	}
+	if gap > half {
+		gap = half // spacing below one line: the gap shrinks evenly
+	}
+	return gap, 2*half - gap
+}
+
 func inlineHalfLeading(f Font, scale, spacing float32) float32 {
 	lh := lineBox(f, scale, spacing)
 	ink := inlineAscent(f) + inlineDescent(f)

@@ -403,3 +403,53 @@ func TestInlineFirstIndentMirrorsForRTL(t *testing.T) {
 		t.Errorf("right-to-left first line ends at %v, want %v", got, want)
 	}
 }
+
+// BoxLineStrut: a line holding only a short image still takes the base
+// font's line box, with the image on its baseline (CSS strut / Google Docs).
+func TestInlineBoxLineStrut(t *testing.T) {
+	f := Font{Size: 16}
+	text := BuildInlineLayout([]InlineItem{inlineText("x", f)}, InlineLayoutOptions{BaseFont: f, LineSpacing: 1.15})
+	items := []InlineItem{{Box: true, Size: Size{W: 300, H: 4}, VAlign: InlineBaseline, BoxIndex: 0}}
+	bare := BuildInlineLayout(items, InlineLayoutOptions{BaseFont: f, LineSpacing: 1.15})
+	if h := bare.Lines[0].Height; h != 4 {
+		t.Fatalf("without the strut the line is %.2f tall, want the box's 4", h)
+	}
+	l := BuildInlineLayout(items, InlineLayoutOptions{BaseFont: f, LineSpacing: 1.15, BoxLineStrut: true})
+	want := text.Lines[0]
+	if got := l.Lines[0]; got.Height != want.Height || got.Baseline != want.Baseline {
+		t.Errorf("strut line height %.2f baseline %.2f, want the text line's %.2f / %.2f",
+			got.Height, got.Baseline, want.Height, want.Baseline)
+	}
+	box := boxFrags(l)[0]
+	if d := box.Rect.Y + box.Rect.H - l.Lines[0].Baseline; d > 0.01 || d < -0.01 {
+		t.Errorf("box bottom %.2f not on the baseline %.2f", box.Rect.Y+box.Rect.H, l.Lines[0].Baseline)
+	}
+	// A box taller than the font keeps the font's descent below it.
+	items[0].Size.H = 60
+	tall := BuildInlineLayout(items, InlineLayoutOptions{BaseFont: f, LineSpacing: 1.15, BoxLineStrut: true})
+	if got, want := tall.Lines[0].Height, 60+(want.Height-want.Baseline); got < want-0.01 || got > want+0.01 {
+		t.Errorf("tall box line %.2f, want box + the font's descent %.2f", got, want)
+	}
+}
+
+// LeadingBelow: double spacing keeps the first baseline where single spacing
+// puts it and adds the extra below (Google Docs), instead of half above.
+func TestInlineLeadingBelow(t *testing.T) {
+	f := Font{Size: 16}
+	items := []InlineItem{inlineText("one\ntwo", f)}
+	single := BuildInlineLayout(items, InlineLayoutOptions{BaseFont: f, LineSpacing: 1, PreserveWhitespace: true})
+	css := BuildInlineLayout(items, InlineLayoutOptions{BaseFont: f, LineSpacing: 2, PreserveWhitespace: true})
+	wp := BuildInlineLayout(items, InlineLayoutOptions{BaseFont: f, LineSpacing: 2, PreserveWhitespace: true, LeadingBelow: true})
+	if wp.Lines[0].Height != css.Lines[0].Height {
+		t.Fatalf("line height %.2f, want the same %.2f either way", wp.Lines[0].Height, css.Lines[0].Height)
+	}
+	if d := wp.Lines[0].Baseline - single.Lines[0].Baseline; d > 0.01 || d < -0.01 {
+		t.Errorf("double-spaced baseline %.2f, want single spacing's %.2f", wp.Lines[0].Baseline, single.Lines[0].Baseline)
+	}
+	if css.Lines[0].Baseline <= wp.Lines[0].Baseline {
+		t.Errorf("CSS half-leading baseline %.2f should sit lower than %.2f", css.Lines[0].Baseline, wp.Lines[0].Baseline)
+	}
+	if pitch := wp.Lines[1].Y - wp.Lines[0].Y; pitch != wp.Lines[0].Height {
+		t.Errorf("line pitch %.2f, want the line height %.2f", pitch, wp.Lines[0].Height)
+	}
+}
