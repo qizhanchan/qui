@@ -28,6 +28,9 @@ type Chart struct {
 	Legend   *Legend // nil disables; use SetLegend to attach
 	Palette  []Color
 	ShowGrid bool
+	// GridColor, when set (A > 0), paints the gridlines instead of the
+	// theme's subdued text colour.
+	GridColor Color
 
 	// EnableZoom gates scroll-wheel zoom (and double-click-to-reset).
 	// EnablePan gates left-button drag-to-pan. EnableSelect gates
@@ -189,10 +192,14 @@ func (c *Chart) Layout(r Rect) {
 	if c.Legend != nil {
 		legendSize = MeasureChild(c.Legend, Size{W: r.W, H: r.H})
 		switch c.Legend.Position {
-		case LegendBottom, LegendTop:
+		case LegendBottom:
 			g.Bottom += legendSize.H + 4
-		case LegendRight, LegendLeft:
+		case LegendTop:
+			g.Top += legendSize.H + 8
+		case LegendRight:
 			g.Right += legendSize.W + 8
+		case LegendLeft:
+			g.Left += legendSize.W + 8
 		}
 	}
 
@@ -222,6 +229,20 @@ func (c *Chart) Layout(r Rect) {
 		case LegendRight:
 			legendRect = Rect{
 				X: c.plotRect.X + c.plotRect.W + 8,
+				Y: c.plotRect.Y,
+				W: legendSize.W,
+				H: c.plotRect.H,
+			}
+		case LegendTop:
+			legendRect = Rect{
+				X: c.plotRect.X,
+				Y: c.plotRect.Y - legendSize.H - 8,
+				W: c.plotRect.W,
+				H: legendSize.H,
+			}
+		case LegendLeft:
+			legendRect = Rect{
+				X: r.X + 4,
 				Y: c.plotRect.Y,
 				W: legendSize.W,
 				H: c.plotRect.H,
@@ -296,7 +317,21 @@ func (c *Chart) ensureAxes() {
 		c.XAxis.SetRange(padLow(bx.Xmin, bx.Xmax), padHigh(bx.Xmin, bx.Xmax))
 	}
 	ymin, ymax := c.YAxis.Range()
-	if ymin == 0 && ymax == 0 && by.HasData {
+	if va, ok := c.YAxis.(*ValueAxis); ok && (va.PinMin || va.PinMax) {
+		// A pinned end stays; the other still follows the data.
+		lo, hi := va.Min, va.Max
+		if by.HasData {
+			if !va.PinMin {
+				lo = padLow(min(by.Ymin, hi), max(by.Ymax, hi))
+			}
+			if !va.PinMax {
+				hi = padHigh(min(by.Ymin, lo), max(by.Ymax, lo))
+			}
+		}
+		if hi > lo {
+			va.SetRange(lo, hi)
+		}
+	} else if ymin == 0 && ymax == 0 && by.HasData {
 		c.YAxis.SetRange(padLow(by.Ymin, by.Ymax), padHigh(by.Ymin, by.Ymax))
 	}
 	c.lastBoundsX = [2]float32{bx.Xmin, bx.Xmax}
@@ -428,7 +463,7 @@ func (c *Chart) Draw(canvas Canvas) {
 	}
 
 	if c.ShowGrid && c.XAxis != nil && c.YAxis != nil && c.usesAxes() {
-		drawGrid(canvas, c.plotRect, c.XAxis, c.YAxis, theme)
+		drawGrid(canvas, c.plotRect, c.XAxis, c.YAxis, theme, c.GridColor)
 	}
 
 	// Clip series to the plot rectangle.

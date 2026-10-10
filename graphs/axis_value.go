@@ -15,6 +15,10 @@ type ValueAxis struct {
 	// map to smaller pixel offsets — what Y axes want by default so
 	// "up on screen" = "higher value".
 	InvertedAxis bool
+	// PinMin / PinMax fix Min / Max when the chart auto-ranges a Y axis:
+	// the pinned end stays, the other follows the data (a chart's
+	// "minimum 0" with an automatic maximum).
+	PinMin, PinMax bool
 }
 
 // compile-time check

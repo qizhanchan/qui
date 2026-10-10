@@ -33,9 +33,12 @@ func defaultGutters(theme *Theme) PlotGutters {
 // drawGrid paints faint horizontal + vertical lines at each major tick.
 // Skips category axes because their "ticks" are bucket centers and
 // gridlines at those positions visually collide with bar series.
-func drawGrid(canvas Canvas, plot Rect, x, y Axis, theme *Theme) {
+func drawGrid(canvas Canvas, plot Rect, x, y Axis, theme *Theme, override Color) {
 	gridColor := theme.TextMuted
 	gridColor.A *= 0.35 // subdued; ticks shouldn't compete with data
+	if override.A > 0 {
+		gridColor = override
+	}
 	if !x.IsCategorical() {
 		for _, t := range x.TickPositions() {
 			px := plot.X + x.ValueToPixel(t.Value, plot.W)

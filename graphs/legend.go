@@ -3,8 +3,7 @@ package graphs
 import . "github.com/qizhanchan/qui"
 
 // LegendPosition selects where the legend docks relative to the plot.
-// v1 supports LegendBottom (default) and LegendRight; LegendTop and
-// LegendLeft are reserved for wave 2.
+// Supports LegendBottom (default), LegendRight, LegendTop and LegendLeft.
 type LegendPosition int
 
 const (
