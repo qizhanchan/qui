@@ -39,11 +39,11 @@ func Rotate(deg float32) *Transform {
 	return &Transform{A: c, B: s, C: -s, D: c}
 }
 
-// RotateAround returns rotation about (cx, cy) — translate(-cx,-cy) ∘
-// rotate(deg) ∘ translate(cx,cy), pre-multiplied to flatten into a
-// single matrix.
+// RotateAround returns rotation about (cx, cy), i.e. SVG's
+// rotate(deg cx cy) = translate(cx cy) rotate(deg) translate(-cx -cy): a
+// point is moved so (cx, cy) is the origin, rotated, and moved back.
 func RotateAround(deg, cx, cy float32) *Transform {
-	return Translate(cx, cy).Then(Rotate(deg)).Then(Translate(-cx, -cy))
+	return Translate(-cx, -cy).Then(Rotate(deg)).Then(Translate(cx, cy))
 }
 
 // SkewX returns a skew along the X axis by deg degrees.
@@ -63,10 +63,10 @@ func Matrix(a, b, c, d, e, f float32) *Transform {
 	return &Transform{A: a, B: b, C: c, D: d, E: e, F: f}
 }
 
-// Then composes self with u producing self∘u in SVG "transform list"
-// semantics, i.e. the result of applying self first, then u to a point.
-// This matches the SVG convention that transform="translate(10,0)
-// rotate(45)" applies translate first.
+// Then returns the transform that applies t to a point first and u
+// second. Note this is the reverse of an SVG transform list, where the
+// rightmost function applies first: transform="translate(10 0) rotate(45)"
+// is Rotate(45).Then(Translate(10, 0)).
 //
 // Returning a new value (never mutating either operand) makes it safe to
 // share *Transform pointers across elements.
@@ -80,11 +80,8 @@ func (t *Transform) Then(u *Transform) *Transform {
 	return multiply(t, u)
 }
 
-// multiply produces a ∘ b in SVG transform-list order. Math: applying
-// a then b to a point p means p' = b * (a * p) = (b*a) * p, but the
-// SVG convention exposes "transform a b" as a function-composition
-// reading left-to-right (first a, then b), so the matrix we want is
-// b * a. We do that here.
+// multiply returns the matrix that applies a to a point first and b
+// second: p' = b * (a * p) = (b*a) * p.
 func multiply(a, b *Transform) *Transform {
 	// out = b * a
 	return &Transform{
@@ -151,8 +148,9 @@ func fmtNum(v float32) string {
 }
 
 // parseTransformAttr accepts an SVG transform attribute string and
-// returns the composed *Transform. Multiple primitives compose
-// left-to-right per the spec; whitespace and commas separate arguments.
+// returns the composed *Transform. A list is the product of its matrices
+// in written order, so the rightmost function is applied to a point first
+// (as in a browser); whitespace and commas separate arguments.
 // Unknown primitive names are an error so silent typos don't ship.
 func parseTransformAttr(s string) (*Transform, error) {
 	s = strings.TrimSpace(s)
@@ -185,7 +183,7 @@ func parseTransformAttr(s string) (*Transform, error) {
 		if out == nil {
 			out = t
 		} else {
-			out = out.Then(t)
+			out = t.Then(out)
 		}
 	}
 	return out, nil

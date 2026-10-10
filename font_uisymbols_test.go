@@ -64,3 +64,53 @@ func TestUIKeyboardSymbolsShapingChain(t *testing.T) {
 		}
 	}
 }
+
+// inkSpan returns the first and last pixel row (and the first column) with
+// ink when text is drawn at the top-left of a 120x60 canvas.
+func inkSpan(t *testing.T, text string, f Font) (top, bottom, left int) {
+	t.Helper()
+	cv, img := NewOffscreenCanvas(120, 60)
+	cv.Clear(Color{R: 1, G: 1, B: 1, A: 1})
+	cv.DrawText(text, Rect{X: 10, Y: 10, W: 100, H: 40}, Color{A: 1}, f)
+	top, bottom, left = -1, -1, -1
+	for y := 0; y < 60; y++ {
+		for x := 0; x < 120; x++ {
+			if img.RGBAAt(x, y).R < 160 {
+				if top < 0 {
+					top = y
+				}
+				bottom = y
+				if left < 0 || x < left {
+					left = x
+				}
+			}
+		}
+	}
+	return
+}
+
+// A shortcut's modifier glyphs share the label's baseline and stand at
+// about cap height, whichever face they came from, so "⌘Z" reads as one
+// word. (⌃ is a small caret at the top of the line, so only its bottom edge
+// is not compared.)
+func TestUIKeyboardSymbolsShareBaselineAndSize(t *testing.T) {
+	GetFontFacesFor(Font{Size: 28})
+	if uiSymbolFallback.Load() == nil {
+		t.Skip("no platform UI-symbol face on this system")
+	}
+	f := Font{Size: 28}
+	zTop, zBot, _ := inkSpan(t, "Z", f)
+	capH := zBot - zTop + 1
+	for _, g := range []string{"⌘", "⇧", "⌥"} {
+		top, bot, _ := inkSpan(t, g, f)
+		if bot < 0 {
+			t.Fatalf("%s drew nothing", g)
+		}
+		if d := bot - zBot; d < -2 || d > 2 {
+			t.Errorf("%s bottom edge is %d px from the baseline (Z bottom %d, glyph bottom %d)", g, d, zBot, bot)
+		}
+		if h := bot - top + 1; h < capH*8/10 || h > capH*12/10 {
+			t.Errorf("%s is %d px tall, cap height is %d", g, h, capH)
+		}
+	}
+}

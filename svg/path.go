@@ -241,15 +241,16 @@ func feedPathCommands(ad rasterx.Adder, cmds []PathCommand) {
 			// the endpoint form via FindEllipseCenter (which also possibly
 			// scales rx/ry if the endpoints are farther apart than the ellipse
 			// can span), then build the 7-element points slice AddArc indexes.
-			rx := float64(c.Args[0])
-			ry := float64(c.Args[1])
+			// A negative radius counts as its absolute value (SVG 1.1 F.6.2).
+			rx := math.Abs(float64(c.Args[0]))
+			ry := math.Abs(float64(c.Args[1]))
 			rotDeg := float64(c.Args[2])
 			rotRad := rotDeg * math.Pi / 180
 			largeArc := c.Args[3] != 0
 			sweep := c.Args[4] != 0
 			endX := float64(c.Args[5])
 			endY := float64(c.Args[6])
-			if rx <= 0 || ry <= 0 || (endX == curX && endY == curY) {
+			if rx == 0 || ry == 0 || (endX == curX && endY == curY) {
 				// Degenerate arc — SVG spec: render as a line to (x,y).
 				if endX != curX || endY != curY {
 					ad.Line(rasterx.ToFixedP(endX, endY))

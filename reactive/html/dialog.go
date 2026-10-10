@@ -105,8 +105,12 @@ type DialogProps struct {
 // dialogCSS), from framework-origin CSS: any author rule beats it,
 // whatever its specificity, and the custom properties --q-dialog-bg /
 // --q-dialog-fg / --q-dialog-radius / --q-dialog-shadow / --q-dialog-accent
-// theme it without restating the rules. The LAST action is drawn as the
-// filled default button. Render it conditionally:
+// theme it without restating the rules. Text inputs, selects and textareas
+// in the body are Material 3 outlined fields (a text input or select is
+// 40 px tall, with a 4 px radius, 1 px #747775 border, 2 px accent border
+// on :focus, and 14 px text 12 px from the edge; :hover and :disabled are
+// styled too).
+// The LAST action is drawn as the filled default button. Render it conditionally:
 //
 //	if open {
 //		dlg = h.Dialog(h.DialogProps{
@@ -245,13 +249,24 @@ const dialogCSS = `
 }
 .q-dialog-body input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=range]),
 .q-dialog-body select {
-	padding: 7px 15px;
-	font-size: 16px; line-height: 24px;
+	padding: 9px 11px;
+	line-height: 20px;
+}
+.q-dialog-body input:not([type=checkbox]):not([type=radio]):hover,
+.q-dialog-body select:hover,
+.q-dialog-body textarea:hover {
+	border-color: #1f1f1f;
 }
 .q-dialog-body input:focus,
 .q-dialog-body select:focus,
-.q-dialog-body textarea:focus {
+.q-dialog-body textarea:focus,
+.q-dialog-body input:not([type=checkbox]):not([type=radio]):focus {
 	border-color: var(--q-dialog-accent, #0b57d0); border-width: 2px;
+}
+.q-dialog-body input:not([type=checkbox]):not([type=radio]):disabled,
+.q-dialog-body select:disabled,
+.q-dialog-body textarea:disabled {
+	border-color: rgba(31,31,31,0.12); background: transparent; color: rgba(31,31,31,0.38);
 }
 `
 
