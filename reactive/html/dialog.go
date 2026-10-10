@@ -109,7 +109,8 @@ type DialogProps struct {
 // in the body are Material 3 outlined fields (a text input or select is
 // 40 px tall, with a 4 px radius, 1 px #747775 border, 2 px accent border
 // on :focus, and 14 px text 12 px from the edge; :hover and :disabled are
-// styled too).
+// styled too); a textarea has the same outline, padding and text, two
+// lines tall unless sized.
 // The LAST action is drawn as the filled default button. Render it conditionally:
 //
 //	if open {
@@ -248,7 +249,8 @@ const dialogCSS = `
 	font-size: 14px;
 }
 .q-dialog-body input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=range]),
-.q-dialog-body select {
+.q-dialog-body select,
+.q-dialog-body textarea {
 	padding: 9px 11px;
 	line-height: 20px;
 }

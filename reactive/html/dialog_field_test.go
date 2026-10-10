@@ -202,3 +202,56 @@ func TestInputTextInsetIsBorderPlusPadding(t *testing.T) {
 		t.Errorf("text is centred at y=%v in a 40 px field", mid)
 	}
 }
+
+// A dialog textarea is the same outlined field as an input: 4px radius,
+// 1px #747775 border, 14/20 text, 9/11 padding inside the border, with
+// hover / focus / disabled outlines — and it is tall enough for two lines
+// of that text.
+func TestDialogTextareaMatchesOutlinedField(t *testing.T) {
+	win := qui.NewTestWindow(qui.Size{W: 800, H: 600})
+	h.Mount(win, ``, func() h.Node {
+		return h.Div(h.Dialog(h.DialogProps{Title: "T", Body: h.Div(
+			h.Textarea().Value("x"), h.Textarea().Disabled(true))}))
+	})
+	var areas []*widgets.TextArea
+	for _, ov := range win.Overlays() {
+		ov.Layout(qui.Rect{W: 800, H: 600})
+		var walk func(w qui.Widget)
+		walk = func(w qui.Widget) {
+			if ta, ok := w.(*widgets.TextArea); ok {
+				areas = append(areas, ta)
+			}
+			if cl, ok := w.(qui.ChildLister); ok {
+				for _, c := range cl.ChildList() {
+					walk(c)
+				}
+			}
+		}
+		walk(ov)
+	}
+	if len(areas) != 2 {
+		t.Fatalf("found %d textareas, want 2", len(areas))
+	}
+	rgb := func(r, g, b float32) qui.Color { return qui.Color{R: r / 255, G: g / 255, B: b / 255, A: 1} }
+	ta := areas[0]
+	st := ta.Style()
+	if st.Font.Size != 14 || st.LineHeight*st.Font.Size != 20 || st.Padding != (qui.Insets{Top: 9, Right: 11, Bottom: 9, Left: 11}) ||
+		st.BorderSize != 1 || st.Radius != 4 || st.Border != rgb(116, 119, 117) {
+		t.Errorf("base: font %v line %v pad %v border %v %v radius %v", st.Font.Size, st.LineHeight, st.Padding, st.BorderSize, st.Border, st.Radius)
+	}
+	if !ta.BoxModel {
+		t.Error("a CSS textarea is not in the box model")
+	}
+	if got := ta.Bounds().H; got != 60 {
+		t.Errorf("textarea height = %v, want 60 (two 20px lines + 9+9 padding + 1+1 border)", got)
+	}
+	if ta.HoverStyle == nil || ta.HoverStyle.Border != rgb(31, 31, 31) {
+		t.Errorf(":hover style = %+v, want a #1f1f1f outline", ta.HoverStyle)
+	}
+	if ta.FocusedStyle == nil || ta.FocusedStyle.BorderSize != 2 || ta.FocusedStyle.Border != rgb(11, 87, 208) {
+		t.Errorf(":focus style = %+v, want a 2px #0b57d0 outline", ta.FocusedStyle)
+	}
+	if d := areas[1].Style(); d.Border.A >= 0.2 || d.Foreground.A >= 0.5 || areas[1].Enabled() {
+		t.Errorf("disabled: border %v text %v enabled %v, want faded and inert", d.Border, d.Foreground, areas[1].Enabled())
+	}
+}

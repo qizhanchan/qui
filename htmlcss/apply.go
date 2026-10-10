@@ -516,12 +516,19 @@ func applyControlColors(w qui.Widget, cs *ComputedStyle, native **qui.StateStyle
 		if cs.HasColor {
 			qui.UpdateStyle(c, func(style *qui.Style) { style.Foreground = cs.Color })
 		}
-		// TextArea has no state table, only a focus override.
-		c.FocusedStyle = nil
+		// TextArea has no state table, only per-state overrides; a disabled
+		// element's rules are already in cs (see syncControlStates), so the
+		// resting style carries the disabled look.
+		c.FocusedStyle, c.HoverStyle = nil, nil
 		if v := focusVariant(cs); v != nil {
 			st := *c.Style()
 			overlayStateChrome(&st, cs, v)
 			c.FocusedStyle = &st
+		}
+		if v := cs.Hover; v != nil && (boxDecorationsDiffer(cs, v) || v.Color != cs.Color) {
+			st := *c.Style()
+			overlayStateChrome(&st, cs, v)
+			c.HoverStyle = &st
 		}
 	case *widgets.Select:
 		if cs.HasColor {
