@@ -146,6 +146,9 @@ type El struct {
 	// selectDisabled marks `<option disabled>` rows plus the inert heading
 	// rows synthesized for `<optgroup label=…>`. defaultSelectedIdx
 	// remembers the `selected` option so a form reset can restore it.
+	// selectedSet: the selection was chosen (a `selected` option, or
+	// SetSelectedIndex) — until then the first enabled option is current,
+	// as in a browser.
 	selectItems        []string
 	selectValues       []string
 	selectDisabled     []bool
@@ -153,6 +156,7 @@ type El struct {
 	defaultSelectedIdx int
 	checked            bool
 	selectedIdx        int
+	selectedSet        bool
 	// Autocomplete state for `<input list=…>` (see datalist.go).
 	suggestions     []string
 	suggestMatches  []string
@@ -1450,6 +1454,18 @@ func typeFormatHint(inputType string) string {
 	return ""
 }
 
+// SetWindow records the owning window. A <select> that was styled before
+// it had one (a dialog mounted after the first frame: the portal attaches
+// its subtree only after building it) is showing the placeholder label;
+// attaching it restyles it so its widget exists now, not on whatever frame
+// next touches it — a headless test window never runs one.
+func (e *El) SetWindow(w *qui.Window) {
+	e.Box.SetWindow(w)
+	if w != nil && e.tag == "select" && e.backing == nil {
+		e.markDirty()
+	}
+}
+
 // ensureBacking lazily creates the control widget for a form tag, wiring
 // the stored callbacks/state. <select> needs a live *Window (its dropdown
 // is an overlay); it is created once the element is window-attached.
@@ -1460,6 +1476,7 @@ func (e *El) ensureBacking() {
 	switch e.tag {
 	case "textarea":
 		ta := widgets.NewTextArea(e.attrs["placeholder"])
+		ta.BoxModel = true // CSS padding sits inside the border
 		ta.OnChange = e.onInput
 		if v, ok := e.attrs["value"]; ok {
 			ta.SetText(v)
@@ -1821,6 +1838,31 @@ func (e *El) readOptions(n *Node) {
 
 	e.selectItems, e.selectValues, e.selectDisabled = items, values, disabled
 	e.selectedIdx, e.defaultSelectedIdx = selected, selected
+	e.selectedSet = selected >= 0
+	e.defaultSelection()
+}
+
+// defaultSelection makes the first enabled option current while no
+// selection was chosen: a <select> without a `selected` option shows its
+// first option, not a blank box. A selection the user has made (the widget
+// no longer blank) is left alone; an explicit one (SetSelectedIndex,
+// including -1 for "nothing") is never replaced.
+func (e *El) defaultSelection() {
+	if e.selectedSet {
+		return
+	}
+	first := -1
+	for i := range e.selectItems {
+		if i >= len(e.selectDisabled) || !e.selectDisabled[i] {
+			first = i
+			break
+		}
+	}
+	e.selectedIdx, e.defaultSelectedIdx = first, first
+	if sel, ok := e.backing.(*widgets.Select); ok && sel.SelectedIdx < 0 && first >= 0 {
+		sel.SelectedIdx = first
+		sel.Invalidate()
+	}
 }
 
 // SetSelectOptions sets a <select>'s option list. Submitted values default to
@@ -1831,6 +1873,7 @@ func (e *El) SetSelectOptions(items []string) {
 	if sel, ok := e.backing.(*widgets.Select); ok {
 		sel.SetItems(items)
 	}
+	e.defaultSelection()
 }
 
 // SelectOptions returns a <select>'s current option labels.
@@ -1850,6 +1893,7 @@ func (e *El) SetSelectDisabled(disabled []bool) {
 	if sel, ok := e.backing.(*widgets.Select); ok {
 		sel.SetItemDisabled(disabled)
 	}
+	e.defaultSelection()
 }
 
 // SetSelectItemColors tints the dropdown rows, parallel to the option labels
@@ -1879,6 +1923,7 @@ func (e *El) selectValueAt(i int) string {
 // SetSelectedIndex sets a <select>'s current selection.
 func (e *El) SetSelectedIndex(i int) {
 	e.selectedIdx = i
+	e.selectedSet = true
 	if sel, ok := e.backing.(*widgets.Select); ok && sel.SelectedIdx != i {
 		sel.SelectedIdx = i
 		sel.Invalidate()

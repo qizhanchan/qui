@@ -190,3 +190,63 @@ func TestColorInputSubmitsPickedValue(t *testing.T) {
 		t.Errorf("after reset, submit = %q, want #000000", data["tint"])
 	}
 }
+
+// With no `selected` option a <select> shows its first enabled option (a
+// browser never renders it blank), submits it, and a form reset returns to it.
+func TestSelectDefaultsToFirstEnabledOption(t *testing.T) {
+	win := qui.NewTestWindow(qui.Size{W: 400, H: 300})
+	res := RenderDoc(
+		`<body><form id="f">
+		   <select id="plain" name="a"><option value="x">X</option><option value="y">Y</option></select>
+		   <select id="skip" name="b"><option disabled>Pick</option><option value="p">P</option></select>
+		   <select id="group" name="c"><optgroup label="Fonts"><option value="arial">Arial</option></optgroup></select>
+		   <select id="empty" name="d"></select>
+		 </form></body>`,
+		``,
+		Options{Window: win},
+	)
+	for id, want := range map[string]int{"plain": 0, "skip": 1, "group": 1, "empty": -1} {
+		el := res.ByID[id].(*El)
+		el.ensureBacking()
+		sel, ok := el.backing.(*widgets.Select)
+		if !ok {
+			continue // the empty select has no options to show
+		}
+		if sel.SelectedIdx != want {
+			t.Errorf("#%s SelectedIdx = %d, want %d", id, sel.SelectedIdx, want)
+		}
+	}
+
+	var data map[string]string
+	res.ByID["f"].(*El).SetOnFormSubmit(func(d map[string]string) { data = d })
+	res.ByID["f"].(*El).submitForm()
+	if data["a"] != "x" || data["b"] != "p" || data["c"] != "arial" {
+		t.Errorf("submitted %v, want the first enabled option's value of each select", data)
+	}
+
+	el, sel := selectWidget(t, res.ByID["plain"])
+	sel.SelectedIdx = 1
+	el.resetControl()
+	if sel.SelectedIdx != 0 {
+		t.Errorf("after reset SelectedIdx = %d, want 0 (the first option)", sel.SelectedIdx)
+	}
+}
+
+// Choosing -1 explicitly keeps the select blank.
+func TestSelectExplicitNoSelectionStaysBlank(t *testing.T) {
+	win := qui.NewTestWindow(qui.Size{W: 400, H: 300})
+	eng := NewStyleEngine("")
+	eng.opts.Window = win
+	el := eng.NewEl("select")
+	el.SetSelectOptions([]string{"A", "B"})
+	el.SetSelectedIndex(-1)
+	el.SetSelectOptions([]string{"A", "B"}) // a re-render hands the options again
+	el.ensureBacking()
+	sel, ok := el.backing.(*widgets.Select)
+	if !ok {
+		t.Fatalf("backing is %T", el.backing)
+	}
+	if sel.SelectedIdx != -1 {
+		t.Errorf("SelectedIdx = %d, want -1 (explicitly nothing selected)", sel.SelectedIdx)
+	}
+}
