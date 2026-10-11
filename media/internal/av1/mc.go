@@ -8,6 +8,7 @@ type mcScratch struct {
 	mask  [128 * 128]int32
 	inter [(2*128 + 16) * 128]int32
 	obmc  [64 * 64]int32
+	edge  mcEdge
 }
 
 // refPic describes a prediction source.
@@ -84,6 +85,10 @@ func (t *tile) blockInterPred(rp refPic, plane, x, y, xStep, yStep, w, h int, in
 	interH := (((h-1)*yStep + 1<<10 - 1) >> 10) + 8
 	fx := &subpelFilters[filterIndex(int(interp[1]), w)]
 	fy := &subpelFilters[filterIndex(int(interp[0]), h)]
+	if xStep == 1<<10 && yStep == 1<<10 {
+		t.interPredUnscaled(pb, lastX, lastY, x, y, w, h, fx, fy, r0, r1, pred)
+		return
+	}
 	inter := t.mc.inter[:interH*w]
 	rnd0 := int32(1) << (r0 - 1)
 	for r := 0; r < interH; r++ {

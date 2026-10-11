@@ -59,33 +59,66 @@ func upscale(f *frameState, src *frame) *frame {
 	return dst
 }
 
-// lrState holds the inputs of loop restoration for one frame.
+// lrState holds the inputs of loop restoration for one plane and the
+// stripe being filtered. Each stripe (64 luma rows, offset 8 rows up) is
+// first copied into buf with three samples of padding on every side,
+// following the spec's sample fetch (7.17.6): coordinates are clamped to
+// the plane, and rows above / below the stripe come from the deblocked
+// (pre-CDEF) frame, at most two rows beyond the stripe.
 type lrState struct {
-	f             *frameState
 	cdef, deblock *frame // UpscaledCdefFrame, UpscaledCurrFrame
-	stripeStart   int
-	stripeEnd     int
-	planeEndX     int
-	planeEndY     int
+	bd            int
+	planeW        int
+	stride        int
+	top           int     // first plane row of the stripe; buf row 3
+	buf           []int32 // buf[(r+3)*stride + c+3] = sample(c, top+r)
+	inter         []int32
+	sgrA, sgrB    []int32
+	flt           [2][]int32
+	hs, hq        []int32
 }
 
-func (s *lrState) sample(plane, x, y int) int32 {
-	x = clip3(0, s.planeEndX, x)
-	y = clip3(0, s.planeEndY, y)
-	if y < s.stripeStart {
-		return s.deblock.planes[plane].get(x, max(s.stripeStart-2, y))
+// rowFrom returns the samples of plane row y of f as int32 into dst
+// (planeW samples).
+func rowFrom(f *frame, plane, y int, dst []int32) {
+	pb := &f.planes[plane]
+	if pb.pix16 != nil {
+		for i, v := range pb.pix16[y*pb.stride : y*pb.stride+len(dst)] {
+			dst[i] = int32(v)
+		}
+		return
 	}
-	if y > s.stripeEnd {
-		return s.deblock.planes[plane].get(x, min(s.stripeEnd+2, y))
+	for i, v := range pb.pix8[y*pb.stride : y*pb.stride+len(dst)] {
+		dst[i] = int32(v)
 	}
-	return s.cdef.planes[plane].get(x, y)
+}
+
+// loadStripe fills buf for the stripe [stripeStart, stripeEnd] whose
+// visible rows are top..bot.
+func (s *lrState) loadStripe(plane, stripeStart, stripeEnd, top, bot, planeEndY int) {
+	s.top = top
+	w := s.planeW
+	for r := -3; r <= bot-top+3; r++ {
+		y := clip3(0, planeEndY, top+r)
+		src := s.cdef
+		switch {
+		case y < stripeStart:
+			src, y = s.deblock, max(stripeStart-2, y)
+		case y > stripeEnd:
+			src, y = s.deblock, min(stripeEnd+2, y)
+		}
+		row := s.buf[(r+3)*s.stride:]
+		rowFrom(src, plane, y, row[3:3+w])
+		row[0], row[1], row[2] = row[3], row[3], row[3]
+		row[3+w], row[4+w], row[5+w] = row[2+w], row[2+w], row[2+w]
+	}
 }
 
 // restore applies loop restoration, returning the restored frame.
 func (d *Decoder) restore(f *frameState, cdefF, deblockF *frame) *frame {
 	h := f.hdr
 	out := cloneFrame(cdefF)
-	s := &lrState{f: f, cdef: cdefF, deblock: deblockF}
+	s := &lrState{cdef: cdefF, deblock: deblockF, bd: cdefF.bitDepth}
 	for p := 0; p < cdefF.numPlanes; p++ {
 		if h.lrType[p] == restoreNone {
 			continue
@@ -93,34 +126,43 @@ func (d *Decoder) restore(f *frameState, cdefF, deblockF *frame) *frame {
 		ss := min(p, 1)
 		lp := &f.lr[p]
 		unit := h.lrUnitSize[p]
-		s.planeEndX = (h.UpscaledWidth+ss)>>ss - 1
-		s.planeEndY = (h.Height+ss)>>ss - 1
-		for y := 0; y < h.Height; y += 4 {
-			row := y >> 2
-			stripe := (y + 8) / 64
-			s.stripeStart = (-8 + stripe*64) >> ss
-			s.stripeEnd = s.stripeStart + 64>>ss - 1
-			unitRow := min(lp.rows-1, ((row*4+8)>>ss)/unit)
-			for x := 0; x < h.UpscaledWidth; x += 4 {
-				col := x >> 2
-				unitCol := min(lp.cols-1, ((col*4)>>ss)/unit)
-				px, py := (col*4)>>ss, (row*4)>>ss
-				w := min(4>>ss, s.planeEndX-px+1)
-				hh := min(4>>ss, s.planeEndY-py+1)
-				if ss == 1 {
-					// Chroma in 4x4 blocks (two luma units each way):
-					// stripe and unit boundaries fall on multiples of 4.
-					if row&1 != 0 || col&1 != 0 {
-						continue
-					}
-					w, hh = min(4, s.planeEndX-px+1), min(4, s.planeEndY-py+1)
+		planeEndX := (h.UpscaledWidth+ss)>>ss - 1
+		planeEndY := (h.Height+ss)>>ss - 1
+		s.planeW = planeEndX + 1
+		s.stride = s.planeW + 6
+		if need := s.stride * (64 + 6); len(s.buf) < need {
+			s.buf = make([]int32, need)
+		}
+		for stripe := 0; ; stripe++ {
+			stripeStart := (-8 + stripe*64) >> ss
+			stripeEnd := stripeStart + 64>>ss - 1
+			top, bot := max(stripeStart, 0), min(stripeEnd, planeEndY)
+			if top > planeEndY {
+				break
+			}
+			unitRow := min(lp.rows-1, (top+8>>ss)/unit)
+			loaded := false
+			for uc := 0; uc < lp.cols; uc++ {
+				u := &lp.units[unitRow*lp.cols+uc]
+				if u.typ != restoreWiener && u.typ != restoreSgrproj {
+					continue
 				}
-				u := &lp.units[unitRow*lp.cols+unitCol]
-				switch u.typ {
-				case restoreWiener:
-					s.wiener(out, p, u, px, py, w, hh)
-				case restoreSgrproj:
-					s.selfGuided(out, p, u, px, py, w, hh)
+				x0, x1 := uc*unit, (uc+1)*unit
+				if uc == lp.cols-1 {
+					x1 = s.planeW
+				}
+				x1 = min(x1, s.planeW)
+				if x0 >= x1 {
+					continue
+				}
+				if !loaded {
+					s.loadStripe(p, stripeStart, stripeEnd, top, bot, planeEndY)
+					loaded = true
+				}
+				if u.typ == restoreWiener {
+					s.wiener(out, p, u, x0, x1-x0, bot-top+1)
+				} else {
+					s.selfGuided(out, p, u, x0, x1-x0, bot-top+1)
 				}
 			}
 		}
@@ -128,9 +170,35 @@ func (d *Decoder) restore(f *frameState, cdefF, deblockF *frame) *frame {
 	return out
 }
 
-func (s *lrState) wiener(out *frame, plane int, u *lrUnit, x, y, w, h int) {
-	bd := out.bitDepth
-	r0, r1 := 3, 11
+// storeRow writes clipped values to plane row y from column x.
+func storeRow(out *frame, plane, x, y int, v []int32) {
+	pb := &out.planes[plane]
+	maxV := int32(1)<<out.bitDepth - 1
+	if pb.pix16 != nil {
+		d := pb.pix16[y*pb.stride+x : y*pb.stride+x+len(v)]
+		for i, s := range v {
+			d[i] = uint16(min(max(s, 0), maxV))
+		}
+		return
+	}
+	d := pb.pix8[y*pb.stride+x : y*pb.stride+x+len(v)]
+	for i, s := range v {
+		d[i] = uint8(min(max(s, 0), maxV))
+	}
+}
+
+func grow(b []int32, n int) []int32 {
+	if cap(b) < n {
+		return make([]int32, n)
+	}
+	return b[:n]
+}
+
+// wiener filters columns x..x+w-1 of the loaded stripe's h rows (spec
+// 7.17.4).
+func (s *lrState) wiener(out *frame, plane int, u *lrUnit, x, w, h int) {
+	bd := s.bd
+	r0, r1 := uint(3), uint(11)
 	if bd == 12 {
 		r0, r1 = 5, 9
 	}
@@ -145,51 +213,81 @@ func (s *lrState) wiener(out *frame, plane int, u *lrUnit, x, y, w, h int) {
 	}
 	mk(u.wiener[0], &vf)
 	mk(u.wiener[1], &hf)
-	offset := int32(1) << (bd + 7 - r0 - 1)
-	limit := int32(1)<<(bd+1+7-r0) - 1
-	var inter [(4 + 6) * 4]int32
+	offset := int32(1) << (uint(bd) + 7 - r0 - 1)
+	limit := int32(1)<<(uint(bd)+1+7-r0) - 1
+	s.inter = grow(s.inter, (h+6)*w)
+	inter := s.inter
+	h0, h1, h2, h3, h4, h5, h6 := hf[0], hf[1], hf[2], hf[3], hf[4], hf[5], hf[6]
+	rnd0 := int32(1) << (r0 - 1)
 	for r := 0; r < h+6; r++ {
-		for c := 0; c < w; c++ {
-			sum := int32(0)
-			for t := 0; t < 7; t++ {
-				sum += hf[t] * s.sample(plane, x+c+t-3, y+r-3)
-			}
-			v := (sum + 1<<(r0-1)) >> r0
-			inter[r*4+c] = min(max(v, -offset), limit-offset)
+		src := s.buf[r*s.stride+x:]
+		src = src[:w+6]
+		d := inter[r*w : r*w+w]
+		for c := range d {
+			p := src[c : c+7 : c+7]
+			sum := h0*p[0] + h1*p[1] + h2*p[2] + h3*p[3] + h4*p[4] + h5*p[5] + h6*p[6]
+			d[c] = min(max((sum+rnd0)>>r0, -offset), limit-offset)
 		}
 	}
-	pb := &out.planes[plane]
-	maxV := int32(1)<<bd - 1
+	v0, v1, v2, v3, v4, v5, v6 := vf[0], vf[1], vf[2], vf[3], vf[4], vf[5], vf[6]
+	rnd1 := int32(1) << (r1 - 1)
+	row := grow(s.hs, w)
+	s.hs = row
 	for r := 0; r < h; r++ {
-		for c := 0; c < w; c++ {
-			sum := int32(0)
-			for t := 0; t < 7; t++ {
-				sum += vf[t] * inter[(r+t)*4+c]
-			}
-			v := (sum + 1<<(r1-1)) >> r1
-			pb.set(x+c, y+r, min(max(v, 0), maxV))
+		a := inter[r*w:]
+		a = a[:7*w]
+		for c := range row {
+			sum := v0*a[c] + v1*a[w+c] + v2*a[2*w+c] + v3*a[3*w+c] + v4*a[4*w+c] + v5*a[5*w+c] + v6*a[6*w+c]
+			row[c] = (sum + rnd1) >> r1
 		}
+		storeRow(out, plane, x, s.top+r, row)
 	}
 }
 
-func (s *lrState) boxFilter(plane, x, y, w, h, set, pass int, flt *[4 * 4]int32) {
-	bd := s.cdef.bitDepth
+// boxFilter is the box filter process (spec 7.17.3) for one pass over
+// columns x..x+w-1 of the loaded stripe's h rows; the output is in
+// s.flt[pass] (stride w).
+func (s *lrState) boxFilter(x, w, h, set, pass int) {
+	bd := s.bd
 	r := sgrParams[set][pass*2]
-	sc := sgrParams[set][pass*2+1]
+	sc := int64(sgrParams[set][pass*2+1])
 	n := (2*r + 1) * (2*r + 1)
-	var A, B [6][6]int32
 	oneOverN := int64(((1 << 12) + n/2) / n)
-	for i := -1; i < h+1; i++ {
-		for j := -1; j < w+1; j++ {
-			var a, b int64
-			for dy := -r; dy <= r; dy++ {
-				for dx := -r; dx <= r; dx++ {
-					c := int64(s.sample(plane, x+j+dx, y+i+dy))
-					a += c * c
-					b += c
-				}
+	aw := w + 2 // A and B cover rows -1..h, columns x-1..x+w
+	s.sgrA = grow(s.sgrA, (h+2)*aw)
+	s.sgrB = grow(s.sgrB, (h+2)*aw)
+	// Horizontal box sums of samples and squares for buffer rows
+	// -1-r..h+r, columns x-1..x+w.
+	rows := h + 2 + 2*r
+	s.hs = grow(s.hs, rows*aw)
+	s.hq = grow(s.hq, rows*aw)
+	for i := 0; i < rows; i++ {
+		src := s.buf[(i+2-r)*s.stride+x+2-r:]
+		src = src[:aw+2*r]
+		hs, hq := s.hs[i*aw:i*aw+aw], s.hq[i*aw:i*aw+aw]
+		for j := range hs {
+			var a, b int32
+			for _, v := range src[j : j+2*r+1] {
+				a += v * v
+				b += v
 			}
-			sh := uint(bd - 8)
+			hs[j], hq[j] = b, a
+		}
+	}
+	sh := uint(bd - 8)
+	for i := 0; i < h+2; i++ {
+		absRow := s.top + i - 1
+		if pass == 0 && absRow&1 == 0 {
+			// Pass 0 only reads A and B on odd rows.
+			continue
+		}
+		A, B := s.sgrA[i*aw:i*aw+aw], s.sgrB[i*aw:i*aw+aw]
+		for j := range A {
+			var a, b int64
+			for k := 0; k <= 2*r; k++ {
+				a += int64(s.hq[(i+k)*aw+j])
+				b += int64(s.hs[(i+k)*aw+j])
+			}
 			if sh > 0 {
 				a = (a + 1<<(2*sh-1)) >> (2 * sh)
 			}
@@ -198,7 +296,7 @@ func (s *lrState) boxFilter(plane, x, y, w, h, set, pass int, flt *[4 * 4]int32)
 				dd = (b + 1<<(sh-1)) >> sh
 			}
 			p := max(0, a*int64(n)-dd*dd)
-			z := (p*int64(sc) + 1<<19) >> 20
+			z := (p*sc + 1<<19) >> 20
 			var a2 int64
 			switch {
 			case z >= 255:
@@ -209,74 +307,87 @@ func (s *lrState) boxFilter(plane, x, y, w, h, set, pass int, flt *[4 * 4]int32)
 				a2 = ((z << 8) + z/2) / (z + 1)
 			}
 			b2 := ((1 << 8) - a2) * b * oneOverN
-			A[i+1][j+1] = int32(a2)
-			B[i+1][j+1] = int32((b2 + 1<<11) >> 12)
+			A[j] = int32(a2)
+			B[j] = int32((b2 + 1<<11) >> 12)
 		}
 	}
+	s.flt[pass] = grow(s.flt[pass], h*w)
+	flt := s.flt[pass]
 	for i := 0; i < h; i++ {
-		shift := 5
-		if pass == 0 && (y+i)&1 != 0 {
-			shift = 4
-		}
-		for j := 0; j < w; j++ {
-			var a, b int32
-			for dy := -1; dy <= 1; dy++ {
-				for dx := -1; dx <= 1; dx++ {
-					var wt int32
-					if pass == 0 {
-						if (y+i+dy)&1 != 0 {
-							wt = 5
-							if dx == 0 {
-								wt = 6
-							}
-						}
-					} else {
-						wt = 3
-						if dx == 0 || dy == 0 {
-							wt = 4
-						}
-					}
-					a += wt * A[i+dy+1][j+dx+1]
-					b += wt * B[i+dy+1][j+dx+1]
+		absRow := s.top + i
+		src := s.buf[(i+3)*s.stride+x+3:]
+		src = src[:w]
+		out := flt[i*w : i*w+w]
+		up, mid, dn := (i)*aw, (i+1)*aw, (i+2)*aw
+		if pass == 0 {
+			if absRow&1 != 0 {
+				A, B := s.sgrA[mid:mid+aw], s.sgrB[mid:mid+aw]
+				for j := range out {
+					a := 5*(A[j]+A[j+2]) + 6*A[j+1]
+					b := 5*(B[j]+B[j+2]) + 6*B[j+1]
+					out[j] = int32((int64(a)*int64(src[j]) + int64(b) + 1<<7) >> 8)
+				}
+			} else {
+				Au, Bu := s.sgrA[up:up+aw], s.sgrB[up:up+aw]
+				Ad, Bd := s.sgrA[dn:dn+aw], s.sgrB[dn:dn+aw]
+				for j := range out {
+					a := 5*(Au[j]+Au[j+2]+Ad[j]+Ad[j+2]) + 6*(Au[j+1]+Ad[j+1])
+					b := 5*(Bu[j]+Bu[j+2]+Bd[j]+Bd[j+2]) + 6*(Bu[j+1]+Bd[j+1])
+					out[j] = int32((int64(a)*int64(src[j]) + int64(b) + 1<<8) >> 9)
 				}
 			}
-			v := int64(a)*int64(s.cdef.planes[plane].get(x+j, y+i)) + int64(b)
-			sh := uint(8 + shift - 4)
-			flt[i*4+j] = int32((v + 1<<(sh-1)) >> sh)
+			continue
+		}
+		Au, Bu := s.sgrA[up:up+aw], s.sgrB[up:up+aw]
+		Am, Bm := s.sgrA[mid:mid+aw], s.sgrB[mid:mid+aw]
+		Ad, Bd := s.sgrA[dn:dn+aw], s.sgrB[dn:dn+aw]
+		for j := range out {
+			a := 3*(Au[j]+Au[j+2]+Ad[j]+Ad[j+2]) + 4*(Au[j+1]+Ad[j+1]+Am[j]+Am[j+1]+Am[j+2])
+			b := 3*(Bu[j]+Bu[j+2]+Bd[j]+Bd[j+2]) + 4*(Bu[j+1]+Bd[j+1]+Bm[j]+Bm[j+1]+Bm[j+2])
+			out[j] = int32((int64(a)*int64(src[j]) + int64(b) + 1<<8) >> 9)
 		}
 	}
 }
 
-func (s *lrState) selfGuided(out *frame, plane int, u *lrUnit, x, y, w, h int) {
+// selfGuided is the self guided filter process (spec 7.17.2).
+func (s *lrState) selfGuided(out *frame, plane int, u *lrUnit, x, w, h int) {
 	set := int(u.sgrSet)
-	var flt0, flt1 [4 * 4]int32
 	r0, r1 := sgrParams[set][0], sgrParams[set][2]
 	if r0 != 0 {
-		s.boxFilter(plane, x, y, w, h, set, 0, &flt0)
+		s.boxFilter(x, w, h, set, 0)
 	}
 	if r1 != 0 {
-		s.boxFilter(plane, x, y, w, h, set, 1, &flt1)
+		s.boxFilter(x, w, h, set, 1)
 	}
 	w0, w1 := int64(u.xqd[0]), int64(u.xqd[1])
 	w2 := (1 << 7) - w0 - w1
-	pb := &out.planes[plane]
-	maxV := int64(1)<<out.bitDepth - 1
+	s.inter = grow(s.inter, w)
+	row := s.inter
 	for i := 0; i < h; i++ {
-		for j := 0; j < w; j++ {
-			uu := int64(s.cdef.planes[plane].get(x+j, y+i)) << 4
+		src := s.buf[(i+3)*s.stride+x+3:]
+		src = src[:w]
+		var f0, f1 []int32
+		if r0 != 0 {
+			f0 = s.flt[0][i*w : i*w+w]
+		}
+		if r1 != 0 {
+			f1 = s.flt[1][i*w : i*w+w]
+		}
+		for j, c := range src {
+			uu := int64(c) << 4
 			v := w1 * uu
-			if r0 != 0 {
-				v += w0 * int64(flt0[i*4+j])
+			if f0 != nil {
+				v += w0 * int64(f0[j])
 			} else {
 				v += w0 * uu
 			}
-			if r1 != 0 {
-				v += w2 * int64(flt1[i*4+j])
+			if f1 != nil {
+				v += w2 * int64(f1[j])
 			} else {
 				v += w2 * uu
 			}
-			sv := (v + 1<<10) >> 11
-			pb.set(x+j, y+i, int32(min(max(sv, 0), maxV)))
+			row[j] = int32((v + 1<<10) >> 11)
 		}
+		storeRow(out, plane, x, s.top+i, row)
 	}
 }
