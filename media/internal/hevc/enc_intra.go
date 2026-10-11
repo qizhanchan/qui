@@ -36,7 +36,8 @@ func (e *Encoder) decideQT(x0, y0, log2, depth int) (*encCU, float64) {
 		}
 		return node, cost
 	}
-	allowLeaf := log2 <= 5 // intra CUs up to 32x32 (the largest TB)
+	// Intra CUs up to 32x32 (the largest TB); inter CUs up to the CTU.
+	allowLeaf := log2 <= 5 || s.h.typ != sliceI
 	snap0 := &e.snaps[2*depth]
 	snapLeaf := &e.snaps[2*depth+1]
 	e.save(snap0, x0, y0, size)
@@ -49,7 +50,7 @@ func (e *Encoder) decideQT(x0, y0, log2, depth int) (*encCU, float64) {
 		}
 		flagCost := e.estCost(start)
 		var c float64
-		leaf, c = e.decideIntraCU(x0, y0, log2, depth)
+		leaf, c = e.decideCU(x0, y0, log2, depth)
 		leafCost = c + flagCost
 	}
 	if !canSplit {

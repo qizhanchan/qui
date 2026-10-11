@@ -128,7 +128,11 @@ var encConfigs = []struct {
 	{"intra_wpp", EncoderConfig{QP: 32, KeyInt: 1, WPP: true}},
 	{"intra_tiles", EncoderConfig{QP: 32, KeyInt: 1, TileCols: 2, TileRows: 2, CTU: 16}},
 	{"intra_slices_dep", EncoderConfig{QP: 32, KeyInt: 1, Slices: 2, DependentSlices: true, CTU: 16, WPP: true}},
-	{"p_intra_only", EncoderConfig{QP: 30}},
+	{"p_qp30", EncoderConfig{QP: 30}},
+	{"p_qp24_ctu64", EncoderConfig{QP: 24, CTU: 64}},
+	{"p_refs3_wpp", EncoderConfig{QP: 32, Refs: 3, WPP: true}},
+	{"p_qp38_nosao_nosdh", EncoderConfig{QP: 38, NoSAO: true, NoSignHiding: true, Preset: 2}},
+	{"p_tiles_slices", EncoderConfig{QP: 30, TileCols: 2, Slices: 2, CTU: 16}},
 }
 
 // TestEncoderReconMatchesDecoders checks, for each configuration, that
