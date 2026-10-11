@@ -31,7 +31,7 @@ type encSnap struct {
 
 // save records the n x n luma region at (x, y) (clipped to the picture).
 func (e *Encoder) save(sn *encSnap, x, y, n int) {
-	s := &e.d.sd
+	s := e.s
 	sp := s.sps
 	pic := s.pic
 	sn.x, sn.y, sn.n = x, y, n
@@ -63,7 +63,7 @@ func (e *Encoder) save(sn *encSnap, x, y, n int) {
 
 // load restores a snapshot.
 func (e *Encoder) load(sn *encSnap) {
-	s := &e.d.sd
+	s := e.s
 	sp := s.sps
 	pic := s.pic
 	x, y, n := sn.x, sn.y, sn.n

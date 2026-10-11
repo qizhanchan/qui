@@ -15,7 +15,7 @@ func (e *Encoder) estCost(start uint64) float64 {
 // chosen reconstruction and state in place and the estimator advanced
 // past its syntax. It returns the node and its cost.
 func (e *Encoder) decideQT(x0, y0, log2, depth int) (*encCU, float64) {
-	s := &e.d.sd
+	s := e.s
 	sp := s.sps
 	size := 1 << log2
 	node := &encCU{x: x0, y: y0, log2: log2}
@@ -53,7 +53,10 @@ func (e *Encoder) decideQT(x0, y0, log2, depth int) (*encCU, float64) {
 		leaf, c = e.decideCU(x0, y0, log2, depth)
 		leafCost = c + flagCost
 	}
-	if !canSplit {
+	// A skipped leaf is not split further in the fast presets, and the
+	// fastest preset codes no inter CU smaller than 16x16.
+	if !canSplit || leaf != nil && leaf.skip && e.cfg.Preset < 2 ||
+		s.h.typ != sliceI && e.cfg.Preset == 0 && log2 <= 4 {
 		return leaf, leafCost
 	}
 	if allowLeaf {
@@ -82,7 +85,7 @@ func (e *Encoder) decideQT(x0, y0, log2, depth int) (*encCU, float64) {
 // setupCU records a CU's geometry in the 4x4 state, as the decoder does
 // before parsing its prediction.
 func (e *Encoder) setupCU(x0, y0, log2, depth, predMode, part int, skip bool) {
-	s := &e.d.sd
+	s := e.s
 	n := 1 << log2
 	s.cuX, s.cuY, s.cuLog2 = x0, y0, log2
 	s.cuTransquantBypass = false
@@ -97,7 +100,7 @@ func (e *Encoder) setupCU(x0, y0, log2, depth, predMode, part int, skip bool) {
 
 // setIPM stores the luma intra mode of a prediction block.
 func (e *Encoder) setIPM(x0, y0, n, mode int) {
-	s := &e.d.sd
+	s := e.s
 	sp := s.sps
 	for y := y0; y < min(y0+n, sp.Height); y += 4 {
 		for x := x0; x < min(x0+n, sp.Width); x += 4 {
@@ -111,7 +114,7 @@ func (e *Encoder) setIPM(x0, y0, n, mode int) {
 // and its distortion plus the rate of its syntax (the estimator advanced
 // past it).
 func (e *Encoder) decideIntraCU(x0, y0, log2, depth int) (*encCU, float64) {
-	s := &e.d.sd
+	s := e.s
 	sp := s.sps
 	n := 1 << log2
 	start := e.est
@@ -153,7 +156,7 @@ func (e *Encoder) decideIntraCU(x0, y0, log2, depth int) (*encCU, float64) {
 // codeIntra2Nx2N codes a 2Nx2N intra CU with luma mode m and chroma DM
 // (one transform unit), returning the CU and its distortion.
 func (e *Encoder) codeIntra2Nx2N(x0, y0, log2, depth, m int) (*encCU, int64) {
-	s := &e.d.sd
+	s := e.s
 	n := 1 << log2
 	e.setupCU(x0, y0, log2, depth, modeIntra, part2Nx2N, false)
 	e.setIPM(x0, y0, n, m)
@@ -177,7 +180,7 @@ func (e *Encoder) codeIntra2Nx2N(x0, y0, log2, depth, m int) (*encCU, int64) {
 // codeIntraNxN codes an 8x8 CU as four 4x4 prediction blocks, choosing
 // each block's mode in turn.
 func (e *Encoder) codeIntraNxN(x0, y0, depth int) (*encCU, int64) {
-	s := &e.d.sd
+	s := e.s
 	e.setupCU(x0, y0, 3, depth, modeIntra, partNxN, false)
 	cu := &encCU{x: x0, y: y0, log2: 3, predMode: modeIntra, partMode: partNxN, chromaSyn: 4}
 	root := &encTU{x: x0, y: y0, log2: 3, split: true}
@@ -248,7 +251,7 @@ func scanIdxFor(predMode, log2, cIdx, mode int) int {
 // tries all 35; the others try planar, DC, every fourth angle and the
 // MPMs, then refine around the best angle.
 func (e *Encoder) searchLumaModes(x, y, n, k int) []int {
-	s := &e.d.sd
+	s := e.s
 	tq := &e.tq
 	s.intraRefs(&tq.refs, 0, x, y, n)
 	mpm := s.mpmCandidates(x, y)
@@ -322,7 +325,7 @@ func (e *Encoder) searchLumaModes(x, y, n, k int) []int {
 // component, reconstructing it into the picture. It returns the levels
 // (nil when all are zero) and the distortion.
 func (e *Encoder) codeTU(cIdx, x, y, log2, mode int, intra bool) ([]int32, int64) {
-	s := &e.d.sd
+	s := e.s
 	pic := s.pic
 	tq := &e.tq
 	n := 1 << log2

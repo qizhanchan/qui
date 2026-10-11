@@ -4,6 +4,9 @@ import (
 	"errors"
 	"image"
 	"math"
+	"runtime"
+	"sync"
+	"sync/atomic"
 )
 
 // The HEVC encoder. It keeps its reconstruction in an embedded Decoder:
@@ -32,7 +35,8 @@ type EncoderConfig struct {
 	// anchors and the next one.
 	BFrames int
 
-	// Preset trades speed for compression: 0 fastest ... 2 best (default 1).
+	// Preset trades speed for compression: 0 fastest (the default), 1
+	// balanced, 2 best.
 	Preset int
 	CTU    int // CTU size 16, 32 or 64 (default 32)
 
@@ -56,7 +60,7 @@ type Packet struct {
 	Key  bool
 	PTS  int64 // input frame index
 	DTS  int64 // coding index minus Encoder.Reorder(), so DTS <= PTS
-	Type byte // 'I', 'P' or 'B'
+	Type byte  // 'I', 'P' or 'B'
 	QP   int
 }
 
@@ -87,6 +91,13 @@ type Encoder struct {
 	tq    encTQ
 	rc    rateControl
 
+	// s is the slice state decisions run on: the decoder's own for the
+	// encoder, a private copy (own) for each row worker.
+	s       *sliceDec
+	own     sliceDec
+	workers []*Encoder
+	saoSt   [][3]saoStats
+
 	arena    []int32  // coefficient levels of the picture being coded
 	roots    []*encCU // decided coding quadtrees by CTB (raster)
 	saoMerge []int8   // per CTB: 0 explicit SAO, 1 merge left, 2 merge up
@@ -95,7 +106,7 @@ type Encoder struct {
 	recon     []*Frame
 }
 
-// allocLevels returns n zeroed levels from the picture's arena. Levels
+// allocLevels returns n levels from the picture's arena. Levels
 // must outlive the decision pass until the picture is written; growing
 // allocates a new block (earlier slices keep the old one alive).
 func (e *Encoder) allocLevels(n int) []int32 {
@@ -104,8 +115,7 @@ func (e *Encoder) allocLevels(n int) []int32 {
 	}
 	l := e.arena[len(e.arena) : len(e.arena)+n]
 	e.arena = e.arena[:len(e.arena)+n]
-	clear(l)
-	return l
+	return l // quantize writes every level
 }
 
 // NewEncoder returns an encoder for cfg.
@@ -126,9 +136,7 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 	if cfg.Refs <= 0 {
 		cfg.Refs = 1
 	}
-	if cfg.Preset == 0 && cfg.CTU == 0 {
-		cfg.Preset = 1
-	}
+	cfg.Preset = clip3(0, 2, cfg.Preset)
 	switch cfg.CTU {
 	case 0:
 		cfg.CTU = 32
@@ -181,6 +189,7 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 	}
 	e.d.pps[0].derive(e.d.sps[0])
 	e.ys, e.cs = q.width, q.width/2
+	e.s = &e.d.sd
 	e.rc.init(e)
 	return e, nil
 }
@@ -462,6 +471,10 @@ func (e *Encoder) codeSlices(pkt *Packet, sl encSlice, restart bool) int {
 	var ca ctxStore
 	for i := range es {
 		e.beginSegment(&es[i], picSize, restart && i == 0)
+		if len(es) == 1 && len(d.pps[0].colWidths) == 1 && len(d.pps[0].rowHeights) == 1 {
+			e.decideRows(&es[i])
+			continue
+		}
 		e.walkSegment(&es[i], &e.est.ctx, &ca, func(x0, y0, rs int) {
 			root, _ := e.decideQT(x0, y0, d.active.Log2Ctb, 0)
 			e.roots[rs] = root
@@ -727,4 +740,100 @@ func escapedSizes(payload []byte, start int, subs []int) []int {
 		}
 	}
 	return out
+}
+
+// decideRows runs pass A of a single-segment, single-tile picture as a
+// wavefront: CTB rows are decided in parallel, each CTU once the CTU
+// above and to the right is done (the furthest any prediction reaches),
+// with the estimator's contexts following the WPP rule (inherited from
+// the row above after its second CTU). The result is the same for any
+// number of workers.
+func (e *Encoder) decideRows(es *encSeg) {
+	d := e.d
+	e.useSegment(es)
+	sp, p, h := d.sd.sps, d.sd.pps, d.sd.h
+	fc := d.fc
+	rows, cols := sp.PicHCtb, sp.PicWCtb
+	sliceQP := p.InitQP + h.qpDelta
+	initType := 0
+	switch h.typ {
+	case sliceP:
+		initType = 1
+	case sliceB:
+		initType = 2
+	}
+	d.sliceAddrRs = h.address
+	done := make([]atomic.Int32, rows)
+	wpp := make([][numCtx]uint8, rows)
+	var mu sync.Mutex
+	cond := sync.NewCond(&mu)
+	wait := func(r, n int) {
+		if int(done[r].Load()) >= n {
+			return
+		}
+		mu.Lock()
+		for int(done[r].Load()) < n {
+			cond.Wait()
+		}
+		mu.Unlock()
+	}
+	nw := min(runtime.GOMAXPROCS(0), rows)
+	var next atomic.Int32
+	var wg sync.WaitGroup
+	for k := 0; k < nw; k++ {
+		w := e.worker(k)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s := w.s
+			for {
+				r := int(next.Add(1)) - 1
+				if r >= rows {
+					return
+				}
+				initContexts(&w.est.ctx, initType, sliceQP)
+				if r > 0 {
+					wait(r-1, min(2, cols))
+					w.est.ctx = wpp[r-1]
+				}
+				for x := 0; x < cols; x++ {
+					if r > 0 {
+						wait(r-1, min(x+2, cols))
+					}
+					rs := r*cols + x
+					fc.ctbSliceAddr[rs] = h.address
+					fc.ctbSlice[rs] = es.sliceIdx
+					s.ctbAddrRs, s.ctbAddrTs = rs, p.ctbRsToTs[rs]
+					s.ctbX, s.ctbY = x, r
+					s.qpY, s.qpYPred, s.firstQG = sliceQP, sliceQP, true
+					root, _ := w.decideQT(x<<sp.Log2Ctb, r<<sp.Log2Ctb, sp.Log2Ctb, 0)
+					e.roots[rs] = root
+					if x == min(1, cols-1) {
+						wpp[r] = w.est.ctx
+					}
+					done[r].Store(int32(x + 1))
+					mu.Lock()
+					cond.Broadcast()
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// worker returns row worker k set up for the current picture and segment.
+func (e *Encoder) worker(k int) *Encoder {
+	for len(e.workers) <= k {
+		e.workers = append(e.workers, &Encoder{})
+	}
+	w := e.workers[k]
+	w.cfg, w.seq, w.d = e.cfg, e.seq, e.d
+	w.srcY, w.srcCb, w.srcCr, w.ys, w.cs = e.srcY, e.srcCb, e.srcCr, e.ys, e.cs
+	w.lambda, w.sqrtL = e.lambda, e.sqrtL
+	w.roots = e.roots
+	w.own = e.d.sd
+	w.s = &w.own
+	w.arena = w.arena[:0]
+	return w
 }

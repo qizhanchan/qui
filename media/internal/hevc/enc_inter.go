@@ -9,7 +9,7 @@ import "math"
 // AMVP 2Nx2N or intra. The winner's reconstruction and state are left in
 // place and the estimator advanced past its syntax.
 func (e *Encoder) decideCU(x0, y0, log2, depth int) (*encCU, float64) {
-	s := &e.d.sd
+	s := e.s
 	if s.h.typ == sliceI {
 		return e.decideIntraCU(x0, y0, log2, depth)
 	}
@@ -68,13 +68,24 @@ func (e *Encoder) decideCU(x0, y0, log2, depth int) (*encCU, float64) {
 			try(cu, d)
 		}
 	}
+	fast := e.cfg.Preset < 2
+	if fast && best != nil && best.skip {
+		// Early skip: a skip that wins the merge stage ends the search.
+		e.load(bestSnap)
+		return best, bestCost
+	}
 	// AMVP with motion search.
-	if pu, ok := e.searchPU(x0, y0, n, n, log2, depth); ok {
+	interSATD := math.Inf(1)
+	if len(merges) > 0 {
+		interSATD = float64(merges[0].c) + e.sqrtL
+	}
+	if pu, c, ok := e.searchPU(x0, y0, n, n, log2, depth); ok {
+		interSATD = math.Min(interSATD, c)
 		cu, d := e.codeInter(x0, y0, log2, depth, pu, false)
 		try(cu, d)
 	}
-	// Intra.
-	if log2 <= 5 {
+	// Intra, in the fast presets only when its SATD estimate beats inter.
+	if log2 <= 5 && (!fast || e.intraSATD(x0, y0, n) < interSATD) {
 		cu, c := e.decideIntraCU(x0, y0, log2, depth)
 		if c < bestCost {
 			return cu, c
@@ -88,7 +99,7 @@ func (e *Encoder) decideCU(x0, y0, log2, depth int) (*encCU, float64) {
 // AMVP); skip codes no residual. It returns the CU (a merge CU whose
 // residual quantises to zero becomes a skip) and its distortion.
 func (e *Encoder) codeInter(x0, y0, log2, depth int, pu encPU, skip bool) (*encCU, int64) {
-	s := &e.d.sd
+	s := e.s
 	n := 1 << log2
 	pu.x, pu.y, pu.w, pu.h = x0, y0, n, n
 	cu := &encCU{x: x0, y: y0, log2: log2, predMode: modeInter, partMode: part2Nx2N, skip: skip}
@@ -128,7 +139,7 @@ func (e *Encoder) codeInter(x0, y0, log2, depth int, pu encPU, skip bool) (*encC
 // transform unit per CU, split only where the CU exceeds the largest
 // transform. It reports whether any block has coefficients.
 func (e *Encoder) codeInterTree(x0, y0, log2, depth int) (*encTU, bool) {
-	sp := e.d.sd.sps
+	sp := e.s.sps
 	tu := &encTU{x: x0, y: y0, log2: log2, depth: depth}
 	if log2 > sp.Log2MaxTb {
 		tu.split = true
@@ -156,8 +167,8 @@ func (e *Encoder) codeInterTree(x0, y0, log2, depth int) (*encTU, bool) {
 
 // cuSSD is the luma plus chroma distortion of the n x n CU at (x0, y0).
 func (e *Encoder) cuSSD(x0, y0, n int) int64 {
-	pic := e.d.sd.pic
-	sp := e.d.sd.sps
+	pic := e.s.pic
+	sp := e.s.sps
 	w, h := min(n, sp.Width-x0), min(n, sp.Height-y0)
 	d := ssd(e.srcY[y0*e.ys+x0:], e.ys, pic.y[y0*pic.ys+x0:], pic.ys, w, h)
 	o, so := (y0/2)*pic.cs+x0/2, (y0/2)*e.cs+x0/2
@@ -195,8 +206,8 @@ func mvdBits(d [2]int) float64 {
 // (x0, y0): per list the best reference and vector, and for B slices the
 // bi-prediction of the two. The CU state must be set up for a 2Nx2N
 // inter CU.
-func (e *Encoder) searchPU(x0, y0, w, h, log2, depth int) (encPU, bool) {
-	s := &e.d.sd
+func (e *Encoder) searchPU(x0, y0, w, h, log2, depth int) (encPU, float64, bool) {
+	s := e.s
 	hd := s.h
 	e.setupCU(x0, y0, log2, depth, modeInter, part2Nx2N, false)
 	type uni struct {
@@ -231,9 +242,10 @@ func (e *Encoder) searchPU(x0, y0, w, h, log2, depth int) (encPU, bool) {
 		}
 	}
 	if !best[0].ok && !best[1].ok {
-		return encPU{}, false
+		return encPU{}, 0, false
 	}
 	idc := predL0
+	cost := best[0].cost
 	if hd.typ == sliceB {
 		// inter_pred_idc bits: about one for bi, two for a single list.
 		c0, c1 := best[0].cost+2*e.sqrtL, best[1].cost+2*e.sqrtL
@@ -242,11 +254,12 @@ func (e *Encoder) searchPU(x0, y0, w, h, log2, depth int) (encPU, bool) {
 			r0, r1 := hd.refList[0][best[0].ref].pic, hd.refList[1][best[1].ref].pic
 			cBi = float64(e.predBiSATD(r0, best[0].mv, r1, best[1].mv, x0, y0, w, h)) + e.sqrtL*(1+mvdBits(sub2(best[0].mv, best[0].mvp))+mvdBits(sub2(best[1].mv, best[1].mvp)))
 		}
+		cost = c0
 		switch {
 		case cBi < c0 && cBi < c1:
-			idc = predBi
+			idc, cost = predBi, cBi
 		case c1 < c0:
-			idc = predL1
+			idc, cost = predL1, c1
 		}
 	}
 	pu := encPU{idc: idc}
@@ -257,13 +270,23 @@ func (e *Encoder) searchPU(x0, y0, w, h, log2, depth int) (encPU, bool) {
 			pu.m.pred[l], pu.m.ref[l], pu.m.mv[l] = true, b.ref, b.mv
 		}
 	}
-	return pu, true
+	return pu, cost, true
+}
+
+// intraSATD estimates the intra cost of the n x n block at (x0, y0): the
+// best luma mode's SATD plus its approximate bits.
+func (e *Encoder) intraSATD(x0, y0, n int) float64 {
+	s := e.s
+	tq := &e.tq
+	m := e.searchLumaModes(x0, y0, n, 1)[0]
+	predictIntra(tq.pred[:], n, &tq.refs, n, m, true, s.sps.StrongIntraSmoothing)
+	return float64(satd(e.srcY[y0*e.ys+x0:], e.ys, tq.pred[:], n, n)) + e.sqrtL*modeBits(m, s.mpmCandidates(x0, y0))
 }
 
 // predBiSATD is the SATD of the bi-prediction from (ref0, mv0) and
 // (ref1, mv1) against the source block.
 func (e *Encoder) predBiSATD(ref0 *picture, mv0 [2]int, ref1 *picture, mv1 [2]int, x0, y0, w, h int) int {
-	s := &e.d.sd
+	s := e.s
 	sp := s.sps
 	mc := &s.mc
 	p0, p1 := mc.pred[0][:w*h], mc.pred[1][:w*h]
@@ -283,13 +306,13 @@ func sub2(a, b [2]int) [2]int { return [2]int{a[0] - b[0], a[1] - b[1]} }
 // half- and quarter-sample refinement by SATD. It returns the best vector
 // (quarter samples) and its SATD + lambda * bits cost.
 func (e *Encoder) motionSearch(ref *picture, x0, y0, w, h int, mvp [2][2]int) ([2]int, float64) {
-	sp := e.d.sd.sps
+	sp := e.s.sps
 	src := e.srcY[y0*e.ys+x0:]
 	mvCost := func(mv [2]int) float64 {
 		return e.sqrtL * math.Min(mvdBits(sub2(mv, mvp[0])), mvdBits(sub2(mv, mvp[1])))
 	}
 	sad := func(ix, iy int) int {
-		b, bs := fetch(e.d.sd.mc.edge[:], ref.y, ref.ys, sp.Width, sp.Height, x0+ix, y0+iy, w, h, 0)
+		b, bs := fetch(e.s.mc.edge[:], ref.y, ref.ys, sp.Width, sp.Height, x0+ix, y0+iy, w, h, 0)
 		return sad(src, e.ys, b, bs, w, h)
 	}
 	rng := []int{16, 32, 64}[clip3(0, 2, e.cfg.Preset)]
@@ -324,7 +347,11 @@ func (e *Encoder) motionSearch(ref *picture, x0, y0, w, h int, mvp [2][2]int) ([
 	// Sub-sample refinement on SATD of the interpolated prediction.
 	mv := [2]int{bx * 4, by * 4}
 	best := float64(e.predSATD(ref, x0, y0, w, h, mv)) + mvCost(mv)
-	for _, step := range []int{2, 1} {
+	steps := []int{2, 1}
+	if e.cfg.Preset == 0 {
+		steps = steps[:1]
+	}
+	for _, step := range steps {
 		c0 := mv
 		for _, d := range [8][2]int{{-1, -1}, {0, -1}, {1, -1}, {-1, 0}, {1, 0}, {-1, 1}, {0, 1}, {1, 1}} {
 			cand := [2]int{c0[0] + d[0]*step, c0[1] + d[1]*step}
@@ -340,7 +367,7 @@ func (e *Encoder) motionSearch(ref *picture, x0, y0, w, h int, mvp [2][2]int) ([
 // predSATD is the SATD between the source block and its uni-directional
 // luma prediction from ref with mv.
 func (e *Encoder) predSATD(ref *picture, x0, y0, w, h int, mv [2]int) int {
-	s := &e.d.sd
+	s := e.s
 	sp := s.sps
 	mc := &s.mc
 	p := mc.pred[0][:w*h]

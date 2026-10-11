@@ -1,6 +1,11 @@
 package hevc
 
-import "math"
+import (
+	"math"
+	"runtime"
+	"sync"
+	"sync/atomic"
+)
 
 // SAO decisions: per CTB and component, band offset, one of the four
 // edge-offset classes, or off, chosen by distortion change plus lambda
@@ -8,17 +13,49 @@ import "math"
 // statistics compare the deblocked reconstruction with the source.
 
 // deblockPicture deblocks the current picture with the decoder's filter
-// (the filter job then applies SAO only).
+// (the filter job then applies SAO only), CTB rows in parallel: first all
+// vertical edges (each touches only its own lines), then all horizontal
+// edges (on the 8-sample grid an edge changes at most three lines on each
+// side and reads four, so no two edges interact). The result equals the
+// picture-wide order of 8.7.2.
 func (e *Encoder) deblockPicture() {
 	d := e.d
 	lf := &d.lf
 	lf.active, lf.fc = d.active, d.fc
 	sp := d.active
-	for r := 0; r < sp.PicHCtb; r++ {
-		top, bot := r<<sp.Log2Ctb, min((r+1)<<sp.Log2Ctb, sp.Height)
-		lf.deblockEdges(d.cur, true, top, bot)
-		lf.deblockEdges(d.cur, false, top, bot)
+	for _, vertical := range []bool{true, false} {
+		parallelFor(sp.PicHCtb, func(r int) {
+			top, bot := r<<sp.Log2Ctb, min((r+1)<<sp.Log2Ctb, sp.Height)
+			lf.deblockEdges(d.cur, vertical, top, bot)
+		})
 	}
+}
+
+// parallelFor runs fn(0..n-1) on up to GOMAXPROCS goroutines.
+func parallelFor(n int, fn func(i int)) {
+	nw := min(runtime.GOMAXPROCS(0), n)
+	if nw <= 1 {
+		for i := 0; i < n; i++ {
+			fn(i)
+		}
+		return
+	}
+	var next atomic.Int32
+	var wg sync.WaitGroup
+	for k := 0; k < nw; k++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(next.Add(1)) - 1
+				if i >= n {
+					return
+				}
+				fn(i)
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 // saoStats are the per-category error sums of one CTB component: for
@@ -191,13 +228,20 @@ func (e *Encoder) decideSAO(enabled [2]bool) {
 	sp := d.active
 	fc := d.fc
 	p := d.pps[0]
-	var st [3]saoStats
-	for rs := 0; rs < sp.PicWCtb*sp.PicHCtb; rs++ {
+	n := sp.PicWCtb * sp.PicHCtb
+	if cap(e.saoSt) < n {
+		e.saoSt = make([][3]saoStats, n)
+	}
+	all := e.saoSt[:n]
+	parallelFor(n, func(rs int) {
 		for c := 0; c < 3; c++ {
 			if enabled[min(c, 1)] {
-				e.saoStats(&st[c], rs, c)
+				e.saoStats(&all[rs][c], rs, c)
 			}
 		}
+	})
+	for rs := 0; rs < n; rs++ {
+		st := &all[rs]
 		var prm saoParams
 		cost := 0.0
 		if enabled[0] {

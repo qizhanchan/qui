@@ -37,4 +37,5 @@ func BenchmarkEncodeFile(b *testing.B) {
 		}
 	}
 	b.ReportMetric(float64(b.Elapsed().Microseconds())/1000/float64(b.N*n), "ms/frame")
+
 }
