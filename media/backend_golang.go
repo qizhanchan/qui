@@ -9,13 +9,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/qizhanchan/qui/media/internal/av1"
 	"github.com/qizhanchan/qui/media/internal/h264"
 	"github.com/qizhanchan/qui/media/internal/hevc"
 	"github.com/qizhanchan/qui/media/internal/mp4x"
 )
 
 // The pure-Go pipeline backend: MP4 demux (internal/mp4x) + the self-written
-// H.264 and HEVC decoders (internal/h264, internal/hevc) + GPU YUV→RGB
+// H.264, HEVC and AV1 decoders (internal/h264, internal/hevc,
+// internal/av1) + GPU YUV→RGB
 // (gl_yuv.go), with no ffmpeg
 // and no platform framework. Audio (AAC-LC) is decoded by internal/aac and
 // played through internal/audioout when available.
@@ -28,7 +30,7 @@ type golangBackend struct{}
 
 func (golangBackend) Capabilities() Capabilities {
 	c := Capabilities{
-		VideoCodecs: []string{"h264", "hevc"},
+		VideoCodecs: []string{"h264", "hevc", "av1"},
 		Containers:  []string{"mp4", "mov", "m4v", "m4a"},
 	}
 	if golangAudioAvailable() {
@@ -43,7 +45,7 @@ func (golangBackend) OpenSource(path string) (Source, error) {
 		return nil, err
 	}
 	s := &golangSource{r: r}
-	if vt := r.VideoTrack(); vt != nil && (vt.Codec == "h264" || vt.Codec == "hevc") {
+	if vt := r.VideoTrack(); vt != nil && (vt.Codec == "h264" || vt.Codec == "hevc" || vt.Codec == "av1") {
 		if err := s.openVideo(vt); err != nil {
 			_ = r.Close()
 			return nil, err
@@ -68,7 +70,8 @@ type golangSource struct {
 	vt        *mp4x.Track
 	video     *VideoTrackInfo
 	hevc      bool     // HEVC rather than H.264
-	params    [][]byte // parameter sets fed before the first sample
+	av1       bool     // AV1: samples are temporal units, not NAL units
+	params    [][]byte // parameter sets (AV1: configOBUs) fed before the first sample
 	lenSize   int
 	audio     *golangAudio
 	scrub     *golangScrub
@@ -85,7 +88,23 @@ func (s *golangSource) openVideo(vt *mp4x.Track) error {
 	}
 	var w, h int
 	var fpsVUI float64
-	if vt.Codec == "hevc" {
+	switch vt.Codec {
+	case "av1":
+		cfg, err := s.r.AV1ConfigOBUs()
+		if err != nil {
+			return err
+		}
+		// SequenceHeaderOf rejects what the decoder cannot handle
+		// (4:2:2 / 4:4:4, 12-bit); 10-bit output is rounded to 8 bits.
+		seq, err := av1.SequenceHeaderOf(cfg)
+		if err != nil {
+			return ErrCodecUnsupported
+		}
+		w, h = seq.MaxWidth, seq.MaxHeight
+		fpsVUI = seq.FPS()
+		s.av1 = true
+		s.params = [][]byte{cfg}
+	case "hevc":
 		vps, sps, pps, ls, err := s.r.HVCCParameterSets()
 		if err != nil {
 			return err
@@ -104,7 +123,7 @@ func (s *golangSource) openVideo(vt *mp4x.Track) error {
 		s.hevc = true
 		s.params = append(append(append([][]byte{}, vps...), sps...), pps...)
 		s.lenSize = ls
-	} else {
+	default:
 		sps, pps, ls, err := s.r.AVCCParameterSets()
 		if err != nil {
 			return err
@@ -302,8 +321,9 @@ func (s *golangSource) Close() error {
 	return err
 }
 
-// videoCodec is the decoder interface shared by h264.Decoder and
-// hevc.Decoder (both output h264.Frame pictures from one frame pool).
+// videoCodec is the decoder interface shared by h264.Decoder,
+// hevc.Decoder and av1Codec (all output h264.Frame pictures from one frame
+// pool).
 type videoCodec interface {
 	SetTag(tag int64)
 	DecodeNAL(nal []byte) error
@@ -312,8 +332,24 @@ type videoCodec interface {
 	Flush()
 }
 
-// videoDecoder feeds samples from the video track into the H.264 or HEVC
-// decoder and yields pictures in display order with their presentation
+// av1Codec adapts av1.Decoder to videoCodec: each "NAL" is a whole
+// temporal unit.
+type av1Codec struct{ *av1.Decoder }
+
+func (c av1Codec) DecodeNAL(tu []byte) error { return c.Decode(tu) }
+
+func (c av1Codec) DecodeNALs(tus [][]byte) error {
+	var first error
+	for _, tu := range tus {
+		if err := c.Decode(tu); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+// videoDecoder feeds samples from the video track into the H.264, HEVC or
+// AV1 decoder and yields pictures in display order with their presentation
 // times.
 type videoDecoder struct {
 	s       *golangSource
@@ -337,9 +373,12 @@ func (s *golangSource) newVideoDecoder() *videoDecoder {
 // start restarts decoding at sample idx.
 func (v *videoDecoder) start(idx int, target time.Duration, precise bool) {
 	s := v.s
-	if s.hevc {
+	switch {
+	case s.av1:
+		v.dec = av1Codec{av1.New()}
+	case s.hevc:
 		v.dec = hevc.New()
-	} else {
+	default:
 		v.dec = h264.New()
 	}
 	for _, n := range s.params {
@@ -396,9 +435,12 @@ func (v *videoDecoder) feed(i int) error {
 	}
 	v.buf = b
 	var nals [][]byte
-	if s.hevc {
+	switch {
+	case s.av1:
+		nals = [][]byte{b}
+	case s.hevc:
 		nals, err = hevc.SplitLengthPrefixed(b, s.lenSize)
-	} else {
+	default:
 		nals, err = h264.SplitLengthPrefixed(b, s.lenSize)
 	}
 	if err != nil && len(nals) == 0 {
@@ -406,7 +448,7 @@ func (v *videoDecoder) feed(i int) error {
 	}
 	v.dec.SetTag(int64(i))
 	if err := v.dec.DecodeNALs(nals); err != nil {
-		if errors.Is(err, h264.ErrUnsupported) || errors.Is(err, hevc.ErrUnsupported) {
+		if errors.Is(err, h264.ErrUnsupported) || errors.Is(err, hevc.ErrUnsupported) || errors.Is(err, av1.ErrUnsupported) {
 			return ErrCodecUnsupported
 		}
 		v.errs++

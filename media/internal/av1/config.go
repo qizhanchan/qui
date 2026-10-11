@@ -69,3 +69,26 @@ func StripTemporalDelimiters(b []byte) []byte {
 	}
 	return out
 }
+
+// SequenceHeaderOf parses the first sequence header in a run of OBUs (such
+// as av1C's configOBUs) and reports ErrUnsupported for streams the decoder
+// does not handle (4:2:2 / 4:4:4, 12-bit).
+func SequenceHeaderOf(b []byte) (*SequenceHeader, error) {
+	obus, err := splitOBUs(b)
+	if err != nil {
+		return nil, err
+	}
+	for _, o := range obus {
+		if o.typ == obuSequenceHeader {
+			s, err := ParseSequenceHeader(o.payload)
+			if err != nil {
+				return nil, err
+			}
+			if err := s.supported(); err != nil {
+				return nil, err
+			}
+			return s, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: no sequence header", ErrInvalid)
+}

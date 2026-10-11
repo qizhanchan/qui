@@ -17,15 +17,18 @@ import (
 //   - bframes_aac_160x90.mp4: x264 High profile (B-pyramid, 3 refs,
 //     weighted P);
 //   - hevc_aac_160x90.mp4: the same picture re-encoded with libx265 (3 B
-//     frames, closed GOP of 12), tagged hvc1.
+//     frames, closed GOP of 12), tagged hvc1;
+//   - av1_aac_160x90.mp4: re-encoded with libsvtav1 (preset 8, random
+//     access with hidden frames, key frame every 12), tagged av01.
 //
 // The hashes are FFmpeg's decode of all 24 frames as I420 (VideoToolbox
-// agrees for the HEVC clip).
+// agrees for the HEVC clip; libdav1d decodes the AV1 one).
 var e2eClips = []struct {
 	file, codec, hash string
 }{
 	{"testdata/bframes_aac_160x90.mp4", "h264", "12751dbb2428437074dae7f56db9f14707cd013c6353d3afbc4d6d4942556fc3"},
 	{"testdata/hevc_aac_160x90.mp4", "hevc", "e2cbb5109bb5d1e0deb1a3e4f3a5572eb642d16caedb5737e516c48fcd1d8f3b"},
+	{"testdata/av1_aac_160x90.mp4", "av1", "6857be6149124ea225909180ea0fc82f61380e846e5895bb2b0ddd1d6f8d58de"},
 }
 
 const e2eFrames = 24

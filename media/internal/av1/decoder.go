@@ -29,6 +29,9 @@ type Decoder struct {
 
 	scratch []*tileScratch // per tile-decoding goroutine
 
+	tag   int64    // SetTag value for the frames Decode outputs
+	ready []*Frame // converted output frames (Decode / Next)
+
 	// Plane buffers of intermediate post-filter frames, for reuse.
 	free8  [][]uint8
 	free16 [][]uint16
