@@ -75,8 +75,8 @@ type Encoder struct {
 	srcPool         []*srcPic
 	curSrc, prevSrc *srcPic
 	refs            []*refPic // most recent first
-	pool []*refPic
-	cur  *refPic
+	pool            []*refPic
+	cur             *refPic
 
 	// Per-macroblock and per-4x4 state of the picture being coded.
 	mbs    []mbInfo
@@ -94,10 +94,11 @@ type Encoder struct {
 	lists [2][]*refPic
 
 	// Lookahead queue for B pictures.
-	queue      []queued
-	reconLog   [][]byte // display-order reconstructions (tests, B pictures)
-	pocBase    int64
-	pendingIDR bool
+	queue    []queued
+	reconLog [][]byte // display-order reconstructions (tests, B pictures)
+	pocBase  int64
+	lastIDR  int64
+	logRecon bool // tests: keep every reconstruction in reconLog
 }
 
 type queued struct {
@@ -237,7 +238,8 @@ func (e *Encoder) Encode(img *image.YCbCr) ([]Packet, error) {
 	pts := e.frameCount
 	e.frameCount++
 	if e.cfg.BFrames == 0 {
-		p := e.codePicture(src, pts, pts, e.pictureType(), true)
+		typ := e.pictureType()
+		p := e.codePicture(src, pts, typ, true, typ == sliceI)
 		return []Packet{p}, nil
 	}
 	return e.queueB(src, pts), nil
@@ -344,24 +346,18 @@ func padPlane(b []byte, s, o, w, h, pad int) {
 }
 
 // codePicture codes src as a picture of type typ and returns its packet.
-func (e *Encoder) codePicture(src *srcPic, pts, poc int64, typ int, isRef bool) Packet {
-	idr := typ == sliceI && (e.coded == 0 || e.sinceIDR >= e.cfg.KeyInt || e.cfg.BFrames == 0)
-	if typ == sliceI && e.cfg.BFrames > 0 {
-		idr = e.pendingIDR
-	}
+func (e *Encoder) codePicture(src *srcPic, pts int64, typ int, isRef, idr bool) Packet {
 	if idr {
 		e.sinceIDR = 0
 		e.frameNum = 0
-		for _, r := range e.refs {
-			e.pool = append(e.pool, r)
-		}
+		e.pool = append(e.pool, e.refs...)
 		e.refs = e.refs[:0]
-		e.pocBase = poc
+		e.pocBase = pts
 	}
 	e.curSrc = src
 	qp := e.rc.pictureQP(typ, e)
 	cur := e.newRef()
-	cur.poc = int(2 * (poc - e.pocBase))
+	cur.poc = int(2 * (pts - e.pocBase))
 	cur.frameNum = e.frameNum
 	e.cur = cur
 	hdr := sliceHeader{
@@ -405,7 +401,13 @@ func (e *Encoder) codePicture(src *srcPic, pts, poc int64, typ int, isRef bool) 
 	e.deblockAndStore(cur)
 	e.rc.update(typ, qp, bits, e)
 
-	pkt := Packet{PTS: pts, DTS: e.coded, Key: idr, QP: qp}
+	pkt := Packet{PTS: pts, DTS: e.coded - int64(e.reorder), Key: idr, QP: qp}
+	if e.logRecon {
+		for int64(len(e.reconLog)) <= pts {
+			e.reconLog = append(e.reconLog, nil)
+		}
+		e.reconLog[pts] = e.framePlanes(cur)
+	}
 	switch typ {
 	case sliceI:
 		pkt.Type = 'I'
@@ -493,6 +495,18 @@ func (e *Encoder) Recon() *h264.Frame {
 		return nil
 	}
 	return e.frameOf(e.refs[0])
+}
+
+// framePlanes copies the cropped I420 planes of p.
+func (e *Encoder) framePlanes(p *refPic) []byte {
+	f := e.frameOf(p)
+	var b []byte
+	for _, pl := range []*h264.Plane{f.Y, f.Cb, f.Cr} {
+		for y := 0; y < pl.H; y++ {
+			b = append(b, pl.Pix[y*pl.Stride:y*pl.Stride+pl.W]...)
+		}
+	}
+	return b
 }
 
 func (e *Encoder) frameOf(p *refPic) *h264.Frame {

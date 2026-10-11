@@ -21,7 +21,8 @@ type mbInfo struct {
 	cbf        uint32 // coded_block_flag bits as in the decoder's mbState
 	mvd        [2][16][2]uint8
 	skip       bool
-	direct     bool
+	direct     bool  // B_Skip / B_Direct_16x16
+	directMask uint8 // 8x8 quadrants predicted in direct mode
 }
 
 // sliceEnc codes one slice (a band of macroblock rows).
@@ -75,8 +76,14 @@ type sliceEnc struct {
 	tryRef [4]int
 	tryMV  [4][2]int
 	cands  [8][2]int
-	leftY  [16]byte
-	leftC  [2][8]byte
+	// CABAC ref_idx context of the partitions coded so far.
+	curRef    [2][16]int8
+	curDirect uint8
+	// Spatial direct motion of the current B macroblock.
+	dRef  [2]int
+	dMV   [4][2][2]int // per 8x8 quadrant, per list
+	leftY [16]byte
+	leftC [2][8]byte
 
 	predY   [256]byte
 	predI16 [256]byte
@@ -272,6 +279,15 @@ func (s *sliceEnc) recordDeblock(qp int) {
 	for r := 0; r < 16; r++ {
 		if mb.nz[r] != 0 {
 			nz |= 1 << uint(r)
+		}
+	}
+	if mb.t8x8 {
+		// Deblocking sees an 8x8 transform block as one unit.
+		for b8 := 0; b8 < 4; b8++ {
+			m := uint16(0x33) << uint((b8>>1)*8+(b8&1)*2)
+			if nz&m != 0 {
+				nz |= m
+			}
 		}
 	}
 	qpc := int8(h264.ChromaQP(qp, e.cfg.ChromaQPOffset))

@@ -194,3 +194,42 @@ func (d *Deblocker) Deblock(y, cb, cr []byte, stride, cstride, mbW, mbH int, mbs
 	p.mv, p.refID = mv, refID
 	pc.deblock(p)
 }
+
+// FilterRef8x8 filters raw 8x8 intra reference samples [L7..L0, TL,
+// T0..T15] (unavailable top-right samples already replaced by T7) for
+// Predict8x8.
+func FilterRef8x8(p *[25]int, left, top, tl bool) [25]byte { return filterRef8x8(p, left, top, tl) }
+
+// CABACInitStates returns the initial context states (pStateIdx<<1 |
+// valMPS) of a slice.
+func CABACInitStates(intraSlice bool, initIDC, qp int) [1024]uint8 {
+	var c cabac
+	t := sliceP
+	if intraSlice {
+		t = sliceI
+	}
+	c.initContexts(t, initIDC, qp)
+	return c.states
+}
+
+// CABACTransitions returns the LPS range table and the MPS/LPS state
+// transitions indexed by the state byte.
+func CABACTransitions() (lps *[256][4]uint8, mps, lpsNext *[256]uint8) {
+	return &lpsRange, &nextMPS, &nextLPS
+}
+
+// CABACResidualCtx describes the residual context layout (Table 9-34 and
+// 9-43) shared with the decoder.
+type CABACResidualCtx struct {
+	CbfCatOffset, SigCatOffset, AbsCatOffset [6]int
+	Sig8x8, Last8x8                          [63]uint8
+	AbsLevel1                                [8]uint8
+	AbsLevelGt1                              [2][8]uint8
+	AbsLevelTrans                            [2][8]uint8
+}
+
+// CABACResidual returns the residual context layout.
+func CABACResidual() CABACResidualCtx {
+	return CABACResidualCtx{cbfCatOffset, sigCatOffset, absCatOffset, sig8x8CtxInc, last8x8CtxInc,
+		absLevel1Ctx, absLevelGt1Ctx, absLevelTrans}
+}

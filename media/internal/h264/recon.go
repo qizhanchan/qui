@@ -171,6 +171,12 @@ func (s *sliceCtx) luma8x8Refs(px, py int, left, top, tr, tl bool) [25]byte {
 			}
 		}
 	}
+	return filterRef8x8(&p, left, top, tl)
+}
+
+// filterRef8x8 applies the 8x8 intra reference filter (spec 8.3.2.2.1) to
+// the raw samples p laid out as [L7..L0, TL, T0..T15].
+func filterRef8x8(p *[25]int, left, top, tl bool) [25]byte {
 	var ref [25]byte
 	if top {
 		if tl {

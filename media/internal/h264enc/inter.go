@@ -495,6 +495,10 @@ func (s *sliceEnc) codeInter() {
 			h264.IDCT4Add(Y[by*4*ys+bx*4:], ys, &c)
 		}
 	}
+	if s.cbpL == 0 {
+		s.t8x8 = false // transform_size_8x8_flag is only sent with luma coefficients
+	}
+	s.mb.t8x8 = s.t8x8
 	s.codeChroma(false)
 }
 

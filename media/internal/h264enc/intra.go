@@ -26,6 +26,7 @@ func (s *sliceEnc) analyseIntra(inP bool) int {
 			s.i16, s.t8x8, best = false, true, c8
 		} else {
 			s.modes, s.lumaLv, s.cbpL, s.i16 = saveModes, saveLv, saveCbp, saveI16
+			s.t8x8 = false
 			if !s.i16 {
 				// Restore the I4x4 reconstruction overwritten by the 8x8 trial.
 				s.reconI4()
