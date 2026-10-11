@@ -123,7 +123,8 @@ type refPic struct {
 	mv     [2][]int16
 	ref    [2][]int8
 	refPOC [2][]int32
-	intra  []bool // per macroblock
+	intra  []bool    // per macroblock
+	hp     [3][]byte // half-sample planes H, V, HV (hpel.go), layout of y
 }
 
 // srcPic is a source picture padded to whole macroblocks.
@@ -399,6 +400,9 @@ func (e *Encoder) codePicture(src *srcPic, pts int64, typ int, isRef, idr bool) 
 	}
 	qp = hdr.qp
 	e.deblockAndStore(cur)
+	if isRef {
+		e.buildHpel(cur, len(e.slices))
+	}
 	e.rc.update(typ, qp, bits, e)
 
 	pkt := Packet{PTS: pts, DTS: e.coded - int64(e.reorder), Key: idr, QP: qp}

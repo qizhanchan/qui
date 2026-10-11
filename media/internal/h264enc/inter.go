@@ -224,10 +224,9 @@ func (s *sliceEnc) search(rp *refPic, px, py, w, h, pmx, pmy, refBits int, cands
 	}
 	// Sub-sample refinement on SATD.
 	qx, qy := bestX*4, bestY*4
-	pw, ph := e.mbW*16+2*lumaPad, e.mbH*16+2*lumaPad
 	cost := func(mx, my int) int {
-		s.mc.Luma(s.tmpY[:], 16, rp.y, rs, pw, ph, x0+lumaPad, y0+lumaPad, mx, my, w, h)
-		return satd(src, ss, s.tmpY[:], 16, w, h) + lam*(mvBits(mx-pmx)+mvBits(my-pmy)+refBits)
+		p, ps := rp.qpel(s.tmpY[:], x0, y0, mx, my, w, h)
+		return satd(src, ss, p, ps, w, h) + lam*(mvBits(mx-pmx)+mvBits(my-pmy)+refBits)
 	}
 	bc := cost(qx, qy)
 	for _, step := range [2]int{2, 1} {
@@ -252,7 +251,18 @@ func (s *sliceEnc) predictPart(rp *refPic, bx, by, bw, bh, mx, my int, y []byte,
 	e := s.e
 	pw, ph := e.mbW*16+2*lumaPad, e.mbH*16+2*lumaPad
 	x0, y0 := s.mbX*16+bx*4, s.mbY*16+by*4
-	s.mc.Luma(y[by*4*16+bx*4:], 16, rp.y, rp.ys, pw, ph, x0+lumaPad, y0+lumaPad, mx, my, bw*4, bh*4)
+	if rp.hp[0] != nil {
+		// The half-sample planes give the exact prediction (TestQpelMatchesMC).
+		d := y[by*4*16+bx*4:]
+		p, ps := rp.qpel(d, x0, y0, mx, my, bw*4, bh*4)
+		if &p[0] != &d[0] {
+			for j := 0; j < bh*4; j++ {
+				copy(d[j*16:j*16+bw*4], p[j*ps:j*ps+bw*4])
+			}
+		}
+	} else {
+		s.mc.Luma(y[by*4*16+bx*4:], 16, rp.y, rp.ys, pw, ph, x0+lumaPad, y0+lumaPad, mx, my, bw*4, bh*4)
+	}
 	cpw, cph := e.mbW*8+2*chromaPad, e.mbH*8+2*chromaPad
 	cx, cy := s.mbX*8+bx*2, s.mbY*8+by*2
 	s.mc.Chroma(cb[by*2*8+bx*2:], 8, rp.cb, rp.cs, cpw, cph, cx+chromaPad, cy+chromaPad, mx, my, bw*2, bh*2)
@@ -269,15 +279,9 @@ func (s *sliceEnc) encodeP() {
 	// Early P_Skip: the skip prediction leaves no residual to code.
 	sx, sy := s.skipMV()
 	s.predictPart(refs[0], 0, 0, 4, 4, sx, sy, s.predY[:], s.predCb[:], s.predCr[:])
-	src, ss := s.srcY()
-	skipSATD := satd(src, ss, s.predY[:], 16, 16, 16)
-	if skipSATD < 24*s.lambda+256 {
-		s.part = 0
-		s.codeInter()
-		if s.cbpL == 0 && s.cbpC == 0 {
-			s.writeSkip(sx, sy)
-			return
-		}
+	if s.probeSkip() {
+		s.writeSkip(sx, sy)
+		return
 	}
 
 	// 16x16 motion search over every reference.
@@ -332,6 +336,61 @@ func (s *sliceEnc) encodeP() {
 	}
 	s.mb.typ = [4]uint32{h264.MB16x16, h264.MB16x8, h264.MB8x16, h264.MB8x8}[s.part]
 	s.writeMB()
+}
+
+// probeSkip reports whether coding the prediction in predY/predCb/predCr
+// would leave no residual after quantisation and decimation, exiting at the
+// first evidence otherwise. (P_Skip / B_Skip are valid for any prediction;
+// this only decides when they are worth taking.)
+func (s *sliceEnc) probeSkip() bool {
+	src, ss := s.srcY()
+	var blk [16]int32
+	var lv [64]int32
+	kept := 0
+	for b8 := 0; b8 < 4; b8++ {
+		score := 0
+		x0, y0 := (b8&1)*8, (b8>>1)*8
+		mask := dctQuant8(&lv, src[y0*ss+x0:], ss, s.predY[y0*16+x0:], 16, s.qp, false)
+		for k := 0; k < 4 && mask != 0; k++ {
+			if mask&(1<<uint(k)) != 0 {
+				score += decimateScore((*[16]int32)(lv[16*k:16*k+16]), 0)
+				if score >= 9 {
+					return false
+				}
+			}
+		}
+		if score >= 4 {
+			if kept += score; kept >= 6 {
+				return false
+			}
+		}
+	}
+	scb, scr, scs := s.srcC()
+	qpc := h264.ChromaQP(s.qp, s.e.cfg.ChromaQPOffset)
+	for c, pred := range [2]*[64]byte{&s.predCb, &s.predCr} {
+		sp := scb
+		if c == 1 {
+			sp = scr
+		}
+		var dc [4]int32
+		score := 0
+		for b := 0; b < 4; b++ {
+			bx, by := (b&1)*4, (b>>1)*4
+			fdct4(&blk, sp[by*scs+bx:], scs, pred[by*8+bx:], 8)
+			dc[b] = blk[0]
+			blk[0] = 0
+			if quant4(&blk, qpc, false, 1) > 0 {
+				if score += decimateScore(&blk, 1); score >= 7 {
+					return false
+				}
+			}
+		}
+		var lv [4]int32
+		if chromaDC(&dc, &lv, qpc, false, 4+c) > 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // chromaInterCost estimates the chroma SATD of the current inter choice so
@@ -460,13 +519,18 @@ func (s *sliceEnc) codeInter() {
 		total := 0
 		var score [4]int
 		var nz [16]bool
-		for r := 0; r < 16; r++ {
-			bx, by := r&3, r>>2
-			blk := &s.lumaLv[r]
-			fdct4(blk, src[by*4*ss+bx*4:], ss, s.predY[by*64+bx*4:], 16)
-			if quant4(blk, s.qp, false, 0) > 0 {
-				nz[r] = true
-				score[(by>>1)*2+bx>>1] += decimateScore(blk, 0)
+		var lv [64]int32
+		for b8 := 0; b8 < 4; b8++ {
+			x0, y0 := (b8&1)*8, (b8>>1)*8
+			mask := dctQuant8(&lv, src[y0*ss+x0:], ss, s.predY[y0*16+x0:], 16, s.qp, false)
+			for k := 0; k < 4; k++ {
+				r := (y0/4+k>>1)*4 + x0/4 + k&1
+				blk := &s.lumaLv[r]
+				copy(blk[:], lv[16*k:16*k+16])
+				if mask&(1<<uint(k)) != 0 {
+					nz[r] = true
+					score[b8] += decimateScore(blk, 0)
+				}
 			}
 		}
 		for b8 := 0; b8 < 4; b8++ {

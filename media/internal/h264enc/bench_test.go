@@ -30,14 +30,32 @@ func BenchmarkEncode1080(b *testing.B) {
 		frames[i] = &image.YCbCr{Y: f[:w*h], Cb: f[w*h : w*h*5/4], Cr: f[w*h*5/4:],
 			YStride: w, CStride: w / 2, SubsampleRatio: image.YCbCrSubsampleRatio420, Rect: image.Rect(0, 0, w, h)}
 	}
-	e, err := New(Config{Width: w, Height: h, QP: 26, Preset: 0, KeyInt: 1 << 30})
-	if err != nil {
-		b.Fatal(err)
-	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if _, err := e.Encode(frames[i%n]); err != nil {
-			b.Fatal(err)
-		}
+	for _, bc := range []struct {
+		name string
+		cfg  Config
+	}{
+		{"fast", Config{Preset: 0}},
+		{"medium", Config{Preset: 1}},
+		{"high_cabac_b", Config{Preset: 2, Profile: ProfileHigh, CABAC: true, Transform8x8: true, BFrames: 2}},
+		{"fast_4slices", Config{Preset: 0, Slices: 4}},
+		{"high_cabac_b_4slices", Config{Preset: 2, Profile: ProfileHigh, CABAC: true, Transform8x8: true, BFrames: 2, Slices: 4}},
+	} {
+		b.Run(bc.name, func(b *testing.B) {
+			cfg := bc.cfg
+			cfg.Width, cfg.Height, cfg.QP, cfg.KeyInt = w, h, 26, 250
+			e, err := New(cfg)
+			if err != nil {
+				b.Fatal(err)
+			}
+			for i := 0; i < n; i++ { // warm up references and pools
+				e.Encode(frames[i])
+			}
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if _, err := e.Encode(frames[i%n]); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

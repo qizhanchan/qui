@@ -152,14 +152,11 @@ func (s *sliceEnc) encodeB() {
 	s.done = 0
 	s.applyDirect()
 	src, ss := s.srcY()
-	directSATD := satd(src, ss, s.predY[:], 16, 16, 16)
-	if directSATD < 24*s.lambda+256 {
-		s.codeInter()
-		if s.cbpL == 0 && s.cbpC == 0 {
-			s.writeBSkip()
-			return
-		}
+	if s.probeSkip() {
+		s.writeBSkip()
+		return
 	}
+	directSATD := satd(src, ss, s.predY[:], 16, 16, 16)
 	best, bestType := directSATD+s.lambda, 0
 
 	// L0 and L1 16x16 searches, then the bi-predicted combination.

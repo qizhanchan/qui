@@ -27,6 +27,10 @@ var quantMF8 = [6][6]int32{
 
 var mf8 [52][64]int32
 
+// mfRows holds mf4 per row, duplicated for two side-by-side blocks (the
+// NEON layout).
+var mfRows [52][4][8]uint16
+
 func class4(i int) int {
 	r, c := i>>2, i&3
 	switch {
@@ -69,6 +73,11 @@ func init() {
 		for i := 0; i < 64; i++ {
 			mf8[qp][i] = quantMF8[qp%6][class8(i)]
 		}
+		for r := 0; r < 4; r++ {
+			for k := 0; k < 8; k++ {
+				mfRows[qp][r][k] = uint16(mf4[qp][r*4+k&3])
+			}
+		}
 	}
 }
 
@@ -102,6 +111,33 @@ func fdct4Residual(out, d *[16]int32) {
 		out[8+x] = s03 - s12
 		out[12+x] = d03 - 2*d12
 	}
+}
+
+// dctQuant8 transforms and quantises the four 4x4 blocks of the 8x8
+// residual src - pred: lv[k] receives block k (0 top-left, 1 top-right,
+// 2 bottom-left, 3 bottom-right) in raster order. It returns a mask of
+// the blocks with non-zero levels.
+func dctQuant8(lv *[64]int32, src []byte, ss int, pred []byte, ps int, qp int, intra bool) int {
+	qbits := 15 + qp/6
+	f := 1 << qbits / 6
+	if intra {
+		f = 1 << qbits / 3
+	}
+	if haveNEON && 7*ss+8 <= len(src) && 7*ps+8 <= len(pred) {
+		mask := 0
+		neonDCTQuant8(&src[0], ss, &pred[0], ps, &mfRows[qp], f, qbits, lv, &mask)
+		return mask
+	}
+	mask := 0
+	for k := 0; k < 4; k++ {
+		bx, by := (k&1)*4, (k>>1)*4
+		b := (*[16]int32)(lv[16*k : 16*k+16])
+		fdct4(b, src[by*ss+bx:], ss, pred[by*ps+bx:], ps)
+		if quant4(b, qp, intra, 0) > 0 {
+			mask |= 1 << uint(k)
+		}
+	}
+	return mask
 }
 
 // fdct8 computes the forward 8x8 transform of src-pred.
@@ -320,8 +356,34 @@ func chromaDC(dc, levels *[4]int32, qp int, intra bool, list int) int {
 	return nz
 }
 
-// satd4 is the sum of absolute Hadamard-transformed differences of a 4x4.
+// satd4 is the sum of absolute Hadamard-transformed differences of a 4x4,
+// halved.
 func satd4(a []byte, as int, b []byte, bs int) int {
+	return (satdRaw(a, as, b, bs, 4, 4) + 1) >> 1
+}
+
+// satd returns the SATD of a w x h block (multiples of 4): the raw sum over
+// its 4x4 blocks, halved once.
+func satd(a []byte, as int, b []byte, bs int, w, h int) int {
+	return (satdRaw(a, as, b, bs, w, h) + 1) >> 1
+}
+
+func satdRaw(a []byte, as int, b []byte, bs int, w, h int) int {
+	if haveNEON && (w == 4 || w == 8 || w == 16) && h&3 == 0 && (h-1)*as+w <= len(a) && (h-1)*bs+w <= len(b) {
+		var out int
+		neonSATD(&a[0], as, &b[0], bs, w, h, &out)
+		return out
+	}
+	s := 0
+	for y := 0; y < h; y += 4 {
+		for x := 0; x < w; x += 4 {
+			s += satd4Raw(a[y*as+x:], as, b[y*bs+x:], bs)
+		}
+	}
+	return s
+}
+
+func satd4Raw(a []byte, as int, b []byte, bs int) int {
 	var d [16]int32
 	for y := 0; y < 4; y++ {
 		ra, rb := a[y*as:y*as+4], b[y*bs:y*bs+4]
@@ -342,22 +404,20 @@ func satd4(a []byte, as int, b []byte, bs int) int {
 		a0, a1, a2, a3 := s0+s1, s0-s1, s2+s3, s2-s3
 		sum += abs32(a0+a2) + abs32(a1+a3) + abs32(a0-a2) + abs32(a1-a3)
 	}
-	return int(sum+1) >> 1
-}
-
-// satd returns the SATD of a w x h block (multiples of 4).
-func satd(a []byte, as int, b []byte, bs int, w, h int) int {
-	s := 0
-	for y := 0; y < h; y += 4 {
-		for x := 0; x < w; x += 4 {
-			s += satd4(a[y*as+x:], as, b[y*bs+x:], bs)
-		}
-	}
-	return s
+	return int(sum)
 }
 
 // sad returns the sum of absolute differences of a w x h block.
 func sad(a []byte, as int, b []byte, bs int, w, h int) int {
+	if haveNEON && (w == 16 || w == 8) && h <= 16 && (h-1)*as+w <= len(a) && (h-1)*bs+w <= len(b) {
+		var out int
+		neonSAD(&a[0], as, &b[0], bs, w, h, &out)
+		return out
+	}
+	return sadGo(a, as, b, bs, w, h)
+}
+
+func sadGo(a []byte, as int, b []byte, bs int, w, h int) int {
 	s := 0
 	for y := 0; y < h; y++ {
 		ra, rb := a[y*as:y*as+w], b[y*bs:y*bs+w]

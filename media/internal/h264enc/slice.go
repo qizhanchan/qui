@@ -223,7 +223,9 @@ func (s *sliceEnc) finishIntra() {
 	s.codeChroma(true)
 	s.clearMotion()
 	mb := s.mb
+	mb.t8x8 = false
 	if s.i16 {
+		s.t8x8 = false
 		mb.typ = h264.MBIntra16x16
 	} else {
 		mb.typ = h264.MBIntra4x4
