@@ -86,7 +86,7 @@ func (e *Encoder) decideLoopFilter(fh *encFrameHdr) {
 	for _, l := range []int{guess / 2, guess, guess * 3 / 2, min(63, guess*2)} {
 		evalY(l)
 	}
-	for step := 4; step >= 1; step /= 2 {
+	for step := 4; step >= e.lfStep; step /= 2 {
 		c := bestY
 		evalY(c - step)
 		evalY(c + step)
@@ -232,6 +232,9 @@ func (e *Encoder) cdefMeasure(f *frameState, scratch *frame, fb int, dy, duv []i
 		for c := c0; c < min(c0+16, f.miCols); c += 2 {
 			if skip(r, c) && skip(r+1, c) && skip(r, c+1) && skip(r+1, c+1) {
 				continue
+			}
+			if e.cdefSparse && (r+c)&2 != 0 {
+				continue // a checkerboard of the 8x8 blocks
 			}
 			yDir, variance := cdefDirection(&src.planes[0], c*4, r*4, 8)
 			varStr := int32(0)

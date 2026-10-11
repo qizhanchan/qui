@@ -301,6 +301,9 @@ func (e *Encoder) searchBlock(r, c, size int) (blkChoice, float64) {
 			inter = append(inter, blkChoice{inter: true, skipMode: true})
 		}
 		e.interList = inter
+		if e.interRank > 0 && len(inter) > e.interRank {
+			inter = e.rankInter(r, c, size, inter, s0)
+		}
 		for _, ch := range inter {
 			try(ch)
 		}
@@ -320,6 +323,13 @@ func (e *Encoder) searchBlock(r, c, size int) (blkChoice, float64) {
 		e.load(s0)
 	}
 	bestInter := best
+	if bestInter.inter && e.intraSkipBelow > 0 && bestCost < e.intraSkipBelow*float64(blockW(size)*blockH(size)) {
+		// Good enough inter prediction: no intra trial.
+		e.load(s0)
+		ch := best
+		cost := e.trial(r, c, size, &ch)
+		return ch, cost
+	}
 	t.initBlock(r, c, size)
 	cands := e.rankLumaModes(r, c, size)
 	intraBest := math.Inf(1)
@@ -550,4 +560,38 @@ func satd(a []byte, as int, b []byte, bs int, w, h int) int {
 		}
 	}
 	return sum >> 1
+}
+
+// rankInter scores inter candidates by the SATD of their luma
+// prediction plus estimated mode bits and keeps the best e.interRank.
+func (e *Encoder) rankInter(r, c, size int, cands []blkChoice, s0 *encSnap) []blkChoice {
+	t := e.t
+	f := t.f
+	w, h := blockW(size), blockH(size)
+	x0, y0 := c*4, r*4
+	src, ss := e.src[0], e.srcStride[0]
+	pb := &f.cur.planes[0]
+	scores := e.scoreBuf[:0]
+	for i := range cands {
+		ch := cands[i]
+		e.load(s0)
+		e.setupInter(r, c, size, &ch)
+		t.storeModeInfo()
+		t.predictInter(0, x0, y0, w, h, r, c)
+		k := &e.sink
+		before := k.cost
+		e.writeInterModeInfo()
+		bits := k.cost - before
+		k.cost = before
+		score := float64(satd(src[y0*ss+x0:], ss, pb.pix8[y0*pb.stride+x0:], pb.stride, w, h)) + e.sqrtLambda*float64(bits)/256
+		scores = append(scores, modeCand{mode: i, score: score})
+	}
+	e.scoreBuf = scores
+	top := topCands(scores, e.interRank)
+	out := e.rankedBuf[:0]
+	for _, s := range top {
+		out = append(out, cands[s.mode])
+	}
+	e.rankedBuf = out
+	return out
 }

@@ -277,3 +277,15 @@ func TestEncodeLR(t *testing.T) {
 		})
 	}
 }
+
+// TestEncodeTiles codes 2x2 and 4x1 tiles (searched and replayed in
+// parallel) through the same checks.
+func TestEncodeTiles(t *testing.T) {
+	src := testSource(t, "ra_p4", 5)
+	for _, tc := range [][2]int{{2, 2}, {4, 1}, {1, 2}} {
+		t.Run(fmt.Sprintf("%dx%d", tc[0], tc[1]), func(t *testing.T) {
+			_, n, ps := encodeCheck(t, EncoderConfig{Width: 320, Height: 180, QIndex: 120, TileCols: tc[0], TileRows: tc[1], MiniGOP: 2, Preset: 1}, src)
+			t.Logf("tiles %dx%d: %d bytes/frame, PSNR %.2f dB", tc[0], tc[1], n/len(src), ps)
+		})
+	}
+}

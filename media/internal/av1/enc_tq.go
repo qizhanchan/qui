@@ -42,6 +42,7 @@ func initFwdMats() {
 			fwdMat[kind][l] = invertMatrix(m, n)
 		}
 	}
+	initFastFwd()
 }
 
 // invertMatrix inverts an n x n matrix by Gauss-Jordan elimination with
@@ -93,8 +94,49 @@ func fwdTx(res []int32, tx, typ int, tmp, out []float64) {
 	lw, lh := txWLog2[tx], txHLog2[tx]
 	tw, th := min(w, 32), min(h, 32)
 	rowT, colT, flipLR, flipUD := txKinds(typ)
+	var colBuf, scratch [64]float64
+	// Columns: tmp[k*w+j] = coefficient k of column j (k < th).
+	for j := 0; j < w; j++ {
+		sj := j
+		if flipLR {
+			sj = w - 1 - j
+		}
+		col := colBuf[:h]
+		for i := 0; i < h; i++ {
+			si := i
+			if flipUD {
+				si = h - 1 - i
+			}
+			col[i] = float64(res[si*w+sj])
+		}
+		fwd1D(col, scratch[:h], lh, colT)
+		for k := 0; k < th; k++ {
+			tmp[k*w+j] = col[k]
+		}
+	}
+	// Rows, then the decoder's scaling: g = 2^-(4+rowShift) (x 2896/4096
+	// when 2:1).
+	scale := float64(int(1) << uint(4+txRowShift[tx]))
+	if lw-lh == 1 || lh-lw == 1 {
+		scale *= 4096.0 / 2896
+	}
+	for k := 0; k < th; k++ {
+		row := tmp[k*w : k*w+w]
+		fwd1D(row, scratch[:w], lw, rowT)
+		for j := 0; j < tw; j++ {
+			out[k*tw+j] = row[j] * scale
+		}
+	}
+}
+
+// fwdTxMat is fwdTx with the full matrices (the reference for tests).
+func fwdTxMat(res []int32, tx, typ int, tmp, out []float64) {
+	fwdMatOnce.Do(initFwdMats)
+	w, h := txW[tx], txH[tx]
+	lw, lh := txWLog2[tx], txHLog2[tx]
+	tw, th := min(w, 32), min(h, 32)
+	rowT, colT, flipLR, flipUD := txKinds(typ)
 	fr, fc := fwdMat[rowT][lw], fwdMat[colT][lh]
-	// tmp = Fc * flip(res): h x w.
 	for i := 0; i < th; i++ {
 		frow := fc[i*h : i*h+h]
 		dst := tmp[i*w : i*w+w]
@@ -120,7 +162,6 @@ func fwdTx(res []int32, tx, typ int, tmp, out []float64) {
 			}
 		}
 	}
-	// out = tmp * Fr^T / g, g = 2^-(4+rowShift) (x 2896/4096 when 2:1).
 	scale := float64(int(1) << uint(4+txRowShift[tx]))
 	if lw-lh == 1 || lh-lw == 1 {
 		scale *= 4096.0 / 2896

@@ -44,6 +44,11 @@ type EncoderConfig struct {
 	// balanced, 2 best.
 	Preset int
 
+	// TileCols and TileRows split frames into uniform tiles coded in
+	// parallel (powers of two; 0 picks by frame size: 2 columns from 1280
+	// wide, 4 from 2560, the same for rows from 720 / 1440 high).
+	TileCols, TileRows int
+
 	FullRange bool
 	Matrix    int // H.273 matrix_coefficients: 1 BT.709 (default), 6 BT.601
 }
@@ -83,7 +88,9 @@ type Encoder struct {
 	lambda          float64
 	sqrtLambda      float64
 	tq              encTQ
-	nonZero         bool // a coefficient was coded since the flag was cleared
+	nonZero         bool       // a coefficient was coded since the flag was cleared
+	tileRecs        [][]symRec // per tile: the symbol records of pass A
+	workers         []*Encoder // per tile-encoding goroutine
 	snaps           []*encSnap
 	snapTop         int
 	nodes           []encNode // partition search arena (per superblock)
@@ -98,19 +105,25 @@ type Encoder struct {
 	chromaOut       []modeCand
 
 	// Search breadth.
-	allow4x4     bool
-	rectParts    bool // HORZ / VERT partitions
-	angleDeltas  bool
-	lumaCands    int
-	chromaCands  int
-	cflCands     int
-	txDepth      bool
-	txTypeSearch int // 0 DCT only, 1 four types, 2 the whole set
-	interpSearch bool
-	cdefCands    [][2]int
-	lrWiener     bool
-	sgrSets      []int
-	lrForce      bool // tests: restore every unit
+	allow4x4       bool
+	rectParts      bool // HORZ / VERT partitions
+	angleDeltas    bool
+	lumaCands      int
+	chromaCands    int
+	cflCands       int
+	txDepth        bool
+	txTypeSearch   int // 0 DCT only, 1 four types, 2 the whole set
+	interpSearch   bool
+	cdefCands      [][2]int
+	lrWiener       bool
+	sgrSets        []int
+	lrForce        bool    // tests: restore every unit
+	cdefSparse     bool    // measure CDEF on half the 8x8 blocks
+	lfStep         int     // finest deblocking level step searched
+	interRank      int     // inter candidates coded in full (0: all)
+	intraSkipBelow float64 // no intra trial when the best inter cost per sample is below
+	scoreBuf       []modeCand
+	rankedBuf      []blkChoice
 
 	rc rateControl
 
@@ -141,6 +154,24 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 		cfg.MiniGOP = 1
 	}
 	cfg.MiniGOP = min(cfg.MiniGOP, 16)
+	if cfg.TileCols <= 0 {
+		cfg.TileCols = 1
+		if cfg.Width >= 1280 {
+			cfg.TileCols = 2
+		}
+		if cfg.Width >= 2560 {
+			cfg.TileCols = 4
+		}
+	}
+	if cfg.TileRows <= 0 {
+		cfg.TileRows = 1
+		if cfg.Height >= 720 {
+			cfg.TileRows = 2
+		}
+		if cfg.Height >= 1440 {
+			cfg.TileRows = 4
+		}
+	}
 	if cfg.Refs <= 0 {
 		cfg.Refs = cfg.Preset + 1
 	}
@@ -235,32 +266,46 @@ func (e *Encoder) encodeFrame(job *encJob, q int) ([]byte, error) {
 	e.lambda = rdLambda(h.baseQIdx)
 	e.sqrtLambda = math.Sqrt(e.lambda)
 
-	// Pass A: decisions, reconstruction and symbol records.
-	t := &tile{f: f, h: h, seq: d.seq, mc: &e.sc.mc, recon: &e.sc.recon, enc: e}
-	t.miRowStart, t.miRowEnd = 0, f.miRows
-	t.miColStart, t.miColEnd = 0, f.miCols
-	t.currentQ = h.baseQIdx
-	t.cdf = f.cdf
-	t.begin()
-	e.t = t
-	initCDF := t.cdf
-	e.sink = symSink{recs: e.sink.recs[:0]}
+	// Pass A: decisions, reconstruction and symbol records, the tiles in
+	// parallel (each worker an Encoder copy with its own scratch).
 	nSB := len(f.cdefIdx)
 	if cap(e.cdefSeen) < nSB {
 		e.cdefSeen = make([]bool, nSB)
 	}
 	e.cdefSeen = e.cdefSeen[:nSB]
 	clear(e.cdefSeen)
-	sb4 := num4x4W[t.sbSize()]
-	for r := t.miRowStart; r < t.miRowEnd; r += sb4 {
-		t.clearLeftContext()
-		for c := t.miColStart; c < t.miColEnd; c += sb4 {
-			f.clearCdef(r, c)
-			t.clearBlockDecoded(r, c, sb4)
-			e.writeLRPlaceholders(r, c, t.sbSize())
-			e.encodeSB(r, c)
-		}
+	ti := &h.tiles
+	nt := ti.cols * ti.rows
+	for len(e.tileRecs) < nt {
+		e.tileRecs = append(e.tileRecs, nil)
 	}
+	tiles := make([]*tile, nt)
+	workers := e.getWorkers(min(nt, workers()))
+	parallelFor(nt, func(wk, i int) {
+		w := workers[wk]
+		w.lambda, w.sqrtLambda, w.activeRefs, w.cdefSeen = e.lambda, e.sqrtLambda, e.activeRefs, e.cdefSeen
+		t := &tile{f: f, h: h, seq: d.seq, mc: &w.sc.mc, recon: &w.sc.recon, enc: w}
+		row, col := i/ti.cols, i%ti.cols
+		t.miRowStart, t.miRowEnd = ti.miRowStarts[row], ti.miRowStarts[row+1]
+		t.miColStart, t.miColEnd = ti.miColStarts[col], ti.miColStarts[col+1]
+		t.currentQ = h.baseQIdx
+		t.cdf = f.cdf
+		t.begin()
+		w.t = t
+		w.sink = symSink{recs: e.tileRecs[i][:0]}
+		sb4 := num4x4W[t.sbSize()]
+		for r := t.miRowStart; r < t.miRowEnd; r += sb4 {
+			t.clearLeftContext()
+			for c := t.miColStart; c < t.miColEnd; c += sb4 {
+				f.clearCdef(r, c)
+				t.clearBlockDecoded(r, c, sb4)
+				w.writeLRPlaceholders(r, c, t.sbSize())
+				w.encodeSB(r, c)
+			}
+		}
+		e.tileRecs[i] = w.sink.recs
+		tiles[i] = t
+	})
 
 	// Pass B: in-loop filters, measured on the reconstruction, which is
 	// then left unfiltered for finishFrame.
@@ -279,20 +324,41 @@ func (e *Encoder) encodeFrame(job *encJob, q int) ([]byte, error) {
 	copyPlanes(f.cur, backup)
 	d.release(&backup.planes, backup.numPlanes)
 
-	// Tile data: replay the records from the initial CDFs.
-	t.cdf = initCDF
-	var me msacEnc
-	me.init()
-	e.sink.replay(&me, f.cdefIdx, h.cdefBits, func(me *msacEnc, p, unit int) {
-		e.writeLRUnit(me, p, &f.lr[p].units[unit])
+	// Tile data: each tile's records replayed from the initial CDFs.
+	data := make([][]byte, nt)
+	parallelFor(nt, func(_, i int) {
+		t := tiles[i]
+		t.cdf = f.cdf
+		var me msacEnc
+		me.init()
+		k := symSink{recs: e.tileRecs[i]}
+		k.replay(&me, f.cdefIdx, h.cdefBits, func(me *msacEnc, p, unit int) {
+			t.writeLRUnit(me, p, &f.lr[p].units[unit])
+		})
+		data[i] = me.done()
 	})
-	tileData := me.done()
-	f.savedCDF = t.cdf
+	f.savedCDF = tiles[ti.contextUpdateID].cdf
+	maxSize := 0
+	for _, b := range data[:nt-1] {
+		maxSize = max(maxSize, len(b))
+	}
+	fh.tileSizeBytes = 1
+	for maxSize > 1<<(8*uint(fh.tileSizeBytes)) {
+		fh.tileSizeBytes++
+	}
 
 	bw = bitWriter{}
 	fh.write(d, &bw)
 	bw.byteAlign()
-	payload := append(bw.buf, tileData...)
+	if nt > 1 {
+		bw.flag(false) // tile_start_and_end_present_flag
+		bw.byteAlign()
+		for _, b := range data[:nt-1] {
+			bw.le(fh.tileSizeBytes, len(b)-1)
+			bw.buf = append(bw.buf, b...)
+		}
+	}
+	payload := append(bw.buf, data[nt-1]...)
 	var out []byte
 	if key {
 		out = append(out, e.seqOBU...)
@@ -325,11 +391,15 @@ func (e *Encoder) setPreset(p int) {
 	switch p {
 	case 0:
 		e.lumaCands, e.chromaCands, e.cflCands = 1, 1, 2
+		e.cdefSparse, e.lfStep = true, 4
+		e.interRank, e.intraSkipBelow = 2, 4
 		e.cdefCands = cdefStrengthSubset([]int{0, 2, 4, 8}, []int{0, 2})
 	case 1:
 		e.rectParts, e.angleDeltas, e.txDepth, e.interpSearch = true, true, true, true
 		e.lumaCands, e.chromaCands, e.cflCands = 2, 1, 4
 		e.txTypeSearch = 1
+		e.lfStep = 2
+		e.interRank = 4
 		e.cdefCands = cdefStrengthSubset([]int{0, 1, 2, 3, 4, 6, 8, 12}, []int{0, 1, 2})
 		e.lrWiener = true
 		e.sgrSets = []int{0, 4, 10, 14}
@@ -337,8 +407,27 @@ func (e *Encoder) setPreset(p int) {
 		e.allow4x4, e.rectParts, e.angleDeltas, e.txDepth, e.interpSearch = true, true, true, true, true
 		e.lumaCands, e.chromaCands, e.cflCands = 3, 2, 8
 		e.txTypeSearch = 2
+		e.lfStep = 1
 		e.cdefCands = cdefStrengths
 		e.lrWiener = true
 		e.sgrSets = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 	}
+}
+
+// getWorkers returns n per-goroutine encoders: copies of e sharing its
+// configuration and state but with their own scratch and pools.
+func (e *Encoder) getWorkers(n int) []*Encoder {
+	for len(e.workers) < n {
+		w := new(Encoder)
+		*w = *e
+		w.workers, w.tileRecs = nil, nil
+		w.snaps, w.snapTop, w.nodes, w.nodeTop = nil, 0, nil, 0
+		w.lumaBuf, w.chromaBuf, w.chromaOut, w.interBuf, w.interList = nil, nil, nil, nil, nil
+		w.scoreBuf, w.rankedBuf = nil, nil
+		w.sink = symSink{}
+		w.sc = tileScratch{}
+		w.recon, w.queue, w.pending = nil, nil, nil
+		e.workers = append(e.workers, w)
+	}
+	return e.workers[:n]
 }

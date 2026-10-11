@@ -260,6 +260,12 @@ func (e *Encoder) frameHeader(job *encJob, q int) encFrameHdr {
 		txSelect:    true,
 	}
 	e.activeRefs = append(e.activeRefs[:0], job.active...)
+	// Uniform tiles within the level's limits.
+	s := e.d.seq
+	lim := s.tileLimits(2*((s.MaxWidth+7)>>3), 2*((s.MaxHeight+7)>>3))
+	fh.tileColsLog2 = clip3(lim.minLog2Cols, lim.maxLog2Cols, bitsFor(e.cfg.TileCols)-1)
+	fh.tileRowsLog2 = clip3(max(lim.minLog2Tiles-fh.tileColsLog2, 0), lim.maxLog2Rows, bitsFor(e.cfg.TileRows)-1)
+	fh.tileSizeBytes = 4
 	if e.lrWiener || len(e.sgrSets) > 0 {
 		fh.lrType = [3]int{restoreSwitchable, restoreSwitchable, restoreSwitchable}
 		fh.lrUnitShift = lrUnitShift(e.cfg.Width, e.cfg.Height)

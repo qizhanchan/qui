@@ -50,8 +50,7 @@ func (e *Encoder) writeLRPlaceholders(r, c, bSize int) {
 }
 
 // writeLRUnit codes a unit at replay (mirrors readLRUnit).
-func (e *Encoder) writeLRUnit(me *msacEnc, p int, u *lrUnit) {
-	t := e.t
+func (t *tile) writeLRUnit(me *msacEnc, p int, u *lrUnit) {
 	h := t.h
 	if h.lrType[p] == restoreNone {
 		return
