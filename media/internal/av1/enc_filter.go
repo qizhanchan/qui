@@ -17,6 +17,17 @@ var cdefStrengths = func() (s [][2]int) {
 	return
 }()
 
+// cdefStrengthSubset is the strength pairs of the given primary and
+// secondary values.
+func cdefStrengthSubset(pri, sec []int) (s [][2]int) {
+	for _, p := range pri {
+		for _, q := range sec {
+			s = append(s, [2]int{p, q})
+		}
+	}
+	return
+}
+
 // planesSSD is the squared error of the frame's visible samples against
 // the source, per plane.
 func (e *Encoder) planesSSD(fr *frame) (ssd [3]int64) {
@@ -129,7 +140,7 @@ func (e *Encoder) decideCDEF(fh *encFrameHdr) {
 		return
 	}
 	// Distortion per coded 64x64 and strength.
-	ns := len(cdefStrengths)
+	ns := len(e.cdefCands)
 	dy := make([]int64, len(coded)*ns)
 	duv := make([]int64, len(coded)*ns)
 	scratch := d.cloneFrame(f.cur)
@@ -193,8 +204,8 @@ func (e *Encoder) decideCDEF(fh *encFrameHdr) {
 	}
 	fh.cdefBits, h.cdefBits = bits, bits
 	for j, p := range bestSet {
-		fh.cdefYPri[j], fh.cdefYSec[j] = cdefStrengths[p.y][0], cdefStrengths[p.y][1]
-		fh.cdefUVPri[j], fh.cdefUVSec[j] = cdefStrengths[p.uv][0], cdefStrengths[p.uv][1]
+		fh.cdefYPri[j], fh.cdefYSec[j] = e.cdefCands[p.y][0], e.cdefCands[p.y][1]
+		fh.cdefUVPri[j], fh.cdefUVSec[j] = e.cdefCands[p.uv][0], e.cdefCands[p.uv][1]
 		h.cdefYPri[j], h.cdefYSec[j] = fh.cdefYPri[j], fh.cdefYSec[j]
 		h.cdefUVPri[j], h.cdefUVSec[j] = fh.cdefUVPri[j], fh.cdefUVSec[j]
 	}
@@ -227,7 +238,7 @@ func (e *Encoder) cdefMeasure(f *frameState, scratch *frame, fb int, dy, duv []i
 			if variance>>6 != 0 {
 				varStr = min(int32(floorLog2(int(variance>>6))), 12)
 			}
-			for si, s := range cdefStrengths {
+			for si, s := range e.cdefCands {
 				pri, sec := int32(s[0]), int32(s[1])
 				dir := yDir
 				if pri == 0 {

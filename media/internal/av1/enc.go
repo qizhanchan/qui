@@ -24,11 +24,19 @@ type EncoderConfig struct {
 	Width, Height  int
 	FPSNum, FPSDen int // frame rate (default 30/1)
 
-	// QIndex is the base quantiser index 1..255 (default 128).
-	QIndex int
+	// Rate control: constant quantiser when Bitrate and CRF are zero.
+	QIndex  int     // base quantiser index 1..255 (default 128; also ABR's start)
+	CRF     float64 // constant rate factor on the 0..63 scale (qindex ~ 4 CRF), 0 = off
+	Bitrate int     // average bits/s (ABR), 0 = off
+	// VBV: maximum bits/s and buffer size in bits (0 = unconstrained).
+	VBVMaxRate, VBVBuffer int
 
 	KeyInt int // frames between key frames (default 250)
-	Refs   int // previous frames inter frames may reference, 1..3 (default 2)
+	Refs   int // previous frames inter frames may reference, 1..3 (default by preset)
+
+	// Preset trades speed for compression: 0 fastest (the default), 1
+	// balanced, 2 best.
+	Preset int
 
 	FullRange bool
 	Matrix    int // H.273 matrix_coefficients: 1 BT.709 (default), 6 BT.601
@@ -79,9 +87,17 @@ type Encoder struct {
 
 	// Search breadth.
 	allow4x4     bool
+	rectParts    bool // HORZ / VERT partitions
+	angleDeltas  bool
 	lumaCands    int
 	chromaCands  int
+	cflCands     int
+	txDepth      bool
 	txTypeSearch int // 0 DCT only, 1 four types, 2 the whole set
+	interpSearch bool
+	cdefCands    [][2]int
+
+	rc rateControl
 
 	keepRecon bool
 	recon     []*Frame
@@ -105,14 +121,16 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 	if cfg.KeyInt <= 0 {
 		cfg.KeyInt = 250
 	}
+	cfg.Preset = clip3(0, 2, cfg.Preset)
 	if cfg.Refs <= 0 {
-		cfg.Refs = 2
+		cfg.Refs = cfg.Preset + 1
 	}
 	cfg.Refs = min(cfg.Refs, 3)
 	if cfg.Matrix == 0 {
 		cfg.Matrix = 1
 	}
-	e := &Encoder{cfg: cfg, d: New(), allow4x4: true, lumaCands: 3, chromaCands: 2, txTypeSearch: 2}
+	e := &Encoder{cfg: cfg, d: New()}
+	e.setPreset(cfg.Preset)
 	e.seq = encSeq{
 		width: cfg.Width, height: cfg.Height, level: seqLevel(cfg.Width, cfg.Height),
 		fullRange: cfg.FullRange, matrix: cfg.Matrix, primaries: 1, transfer: 1,
@@ -121,6 +139,7 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 	if cfg.Matrix == 6 {
 		e.seq.primaries, e.seq.transfer = 6, 6
 	}
+	e.rc.init(e)
 	e.seqOBU = appendOBU(nil, obuSequenceHeader, e.seq.writeSequenceHeader())
 	if err := e.d.DecodeTemporalUnit(e.seqOBU); err != nil {
 		return nil, err
@@ -141,10 +160,36 @@ func (e *Encoder) Encode(img *image.YCbCr) (Packet, error) {
 	if key {
 		e.keyFrame = e.frameCount
 	}
-	pkt, err := e.encodeFrame(key)
+	q := e.rc.frameQIndex(key, e)
+	pkt, err := e.encodeFrame(key, q)
+	// A frame that would overflow the VBV is coded again more coarsely
+	// (nothing is committed before finishFrame).
+	for tries := 0; err == nil && e.rc.vbvOverflow(len(pkt.Data)*8) && q < 255 && tries < 4; tries++ {
+		e.d.seenFrameHeader = false
+		q = qindexOf(qscaleOf(q) * 1.5)
+		pkt, err = e.encodeFrame(key, q)
+	}
+	if err != nil {
+		return pkt, err
+	}
+	if err := e.finishFrame(); err != nil {
+		return pkt, err
+	}
+	e.rc.update(key, q, len(pkt.Data)*8, e)
 	pkt.PTS = e.frameCount
 	e.frameCount++
-	return pkt, err
+	return pkt, nil
+}
+
+// finishFrame commits the coded frame: in-loop filters, reference update
+// and the reconstruction.
+func (e *Encoder) finishFrame() error {
+	e.d.seenFrameHeader = false
+	if err := e.d.finishFrame(); err != nil {
+		return err
+	}
+	e.collectRecon()
+	return nil
 }
 
 // loadSource copies img into the padded source planes.
@@ -182,11 +227,11 @@ func (e *Encoder) loadSource(img *image.YCbCr) {
 
 // frameHeader returns the header fields of a key frame or of an inter
 // frame predicting from the previous frame (slot 0, all references).
-func (e *Encoder) frameHeader(key bool) encFrameHdr {
+func (e *Encoder) frameHeader(key bool, q int) encFrameHdr {
 	fh := encFrameHdr{
 		frameType: keyFrame, showFrame: true,
 		orderHint:   int(e.frameCount) & (1<<uint(e.seq.orderHintBits) - 1),
-		baseQ:       e.cfg.QIndex,
+		baseQ:       q,
 		cdefDamping: 3,
 		txSelect:    true,
 	}
@@ -215,9 +260,11 @@ func (e *Encoder) frameHeader(key bool) encFrameHdr {
 	return fh
 }
 
-func (e *Encoder) encodeFrame(key bool) (Packet, error) {
+// encodeFrame codes the loaded source as a key or inter frame at qindex
+// q, leaving the frame to finishFrame.
+func (e *Encoder) encodeFrame(key bool, q int) (Packet, error) {
 	d := e.d
-	fh := e.frameHeader(key)
+	fh := e.frameHeader(key, q)
 	var bw bitWriter
 	fh.write(d, &bw)
 	bw.trailing()
@@ -283,11 +330,6 @@ func (e *Encoder) encodeFrame(key bool) (Packet, error) {
 	}
 	out = appendOBU(out, obuFrame, payload)
 
-	d.seenFrameHeader = false
-	if err := d.finishFrame(); err != nil {
-		return Packet{}, err
-	}
-	e.collectRecon()
 	typ := byte('K')
 	if !key {
 		typ = 'P'
@@ -312,4 +354,23 @@ func (e *Encoder) collectRecon() {
 func rdLambda(qindex int) float64 {
 	q := float64(acQ(8, qindex))
 	return 0.0021 * q * q
+}
+
+// setPreset sets the search breadth.
+func (e *Encoder) setPreset(p int) {
+	switch p {
+	case 0:
+		e.lumaCands, e.chromaCands, e.cflCands = 1, 1, 2
+		e.cdefCands = cdefStrengthSubset([]int{0, 2, 4, 8}, []int{0, 2})
+	case 1:
+		e.rectParts, e.angleDeltas, e.txDepth, e.interpSearch = true, true, true, true
+		e.lumaCands, e.chromaCands, e.cflCands = 2, 1, 4
+		e.txTypeSearch = 1
+		e.cdefCands = cdefStrengthSubset([]int{0, 1, 2, 3, 4, 6, 8, 12}, []int{0, 1, 2})
+	default:
+		e.allow4x4, e.rectParts, e.angleDeltas, e.txDepth, e.interpSearch = true, true, true, true, true
+		e.lumaCands, e.chromaCands, e.cflCands = 3, 2, 8
+		e.txTypeSearch = 2
+		e.cdefCands = cdefStrengths
+	}
 }

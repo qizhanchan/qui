@@ -202,7 +202,10 @@ func (e *Encoder) searchNode(r, c, bSize int, budget float64) (*encNode, float64
 	case bSize == block4x4:
 		parts = append(parts, partNone)
 	case hasRows && hasCols:
-		parts = append(parts, partNone, partHorz, partVert)
+		parts = append(parts, partNone)
+		if e.rectParts {
+			parts = append(parts, partHorz, partVert)
+		}
 		if bSize > block8x8 || e.allow4x4 {
 			parts = append(parts, partSplit)
 		}
@@ -289,7 +292,7 @@ func (e *Encoder) searchBlock(r, c, size int) (blkChoice, float64) {
 			try(ch)
 		}
 		// Interpolation filters for the best inter choice.
-		if best.inter && t.h.interpFilter == filterSwitchable {
+		if best.inter && t.h.interpFilter == filterSwitchable && e.interpSearch {
 			base := best
 			e.load(s0)
 			e.setupInter(r, c, size, &base)
@@ -337,7 +340,7 @@ func (e *Encoder) searchBlock(r, c, size int) (blkChoice, float64) {
 		}
 	}
 	// Transform depth.
-	if maxTxDepth[size] > 0 && t.h.txMode == txModeSelect {
+	if e.txDepth && maxTxDepth[size] > 0 && t.h.txMode == txModeSelect {
 		base := best
 		for d := 1; d <= min(maxTxDepth[size], 2); d++ {
 			ch := base
@@ -414,7 +417,7 @@ func (e *Encoder) rankLumaModes(r, c, size int) []modeCand {
 	cands := e.lumaBuf[:0]
 	for mode := dcPred; mode <= paethPred; mode++ {
 		for angle := -3; angle <= 3; angle++ {
-			if angle != 0 && (!isDirectional(mode) || size < block8x8) {
+			if angle != 0 && (!isDirectional(mode) || size < block8x8 || !e.angleDeltas) {
 				continue
 			}
 			bits := symCost(modeCDF, mode)
@@ -464,7 +467,8 @@ func (e *Encoder) rankChromaModes(r, c, size int, y *blkChoice) []modeCand {
 
 // cflAlphas are the CfL alpha pairs tried.
 func (e *Encoder) cflAlphas() [][2]int {
-	return [][2]int{{-2, -2}, {-2, 2}, {2, -2}, {2, 2}, {-4, 4}, {4, -4}, {1, 1}, {-1, -1}}
+	all := [][2]int{{-2, -2}, {2, 2}, {-2, 2}, {2, -2}, {-4, 4}, {4, -4}, {1, 1}, {-1, -1}}
+	return all[:e.cflCands]
 }
 
 func topCands(c []modeCand, n int) []modeCand {
