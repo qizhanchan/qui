@@ -172,7 +172,13 @@ func (t *tile) transformBlock(plane, baseX, baseY, tx, x, y int) error {
 		}
 	}
 	if !b.skip {
-		eob, err := t.coeffs(plane, startX, startY, tx)
+		var eob int
+		var err error
+		if t.enc != nil {
+			eob = t.enc.txBlock(t, plane, startX, startY, tx)
+		} else {
+			eob, err = t.coeffs(plane, startX, startY, tx)
+		}
 		if err != nil {
 			return err
 		}
@@ -374,7 +380,6 @@ const sigCoefContexts2D = 26
 // coeffs is coeffs() (spec 5.11.39): it reads the coefficients of one
 // transform block into t.coef (Quant[]) and returns the end of block.
 func (t *tile) coeffs(plane, startX, startY, tx int) (int, error) {
-	b := &t.b
 	f := t.f
 	x4, y4 := startX>>2, startY>>2
 	w4, h4 := txW[tx]>>2, txH[tx]>>2
@@ -388,62 +393,7 @@ func (t *tile) coeffs(plane, startX, startY, tx int) (int, error) {
 	quant := t.coef[:tw*th]
 	clear(quant)
 
-	// all_zero context.
-	var ctx int
-	if plane == 0 {
-		top, left := 0, 0
-		for k := 0; k < w4; k++ {
-			if x4+k < maxX4 {
-				top = max(top, int(t.aboveLevel[0][x4+k]))
-			}
-		}
-		for k := 0; k < h4; k++ {
-			if y4+k < maxY4 {
-				left = max(left, int(t.leftLevel[0][(y4+k)&31]))
-			}
-		}
-		top, left = min(top, 255), min(left, 255)
-		switch {
-		case blockW(b.size) == txW[tx] && blockH(b.size) == txH[tx]:
-			ctx = 0
-		case top == 0 && left == 0:
-			ctx = 1
-		case top == 0 || left == 0:
-			ctx = 2
-			if max(top, left) > 3 {
-				ctx = 3
-			}
-		case max(top, left) <= 3:
-			ctx = 4
-		case min(top, left) <= 3:
-			ctx = 5
-		default:
-			ctx = 6
-		}
-	} else {
-		above, left := 0, 0
-		for k := 0; k < w4; k++ {
-			if x4+k < maxX4 {
-				above |= int(t.aboveLevel[plane][x4+k]) | int(t.aboveDC[plane][x4+k])
-			}
-		}
-		for k := 0; k < h4; k++ {
-			if y4+k < maxY4 {
-				left |= int(t.leftLevel[plane][(y4+k)&31]) | int(t.leftDC[plane][(y4+k)&31])
-			}
-		}
-		ctx = 7
-		if above != 0 {
-			ctx++
-		}
-		if left != 0 {
-			ctx++
-		}
-		cs := chromaSize[b.size]
-		if blockW(cs)*blockH(cs) > txW[tx]*txH[tx] {
-			ctx += 3
-		}
-	}
+	ctx := t.txbSkipCtx(plane, x4, y4, w4, h4, maxX4, maxY4, tx)
 	allZero := t.ms.flag(t.cdf.txbSkip[txSzCtx][ctx][:])
 	eob := 0
 	culLevel, dcCategory := 0, 0
@@ -578,6 +528,67 @@ func (t *tile) coeffs(plane, startX, startY, tx int) (int, error) {
 		t.leftDC[plane][(y4+i)&31] = uint8(dcCategory)
 	}
 	return eob, nil
+}
+
+// txbSkipCtx is the all_zero context (spec 8.3.2).
+func (t *tile) txbSkipCtx(plane, x4, y4, w4, h4, maxX4, maxY4, tx int) int {
+	b := &t.b
+	ctx := 0
+	if plane == 0 {
+		top, left := 0, 0
+		for k := 0; k < w4; k++ {
+			if x4+k < maxX4 {
+				top = max(top, int(t.aboveLevel[0][x4+k]))
+			}
+		}
+		for k := 0; k < h4; k++ {
+			if y4+k < maxY4 {
+				left = max(left, int(t.leftLevel[0][(y4+k)&31]))
+			}
+		}
+		top, left = min(top, 255), min(left, 255)
+		switch {
+		case blockW(b.size) == txW[tx] && blockH(b.size) == txH[tx]:
+			ctx = 0
+		case top == 0 && left == 0:
+			ctx = 1
+		case top == 0 || left == 0:
+			ctx = 2
+			if max(top, left) > 3 {
+				ctx = 3
+			}
+		case max(top, left) <= 3:
+			ctx = 4
+		case min(top, left) <= 3:
+			ctx = 5
+		default:
+			ctx = 6
+		}
+	} else {
+		above, left := 0, 0
+		for k := 0; k < w4; k++ {
+			if x4+k < maxX4 {
+				above |= int(t.aboveLevel[plane][x4+k]) | int(t.aboveDC[plane][x4+k])
+			}
+		}
+		for k := 0; k < h4; k++ {
+			if y4+k < maxY4 {
+				left |= int(t.leftLevel[plane][(y4+k)&31]) | int(t.leftDC[plane][(y4+k)&31])
+			}
+		}
+		ctx = 7
+		if above != 0 {
+			ctx++
+		}
+		if left != 0 {
+			ctx++
+		}
+		cs := chromaSize[b.size]
+		if blockW(cs)*blockH(cs) > txW[tx]*txH[tx] {
+			ctx += 3
+		}
+	}
+	return ctx
 }
 
 func iabs32(v int32) int32 {

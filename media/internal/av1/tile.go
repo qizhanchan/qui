@@ -100,6 +100,17 @@ type tile struct {
 	coef      [32 * 32]int32 // Quant[] of the current transform block
 	planeType int            // PlaneTxType of the current transform block
 	recon     *reconScratch
+
+	// enc, when set, supplies the coefficients of each transform block
+	// instead of the bitstream (the encoder's reconstruction).
+	enc encTxCoder
+}
+
+// encTxCoder produces a transform block's coefficients: it fills t.coef
+// and t.planeType, updates the coefficient contexts and tx types as
+// coeffs() does, and returns the end of block.
+type encTxCoder interface {
+	txBlock(t *tile, plane, startX, startY, tx int) int
 }
 
 // tileScratch is the large per-goroutine scratch of tile decoding, kept
@@ -126,6 +137,27 @@ func (t *tile) sbSize() int {
 // decode is decode_tile (spec 5.11.2).
 func (t *tile) decode() error {
 	f := t.f
+	t.begin()
+	sb := t.sbSize()
+	sb4 := num4x4W[sb]
+	for r := t.miRowStart; r < t.miRowEnd; r += sb4 {
+		t.clearLeftContext()
+		for c := t.miColStart; c < t.miColEnd; c += sb4 {
+			t.readDeltas = t.h.deltaQPresent
+			f.clearCdef(r, c)
+			t.clearBlockDecoded(r, c, sb4)
+			t.readLR(r, c, sb)
+			if err := t.partition(r, c, sb); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// begin resets the tile-wide contexts.
+func (t *tile) begin() {
+	f := t.f
 	for p := 0; p < 3; p++ {
 		n := (f.miCols+1)>>min(p, 1) + 32
 		if cap(t.aboveLevel[p]) < n {
@@ -149,25 +181,16 @@ func (t *tile) decode() error {
 			t.refLrWiener[p][pass] = wienerTapsMid
 		}
 	}
-	sb := t.sbSize()
-	sb4 := num4x4W[sb]
-	for r := t.miRowStart; r < t.miRowEnd; r += sb4 {
-		for p := range t.leftLevel {
-			t.leftLevel[p] = [32]uint8{}
-			t.leftDC[p] = [32]uint8{}
-		}
-		t.leftSegPred = [32]bool{}
-		for c := t.miColStart; c < t.miColEnd; c += sb4 {
-			t.readDeltas = t.h.deltaQPresent
-			f.clearCdef(r, c)
-			t.clearBlockDecoded(r, c, sb4)
-			t.readLR(r, c, sb)
-			if err := t.partition(r, c, sb); err != nil {
-				return err
-			}
-		}
+}
+
+// clearLeftContext resets the left contexts at the start of a superblock
+// row.
+func (t *tile) clearLeftContext() {
+	for p := range t.leftLevel {
+		t.leftLevel[p] = [32]uint8{}
+		t.leftDC[p] = [32]uint8{}
 	}
-	return nil
+	t.leftSegPred = [32]bool{}
 }
 
 // clearBlockDecoded is clear_block_decoded_flags (spec 5.11.3): marks

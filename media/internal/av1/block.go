@@ -7,7 +7,35 @@ import (
 
 // decodeBlock is decode_block (spec 5.11.5).
 func (t *tile) decodeBlock(r, c, size int) error {
-	f := t.f
+	t.initBlock(r, c, size)
+	b := &t.b
+	var err error
+	if t.h.intra {
+		err = t.intraFrameModeInfo()
+	} else {
+		err = t.interFrameModeInfo()
+	}
+	if err != nil {
+		return err
+	}
+	t.paletteTokens()
+	t.readBlockTxSize()
+	if b.skip {
+		t.resetBlockContext()
+	}
+	t.storeModeInfo()
+	if debugBlock != nil {
+		debugBlock(t)
+	}
+	if err := t.computePrediction(); err != nil {
+		return err
+	}
+	return t.residual()
+}
+
+// initBlock starts block (r, c) of the given size: position, chroma
+// presence and neighbour availability.
+func (t *tile) initBlock(r, c, size int) {
 	b := &t.b
 	*b = block{colorMap: b.colorMap, txTypes: b.txTypes}
 	b.miRow, b.miCol, b.size = r, c, size
@@ -29,21 +57,13 @@ func (t *tile) decodeBlock(r, c, size int) error {
 			b.availLC = t.inside(r, c-2)
 		}
 	}
-	var err error
-	if t.h.intra {
-		err = t.intraFrameModeInfo()
-	} else {
-		err = t.interFrameModeInfo()
-	}
-	if err != nil {
-		return err
-	}
-	t.paletteTokens()
-	t.readBlockTxSize()
-	if b.skip {
-		t.resetBlockContext()
-	}
-	// Store the mode info of every covered 4x4 unit.
+}
+
+// storeModeInfo stores the block's mode info in every covered 4x4 unit.
+func (t *tile) storeModeInfo() {
+	f := t.f
+	b := &t.b
+	r, c, size := b.miRow, b.miCol, b.size
 	rows, cols := min(b.bh4, f.miRows-r), min(b.bw4, f.miCols-c)
 	m := miInfo{
 		size: uint8(size), skip: b.skip, skipMode: b.skipMode, isInter: b.isInter,
@@ -74,13 +94,6 @@ func (t *tile) decodeBlock(r, c, size int) error {
 			row[x] = m
 		}
 	}
-	if debugBlock != nil {
-		debugBlock(t)
-	}
-	if err := t.computePrediction(); err != nil {
-		return err
-	}
-	return t.residual()
 }
 
 func (t *tile) segFeature(id, feature int) bool {

@@ -638,21 +638,37 @@ func tileLog2(blk, target int) int {
 	return k
 }
 
-func (d *Decoder) parseTileInfo(r *bitReader, h *FrameHeader) error {
-	s := d.seq
-	sbShift := 4
+// tileLimits holds the tile_info bounds of a frame size.
+type tileLimits struct {
+	sbShift, sbCols, sbRows       int
+	maxTileWidthSb, maxTileAreaSb int
+	minLog2Cols, maxLog2Cols      int
+	maxLog2Rows, minLog2Tiles     int
+}
+
+func (s *SequenceHeader) tileLimits(miCols, miRows int) tileLimits {
+	var l tileLimits
+	l.sbShift = 4
 	if s.Use128x128 {
-		sbShift = 5
+		l.sbShift = 5
 	}
-	sbCols := (h.miCols + (1 << sbShift) - 1) >> sbShift
-	sbRows := (h.miRows + (1 << sbShift) - 1) >> sbShift
-	sbSize := sbShift + 2
-	maxTileWidthSb := 4096 >> sbSize
-	maxTileAreaSb := (4096 * 2304) >> (2 * sbSize)
-	minLog2TileCols := tileLog2(maxTileWidthSb, sbCols)
-	maxLog2TileCols := tileLog2(1, min(sbCols, 64))
-	maxLog2TileRows := tileLog2(1, min(sbRows, 64))
-	minLog2Tiles := max(minLog2TileCols, tileLog2(maxTileAreaSb, sbRows*sbCols))
+	l.sbCols = (miCols + (1 << l.sbShift) - 1) >> l.sbShift
+	l.sbRows = (miRows + (1 << l.sbShift) - 1) >> l.sbShift
+	sbSize := l.sbShift + 2
+	l.maxTileWidthSb = 4096 >> sbSize
+	l.maxTileAreaSb = (4096 * 2304) >> (2 * sbSize)
+	l.minLog2Cols = tileLog2(l.maxTileWidthSb, l.sbCols)
+	l.maxLog2Cols = tileLog2(1, min(l.sbCols, 64))
+	l.maxLog2Rows = tileLog2(1, min(l.sbRows, 64))
+	l.minLog2Tiles = max(l.minLog2Cols, tileLog2(l.maxTileAreaSb, l.sbRows*l.sbCols))
+	return l
+}
+
+func (d *Decoder) parseTileInfo(r *bitReader, h *FrameHeader) error {
+	lim := d.seq.tileLimits(h.miCols, h.miRows)
+	sbShift, sbCols, sbRows := lim.sbShift, lim.sbCols, lim.sbRows
+	maxTileWidthSb := lim.maxTileWidthSb
+	minLog2TileCols, maxLog2TileCols, maxLog2TileRows, minLog2Tiles := lim.minLog2Cols, lim.maxLog2Cols, lim.maxLog2Rows, lim.minLog2Tiles
 	t := &h.tiles
 	t.miColStarts, t.miRowStarts = t.miColStarts[:0], t.miRowStarts[:0]
 	if r.flag() { // uniform_tile_spacing_flag
@@ -910,6 +926,14 @@ func (d *Decoder) lrParams(r *bitReader, h *FrameHeader) {
 }
 
 func (d *Decoder) skipModeParams(r *bitReader, h *FrameHeader) {
+	if d.skipModeAllowed(h) {
+		h.skipModePresent = r.flag()
+	}
+}
+
+// skipModeAllowed is skipModeAllowed of skip_mode_params (spec 5.9.22);
+// it also sets h.skipModeFrame.
+func (d *Decoder) skipModeAllowed(h *FrameHeader) bool {
 	s := d.seq
 	allowed := false
 	if !h.intra && h.referenceSelect && s.EnableOrderHint {
@@ -949,9 +973,7 @@ func (d *Decoder) skipModeParams(r *bitReader, h *FrameHeader) {
 			}
 		}
 	}
-	if allowed {
-		h.skipModePresent = r.flag()
-	}
+	return allowed
 }
 
 func (d *Decoder) globalMotionParams(r *bitReader, h *FrameHeader, prev *[numRefFrames][6]int32) {
