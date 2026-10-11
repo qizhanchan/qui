@@ -1,399 +1,475 @@
 package h264
 
-// Slice-data decoding (macroblock layer) and picture reconstruction.
+// Decoder decodes an H.264 elementary stream NAL unit by NAL unit and
+// returns pictures in display order.
+//
+// Typical use:
+//
+//	d := avc.New()
+//	for each access unit: for each NAL: d.DecodeNAL(nal); then d.EndOfPicture()
+//	for f := d.Next(); f != nil; f = d.Next() { ... }
+//	d.Flush() at end of stream, then drain Next.
+type Decoder struct {
+	sps [32]*SPS
+	pps [256]*PPS
 
-// picState is the per-picture decoding state shared by all slices.
-type picState struct {
-	sps                  *SPS
-	pps                  *PPS
-	mbWidth, mbHeight    int
-	chromaArrayType      int
-	chromaQpIndexOffset  int
-	transform8x8ModeFlag bool
+	dpb    []*picture
+	pool   []*picture
+	nextID int32
 
-	qpY         int // running QP for the current slice
-	curSliceNum int
+	cur    *picture
+	curHdr *sliceHeader
+	// pc is the context of the picture being decoded; the other buffer may
+	// still be in use by that picture's predecessor's deblocking
+	// (pipeline.go). pcOwner[i] is the picture deblocking with pcs[i].
+	pcs     [2]picCtx
+	pc      *picCtx
+	pcIdx   int
+	pcOwner [2]*picture
+	// syncDeblock deblocks in place instead of pipelining (tests).
+	syncDeblock bool
+	sc          sliceCtx
+	rbsp        []byte
 
-	mbs []mbData
-	br  *bitReader
+	activeSPS *SPS
+	haveRef   bool
 
-	slices []sliceDeblock
-
-	// Reference pictures (list 0 and list 1), most recent first.
-	refFrames   []*Frame
-	refFramesL1 []*Frame
-	refPOCL0    []int
-	refPOCL1    []int
-	curPOC      int
-	// Per-4x4-block motion state for the current picture (for MV prediction):
-	// refLX >= 0 is a reference index, -1 is intra, -2 is not-yet-available.
-	mvLX, mvLY    []int
-	refLX         []int
-	mvL1X, mvL1Y  []int
-	refL1X        []int
-	motionInit    bool
-	directSpatial bool
-	coloc         *refPicture
-	numRefL0      int
-	numRefL1      int
-
-	weightedPred   bool
-	lumaLog2WD     int
-	chromaLog2WD   int
-	lumaWeightL0   []int
-	lumaOffsetL0   []int
-	chromaWeightL0 [][2]int
-	chromaOffsetL0 [][2]int
-	lumaWeightL1   []int
-	lumaOffsetL1   []int
-	chromaWeightL1 [][2]int
-	chromaOffsetL1 [][2]int
+	prevPOCMsb, prevPOCLsb                              int
+	curPOCMsb, curTopPOC                                int
+	prevFrameNum, prevFrameNumOffset                    int
+	curFrameNumOffset, prevRefFrameNum                  int
+	maxLongTermIdx                                      int
+	tag                                                 int64
+	out                                                 []*Frame
+	outPics                                             []*picture // bumped, awaiting deblock + copy
+	lastErr                                             error
+	concealedMBs, totalMBs, droppedSlice, concealedRefs int
 }
 
-type availability struct{ left, top, topLeft, topRight bool }
-
-// mbNeighbors returns which neighbouring macroblocks are available.
-func (s *picState) mbNeighbors(mbIdx int) availability {
-	return availability{
-		left:     s.mbAvailA(mbIdx) != nil,
-		top:      s.mbAvailB(mbIdx) != nil,
-		topLeft:  s.mbAvailD(mbIdx) != nil,
-		topRight: s.mbAvailC(mbIdx) != nil,
-	}
+// New returns a decoder.
+func New() *Decoder {
+	d := &Decoder{maxLongTermIdx: -1}
+	d.pc = &d.pcs[0]
+	d.sc.d = d
+	return d
 }
 
-// decodeSliceCAVLC dispatches one CAVLC slice by slice type. Deblocking is
-// applied separately, after the whole picture is reconstructed.
-func (s *picState) decodeSliceCAVLC(f *Frame, hdr *SliceHeader) error {
-	switch {
-	case sliceTypeIsI(hdr.SliceType) || sliceTypeIsSI(hdr.SliceType):
-		return s.decodeISliceCAVLC(f, hdr)
-	case sliceTypeIsP(hdr.SliceType) || sliceTypeIsSP(hdr.SliceType):
-		return s.decodePSliceCAVLC(f, hdr)
-	case sliceTypeIsB(hdr.SliceType):
-		return s.decodeBSliceCAVLC(f, hdr)
-	default:
-		return errf("h264: unsupported slice type")
+// SetTag sets the value attached to the next picture that starts (see
+// Frame.Tag).
+func (d *Decoder) SetTag(tag int64) { d.tag = tag }
+
+// SPSInfo returns the most recently activated SPS, or nil.
+func (d *Decoder) SPSInfo() *SPS { return d.activeSPS }
+
+// DecodeNAL decodes one NAL unit (header byte first, no start code).
+// Errors inside slice data are concealed where possible; the returned error
+// reports the problem but the decoder stays usable.
+func (d *Decoder) DecodeNAL(nal []byte) (err error) {
+	defer func() {
+		// Defence in depth: a malformed stream must never take the host
+		// process down. The picture's undecoded macroblocks are concealed.
+		if r := recover(); r != nil {
+			err = errCorruptPanic
+		}
+	}()
+	if len(nal) == 0 || nal[0]&0x80 != 0 {
+		return nil
 	}
-}
-
-// decodeISliceCAVLC decodes all macroblocks of one I-slice into f.
-func (s *picState) decodeISliceCAVLC(f *Frame, hdr *SliceHeader) error {
-	s.curSliceNum++
-	s.slices = append(s.slices, sliceDeblock{
-		disableIDC:  hdr.DisableDeblockingFilterIDC,
-		alphaOffset: 52 + int(hdr.SliceAlphaC0OffsetDiv2)*2,
-		betaOffset:  52 + int(hdr.SliceBetaOffsetDiv2)*2,
-	})
-	for mbIdx := int(hdr.FirstMbInSlice); ; mbIdx++ {
-		if mbIdx >= len(s.mbs) {
-			return errf("h264: macroblock index out of range")
-		}
-		mb := &s.mbs[mbIdx]
-		mb.sliceNum = s.curSliceNum
-		mt := int(s.br.ue())
-		if s.br.err() != nil {
-			return s.br.err()
-		}
-		if mt > 25 {
-			return errf("h264: mb_type out of range")
-		}
-		mb.mbType = mt
-		if err := s.decodeIntraBody(f, mbIdx); err != nil {
-			return err
-		}
-		if !s.br.moreRBSPData() {
-			return nil
-		}
-	}
-}
-
-// decodeIntraBody decodes and reconstructs an intra macroblock whose mb_type
-// (0..25) has already been stored.
-func (s *picState) decodeIntraBody(f *Frame, mbIdx int) error {
-	mb := &s.mbs[mbIdx]
-
-	if mb.mbType == 25 { // I_PCM
-		return s.decodeIPCM(f, mbIdx)
-	}
-
-	if mb.mbType == 0 { // I_NxN
-		if s.transform8x8ModeFlag {
-			mb.transform8x8 = s.br.u1()
-		}
-		if mb.transform8x8 {
-			for i := 0; i < 4; i++ {
-				mb.intra8x8PredMode[i] = s.decodeIntra8x8PredMode(mbIdx, i)
-			}
-		} else {
-			for i := 0; i < 16; i++ {
-				mb.intra4x4PredMode[i] = s.decodeIntra4x4PredMode(mbIdx, i)
-			}
-		}
-		if s.chromaArrayType != 0 {
-			mb.intraChromaMode = int(s.br.ue())
-		}
-		cbp := int(s.br.ue())
-		if cbp > 47 {
-			return errf("h264: cbp out of range")
-		}
-		v := int(golombToIntra4x4CBP[cbp])
-		mb.cbpLuma = v & 0x0f
-		mb.cbpChroma = (v >> 4) & 0x03
-	} else { // I_16x16
-		mb.intraPredMode16 = i16x16PredMode(mb.mbType)
-		mb.cbpLuma = i16x16CBPLuma(mb.mbType)
-		mb.cbpChroma = i16x16CBPChroma(mb.mbType)
-		if s.chromaArrayType != 0 {
-			mb.intraChromaMode = int(s.br.ue())
-		}
-	}
-
-	if mb.cbpLuma > 0 || mb.cbpChroma > 0 || (mb.mbType >= 1 && mb.mbType <= 24) {
-		delta := int(s.br.se())
-		if s.br.err() != nil {
-			return s.br.err()
-		}
-		mb.qpDelta = delta
-		mb.qpY = clampInt(s.qpY+delta, 0, 51)
-	} else {
-		mb.qpY = s.qpY
-	}
-	s.qpY = mb.qpY
-
-	if err := s.decodeResidualMBCAVLC(mbIdx); err != nil {
-		return err
-	}
-	return s.reconstructMB(f, mbIdx)
-}
-
-func (s *picState) decodeResidualMBCAVLC(mbIdx int) error {
-	mb := &s.mbs[mbIdx]
-
-	if mb.mbType >= 1 && mb.mbType <= 24 {
-		nC := s.deriveNC(mbIdx, 0)
-		dc, _, err := decodeResidualBlock(s.br, nC, 16)
+	switch nalType(nal[0]) {
+	case nalSPS:
+		s, err := ParseSPS(nal)
 		if err != nil {
 			return err
 		}
-		copy(mb.intra16x16DC[:], dc)
-
-		if mb.cbpLuma > 0 {
-			for i := 0; i < 16; i++ {
-				if mb.cbpLuma&(1<<uint(i/4)) == 0 {
-					continue
-				}
-				nC := s.deriveNC(mbIdx, i)
-				ac, tc, err := decodeResidualBlock(s.br, nC, 15)
-				if err != nil {
-					return err
-				}
-				copy(mb.intra16x16AC[i][:], ac)
-				mb.nzLuma[i] = tc
-			}
+		d.sps[s.ID] = s
+	case nalPPS:
+		p, err := ParsePPS(nal, func(id int) *SPS { return d.sps[id] })
+		if err != nil {
+			return err
 		}
-	} else if mb.mbType == 0 {
-		if mb.transform8x8 {
-			for i8x8 := 0; i8x8 < 4; i8x8++ {
-				if mb.cbpLuma&(1<<uint(i8x8)) == 0 {
-					continue
-				}
-				for i4x4 := 0; i4x4 < 4; i4x4++ {
-					blkIdx := i8x8*4 + i4x4
-					nC := s.deriveNC(mbIdx, blkIdx)
-					coeffs, tc, err := decodeResidualBlock(s.br, nC, 16)
-					if err != nil {
-						return err
-					}
-					for j := 0; j < 16; j++ {
-						mb.lumaLevel8x8[i8x8][zigzagScan8x8CAVLC[i4x4*16+j]] = coeffs[j]
-					}
-					mb.nzLuma[blkIdx] = tc
-				}
-			}
-		} else {
-			for i := 0; i < 16; i++ {
-				if mb.cbpLuma&(1<<uint(i/4)) == 0 {
-					continue
-				}
-				nC := s.deriveNC(mbIdx, i)
-				coeffs, tc, err := decodeResidualBlock(s.br, nC, 16)
-				if err != nil {
-					return err
-				}
-				copy(mb.lumaLevel4x4[i][:], coeffs)
-				mb.nzLuma[i] = tc
-			}
-		}
-	}
-
-	if s.chromaArrayType != 0 && mb.cbpChroma > 0 {
-		for c := 0; c < 2; c++ {
-			dc, _, err := decodeResidualBlock(s.br, -1, 4)
-			if err != nil {
-				return err
-			}
-			copy(mb.chromaDC[c][:], dc)
-		}
-		if mb.cbpChroma > 1 {
-			for c := 0; c < 2; c++ {
-				for i := 0; i < 4; i++ {
-					blk := c*4 + i
-					nC := s.deriveChromaNC(mbIdx, blk)
-					ac, tc, err := decodeResidualBlock(s.br, nC, 15)
-					if err != nil {
-						return err
-					}
-					copy(mb.chromaAC[c][i][:], ac)
-					mb.nzChroma[blk] = tc
-				}
-			}
-		}
+		d.pps[p.ID] = p
+	case nalAUD, nalEndSeq, nalEndStream:
+		d.EndOfPicture()
+	case nalIDR, nalSlice:
+		return d.decodeSlice(nal)
+	case nalDPA, nalDPB, nalDPC:
+		return ErrUnsupported
 	}
 	return nil
 }
 
-// decodeIntra4x4PredMode reads prev_intra4x4_pred_mode_flag / rem and derives
-// the mode (spec 7.4.5).
-func (s *picState) decodeIntra4x4PredMode(mbIdx, blkIdx int) int {
-	prev := s.br.u1()
-	var rem int
-	if !prev {
-		rem = int(s.br.u(3))
+// DecodeNALs decodes a sequence of NAL units (e.g. one MP4 sample) and ends
+// the picture afterwards.
+func (d *Decoder) DecodeNALs(nals [][]byte) error {
+	var first error
+	for _, n := range nals {
+		if err := d.DecodeNAL(n); err != nil && first == nil {
+			first = err
+		}
 	}
-	predicted := s.derivePredIntra4x4PredMode(mbIdx, blkIdx)
-	if prev {
-		return predicted
-	}
-	if rem < predicted {
-		return rem
-	}
-	return rem + 1
+	d.EndOfPicture()
+	return first
 }
 
-func (s *picState) derivePredIntra4x4PredMode(mbIdx, blkIdx int) int {
-	modeA, modeB := -1, -1
-	if li := lumaLeftNeighbor[blkIdx]; li >= 0 {
-		modeA = s.mbs[mbIdx].intra4x4PredMode[li]
-	} else if a := s.mbAvailA(mbIdx); a != nil {
-		switch {
-		case a.mbType == 0 && a.transform8x8:
-			modeA = a.intra8x8PredMode[lumaLeftFromMBA8x8[blkIdx]]
-		case a.mbType == 0:
-			if li := lumaLeftFromMBA[blkIdx]; li >= 0 {
-				modeA = a.intra4x4PredMode[li]
+var errCorruptPanic = errf("h264: corrupt stream (internal decoder fault recovered)")
+
+// EndOfPicture finishes the picture being decoded (if any). Callers that
+// know access-unit boundaries call it after the last NAL of each access
+// unit so the picture becomes available without waiting for the next one.
+func (d *Decoder) EndOfPicture() {
+	defer func() {
+		if recover() != nil {
+			d.cur, d.curHdr = nil, nil
+		}
+	}()
+	d.finishPicture()
+}
+
+// Flush finishes the current picture and releases every picture still
+// waiting for output (end of stream or before a seek).
+func (d *Decoder) Flush() {
+	d.EndOfPicture()
+	d.bumpAll()
+	d.collect(true)
+}
+
+// collect copies bumped pictures out, in order, once their deblocking is
+// done. With block it waits for all of them.
+func (d *Decoder) collect(block bool) {
+	for len(d.outPics) > 0 {
+		p := d.outPics[0]
+		if !block && !p.prog.finished() {
+			return
+		}
+		p.prog.wait()
+		d.out = append(d.out, p.frame())
+		p.copyPending = false
+		d.outPics[0] = nil
+		d.outPics = d.outPics[1:]
+		d.recycle(p)
+	}
+}
+
+// Reset drops all decoder state except parameter sets (used after a seek;
+// decoding must restart at an IDR or recovery point).
+func (d *Decoder) Reset() {
+	d.cur, d.curHdr = nil, nil
+	d.dpb = d.dpb[:0]
+	d.out = d.out[:0]
+	d.outPics = nil
+	d.haveRef = false
+	d.maxLongTermIdx = -1
+	d.prevPOCMsb, d.prevPOCLsb, d.prevFrameNum, d.prevFrameNumOffset, d.prevRefFrameNum = 0, 0, 0, 0, 0
+}
+
+// Next pops the next picture in display order, or nil. A picture whose
+// deblocking is still running (it overlaps decoding of the next one) is
+// returned by a later call; Flush waits for all of them.
+func (d *Decoder) Next() *Frame {
+	d.collect(false)
+	if len(d.out) == 0 {
+		return nil
+	}
+	f := d.out[0]
+	copy(d.out, d.out[1:])
+	d.out[len(d.out)-1] = nil
+	d.out = d.out[:len(d.out)-1]
+	return f
+}
+
+// DecodeAnnexB decodes a whole Annex-B stream and returns all pictures in
+// display order.
+func DecodeAnnexB(data []byte) ([]*Frame, error) {
+	d := New()
+	var frames []*Frame
+	var first error
+	for _, nal := range SplitAnnexB(data) {
+		if err := d.DecodeNAL(nal); err != nil && first == nil {
+			first = err
+		}
+		for f := d.Next(); f != nil; f = d.Next() {
+			frames = append(frames, f)
+		}
+	}
+	d.Flush()
+	for f := d.Next(); f != nil; f = d.Next() {
+		frames = append(frames, f)
+	}
+	return frames, first
+}
+
+func (d *Decoder) decodeSlice(nal []byte) error {
+	d.rbsp = unescapeRBSP(d.rbsp, nal[1:])
+	sc := &d.sc
+	sc.br.reset(d.rbsp)
+	h, err := parseSliceHeader(&sc.br, nal[0], d.sps[:], d.pps[:])
+	if err != nil {
+		return err
+	}
+	if h.redundantPicCnt > 0 {
+		return nil
+	}
+	if d.cur != nil && d.isNewPicture(h) {
+		d.finishPicture()
+	}
+	if d.cur == nil {
+		if !h.idr && !d.haveRef && !h.isI() {
+			// No reference yet (stream started mid-GOP): skip until an
+			// intra picture arrives.
+			d.droppedSlice++
+			return nil
+		}
+		d.startPicture(h)
+	}
+	lists, err := d.buildRefLists(h, d.cur.poc)
+	if err != nil {
+		return err
+	}
+	return sc.decode(h, lists)
+}
+
+// isNewPicture detects the first slice of a new primary picture
+// (spec 7.4.1.2.4).
+func (d *Decoder) isNewPicture(h *sliceHeader) bool {
+	p := d.curHdr
+	if h.frameNum != p.frameNum || h.ppsID != p.ppsID || (h.nalRefIDC == 0) != (p.nalRefIDC == 0) ||
+		h.idr != p.idr || (h.idr && h.idrPicID != p.idrPicID) {
+		return true
+	}
+	switch h.sps.PicOrderCntType {
+	case 0:
+		if h.pocLsb != p.pocLsb || h.deltaPOCBottom != p.deltaPOCBottom {
+			return true
+		}
+	case 1:
+		if h.deltaPOC != p.deltaPOC {
+			return true
+		}
+	}
+	// Same header fields but the slice restarts at an already-decoded
+	// macroblock: a new picture with identical parameters.
+	return d.pc.mbs[h.firstMB].slice >= 0
+}
+
+func (d *Decoder) startPicture(h *sliceHeader) {
+	sps := h.sps
+	if d.activeSPS == nil || sps.PicWidthInMbs != d.activeSPS.PicWidthInMbs ||
+		sps.FrameHeightInMbs() != d.activeSPS.FrameHeightInMbs() {
+		d.bumpAll()
+		d.dpb = d.dpb[:0]
+		d.pool = d.pool[:0]
+		d.haveRef = false
+	}
+	d.activeSPS = sps
+	maxFrameNum := 1 << uint(sps.Log2MaxFrameNum)
+	if !h.idr && d.haveRef && h.frameNum != d.prevRefFrameNum && h.frameNum != (d.prevRefFrameNum+1)%maxFrameNum {
+		d.fillFrameNumGap(h)
+	}
+	p := d.newPicture(sps)
+	p.frameNum = h.frameNum
+	p.idr = h.idr
+	p.tag = d.tag
+	d.cur, d.curHdr = p, h
+	p.poc = d.computePOC(h)
+	// Switch to the other context buffer, waiting for the deblocking that
+	// still reads it (two pictures back) if needed.
+	d.pcIdx ^= 1
+	if o := d.pcOwner[d.pcIdx]; o != nil {
+		o.prog.wait()
+		d.pcOwner[d.pcIdx] = nil
+	}
+	d.pc = &d.pcs[d.pcIdx]
+	d.pc.reset(sps, h.pps)
+}
+
+// fillFrameNumGap inserts "non-existing" reference frames for missing
+// frame_num values (spec 8.2.5.2). Their samples copy the most recent
+// picture, which is also the best concealment for lost frames.
+func (d *Decoder) fillFrameNumGap(h *sliceHeader) {
+	sps := h.sps
+	maxFrameNum := 1 << uint(sps.Log2MaxFrameNum)
+	gap := (h.frameNum - d.prevRefFrameNum - 1 + maxFrameNum) % maxFrameNum
+	start := (d.prevRefFrameNum + 1) % maxFrameNum
+	if keep := max(sps.MaxNumRefFrames, 1); gap > keep {
+		start = (h.frameNum - keep + maxFrameNum) % maxFrameNum
+		gap = keep
+	}
+	src := d.fallbackRef()
+	for i := 0; i < gap; i++ {
+		fn := (start + i) % maxFrameNum
+		p := d.newPicture(sps)
+		if src != nil {
+			src.prog.wait()
+			copy(p.y, src.y)
+			copy(p.cb, src.cb)
+			copy(p.cr, src.cr)
+			p.poc = src.poc
+		}
+		for j := range p.mbType {
+			p.mbType[j] = mtIntra16x16
+		}
+		for l := 0; l < 2; l++ {
+			clear(p.mv[l])
+			for j := range p.ref[l] {
+				p.ref[l][j] = -1
+				p.refID[l][j] = -1
 			}
-		default:
-			modeA = 2
 		}
-	}
-	if ti := lumaTopNeighbor[blkIdx]; ti >= 0 {
-		modeB = s.mbs[mbIdx].intra4x4PredMode[ti]
-	} else if b := s.mbAvailB(mbIdx); b != nil {
-		switch {
-		case b.mbType == 0 && b.transform8x8:
-			modeB = b.intra8x8PredMode[lumaTopFromMBB8x8[blkIdx]]
-		case b.mbType == 0:
-			if ti := lumaTopFromMBB[blkIdx]; ti >= 0 {
-				modeB = b.intra4x4PredMode[ti]
-			}
-		default:
-			modeB = 2
+		p.frameNum = fn
+		p.nonExisting = true
+		d.updateFrameNumWrap(fn, sps)
+		d.slidingWindow(sps)
+		p.refState = refShort
+		d.dpb = append(d.dpb, p)
+		if d.prevFrameNum > fn {
+			d.prevFrameNumOffset += maxFrameNum
 		}
+		d.prevFrameNum = fn
+		d.prevRefFrameNum = fn
 	}
-	if modeA < 0 || modeB < 0 {
-		return 2 // a neighbour is unavailable
-	}
-	if modeA < modeB {
-		return modeA
-	}
-	return modeB
 }
 
-// decodeIntra8x8PredMode reads prev_intra8x8_pred_mode_flag / rem and derives
-// the mode (spec 7.4.5).
-func (s *picState) decodeIntra8x8PredMode(mbIdx, blkIdx int) int {
-	prev := s.br.u1()
-	var rem int
-	if !prev {
-		rem = int(s.br.u(3))
+// finishPicture deblocks the current picture, performs reference marking
+// and queues it for output.
+func (d *Decoder) finishPicture() {
+	cur, h := d.cur, d.curHdr
+	if cur == nil {
+		return
 	}
-	predicted := s.derivePredIntra8x8PredMode(mbIdx, blkIdx)
-	if prev {
-		return predicted
+	d.pc.conceal(cur, d)
+	switch {
+	case debugNoDeblock:
+		cur.prog.complete(cur.mbH)
+	case debugPicture != nil || d.syncDeblock:
+		d.pc.deblock(cur)
+		cur.prog.complete(cur.mbH)
+	default:
+		d.pc.deblockAsync(cur)
+		d.pcOwner[d.pcIdx] = cur
 	}
-	if rem < predicted {
-		return rem
+	if debugPicture != nil {
+		debugPicture(cur, d.pc)
 	}
-	return rem + 1
+	d.totalMBs += len(d.pc.mbs)
+
+	if h.nalRefIDC != 0 {
+		d.markReference(cur, h)
+		d.haveRef = true
+	} else {
+		cur.refState = refUnused
+	}
+	if cur.mmco5 {
+		temp := cur.poc
+		cur.poc = 0
+		d.curTopPOC -= temp
+		d.prevPOCMsb, d.prevPOCLsb = 0, d.curTopPOC
+		d.prevFrameNum, d.prevFrameNumOffset, d.prevRefFrameNum = 0, 0, 0
+	} else {
+		if h.nalRefIDC != 0 {
+			d.prevPOCMsb, d.prevPOCLsb = d.curPOCMsb, h.pocLsb
+			d.prevRefFrameNum = h.frameNum
+		}
+		d.prevFrameNum = h.frameNum
+		d.prevFrameNumOffset = d.curFrameNumOffset
+	}
+
+	if h.idr || cur.mmco5 {
+		d.bumpAll()
+	}
+	cur.needOutput = true
+	d.dpb = append(d.dpb, cur)
+	d.cur, d.curHdr = nil, nil
+	reorder := d.reorderDepth(h.sps)
+	for d.waiting() > reorder {
+		d.bump()
+	}
+	d.pruneDPB()
 }
 
-func (s *picState) derivePredIntra8x8PredMode(mbIdx, blkIdx int) int {
-	x, y := blkIdx%2, blkIdx/2
-	modeA, modeB := -1, -1
-	if x > 0 {
-		modeA = s.mbs[mbIdx].intra8x8PredMode[blkIdx-1]
-	} else if a := s.mbAvailA(mbIdx); a != nil {
-		switch {
-		case a.mbType == 0 && a.transform8x8:
-			modeA = a.intra8x8PredMode[y*2+1]
-		case a.mbType == 0:
-			modeA = a.intra4x4PredMode[zScanToRaster[2*y*4+3]]
-		default:
-			modeA = 2
+func (d *Decoder) waiting() int {
+	n := 0
+	for _, p := range d.dpb {
+		if p.needOutput {
+			n++
 		}
 	}
-	if y > 0 {
-		modeB = s.mbs[mbIdx].intra8x8PredMode[blkIdx-2]
-	} else if b := s.mbAvailB(mbIdx); b != nil {
-		switch {
-		case b.mbType == 0 && b.transform8x8:
-			modeB = b.intra8x8PredMode[2+x]
-		case b.mbType == 0:
-			modeB = b.intra4x4PredMode[zScanToRaster[3*4+2*x]]
-		default:
-			modeB = 2
-		}
-	}
-	if modeA < 0 || modeB < 0 {
-		return 2
-	}
-	if modeA < modeB {
-		return modeA
-	}
-	return modeB
+	return n
 }
 
-func (s *picState) decodeIPCM(f *Frame, mbIdx int) error {
-	s.br.align()
-	if s.br.err() != nil {
-		return s.br.err()
-	}
-	mbX := (mbIdx % s.mbWidth) * 16
-	mbY := (mbIdx / s.mbWidth) * 16
-	y := s.br.readBytes(256)
-	if y == nil {
-		return s.br.err()
-	}
-	for r := 0; r < 16; r++ {
-		for c := 0; c < 16; c++ {
-			f.Y.Set(mbX+c, mbY+r, y[r*16+c])
+// bump outputs the waiting picture with the smallest POC.
+func (d *Decoder) bump() bool {
+	var best *picture
+	for _, p := range d.dpb {
+		if p.needOutput && (best == nil || p.poc < best.poc) {
+			best = p
 		}
 	}
-	for comp := 0; comp < 2; comp++ {
-		buf := s.br.readBytes(64)
-		if buf == nil {
-			return s.br.err()
-		}
-		plane := f.Cb
-		if comp == 1 {
-			plane = f.Cr
-		}
-		for r := 0; r < 8; r++ {
-			for c := 0; c < 8; c++ {
-				plane.Set(mbX/2+c, mbY/2+r, buf[r*8+c])
-			}
-		}
+	if best == nil {
+		return false
 	}
-	return nil
+	best.needOutput = false
+	best.copyPending = true
+	d.outPics = append(d.outPics, best)
+	return true
 }
+
+func (d *Decoder) bumpAll() {
+	for d.bump() {
+	}
+	d.pruneDPB()
+}
+
+// maxDpbMbs is Table A-1's MaxDpbMbs by level_idc.
+func maxDpbFrames(sps *SPS) int {
+	var mbs int
+	switch sps.LevelIDC {
+	case 9, 10:
+		mbs = 396
+	case 11:
+		mbs = 900
+		if sps.ConstraintFlags&0x10 != 0 && sps.ProfileIDC != 100 {
+			mbs = 396
+		}
+	case 12, 13, 20:
+		mbs = 2376
+	case 21:
+		mbs = 4752
+	case 22, 30:
+		mbs = 8100
+	case 31:
+		mbs = 18000
+	case 32:
+		mbs = 20480
+	case 40, 41:
+		mbs = 32768
+	case 42:
+		mbs = 34816
+	case 50:
+		mbs = 110400
+	case 51, 52:
+		mbs = 184320
+	default:
+		mbs = 696320
+	}
+	n := mbs / (sps.PicWidthInMbs * sps.FrameHeightInMbs())
+	return clip3(max(1, sps.MaxNumRefFrames), 16, n)
+}
+
+func (d *Decoder) reorderDepth(sps *SPS) int {
+	if sps.BitstreamRestriction {
+		return sps.MaxNumReorderFrames
+	}
+	if sps.ProfileIDC == 66 || (sps.ProfileIDC == 100 && sps.ConstraintFlags&0x0c == 0x0c) {
+		// Constrained Baseline / constrained High: no B-pictures.
+		if sps.ConstraintFlags&0x40 != 0 || sps.ProfileIDC != 66 {
+			return 0
+		}
+	}
+	return maxDpbFrames(sps)
+}
+
+// debugPicture is a test hook called before deblocking each picture.
+var debugPicture func(p *picture, pc *picCtx)
+
+// debugNoDeblock disables the loop filter (test hook).
+var debugNoDeblock bool

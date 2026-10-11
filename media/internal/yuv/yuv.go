@@ -125,3 +125,33 @@ void main() {
     fragColor = vec4(r, g, b, 1.0);
 }
 `
+
+// I420ToRGBAColorRange converts into a tightly packed RGBA buffer (stride
+// width*4) with an explicit matrix and range (full = JPEG/PC range).
+func I420ToRGBAColorRange(dst []byte, y, cb, cr []byte, width, height, strideY, strideC int, cs Colorspace, full bool) {
+	if !full {
+		img := &image.RGBA{Pix: dst, Stride: width * 4, Rect: image.Rect(0, 0, width, height)}
+		I420ToRGBAColor(img, y, cb, cr, width, height, strideY, strideC, cs)
+		return
+	}
+	// Full-range coefficients, scaled by 256.
+	rv, gu, gv, bu := 359, -88, -183, 454
+	if cs == BT709 {
+		rv, gu, gv, bu = 403, -48, -120, 475
+	}
+	for row := 0; row < height; row++ {
+		yRow := row * strideY
+		cRow := (row / 2) * strideC
+		d := dst[row*width*4:]
+		for col := 0; col < width; col++ {
+			luma := int(y[yRow+col]) << 8
+			uu := int(cb[cRow+col/2]) - 128
+			vv := int(cr[cRow+col/2]) - 128
+			o := col * 4
+			d[o+0] = clipByte((luma + rv*vv + 128) >> 8)
+			d[o+1] = clipByte((luma + gu*uu + gv*vv + 128) >> 8)
+			d[o+2] = clipByte((luma + bu*uu + 128) >> 8)
+			d[o+3] = 255
+		}
+	}
+}

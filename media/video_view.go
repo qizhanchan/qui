@@ -120,6 +120,14 @@ type VideoView struct {
 	currentFrame VideoFrame
 	frameSink    func(VideoFrame)
 
+	// retained is set once Draw has registered a retained GL draw (see
+	// qui.RetainedGLCanvas). From then on a new frame costs a GL-only
+	// redraw and the picture survives repaints of the rest of the window
+	// without the view repainting itself. glDst is the logical
+	// destination rect that draw uses. UI thread.
+	retained bool
+	glDst    qui.Rect
+
 	scrub ScrubDecoder // lazy
 
 	onReady      func()
@@ -820,13 +828,37 @@ func (v *VideoView) Tick(_ time.Time) qui.Rect {
 		timeCB(clockNow)
 	}
 
-	// Keep ourselves dirty whenever there's a frame on screen — the GL
-	// framebuffer is cleared every End(), so the QueueGLDraw closure
-	// must re-run every frame to preserve the picture. (Container.Draw
-	// skips children whose bounds don't intersect the dirty region,
-	// which would prevent us from even queuing the closure.) Cost is
-	// one texture blit per frame while paused; the alternative is the
-	// picture vanishing the moment we stop ticking.
+	if v.retained {
+		// The retained draw keeps the picture on screen; a new frame is a
+		// GL-only redraw. Nothing is re-rasterized and the window idles
+		// between frames: ask for a Tick when the parked frame comes due
+		// (or soon, while the decoder has none ready yet).
+		w := v.Window()
+		if promoted && w != nil {
+			w.RequestGLRedraw()
+		}
+		if state == StatePlaying && w != nil {
+			wait := 5 * time.Millisecond
+			v.pumpMu.Lock()
+			if pf := v.pumpFrame; pf != nil {
+				rate := v.clock.Rate()
+				if rate <= 0 {
+					rate = 1
+				}
+				wait = max(time.Duration(float32(pf.PTS()-clockNow)/rate), time.Millisecond)
+			}
+			v.pumpMu.Unlock()
+			w.RequestTickAt(time.Now().Add(min(wait, 100*time.Millisecond)))
+		}
+		return qui.Rect{}
+	}
+
+	// Without a retained draw (renderers that lack it) the GL framebuffer
+	// is cleared every frame, so the QueueGLDraw closure must re-run every
+	// frame to preserve the picture: keep the view dirty whenever there is
+	// a frame on screen. (Container.Draw skips children whose bounds don't
+	// intersect the dirty region, which would prevent us from even
+	// queuing the closure.)
 	v.mu.Lock()
 	hasFrame := v.currentFrame != nil
 	v.mu.Unlock()
@@ -941,65 +973,86 @@ func (v *VideoView) Draw(canvas qui.Canvas) {
 	// the-frame UI works the same way.
 	canvas.FillRect(bounds, qui.Color{R: 0, G: 0, B: 0, A: 0})
 
-	gpu.QueueGLDraw(func(state qui.GLState) {
-		// HiDPI: dstRect is logical pixels; the GL framebuffer is
-		// physical. Scale by the ratio so the texture lands at the
-		// right place on Retina displays.
-		scaleX, scaleY := float32(1), float32(1)
-		if state.LogicalSize.W > 0 {
-			scaleX = state.FramebufferSize.W / state.LogicalSize.W
+	if rk, ok := canvas.(qui.RetainedGLCanvas); ok {
+		v.glDst = dstRect
+		rk.QueueRetainedGLDraw(v, canvas.CurrentMatrix().TransformRect(bounds), v.glDraw)
+		v.retained = true
+		return
+	}
+	gpu.QueueGLDraw(func(state qui.GLState) { drawVideoFrame(state, frame, dstRect) })
+}
+
+// glDraw is the retained GL draw: it shows whatever frame is current when
+// the frame is produced, so a RequestGLRedraw picks up a new one.
+func (v *VideoView) glDraw(state qui.GLState) {
+	v.mu.Lock()
+	frame, dst := v.currentFrame, v.glDst
+	v.mu.Unlock()
+	if frame != nil {
+		drawVideoFrame(state, frame, dst)
+	}
+}
+
+// drawVideoFrame composites frame into dstRect (logical pixels) of the
+// current framebuffer.
+func drawVideoFrame(state qui.GLState, frame VideoFrame, dstRect qui.Rect) {
+	// HiDPI: dstRect is logical pixels; the GL framebuffer is
+	// physical. Scale by the ratio so the texture lands at the
+	// right place on Retina displays.
+	scaleX, scaleY := float32(1), float32(1)
+	if state.LogicalSize.W > 0 {
+		scaleX = state.FramebufferSize.W / state.LogicalSize.W
+	}
+	if state.LogicalSize.H > 0 {
+		scaleY = state.FramebufferSize.H / state.LogicalSize.H
+	}
+	physDst := qui.Rect{
+		X: dstRect.X * scaleX,
+		Y: dstRect.Y * scaleY,
+		W: dstRect.W * scaleX,
+		H: dstRect.H * scaleY,
+	}
+	// Darwin frames know how to draw themselves — they hold a
+	// GL_TEXTURE_RECTANGLE which GLRenderer.DrawTexture's
+	// sampler2D shader can't sample. The rect-aware shader
+	// lives in gl_rect_darwin.go.
+	if fbd, ok := frame.(framebufferDrawer); ok {
+		if vvSample("drawfb", 30) {
+			vvDebugf("DrawIntoFramebuffer physDst=%v fbSize=%v logSize=%v texSize=%dx%d",
+				physDst, state.FramebufferSize, state.LogicalSize,
+				frame.Width(), frame.Height())
 		}
-		if state.LogicalSize.H > 0 {
-			scaleY = state.FramebufferSize.H / state.LogicalSize.H
+		if !fbd.DrawIntoFramebuffer(state, physDst, true) {
+			vvDebugf("QueueGLDraw: DrawIntoFramebuffer FAILED")
 		}
-		physDst := qui.Rect{
-			X: dstRect.X * scaleX,
-			Y: dstRect.Y * scaleY,
-			W: dstRect.W * scaleX,
-			H: dstRect.H * scaleY,
+		if flushTextureCache != nil {
+			flushTextureCache()
 		}
-		// Darwin frames know how to draw themselves — they hold a
-		// GL_TEXTURE_RECTANGLE which GLRenderer.DrawTexture's
-		// sampler2D shader can't sample. The rect-aware shader
-		// lives in gl_rect_darwin.go.
-		if fbd, ok := frame.(framebufferDrawer); ok {
-			if vvSample("drawfb", 30) {
-				vvDebugf("DrawIntoFramebuffer physDst=%v fbSize=%v logSize=%v texSize=%dx%d",
-					physDst, state.FramebufferSize, state.LogicalSize,
-					frame.Width(), frame.Height())
-			}
-			if !fbd.DrawIntoFramebuffer(state, physDst, true) {
-				vvDebugf("QueueGLDraw: DrawIntoFramebuffer FAILED")
-			}
-			if flushTextureCache != nil {
-				flushTextureCache()
-			}
-			return
-		}
-		// Fallback: 2D-texture path via the renderer's stock shader.
-		// Not hit on darwin; kept for hypothetical future backends
-		// that bind eagerly into GL_TEXTURE_2D.
-		texName := frame.GLTexture()
-		if texName == 0 {
-			vvDebugf("QueueGLDraw: texName=0 and no framebufferDrawer, skipping")
-			return
-		}
-		glr := qui.ActiveGLRenderer()
-		if glr == nil {
-			vvDebugf("QueueGLDraw: ActiveGLRenderer is nil")
-			return
-		}
-		texW := int32(frame.Width())
-		texH := int32(frame.Height())
-		glr.DrawTexture(
-			texName,
-			qui.Rect{W: float32(texW), H: float32(texH)},
-			physDst,
-			texW,
-			texH,
-			qui.TextureOpts{FlipY: true, Tint: qui.Color{R: 1, G: 1, B: 1, A: 1}, Opacity: 1},
-		)
-	})
+		return
+	}
+	// Fallback: 2D-texture path via the renderer's stock shader.
+	// Not hit on darwin; kept for hypothetical future backends
+	// that bind eagerly into GL_TEXTURE_2D.
+	texName := frame.GLTexture()
+	if texName == 0 {
+		vvDebugf("QueueGLDraw: texName=0 and no framebufferDrawer, skipping")
+		return
+	}
+	glr := qui.ActiveGLRenderer()
+	if glr == nil {
+		vvDebugf("QueueGLDraw: ActiveGLRenderer is nil")
+		return
+	}
+	texW := int32(frame.Width())
+	texH := int32(frame.Height())
+	glr.DrawTexture(
+		texName,
+		qui.Rect{W: float32(texW), H: float32(texH)},
+		physDst,
+		texW,
+		texH,
+		qui.TextureOpts{FlipY: true, Tint: qui.Color{R: 1, G: 1, B: 1, A: 1}, Opacity: 1},
+	)
 }
 
 // InvalidateRectBounds is a thin wrapper around the parent window's

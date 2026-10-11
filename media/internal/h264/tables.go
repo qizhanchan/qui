@@ -1,82 +1,75 @@
 package h264
 
-// Scan-order mapping tables and small derived-value helpers.
+// zigzag4x4 maps a frame zig-zag scan position to its raster position.
+var zigzag4x4 = [16]uint8{0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15}
 
-// zigzag4x4 maps scan position to raster position for a 4x4 block (Table 8-13).
-var zigzag4x4 = [16]int{
-	0, 1, 4, 8, 5, 2, 3, 6,
-	9, 12, 13, 10, 7, 11, 14, 15,
+// zigzag8x8 is the 8x8 frame zig-zag scan.
+var zigzag8x8 = [64]uint8{
+	0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5,
+	12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28,
+	35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51,
+	58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
 }
 
-// zigzag4x4AC is zigzag4x4 without the DC position (AC-only blocks).
-var zigzag4x4AC = [15]int{
-	1, 4, 8, 5, 2, 3, 6,
-	9, 12, 13, 10, 7, 11, 14, 15,
-}
+// blkX / blkY give the position, in 4x4-block units, of luma 4x4 block
+// blkIdx (z-scan order, spec 6.4.3) inside its macroblock.
+var (
+	blkX = [16]uint8{0, 1, 0, 1, 2, 3, 2, 3, 0, 1, 0, 1, 2, 3, 2, 3}
+	blkY = [16]uint8{0, 0, 1, 1, 0, 0, 1, 1, 2, 2, 3, 3, 2, 2, 3, 3}
+)
 
-// inverseRasterX4x4 / inverseRasterY4x4 map a 4x4 block index (0..15, in the
-// hierarchical 8x8 scan) to its (x, y) position inside the macroblock.
-var inverseRasterX4x4 = [16]int{
-	0, 4, 0, 4, 8, 12, 8, 12,
-	0, 4, 0, 4, 8, 12, 8, 12,
-}
+// rasterToBlk maps a raster 4x4 position (y*4+x) to its z-scan index.
+var rasterToBlk = [16]uint8{0, 1, 4, 5, 2, 3, 6, 7, 8, 9, 12, 13, 10, 11, 14, 15}
 
-var inverseRasterY4x4 = [16]int{
-	0, 0, 4, 4, 0, 0, 4, 4,
-	8, 8, 12, 12, 8, 8, 12, 12,
-}
-
-// zScanToRaster maps the z-scan 4x4 block index to raster (row*4+col).
-var zScanToRaster = [16]int{0, 1, 4, 5, 2, 3, 6, 7, 8, 9, 12, 13, 10, 11, 14, 15}
-
-// topRightNotAvail4x4 marks 4x4 blocks whose upper-right samples lie in a
-// later-decoded block inside the same macroblock.
-var topRightNotAvail4x4 = [16]bool{
-	false, false, false, true,
-	false, false, false, false,
-	false, false, false, true,
-	false, false, false, false,
-}
-
-// I16x16 mb_type helpers (Table 7-11).
-// mb_type = 1 + predMode + 4*cbpChroma + 12*(cbpLuma != 0)
-func i16x16PredMode(mbType int) int  { return (mbType - 1) % 4 }
-func i16x16CBPChroma(mbType int) int { return ((mbType - 1) / 4) % 3 }
-func i16x16CBPLuma(mbType int) int {
-	if (mbType-1)/12 > 0 {
-		return 15
-	}
-	return 0
-}
-
-// chromaQP maps luma QP to chroma QP (Table 8-15).
-func chromaQP(qpY int) int {
-	if qpY < 0 {
-		qpY = 0
-	}
-	if qpY < 30 {
-		return qpY
-	}
-	if qpY > 51 {
-		return 51
-	}
-	table := [22]int{29, 30, 31, 32, 32, 33, 34, 34, 35, 35, 36, 36,
-		37, 37, 37, 38, 38, 38, 39, 39, 39, 39}
-	return table[qpY-30]
-}
-
-// golombToIntra4x4CBP maps the ue(v) code used to signal coded_block_pattern
-// in an I_NxN macroblock to the actual CBP (Table 9-4, intra column).
-var golombToIntra4x4CBP = [48]uint8{
+// golombToIntraCBP / golombToInterCBP map the me(v) codeNum of
+// coded_block_pattern to the CBP for ChromaArrayType 1/2 (Table 9-4).
+var golombToIntraCBP = [48]uint8{
 	47, 31, 15, 0, 23, 27, 29, 30, 7, 11, 13, 14, 39, 43, 45, 46,
 	16, 3, 5, 10, 12, 19, 21, 26, 28, 35, 37, 42, 44, 1, 2, 4,
 	8, 17, 18, 20, 24, 6, 9, 22, 25, 32, 33, 34, 36, 40, 38, 41,
 }
 
-// golombToInterCBP maps the ue(v) code used to signal coded_block_pattern in
-// a non-I_NxN macroblock (inter) to the actual CBP (Table 9-4, inter column).
 var golombToInterCBP = [48]uint8{
 	0, 16, 1, 2, 4, 8, 32, 3, 5, 10, 12, 15, 47, 7, 11, 13,
 	14, 6, 9, 31, 35, 37, 42, 44, 33, 34, 36, 40, 39, 43, 45, 46,
 	17, 18, 20, 24, 19, 21, 26, 28, 23, 27, 29, 30, 22, 25, 38, 41,
+}
+
+// chromaQPTable maps qPI (0..51) to QPc (Table 8-15).
+var chromaQPTable = [52]uint8{
+	0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+	16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+	29, 30, 31, 32, 32, 33, 34, 34, 35, 35, 36, 36,
+	37, 37, 37, 38, 38, 38, 39, 39, 39, 39,
+}
+
+func chromaQP(qp, offset int) int {
+	return int(chromaQPTable[clip3(0, 51, qp+offset)])
+}
+
+func clip3(lo, hi, v int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func clipU8(v int32) uint8 {
+	if uint32(v) > 255 {
+		if v < 0 {
+			return 0
+		}
+		return 255
+	}
+	return uint8(v)
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }

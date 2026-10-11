@@ -1,174 +1,202 @@
 package h264
 
-// Motion compensation (spec 8.5.6). Motion vectors are in quarter-luma-sample
-// units; the fractional luma samples use the 6-tap Wiener filter and chroma
-// uses 1/8-sample bilinear interpolation. All source coordinates are clamped to
-// the reference picture edges.
+// Fractional-sample motion compensation (spec 8.4.2.2). Reference samples
+// outside the picture are replicated from the nearest edge sample by copying
+// the needed window into an emulation buffer first.
 
-func clampInt(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
-}
-
-// interpLuma returns one interpolated luma sample. (x,y) is the integer source
-// position and (fx,fy) are the fractional parts in quarter-sample units.
-func interpLuma(p *Plane, x, y, fx, fy int) byte {
-	s := func(dx, dy int) int {
-		return int(p.At(clampInt(x+dx, 0, p.W-1), clampInt(y+dy, 0, p.H-1)))
-	}
-	bh := func(dx, dy int) int { // half-pel horizontal between (x+dx) and (x+dx+1)
-		return clampInt((s(dx-2, dy)-5*s(dx-1, dy)+20*s(dx, dy)+20*s(dx+1, dy)-5*s(dx+2, dy)+s(dx+3, dy)+16)>>5, 0, 255)
-	}
-	bv := func(dx, dy int) int { // half-pel vertical between (y+dy) and (y+dy+1)
-		return clampInt((s(dx, dy-2)-5*s(dx, dy-1)+20*s(dx, dy)+20*s(dx, dy+1)-5*s(dx, dy+2)+s(dx, dy+3)+16)>>5, 0, 255)
-	}
-	bvRaw := func(dx, dy int) int { // vertical 6-tap, unclipped (16-bit intermediate)
-		return s(dx, dy-2) - 5*s(dx, dy-1) + 20*s(dx, dy) + 20*s(dx, dy+1) - 5*s(dx, dy+2) + s(dx, dy+3)
-	}
-	j := func(dx, dy int) int { // half-pel both directions: vertical then horizontal
-		return clampInt((bvRaw(dx-2, dy)-5*bvRaw(dx-1, dy)+20*bvRaw(dx, dy)+20*bvRaw(dx+1, dy)-5*bvRaw(dx+2, dy)+bvRaw(dx+3, dy)+512)>>10, 0, 255)
-	}
-
-	var v int
-	switch {
-	case fx == 0 && fy == 0:
-		v = s(0, 0)
-	case fx == 2 && fy == 0:
-		v = bh(0, 0)
-	case fx == 0 && fy == 2:
-		v = bv(0, 0)
-	case fx == 2 && fy == 2:
-		v = j(0, 0)
-	case fx == 1 && fy == 0:
-		v = (s(0, 0) + bh(0, 0) + 1) >> 1
-	case fx == 3 && fy == 0:
-		v = (bh(0, 0) + s(1, 0) + 1) >> 1
-	case fx == 0 && fy == 1:
-		v = (s(0, 0) + bv(0, 0) + 1) >> 1
-	case fx == 0 && fy == 3:
-		v = (bv(0, 0) + s(0, 1) + 1) >> 1
-	case fx == 2 && fy == 1:
-		v = (bh(0, 0) + j(0, 0) + 1) >> 1
-	case fx == 2 && fy == 3:
-		v = (bh(0, 1) + j(0, 0) + 1) >> 1
-	case fx == 1 && fy == 2:
-		v = (bv(0, 0) + j(0, 0) + 1) >> 1
-	case fx == 3 && fy == 2:
-		v = (j(0, 0) + bv(1, 0) + 1) >> 1
-	case fx == 1 && fy == 1:
-		v = (bh(0, 0) + bv(0, 0) + 1) >> 1
-	case fx == 3 && fy == 1:
-		v = (bh(0, 0) + bv(1, 0) + 1) >> 1
-	case fx == 1 && fy == 3:
-		v = (bh(0, 1) + bv(0, 0) + 1) >> 1
-	case fx == 3 && fy == 3:
-		v = (bh(0, 1) + bv(1, 0) + 1) >> 1
+func clip255(v int32) byte {
+	if uint32(v) > 255 {
+		if v < 0 {
+			return 0
+		}
+		return 255
 	}
 	return byte(v)
 }
 
-// weightBuf applies weighted-prediction scaling to n samples in place:
-//
-//	out = clip(((weight * in + (1<<(denom-1))) >> denom) + offset)
-//
-// When the weight is the default (1<<denom) and offset is 0 it is a no-op.
-func weightBuf(buf []byte, n, weight, offset, denom int) {
-	if weight == (1<<uint(denom)) && offset == 0 {
-		return
-	}
-	round := 0
-	if denom > 0 {
-		round = 1 << uint(denom-1)
-	}
-	for i := 0; i < n; i++ {
-		v := (weight*int(buf[i]) + round) >> uint(denom)
-		buf[i] = clipPixel(v + offset)
-	}
-}
-
-// predLuma writes the (w x h) luma prediction of a partition at (x0,y0) into a
-// byte buffer with the given stride (used for bi-prediction).
-func predLuma(dst []byte, dstStride int, ref *Plane, x0, y0, w, h, mvx, mvy int) {
-	ix, iy := mvx>>2, mvy>>2
-	fx, fy := mvx&3, mvy&3
-	bx, by := x0+ix, y0+iy
-	for j := 0; j < h; j++ {
-		for i := 0; i < w; i++ {
-			var v byte
-			if fx == 0 && fy == 0 {
-				v = ref.At(clampInt(bx+i, 0, ref.W-1), clampInt(by+j, 0, ref.H-1))
-			} else {
-				v = interpLuma(ref, bx+i, by+j, fx, fy)
-			}
-			dst[j*dstStride+i] = v
+// emulateEdge copies the bw x bh window at (x, y) of a pw x ph plane into
+// buf (stride bw), clamping coordinates to the plane.
+func emulateEdge(buf []byte, src []byte, ss, pw, ph, x, y, bw, bh int) {
+	for j := 0; j < bh; j++ {
+		sy := clip3(0, ph-1, y+j)
+		row := src[sy*ss:]
+		d := buf[j*bw : j*bw+bw]
+		for i := range d {
+			d[i] = row[clip3(0, pw-1, x+i)]
 		}
 	}
 }
 
-// predChroma writes the (w x h) chroma prediction into a byte buffer.
-func predChroma(dst []byte, dstStride int, ref *Plane, x0, y0, w, h, mvx, mvy int) {
-	ix, iy := mvx>>3, mvy>>3
-	fx, fy := mvx&7, mvy&7
-	bx, by := x0+ix, y0+iy
-	at := func(x, y int) int {
-		return int(ref.At(clampInt(x, 0, ref.W-1), clampInt(y, 0, ref.H-1)))
+// mcLuma predicts a w x h luma block whose top-left integer position in the
+// reference is (x, y) with quarter-sample fraction (fx, fy).
+func (s *sliceCtx) mcLuma(dst []byte, ds int, src []byte, ss, pw, ph, x, y, fx, fy, w, h int) {
+	o := y*ss + x
+	if x < 2 || y < 2 || x+w+3 > pw || y+h+3 > ph {
+		bw := w + 5
+		emulateEdge(s.emu[:], src, ss, pw, ph, x-2, y-2, bw, h+5)
+		src, ss, o = s.emu[:], bw, 2*bw+2
 	}
+	switch {
+	case fx == 0 && fy == 0:
+		for j := 0; j < h; j++ {
+			copy(dst[j*ds:j*ds+w], src[o+j*ss:o+j*ss+w])
+		}
+	case fy == 0:
+		lumaH(dst, ds, src, o, ss, w, h)
+		if fx != 2 {
+			avgInto(dst, ds, src, o+(fx>>1), ss, w, h)
+		}
+	case fx == 0:
+		lumaV(dst, ds, src, o, ss, w, h)
+		if fy != 2 {
+			avgInto(dst, ds, src, o+(fy>>1)*ss, ss, w, h)
+		}
+	case fx == 2 && fy == 2:
+		s.lumaHV(dst, ds, src, o, ss, w, h)
+	case fx == 2:
+		s.lumaHV(dst, ds, src, o, ss, w, h)
+		var t [256]byte
+		lumaH(t[:], 16, src, o+(fy>>1)*ss, ss, w, h)
+		avgInto(dst, ds, t[:], 0, 16, w, h)
+	case fy == 2:
+		s.lumaHV(dst, ds, src, o, ss, w, h)
+		var t [256]byte
+		lumaV(t[:], 16, src, o+(fx>>1), ss, w, h)
+		avgInto(dst, ds, t[:], 0, 16, w, h)
+	default:
+		lumaH(dst, ds, src, o+(fy>>1)*ss, ss, w, h)
+		var t [256]byte
+		lumaV(t[:], 16, src, o+(fx>>1), ss, w, h)
+		avgInto(dst, ds, t[:], 0, 16, w, h)
+	}
+}
+
+// lumaH, lumaV and lumaHV run the NEON kernels for 16- and 8-wide blocks
+// when every byte the kernel touches is inside the slices (the kernels load
+// whole vectors, so a block at a buffer's very end takes the Go path).
+
+func lumaH(dst []byte, ds int, src []byte, o, ss, w, h int) {
+	if haveNEON && (w == 16 || w == 8) {
+		start := o - 2
+		if start >= 0 && start+(h-1)*ss+2*w <= len(src) && (h-1)*ds+w <= len(dst) {
+			neonLumaH(&dst[0], ds, &src[start], ss, w, h)
+			return
+		}
+	}
+	lumaHGo(dst, ds, src, o, ss, w, h)
+}
+
+func lumaV(dst []byte, ds int, src []byte, o, ss, w, h int) {
+	if haveNEON && (w == 16 || w == 8) {
+		start := o - 2*ss
+		if start >= 0 && o+(h+2)*ss+w <= len(src) && (h-1)*ds+w <= len(dst) {
+			neonLumaV(&dst[0], ds, &src[start], ss, w, h)
+			return
+		}
+	}
+	lumaVGo(dst, ds, src, o, ss, w, h)
+}
+
+func (s *sliceCtx) lumaHV(dst []byte, ds int, src []byte, o, ss, w, h int) {
+	if haveNEON && (w == 16 || w == 8) && h <= 16 {
+		start := o - 2*ss - 2
+		if start >= 0 && o+(h+2)*ss-2+24 <= len(src) && (h-1)*ds+w <= len(dst) {
+			neonLumaHV(&dst[0], ds, &src[start], ss, w, h, &s.hvTmp[0])
+			return
+		}
+	}
+	s.lumaHVGo(dst, ds, src, o, ss, w, h)
+}
+
+// avgInto sets dst = (dst + src + 1) >> 1.
+func avgInto(dst []byte, ds int, src []byte, o, ss, w, h int) {
+	avg2(dst, ds, dst, ds, src[o:], ss, w, h)
+}
+
+func lumaHGo(dst []byte, ds int, src []byte, o, ss, w, h int) {
 	for j := 0; j < h; j++ {
-		for i := 0; i < w; i++ {
-			a := at(bx+i, by+j)
-			b := at(bx+i+1, by+j)
-			c := at(bx+i, by+j+1)
-			d := at(bx+i+1, by+j+1)
-			v := ((8-fx)*(8-fy)*a + fx*(8-fy)*b + (8-fx)*fy*c + fx*fy*d + 32) >> 6
-			dst[j*dstStride+i] = byte(v)
+		r := src[o+j*ss-2 : o+j*ss+w+3]
+		d := dst[j*ds : j*ds+w]
+		for i := range d {
+			v := int32(r[i]) - 5*int32(r[i+1]) + 20*int32(r[i+2]) + 20*int32(r[i+3]) - 5*int32(r[i+4]) + int32(r[i+5])
+			d[i] = clip255((v + 16) >> 5)
 		}
 	}
 }
 
-// mcLuma copies the (w x h) luma prediction for a partition at (x0,y0) in the
-// destination from ref, displaced by (mvx,mvy) quarter-samples.
-func mcLuma(dst, ref *Plane, x0, y0, w, h, mvx, mvy int) {
-	ix, iy := mvx>>2, mvy>>2
-	fx, fy := mvx&3, mvy&3
-	bx, by := x0+ix, y0+iy
+func lumaVGo(dst []byte, ds int, src []byte, o, ss, w, h int) {
+	for j := 0; j < h; j++ {
+		b := o + j*ss
+		r0 := src[b-2*ss : b-2*ss+w]
+		r1 := src[b-ss : b-ss+w]
+		r2 := src[b : b+w]
+		r3 := src[b+ss : b+ss+w]
+		r4 := src[b+2*ss : b+2*ss+w]
+		r5 := src[b+3*ss : b+3*ss+w]
+		d := dst[j*ds : j*ds+w]
+		for i := range d {
+			v := int32(r0[i]) - 5*int32(r1[i]) + 20*int32(r2[i]) + 20*int32(r3[i]) - 5*int32(r4[i]) + int32(r5[i])
+			d[i] = clip255((v + 16) >> 5)
+		}
+	}
+}
+
+// lumaHV computes the centre half-sample position j.
+func (s *sliceCtx) lumaHVGo(dst []byte, ds int, src []byte, o, ss, w, h int) {
+	tw := w + 5
+	t := s.mcTmp[:tw*h]
+	for j := 0; j < h; j++ {
+		b := o + j*ss - 2
+		r0 := src[b-2*ss : b-2*ss+tw]
+		r1 := src[b-ss : b-ss+tw]
+		r2 := src[b : b+tw]
+		r3 := src[b+ss : b+ss+tw]
+		r4 := src[b+2*ss : b+2*ss+tw]
+		r5 := src[b+3*ss : b+3*ss+tw]
+		row := t[j*tw : j*tw+tw]
+		for i := range row {
+			row[i] = int32(r0[i]) - 5*int32(r1[i]) + 20*int32(r2[i]) + 20*int32(r3[i]) - 5*int32(r4[i]) + int32(r5[i])
+		}
+	}
+	for j := 0; j < h; j++ {
+		r := t[j*tw : j*tw+tw]
+		d := dst[j*ds : j*ds+w]
+		for i := range d {
+			v := r[i] - 5*r[i+1] + 20*r[i+2] + 20*r[i+3] - 5*r[i+4] + r[i+5]
+			d[i] = clip255((v + 512) >> 10)
+		}
+	}
+}
+
+// mcChroma predicts a w x h chroma block at integer (x, y) with eighth-sample
+// fraction (fx, fy).
+func (s *sliceCtx) mcChroma(dst []byte, ds int, src []byte, ss, pw, ph, x, y, fx, fy, w, h int) {
+	o := y*ss + x
+	if x < 0 || y < 0 || x+w+1 > pw || y+h+1 > ph {
+		bw := w + 1
+		emulateEdge(s.emu[:], src, ss, pw, ph, x, y, bw, h+1)
+		src, ss, o = s.emu[:], bw, 0
+	}
 	if fx == 0 && fy == 0 {
 		for j := 0; j < h; j++ {
-			for i := 0; i < w; i++ {
-				dst.Set(x0+i, y0+j, ref.At(clampInt(bx+i, 0, ref.W-1), clampInt(by+j, 0, ref.H-1)))
-			}
+			copy(dst[j*ds:j*ds+w], src[o+j*ss:o+j*ss+w])
 		}
 		return
 	}
-	for j := 0; j < h; j++ {
-		for i := 0; i < w; i++ {
-			dst.Set(x0+i, y0+j, interpLuma(ref, bx+i, by+j, fx, fy))
-		}
-	}
-}
-
-// mcChroma copies the (w x h) chroma prediction using 1/8-sample bilinear
-// interpolation. The luma motion vector maps to chroma integer = mv>>3 and
-// eighth fraction = mv&7.
-func mcChroma(dst, ref *Plane, x0, y0, w, h, mvx, mvy int) {
-	ix, iy := mvx>>3, mvy>>3
-	fx, fy := mvx&7, mvy&7
-	bx, by := x0+ix, y0+iy
-	at := func(x, y int) int {
-		return int(ref.At(clampInt(x, 0, ref.W-1), clampInt(y, 0, ref.H-1)))
+	a := int32((8 - fx) * (8 - fy))
+	b := int32(fx * (8 - fy))
+	c := int32((8 - fx) * fy)
+	dd := int32(fx * fy)
+	if haveNEON && (w == 8 || w == 4) && o+h*ss+2*w <= len(src) && (h-1)*ds+w <= len(dst) {
+		neonChroma(&dst[0], ds, &src[o], ss, w, h, int(a), int(b), int(c), int(dd))
+		return
 	}
 	for j := 0; j < h; j++ {
-		for i := 0; i < w; i++ {
-			a := at(bx+i, by+j)
-			b := at(bx+i+1, by+j)
-			c := at(bx+i, by+j+1)
-			d := at(bx+i+1, by+j+1)
-			v := ((8-fx)*(8-fy)*a + fx*(8-fy)*b + (8-fx)*fy*c + fx*fy*d + 32) >> 6
-			dst.Set(x0+i, y0+j, byte(v))
+		r0 := src[o+j*ss : o+j*ss+w+1]
+		r1 := src[o+(j+1)*ss : o+(j+1)*ss+w+1]
+		d := dst[j*ds : j*ds+w]
+		for i := range d {
+			d[i] = byte((a*int32(r0[i]) + b*int32(r0[i+1]) + c*int32(r1[i]) + dd*int32(r1[i+1]) + 32) >> 6)
 		}
 	}
 }

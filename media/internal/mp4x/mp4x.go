@@ -4,28 +4,34 @@
 // API — with the pieces a decoder/player actually needs:
 //
 //   - track enumeration with codec/dimension/rate metadata
-//   - a sample timeline (decode timestamps)
+//   - a per-sample table (file offset, size, decode and presentation time,
+//     sync flag) built once at open
 //   - sample bytes by index
-//   - keyframe (IDR) indexing and keyframe-accurate seek
+//   - keyframe indexing (stss) and keyframe-accurate seek
 //   - codec configuration (avcC SPS/PPS, AudioSpecificConfig)
 //
+// Presentation timestamps apply the composition offsets (ctts / trun) and
+// the first edit-list entry, so they start at (about) zero for files whose
+// encoder delays the first frame (B-frame reordering, AAC priming).
+//
 // The package is pure Go (no cgo) and has no dependency on root qui, so
-// it can back a cross-platform media backend. Progressive (non-fragmented)
-// MP4 is supported today; fragmented MP4 (moof/traf) is detected and
-// reported via ErrFragmented for a follow-up.
+// it can back a cross-platform media backend. Both progressive and
+// fragmented MP4 are supported: for a fragmented file Open walks the
+// moof/traf/trun boxes and assembles the same per-sample table a
+// progressive file gets from stbl, so the read API is identical.
 package mp4x
 
 import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	mp4 "github.com/abema/go-mp4"
 )
 
-// ErrFragmented is returned when a file uses fragmented MP4 (moof/traf),
-// which this version does not yet read.
+// ErrFragmented is kept for API compatibility; fragmented files are read.
 var ErrFragmented = errors.New("mp4x: fragmented MP4 not supported yet")
 
 // ErrNoTrack is returned when the requested track kind is absent.
@@ -39,6 +45,19 @@ const (
 	KindVideo
 	KindAudio
 )
+
+// sample is one entry of a track's sample table.
+type sample struct {
+	off  uint64 // absolute file offset
+	size uint32
+	dur  uint32 // duration, track timescale units
+	dts  uint64 // decode time, track timescale units
+	cto  int64  // composition time offset, track timescale units
+	sync bool
+}
+
+// fragSample is the fragment-table entry (same layout as sample).
+type fragSample = sample
 
 // Track describes one media track and exposes its sample timeline.
 type Track struct {
@@ -59,17 +78,31 @@ type Track struct {
 
 	raw *mp4.Track
 
-	dts     []time.Duration // decode timestamps, lazily built
-	keyfr   []int           // keyframe sample indices (video), lazily built
+	// samples is the full table (progressive: from stbl; fragmented: from
+	// the movie fragments). frag aliases it while fragments are appended.
+	samples []sample
+	frag    []fragSample
+
+	// shift is subtracted from dts+cto to get the presentation time (the
+	// first edit's media_time, minus any leading empty edit).
+	shift int64
+
+	stss    []uint32 // 1-based sync sample numbers; nil = all sync
+	hasStss bool
+
+	keyfr   []int
 	keyfrOK bool
+
+	avcC *mp4.AVCDecoderConfiguration
+	asc  []byte
 }
 
 // SampleCount is the number of samples in the track.
 func (t *Track) SampleCount() int {
-	if t == nil || t.raw == nil {
+	if t == nil {
 		return 0
 	}
-	return len(t.raw.Samples)
+	return len(t.samples)
 }
 
 // Reader is an open MP4 file.
@@ -93,20 +126,142 @@ func Open(path string) (*Reader, error) {
 		return nil, fmt.Errorf("mp4x: probe %s: %w", path, err)
 	}
 	r := &Reader{f: f, info: info}
+	byID := map[uint32]*Track{}
 	for _, raw := range info.Tracks {
 		t := newTrack(raw)
+		byID[t.ID] = t
 		switch t.Kind {
 		case KindVideo:
-			if r.video == nil {
+			if r.video == nil && !raw.Encrypted {
 				r.video = t
 			}
 		case KindAudio:
-			if r.audio == nil {
+			if r.audio == nil && !raw.Encrypted {
 				r.audio = t
 			}
 		}
 	}
+	if err := r.readTrakExtras(byID, info.Timescale); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	for _, t := range []*Track{r.video, r.audio} {
+		if t != nil && len(t.raw.Samples) > 0 {
+			if err := t.buildProgressive(); err != nil {
+				_ = f.Close()
+				return nil, err
+			}
+		}
+	}
+	if len(info.Segments) > 0 {
+		if err := r.buildFragments(); err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+		for _, t := range []*Track{r.video, r.audio} {
+			if t != nil && len(t.samples) == 0 && len(t.frag) > 0 {
+				t.samples = t.frag
+			}
+		}
+	}
 	return r, nil
+}
+
+// readTrakExtras reads per-trak boxes go-mp4's probe does not expose: the
+// sync sample table and the codec configuration.
+func (r *Reader) readTrakExtras(byID map[uint32]*Track, movieTimescale uint32) error {
+	traks, err := mp4.ExtractBox(r.f, nil, mp4.BoxPath{mp4.BoxTypeMoov(), mp4.BoxTypeTrak()})
+	if err != nil {
+		return err
+	}
+	for _, trak := range traks {
+		bips, err := mp4.ExtractBoxesWithPayload(r.f, trak, []mp4.BoxPath{
+			{mp4.BoxTypeTkhd()},
+			{mp4.BoxTypeMdia(), mp4.BoxTypeMinf(), mp4.BoxTypeStbl(), mp4.BoxTypeStss()},
+			{mp4.BoxTypeMdia(), mp4.BoxTypeMinf(), mp4.BoxTypeStbl(), mp4.BoxTypeStsd(), mp4.BoxTypeAvc1(), mp4.BoxTypeAvcC()},
+			{mp4.BoxTypeMdia(), mp4.BoxTypeMinf(), mp4.BoxTypeStbl(), mp4.BoxTypeStsd(), mp4.BoxTypeMp4a(), mp4.BoxTypeEsds()},
+		})
+		if err != nil {
+			return err
+		}
+		var t *Track
+		for _, bip := range bips {
+			switch b := bip.Payload.(type) {
+			case *mp4.Tkhd:
+				t = byID[b.TrackID]
+			case *mp4.Stss:
+				if t != nil {
+					t.hasStss = true
+					t.stss = b.SampleNumber
+				}
+			case *mp4.AVCDecoderConfiguration:
+				if t != nil && t.avcC == nil {
+					t.avcC = b
+				}
+			case *mp4.Esds:
+				if t != nil && t.asc == nil {
+					for _, d := range b.Descriptors {
+						if d.Tag == mp4.DecSpecificInfoTag {
+							t.asc = d.Data
+						}
+					}
+				}
+			}
+		}
+		if t == nil {
+			continue
+		}
+		// Edit list: a leading empty edit delays the track; the first
+		// non-empty edit's media_time is where presentation starts.
+		var empty uint64
+		for _, e := range t.raw.EditList {
+			if e.MediaTime == -1 {
+				empty += e.SegmentDuration
+				continue
+			}
+			t.shift = e.MediaTime
+			break
+		}
+		if empty > 0 && movieTimescale > 0 {
+			t.shift -= int64(empty * uint64(t.Timescale) / uint64(movieTimescale))
+		}
+	}
+	return nil
+}
+
+// buildProgressive builds the sample table from stbl (chunks, sizes,
+// stts deltas, ctts offsets) and the sync table.
+func (t *Track) buildProgressive() error {
+	raw := t.raw
+	t.samples = make([]sample, len(raw.Samples))
+	i := 0
+	for _, ch := range raw.Chunks {
+		off := ch.DataOffset
+		for k := uint32(0); k < ch.SamplesPerChunk && i < len(raw.Samples); k++ {
+			t.samples[i].off = off
+			off += uint64(raw.Samples[i].Size)
+			i++
+		}
+	}
+	if i < len(raw.Samples) {
+		return fmt.Errorf("mp4x: chunk table covers %d of %d samples", i, len(raw.Samples))
+	}
+	var dts uint64
+	for k, s := range raw.Samples {
+		e := &t.samples[k]
+		e.size = s.Size
+		e.dur = s.TimeDelta
+		e.dts = dts
+		e.cto = s.CompositionTimeOffset
+		e.sync = !t.hasStss
+		dts += uint64(s.TimeDelta)
+	}
+	for _, n := range t.stss {
+		if n >= 1 && int(n) <= len(t.samples) {
+			t.samples[n-1].sync = true
+		}
+	}
+	return nil
 }
 
 // Close releases the file.
@@ -119,8 +274,9 @@ func (r *Reader) Close() error {
 	return err
 }
 
-// Fragmented reports whether the file uses fragmented MP4, which this
-// version cannot read yet.
+// Fragmented reports whether the file uses fragmented MP4 (moof/traf). Such
+// files are fully readable: Open assembles the sample table from the movie
+// fragments.
 func (r *Reader) Fragmented() bool {
 	for _, t := range r.info.Tracks {
 		if len(t.Samples) == 0 {
@@ -150,129 +306,148 @@ func (r *Reader) Track(k Kind) *Track {
 
 // ReadSample returns the encoded bytes of sample i of t.
 func (r *Reader) ReadSample(t *Track, i int) ([]byte, error) {
-	if t == nil || t.raw == nil {
+	return r.ReadSampleInto(nil, t, i)
+}
+
+// ReadSampleInto is ReadSample reusing buf's storage when it is large
+// enough.
+func (r *Reader) ReadSampleInto(buf []byte, t *Track, i int) ([]byte, error) {
+	if t == nil {
 		return nil, ErrNoTrack
 	}
-	if len(t.raw.Samples) == 0 {
-		return nil, ErrFragmented
+	if i < 0 || i >= len(t.samples) {
+		return nil, fmt.Errorf("mp4x: sample %d out of range (0..%d)", i, len(t.samples)-1)
 	}
-	off, size, err := sampleOffset(t.raw, i)
-	if err != nil {
-		return nil, err
+	s := &t.samples[i]
+	if cap(buf) < int(s.size) {
+		buf = make([]byte, s.size)
 	}
-	buf := make([]byte, size)
-	if _, err := r.f.ReadAt(buf, int64(off)); err != nil {
+	buf = buf[:s.size]
+	if _, err := r.f.ReadAt(buf, int64(s.off)); err != nil {
 		return nil, err
 	}
 	return buf, nil
 }
 
-// DTS returns the decode timestamp of sample i within the track. It is
-// the running sum of the sample durations from the stts table.
-func (r *Reader) DTS(t *Track, i int) time.Duration {
-	if t == nil || t.raw == nil {
+func (t *Track) toDuration(v int64) time.Duration {
+	if t.Timescale == 0 {
 		return 0
 	}
-	t.buildDTS()
-	if i < 0 || i >= len(t.dts) {
-		return 0
-	}
-	return t.dts[i]
+	return time.Duration(float64(v) / float64(t.Timescale) * float64(time.Second))
 }
 
-// Keyframes returns the sample indices that are sync samples (IDR frames)
-// for a video track. Returns nil for non-video tracks.
+// DTS returns the decode timestamp of sample i within the track.
+func (r *Reader) DTS(t *Track, i int) time.Duration {
+	if t == nil || i < 0 || i >= len(t.samples) {
+		return 0
+	}
+	return t.toDuration(int64(t.samples[i].dts))
+}
+
+// PTS returns the presentation timestamp of sample i (composition offset
+// and edit list applied). It can be negative for samples that precede the
+// presentation start (e.g. AAC priming).
+func (r *Reader) PTS(t *Track, i int) time.Duration {
+	if t == nil || i < 0 || i >= len(t.samples) {
+		return 0
+	}
+	s := &t.samples[i]
+	return t.toDuration(int64(s.dts) + s.cto - t.shift)
+}
+
+// SampleDuration returns the duration of sample i.
+func (r *Reader) SampleDuration(t *Track, i int) time.Duration {
+	if t == nil || i < 0 || i >= len(t.samples) {
+		return 0
+	}
+	return t.toDuration(int64(t.samples[i].dur))
+}
+
+// IsSync reports whether sample i is a sync sample (keyframe).
+func (r *Reader) IsSync(t *Track, i int) bool {
+	if t == nil || i < 0 || i >= len(t.samples) {
+		return false
+	}
+	return t.samples[i].sync
+}
+
+// Keyframes returns the sample indices that are sync samples for a video
+// track. Returns nil for non-video tracks.
 func (r *Reader) Keyframes(t *Track) []int {
-	if t == nil || t.raw == nil || t.Kind != KindVideo {
+	if t == nil || t.Kind != KindVideo {
 		return nil
 	}
 	if t.keyfrOK {
 		return t.keyfr
 	}
 	t.keyfrOK = true
-	idxs, err := mp4.FindIDRFrames(r.f, &mp4.TrackInfo{
-		AVC:     t.raw.AVC,
-		Chunks:  t.raw.Chunks,
-		Samples: t.raw.Samples,
-	})
-	if err != nil {
-		return nil
+	if !t.hasStss && len(t.frag) == 0 && t.avcC != nil {
+		// No stss means "all samples are sync" — but some muxers omit it
+		// for ordinary IDR/P streams, so classify by NAL unit type.
+		ls := int(t.avcC.LengthSizeMinusOne) + 1
+		var buf []byte
+		for i := range t.samples {
+			b, err := r.ReadSampleInto(buf, t, i)
+			if err != nil {
+				break
+			}
+			buf = b
+			t.samples[i].sync = hasIDR(b, ls)
+		}
 	}
-	t.keyfr = idxs
-	return idxs
+	for i := range t.samples {
+		if t.samples[i].sync {
+			t.keyfr = append(t.keyfr, i)
+		}
+	}
+	return t.keyfr
 }
 
-// SeekKeyframe returns the sample index of the last keyframe whose decode
-// timestamp is <= target. It returns 0 when target precedes the first
-// keyframe. The returned index is suitable for feeding a decoder from a
-// self-contained point.
+// SeekKeyframe returns the index of the last keyframe whose presentation
+// time is <= target (0 when target precedes the first keyframe). Decoding
+// from that sample in decode order reaches target.
 func (r *Reader) SeekKeyframe(t *Track, target time.Duration) int {
 	ks := r.Keyframes(t)
 	if len(ks) == 0 {
 		return 0
 	}
-	best := ks[0]
-	for _, k := range ks {
-		if r.DTS(t, k) <= target {
-			best = k
-		} else {
-			break
-		}
+	j := sort.Search(len(ks), func(j int) bool { return r.PTS(t, ks[j]) > target })
+	if j == 0 {
+		return ks[0]
 	}
-	return best
+	return ks[j-1]
+}
+
+// SampleAtTime returns the index of the first sample (decode order) whose
+// presentation time is >= target, for tracks without reordering (audio).
+func (r *Reader) SampleAtTime(t *Track, target time.Duration) int {
+	n := len(t.samples)
+	return sort.Search(n, func(i int) bool { return r.PTS(t, i)+r.SampleDuration(t, i) > target })
 }
 
 // AVCCParameterSets returns the SPS/PPS NAL units and the NAL length prefix
 // size for the video track.
 func (r *Reader) AVCCParameterSets() (sps, pps [][]byte, lengthSize int, err error) {
-	boxes, err := mp4.ExtractBoxWithPayload(r.f, nil, mp4.BoxPath{
-		mp4.BoxTypeMoov(), mp4.BoxTypeTrak(), mp4.BoxTypeMdia(),
-		mp4.BoxTypeMinf(), mp4.BoxTypeStbl(), mp4.BoxTypeStsd(),
-		mp4.BoxTypeAvc1(), mp4.BoxTypeAvcC(),
-	})
-	if err != nil {
-		return nil, nil, 0, err
-	}
-	if len(boxes) == 0 {
+	t := r.video
+	if t == nil || t.avcC == nil {
 		return nil, nil, 0, fmt.Errorf("mp4x: avcC not found")
 	}
-	avcC, ok := boxes[0].Payload.(*mp4.AVCDecoderConfiguration)
-	if !ok {
-		return nil, nil, 0, fmt.Errorf("mp4x: unexpected avcC payload %T", boxes[0].Payload)
-	}
-	for _, ps := range avcC.SequenceParameterSets {
+	for _, ps := range t.avcC.SequenceParameterSets {
 		sps = append(sps, ps.NALUnit)
 	}
-	for _, ps := range avcC.PictureParameterSets {
+	for _, ps := range t.avcC.PictureParameterSets {
 		pps = append(pps, ps.NALUnit)
 	}
-	return sps, pps, int(avcC.LengthSizeMinusOne) + 1, nil
+	return sps, pps, int(t.avcC.LengthSizeMinusOne) + 1, nil
 }
 
 // AudioSpecificConfig returns the AAC AudioSpecificConfig bytes for the
 // audio track.
 func (r *Reader) AudioSpecificConfig() ([]byte, error) {
-	boxes, err := mp4.ExtractBoxWithPayload(r.f, nil, mp4.BoxPath{
-		mp4.BoxTypeMoov(), mp4.BoxTypeTrak(), mp4.BoxTypeMdia(),
-		mp4.BoxTypeMinf(), mp4.BoxTypeStbl(), mp4.BoxTypeStsd(),
-		mp4.BoxTypeMp4a(), mp4.BoxTypeEsds(),
-	})
-	if err != nil {
-		return nil, err
+	if r.audio == nil || r.audio.asc == nil {
+		return nil, fmt.Errorf("mp4x: DecoderSpecificInfo not found")
 	}
-	if len(boxes) == 0 {
-		return nil, fmt.Errorf("mp4x: esds not found")
-	}
-	esds, ok := boxes[0].Payload.(*mp4.Esds)
-	if !ok {
-		return nil, fmt.Errorf("mp4x: unexpected esds payload %T", boxes[0].Payload)
-	}
-	for _, d := range esds.Descriptors {
-		if d.Tag == mp4.DecSpecificInfoTag {
-			return d.Data, nil
-		}
-	}
-	return nil, fmt.Errorf("mp4x: DecoderSpecificInfo not found")
+	return r.audio.asc, nil
 }
 
 // newTrack converts go-mp4's Track into our Track.
@@ -303,42 +478,21 @@ func newTrack(raw *mp4.Track) *Track {
 	return t
 }
 
-// buildDTS lazily accumulates decode timestamps from the stts deltas.
-func (t *Track) buildDTS() {
-	if t.dts != nil {
-		return
-	}
-	t.dts = make([]time.Duration, len(t.raw.Samples))
-	if t.Timescale == 0 {
-		return
-	}
-	var acc uint64
-	for i, s := range t.raw.Samples {
-		t.dts[i] = time.Duration(float64(acc) / float64(t.Timescale) * float64(time.Second))
-		acc += uint64(s.TimeDelta)
-	}
-}
-
-// sampleOffset walks the chunk table (stsc + stco/co64 + stsz) to find the
-// absolute file offset and size of sample idx.
-func sampleOffset(t *mp4.Track, idx int) (uint64, uint32, error) {
-	if idx < 0 || idx >= len(t.Samples) {
-		return 0, 0, fmt.Errorf("mp4x: sample %d out of range (0..%d)", idx, len(t.Samples)-1)
-	}
-	si := 0
-	for _, ch := range t.Chunks {
-		spc := int(ch.SamplesPerChunk)
-		if spc == 0 {
-			continue
+// hasIDR reports whether a length-prefixed AVC sample contains an IDR slice.
+func hasIDR(b []byte, ls int) bool {
+	for len(b) >= ls {
+		n := 0
+		for k := 0; k < ls; k++ {
+			n = n<<8 | int(b[k])
 		}
-		if idx < si+spc {
-			off := ch.DataOffset
-			for k := si; k < idx; k++ {
-				off += uint64(t.Samples[k].Size)
-			}
-			return off, t.Samples[idx].Size, nil
+		b = b[ls:]
+		if n <= 0 || n > len(b) {
+			return false
 		}
-		si += spc
+		if b[0]&0x1f == 5 {
+			return true
+		}
+		b = b[n:]
 	}
-	return 0, 0, fmt.Errorf("mp4x: sample %d not covered by any chunk", idx)
+	return false
 }

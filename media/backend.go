@@ -2,6 +2,9 @@ package media
 
 import (
 	"context"
+	"os"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -125,19 +128,71 @@ type AudioRenderer interface {
 	Close() error
 }
 
-// currentBackend is the registered platform backend. nil on
-// unsupported platforms.
+// Backends are registered by name at process init via setBackend. The one
+// that is actually used is chosen on first use from the QUI_MEDIA_BACKEND
+// environment variable:
 //
-// The variable is set exactly once from the platform-specific init()
-// (backend_darwin.go on macOS, backend_other.go elsewhere). No locking
-// because init() runs before any user code.
-var currentBackend Backend
+//	native  — the platform backend (AVFoundation on macOS)
+//	golang  — the cross-platform pure-Go pipeline (backend_golang.go)
+//	auto    — native when registered, otherwise golang (the default)
+//
+// Any other non-empty value is looked up as a backend name directly, so a
+// future backend can be selected without changing this file.
+var (
+	backendRegistry = map[string]Backend{}
+	backendOnce     sync.Once
+	backendChosen   Backend
+)
 
 // setBackend is the entry point platform files call from init().
-// Unexported on purpose — callers cannot swap backends at runtime.
-func setBackend(b Backend) { currentBackend = b }
+// Unexported on purpose — callers select via QUI_MEDIA_BACKEND, not by
+// swapping the pointer.
+func setBackend(name string, b Backend) { backendRegistry[name] = b }
 
-// activeBackend returns the registered backend or nil. Public package
-// code consults this before calling backend methods so it can return
+// backendOverride / backendHasOverride force the active backend. Installed
+// by tests so they never have to mutate the process environment; a nil
+// override with backendHasOverride set means "no backend".
+var (
+	backendOverride    Backend
+	backendHasOverride bool
+)
+
+// overrideBackendForTest forces b as the active backend (nil = none) and
+// returns a restore function. Test-only.
+func overrideBackendForTest(b Backend) func() {
+	prevB, prevH := backendOverride, backendHasOverride
+	backendOverride, backendHasOverride = b, true
+	return func() { backendOverride, backendHasOverride = prevB, prevH }
+}
+
+// resolveBackend picks the active backend once, from QUI_MEDIA_BACKEND.
+func resolveBackend() Backend {
+	if backendHasOverride {
+		return backendOverride
+	}
+	backendOnce.Do(func() {
+		switch want := strings.TrimSpace(os.Getenv("QUI_MEDIA_BACKEND")); want {
+		case "", "auto":
+			if b := backendRegistry["native"]; b != nil {
+				backendChosen = b
+			} else {
+				backendChosen = backendRegistry["golang"]
+			}
+		default:
+			backendChosen = backendRegistry[want]
+		}
+	})
+	return backendChosen
+}
+
+// resetBackendForTest clears the one-shot selection so a test can change
+// QUI_MEDIA_BACKEND and re-resolve.
+func resetBackendForTest() {
+	backendOnce = sync.Once{}
+	backendChosen = nil
+}
+
+// activeBackend returns the selected backend or nil. Public package code
+// consults this before calling backend methods so it can return
 // ErrNotSupported gracefully.
-func activeBackend() Backend { return currentBackend }
+func activeBackend() Backend { return resolveBackend() }

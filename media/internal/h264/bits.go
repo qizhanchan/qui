@@ -1,68 +1,127 @@
-// Package h264 is qui's self-written pure-Go H.264/AVC decoder.
+// Package h264 is qui's self-written, pure-Go H.264/AVC decoder.
 //
-// It is built bottom-up and verified incrementally against a reference
-// decoder (Cisco OpenH264) using the harness in tools/media-poc.
+// It decodes progressive (frame_mbs_only) 8-bit 4:2:0 streams of the
+// Constrained Baseline, Main and High profiles: CAVLC and CABAC entropy
+// coding, I/P/B slices, multiple slices per picture, the 8x8 transform,
+// custom scaling matrices, explicit and implicit weighted prediction,
+// spatial and temporal direct prediction, long-term references and
+// memory-management control operations, and display-order output.
 //
-// Milestones (see docs/media-foundation.md):
-//
-//	H0 bitstream   NAL parsing, RBSP, exp-Golomb, SPS/PPS        <- this file set
-//	H1 intra       I_PCM, I16x16, I4x4, chroma, transform, deblock
-//	H2..           P/B slices, CABAC, High profile
-//
-// Nothing here depends on cgo, root qui, or any third-party module.
+// Correctness is checked plane-exact against FFmpeg's decoder (see the
+// tests). Nothing here depends on cgo, root qui, or any third-party module.
 package h264
 
-// bitReader reads big-endian bits from an RBSP byte slice. The first
-// error is latched; all subsequent reads return 0 and err() reports it.
+import (
+	"encoding/binary"
+	"math/bits"
+)
+
+// bitReader reads big-endian bits from an RBSP. The data slice carries at
+// least 8 bytes of zero padding past nbits so the fast paths can always load
+// a full 64-bit word. The first error is latched.
 type bitReader struct {
-	data []byte
-	pos  int // bit offset from the start
-	e    error
+	data  []byte
+	pos   int // bit offset
+	nbits int // number of real bits
+	e     error
+	// lastOne is the position of the last set bit (rbsp_stop_one_bit).
+	lastOne int
 }
 
-func newBitReader(data []byte) *bitReader { return &bitReader{data: data} }
+func newBitReader(rbsp []byte) *bitReader {
+	r := &bitReader{}
+	r.reset(rbsp)
+	return r
+}
+
+// reset points the reader at rbsp, copying it into a padded buffer.
+func (r *bitReader) reset(rbsp []byte) {
+	n := len(rbsp)
+	if cap(r.data) < n+8 {
+		r.data = make([]byte, n+8, n+64)
+	}
+	r.data = r.data[:n+8]
+	copy(r.data, rbsp)
+	clear(r.data[n:])
+	r.pos = 0
+	r.nbits = n * 8
+	r.e = nil
+	r.lastOne = -1
+	for i := n - 1; i >= 0; i-- {
+		if b := rbsp[i]; b != 0 {
+			r.lastOne = i*8 + 7 - bits.TrailingZeros8(b)
+			break
+		}
+	}
+}
 
 func (r *bitReader) err() error { return r.e }
 
-// bitsLeft reports how many bits remain.
-func (r *bitReader) bitsLeft() int {
-	return len(r.data)*8 - r.pos
+func (r *bitReader) bitsLeft() int { return r.nbits - r.pos }
+
+// peek32 returns the next 32 bits (zero padded past the end).
+func (r *bitReader) peek32() uint32 {
+	i := r.pos >> 3
+	if i+8 > len(r.data) {
+		return 0
+	}
+	v := binary.BigEndian.Uint64(r.data[i:])
+	return uint32((v << uint(r.pos&7)) >> 32)
 }
 
-// u reads n (0..32) bits MSB-first and returns them right-aligned.
+// peekBits returns the next n (1..32) bits without consuming them.
+func (r *bitReader) peekBits(n int) uint32 {
+	return r.peek32() >> uint(32-n)
+}
+
+// u reads n (0..32) bits.
 func (r *bitReader) u(n int) uint32 {
-	if r.e != nil || n == 0 {
+	if n == 0 || r.e != nil {
 		return 0
 	}
-	if n < 0 || n > 32 {
-		r.e = errBadField
-		return 0
-	}
-	if r.bitsLeft() < n {
+	if r.pos+n > r.nbits {
 		r.e = errShort
+		r.pos = r.nbits
 		return 0
 	}
-	var v uint32
-	for i := 0; i < n; i++ {
-		byteIdx := r.pos >> 3
-		bit := 7 - uint(r.pos&7)
-		v = v<<1 | uint32((r.data[byteIdx]>>bit)&1)
-		r.pos++
-	}
+	v := r.peek32() >> uint(32-n)
+	r.pos += n
 	return v
 }
 
-// u1 reads one bit as a bool.
 func (r *bitReader) u1() bool { return r.u(1) == 1 }
+
+func (r *bitReader) skip(n int) {
+	if r.pos+n > r.nbits {
+		r.e = errShort
+		r.pos = r.nbits
+		return
+	}
+	r.pos += n
+}
 
 // ue reads an unsigned Exp-Golomb code (spec 9.1).
 func (r *bitReader) ue() uint32 {
 	if r.e != nil {
 		return 0
 	}
+	p := r.peek32()
+	if p != 0 {
+		lz := bits.LeadingZeros32(p)
+		if lz < 16 {
+			n := 2*lz + 1
+			if r.pos+n > r.nbits {
+				r.e = errShort
+				return 0
+			}
+			r.pos += n
+			return (p >> uint(32-n)) - 1
+		}
+	}
+	// Long code: count zeros bit by bit.
 	zeros := 0
 	for {
-		if r.bitsLeft() < 1 {
+		if r.pos >= r.nbits {
 			r.e = errShort
 			return 0
 		}
@@ -75,11 +134,7 @@ func (r *bitReader) ue() uint32 {
 			return 0
 		}
 	}
-	if zeros == 0 {
-		return 0
-	}
-	suffix := r.u(zeros)
-	return (1 << uint(zeros)) - 1 + suffix
+	return (1<<uint(zeros) - 1) + r.u(zeros)
 }
 
 // se reads a signed Exp-Golomb code (spec 9.1.1).
@@ -91,105 +146,63 @@ func (r *bitReader) se() int32 {
 	return -int32(k / 2)
 }
 
-// skip discards n bits.
-func (r *bitReader) skip(n int) { _ = r.u(n) }
-
-// peekBits returns the next n bits without consuming them. Missing bits
-// past the end read as zero, matching the zero-padding a conforming
-// bitstream carries in its rbsp_trailing_bits.
-func (r *bitReader) peekBits(n int) uint32 {
-	if n <= 0 {
+// te reads a truncated Exp-Golomb code with the given range (spec 9.1).
+func (r *bitReader) te(max int) int {
+	if max > 1 {
+		return int(r.ue())
+	}
+	if r.u1() {
 		return 0
 	}
-	if n > 32 {
-		n = 32
-	}
-	var v uint32
-	for i := 0; i < n; i++ {
-		p := r.pos + i
-		if p >= len(r.data)*8 {
-			v <<= 1
-			continue
-		}
-		v = v<<1 | uint32((r.data[p>>3]>>(7-uint(p&7)))&1)
-	}
-	return v
+	return 1
 }
 
-// readBit consumes one bit and returns it (0 or 1).
-func (r *bitReader) readBit() uint32 { return r.u(1) }
+func (r *bitReader) byteAligned() bool { return r.pos&7 == 0 }
 
-// readBytes aligns to a byte boundary and reads n whole bytes (for I_PCM).
-func (r *bitReader) readBytes(n int) []byte {
-	if r.e != nil {
-		return nil
-	}
-	r.align()
-	out := make([]byte, n)
-	for i := 0; i < n; i++ {
-		out[i] = byte(r.u(8))
-	}
-	if r.e != nil {
-		return nil
-	}
-	return out
-}
-
-// align advances to the next byte boundary.
 func (r *bitReader) align() {
 	if rem := r.pos & 7; rem != 0 {
 		r.skip(8 - rem)
 	}
 }
 
-// moreRBSPData reports whether there is more than just rbsp_trailing_bits
-// left. The trailing bits are a single 1 bit followed by zeros, so there is
-// more data iff the current position is before the last set bit in the RBSP.
+// moreRBSPData reports whether data remains before rbsp_trailing_bits.
 func (r *bitReader) moreRBSPData() bool {
-	last := -1
-	for i := len(r.data)*8 - 1; i >= 0; i-- {
-		if (r.data[i>>3]>>(7-uint(i&7)))&1 == 1 {
-			last = i
-			break
-		}
-	}
-	return last >= 0 && r.pos < last
+	return r.lastOne > r.pos
 }
 
-func (r *bitReader) peekBit(i int) uint32 {
-	p := r.pos + i
-	if p >= len(r.data)*8 {
-		return 0
-	}
-	return uint32((r.data[p>>3] >> (7 - uint(p&7))) & 1)
-}
-
-// unescapeRBSP removes emulation_prevention_three_byte (0x03) that follows
-// two zero bytes, converting an EBSP to an RBSP (spec 7.4.1.1).
-func unescapeRBSP(data []byte) []byte {
-	out := make([]byte, 0, len(data))
+// unescapeRBSP removes emulation_prevention_three_bytes (spec 7.4.1.1),
+// appending into dst.
+func unescapeRBSP(dst, data []byte) []byte {
+	dst = dst[:0]
 	zeros := 0
-	for _, b := range data {
-		if zeros == 2 && b == 0x03 {
+	start := 0
+	for i := 0; i < len(data); i++ {
+		b := data[i]
+		if zeros >= 2 && b == 0x03 {
+			dst = append(dst, data[start:i]...)
+			start = i + 1
 			zeros = 0
 			continue
 		}
-		out = append(out, b)
 		if b == 0 {
 			zeros++
 		} else {
 			zeros = 0
 		}
 	}
-	return out
+	return append(dst, data[start:]...)
 }
-
-var (
-	errShort    = errf("h264: unexpected end of bitstream")
-	errBadField = errf("h264: invalid bit field")
-)
 
 type errString string
 
 func (e errString) Error() string { return string(e) }
 func errf(s string) error         { return errString(s) }
+
+var (
+	errShort    = errf("h264: unexpected end of bitstream")
+	errBadField = errf("h264: invalid bit field")
+	// ErrUnsupported is returned for valid streams using features this
+	// decoder does not implement (interlace, 4:2:2/4:4:4, high bit depth,
+	// slice groups, data partitioning).
+	ErrUnsupported = errf("h264: unsupported stream feature")
+)

@@ -108,7 +108,7 @@ func predict16x16(mode int, top, left []byte, topLeft byte) [16][16]byte {
 		c := (5*iV + 32) >> 6
 		for y := range 16 {
 			for x := range 16 {
-				pred[y][x] = clip8(int32((a + b*(x-7) + c*(y-7) + 16) >> 5))
+				pred[y][x] = clipU8(int32((a + b*(x-7) + c*(y-7) + 16) >> 5))
 			}
 		}
 	}
@@ -497,7 +497,7 @@ func predictChroma(mode int, top, left []byte, topLeft byte) [8][8]byte {
 		c := (34*iV + 32) >> 6
 		for y := range 8 {
 			for x := range 8 {
-				pred[y][x] = clip8(int32((a + b*(x-3) + c*(y-3) + 16) >> 5))
+				pred[y][x] = clipU8(int32((a + b*(x-3) + c*(y-3) + 16) >> 5))
 			}
 		}
 	}

@@ -16,14 +16,20 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
+	"runtime/pprof"
 	"time"
 
 	"github.com/qizhanchan/qui"
+	"github.com/qizhanchan/qui/agent"
 	"github.com/qizhanchan/qui/media"
 	"github.com/qizhanchan/qui/widgets"
 )
 
 func main() {
+	autoplay := flag.Bool("autoplay", false, "start playing immediately")
+	rate := flag.Float64("rate", 1, "initial playback rate (with -autoplay)")
+	cpuProfile := flag.String("cpuprofile", "", "write a CPU profile of the session to this file")
 	flag.Parse()
 	if flag.NArg() < 1 {
 		log.Fatal("usage: media-video <path-to-video-file>")
@@ -39,6 +45,10 @@ func main() {
 		log.Fatal(err)
 	}
 	window.SetRenderer(qui.NewGLRenderer())
+	// QUI_AGENT=1 exposes the window to qui-agent (tree / click / shot).
+	if srv, err := agent.BindEnv(window); err == nil && srv != nil {
+		window.OnClose(func() { _ = srv.Stop() })
+	}
 
 	view := media.NewVideoView()
 	defer view.Destroy()
@@ -174,6 +184,30 @@ func main() {
 	})
 	window.SetAcceleratorRegistry(accel)
 
+	if *cpuProfile != "" {
+		f, err := os.Create(*cpuProfile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := pprof.StartCPUProfile(f); err != nil {
+			log.Fatal(err)
+		}
+		defer func() {
+			pprof.StopCPUProfile()
+			f.Close()
+		}()
+	}
+	if *autoplay {
+		if *rate != 1 {
+			view.SetRate(float32(*rate))
+			for i, r := range speedRates {
+				if float64(r) == *rate {
+					speed.SelectedIdx = i
+				}
+			}
+		}
+		_ = view.Play()
+	}
 	app.Run()
 }
 

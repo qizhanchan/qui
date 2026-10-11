@@ -17,41 +17,56 @@ static void aqCallback(void* userData, AudioQueueRef q, AudioQueueBufferRef buf)
 }
 
 static OSStatus aqNew(AudioStreamBasicDescription* fmt, int id, AudioQueueRef* q) {
-    return AudioQueueNewOutput(fmt, aqCallback, (void*)(intptr_t)id, NULL, NULL, 0, q);
+    OSStatus st = AudioQueueNewOutput(fmt, aqCallback, (void*)(intptr_t)id, NULL, NULL, 0, q);
+    if (st != 0) return st;
+    UInt32 on = 1;
+    AudioQueueSetProperty(*q, kAudioQueueProperty_EnableTimePitch, &on, sizeof(on));
+    UInt32 algo = kAudioQueueTimePitchAlgorithm_Spectral;
+    AudioQueueSetProperty(*q, kAudioQueueProperty_TimePitchAlgorithm, &algo, sizeof(algo));
+    return 0;
 }
 static OSStatus aqAlloc(AudioQueueRef q, int bytes, AudioQueueBufferRef* buf) {
     return AudioQueueAllocateBuffer(q, bytes, buf);
 }
-static void aqFill(AudioQueueBufferRef buf, const void* src, int len) {
-    memcpy(buf->mAudioData, src, len);
-    buf->mAudioDataByteSize = len;
+static void aqSilence(AudioQueueBufferRef buf) {
+    memset(buf->mAudioData, 0, buf->mAudioDataBytesCapacity);
+    buf->mAudioDataByteSize = buf->mAudioDataBytesCapacity;
 }
 static OSStatus aqEnqueue(AudioQueueRef q, AudioQueueBufferRef buf) {
     return AudioQueueEnqueueBuffer(q, buf, 0, NULL);
+}
+static double aqSampleTime(AudioQueueRef q) {
+    AudioTimeStamp ts;
+    memset(&ts, 0, sizeof(ts));
+    if (AudioQueueGetCurrentTime(q, NULL, &ts, NULL) != 0) return -1;
+    if (!(ts.mFlags & kAudioTimeStampSampleTimeValid)) return -1;
+    return ts.mSampleTime;
 }
 */
 import "C"
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 )
 
 const (
-	aqBuffers    = 4
-	aqBufferSize = 16384 // bytes per AudioQueue buffer
+	aqBuffers      = 3
+	aqBufferFrames = 2048
+	// ringSeconds bounds how much decoded PCM Write accepts ahead of
+	// playback.
+	ringSeconds = 0.5
 )
 
-// sink is the AudioQueue-backed Sink.
+// sink is the AudioQueue-backed Sink. Rate (time-pitch) and volume are
+// native queue parameters; the queue's sample time is the device clock.
 type sink struct {
-	queue C.AudioQueueRef
-	id    int
-
-	mu      sync.Mutex
-	ring    []byte
-	vol     float32
-	started bool
+	*ring
+	queue   C.AudioQueueRef
+	id      int
+	started atomic.Bool
 }
 
 var (
@@ -68,20 +83,13 @@ func goAudioRefill(id C.int, buf unsafe.Pointer, length C.int) {
 	if s == nil {
 		return
 	}
-	n := int(length)
-	out := unsafe.Slice((*byte)(buf), n)
-	s.mu.Lock()
-	copied := copy(out, s.ring)
-	if copied < n {
-		for i := copied; i < n; i++ {
-			out[i] = 0
-		}
-	}
-	s.ring = s.ring[copied:]
-	s.mu.Unlock()
+	s.fill(unsafe.Slice((*byte)(buf), int(length)))
 }
 
 func open(format Format) (Sink, error) {
+	if format.SampleRate <= 0 || format.Channels <= 0 {
+		return nil, ErrNotSupported
+	}
 	var asbd C.AudioStreamBasicDescription
 	asbd.mSampleRate = C.double(format.SampleRate)
 	asbd.mFormatID = C.kAudioFormatLinearPCM
@@ -101,41 +109,39 @@ func open(format Format) (Sink, error) {
 	if st := C.aqNew(&asbd, C.int(id), &q); st != 0 {
 		return nil, ErrNotSupported
 	}
-	s := &sink{queue: q, id: id, vol: 1}
+	s := &sink{ring: newRing(format, ringSeconds, false), queue: q, id: id}
 	regMu.Lock()
 	reg[id] = s
 	regMu.Unlock()
 
+	fb := 2 * format.Channels
 	for i := 0; i < aqBuffers; i++ {
 		var buf C.AudioQueueBufferRef
-		if st := C.aqAlloc(q, aqBufferSize, &buf); st != 0 {
+		if st := C.aqAlloc(q, C.int(aqBufferFrames*fb), &buf); st != 0 {
 			s.Close()
 			return nil, ErrNotSupported
 		}
-		// Prime with silence so playback can start immediately.
-		var silence [1]byte
-		C.aqFill(buf, unsafe.Pointer(&silence[0]), 0)
+		// Prime with silence; the timeline accounts for it.
+		C.aqSilence(buf)
 		C.aqEnqueue(q, buf)
+		s.ring.mu.Lock()
+		s.ring.enqueued += aqBufferFrames
+		s.ring.mu.Unlock()
 	}
 	return s, nil
 }
 
 func available() bool { return true }
 
-func (s *sink) Write(pcm []byte) (int, error) {
-	s.mu.Lock()
-	s.ring = append(s.ring, pcm...)
-	s.mu.Unlock()
-	if !s.started {
-		_ = s.Play()
-	}
-	return len(pcm), nil
-}
+func (s *sink) Write(pcm []byte) (int, error) { return s.write(pcm), nil }
+func (s *sink) Buffered() time.Duration       { return s.buffered() }
+
+// Flush drops queued PCM and restarts HostTime at zero. Up to the device
+// buffers already enqueued (~0.1 s) of old audio may still be heard.
+func (s *sink) Flush() { s.flush() }
 
 func (s *sink) Play() error {
-	s.mu.Lock()
-	s.started = true
-	s.mu.Unlock()
+	s.started.Store(true)
 	C.AudioQueueStart(s.queue, nil)
 	return nil
 }
@@ -146,28 +152,24 @@ func (s *sink) Pause() error {
 }
 
 func (s *sink) SetVolume(v float32) {
-	if v < 0 {
-		v = 0
-	}
-	if v > 1 {
-		v = 1
-	}
-	s.mu.Lock()
-	s.vol = v
-	s.mu.Unlock()
+	v = max(0, min(1, v))
 	C.AudioQueueSetParameter(s.queue, C.kAudioQueueParam_Volume, C.Float32(v))
 }
 
+// SetRate sets the playback rate (0.5–2.0) with pitch preservation.
+func (s *sink) SetRate(r float32) {
+	r = max(0.5, min(2, r))
+	C.AudioQueueSetParameter(s.queue, C.kAudioQueueParam_PlayRate, C.Float32(r))
+}
+
+// HostTime is the content time (since Open or the last Flush) currently
+// being heard.
 func (s *sink) HostTime() time.Duration {
-	var ts C.AudioTimeStamp
-	var disc C.Boolean
-	C.AudioQueueGetCurrentTime(s.queue, nil, &ts, &disc)
-	// Prefer the sample time when available.
-	secs := float64(ts.mSampleTime) / float64(48000)
-	if secs <= 0 {
-		secs = float64(ts.mHostTime) / 1e9
+	st := float64(-1)
+	if s.started.Load() {
+		st = float64(C.aqSampleTime(s.queue))
 	}
-	return time.Duration(secs * float64(time.Second))
+	return s.hostTime(int64(st), st >= 0)
 }
 
 func (s *sink) Close() error {

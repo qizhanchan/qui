@@ -131,13 +131,11 @@ func (d *fakeScrubDecoder) Close() error {
 }
 
 // swapBackend installs a backend for the duration of a test and
-// returns a restore function. The package-private currentBackend is
+// returns a restore function. The package-private override hook is
 // reachable because the test lives in `package media`.
 func swapBackend(t *testing.T, b Backend) func() {
 	t.Helper()
-	prev := currentBackend
-	currentBackend = b
-	return func() { currentBackend = prev }
+	return overrideBackendForTest(b)
 }
 
 // virtualClock pins the wall clock used by wallClock so Tick-driven

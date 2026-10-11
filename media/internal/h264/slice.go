@@ -1,231 +1,252 @@
 package h264
 
-// SliceHeader is a parsed slice header (spec 7.3.3). Fields that only
-// matter to inter prediction are parsed (so the reader lands exactly at
-// the slice-data start) but not all are stored.
-type SliceHeader struct {
-	FirstMbInSlice uint32
-	SliceType      uint32
-	PPSID          uint32
-	ColourPlaneID  uint32
+// Slice types (slice_type % 5).
+const (
+	sliceP  = 0
+	sliceB  = 1
+	sliceI  = 2
+	sliceSP = 3
+	sliceSI = 4
+)
 
-	FrameNum    uint32
-	FieldPic    bool
-	BottomField bool
-	IDRPicID    uint32
-
-	PicOrderCntType        uint32
-	PicOrderCntLsb         uint32
-	DeltaPicOrderCntBottom int32
-	DeltaPicOrderCnt       [2]int32
-
-	RedundantPicCnt uint32
-
-	DirectSpatialMV   bool
-	NumRefIdxL0Active int
-	NumRefIdxL1Active int
-
-	CabacInitIDC               uint32
-	SliceQPDelta               int32
-	DisableDeblockingFilterIDC uint32
-	SliceAlphaC0OffsetDiv2     int32
-	SliceBetaOffsetDiv2        int32
-
-	// Weighted prediction (pred_weight_table).
-	LumaLog2WeightDenom   int
-	ChromaLog2WeightDenom int
-	LumaWeightL0          []int
-	LumaOffsetL0          []int
-	ChromaWeightL0        [][2]int
-	ChromaOffsetL0        [][2]int
-	LumaWeightL1          []int
-	LumaOffsetL1          []int
-	ChromaWeightL1        [][2]int
-	ChromaOffsetL1        [][2]int
+type refModOp struct {
+	idc int // 0: subtract, 1: add, 2: long-term
+	val int // abs_diff_pic_num_minus1 or long_term_pic_num
 }
 
-// Slice-type predicates (types 5..9 are the "all slices" range).
-func sliceTypeIsP(t uint32) bool  { return t%5 == 0 }
-func sliceTypeIsB(t uint32) bool  { return t%5 == 1 }
-func sliceTypeIsI(t uint32) bool  { return t%5 == 2 }
-func sliceTypeIsSP(t uint32) bool { return t%5 == 3 }
-func sliceTypeIsSI(t uint32) bool { return t%5 == 4 }
+type mmcoOp struct {
+	op                 int
+	diffPicNumsMinus1  int
+	longTermPicNum     int
+	longTermFrameIdx   int
+	maxLongTermIdxPlus int
+}
 
-// IsIntra reports whether the slice is intra-coded (I or SI).
-func (h *SliceHeader) IsIntra() bool { return sliceTypeIsI(h.SliceType) || sliceTypeIsSI(h.SliceType) }
+// sliceHeader is a parsed slice header (spec 7.3.3).
+type sliceHeader struct {
+	nalType   int
+	nalRefIDC int
+	idr       bool
 
-// parseSliceHeader reads a slice header from r (positioned after the NAL
-// header, RBSP unescaped) and leaves r positioned at the start of slice
-// data.
-func parseSliceHeader(r *bitReader, sps *SPS, pps *PPS, nalRefIDC, nalTyp int) (*SliceHeader, error) {
-	h := &SliceHeader{
-		PicOrderCntType:   sps.PicOrderCntType,
-		NumRefIdxL0Active: pps.NumRefIdxL0,
-		NumRefIdxL1Active: pps.NumRefIdxL1,
+	firstMB   int
+	sliceType int // 0..4
+	ppsID     int
+	frameNum  int
+	idrPicID  int
+
+	pocLsb         int
+	deltaPOCBottom int
+	deltaPOC       [2]int
+
+	redundantPicCnt int
+	directSpatial   bool
+	numRefIdx       [2]int
+
+	refMod [2][]refModOp
+
+	// Explicit weighted prediction tables (pred_weight_table).
+	hasWeights     bool
+	lumaLog2WD     int
+	chromaLog2WD   int
+	lumaWeight     [2][32]int
+	lumaOffset     [2][32]int
+	chromaWeight   [2][32][2]int
+	chromaOffset   [2][32][2]int
+	lumaWeightFlag [2][32]bool
+	chromaWFlag    [2][32]bool
+
+	noOutputOfPriorPics bool
+	longTermReference   bool
+	adaptiveMarking     bool
+	mmco                []mmcoOp
+
+	cabacInitIDC   int
+	qpDelta        int
+	disableDeblock int
+	alphaOffset    int // slice_alpha_c0_offset_div2 * 2
+	betaOffset     int
+
+	sps *SPS
+	pps *PPS
+}
+
+func (h *sliceHeader) isI() bool { return h.sliceType == sliceI || h.sliceType == sliceSI }
+func (h *sliceHeader) isB() bool { return h.sliceType == sliceB }
+func (h *sliceHeader) isP() bool { return h.sliceType == sliceP || h.sliceType == sliceSP }
+
+// parseSliceHeader parses the slice header; r is left at slice_data().
+func parseSliceHeader(r *bitReader, nal byte, spsTab []*SPS, ppsTab []*PPS) (*sliceHeader, error) {
+	h := &sliceHeader{nalType: nalType(nal), nalRefIDC: nalRefIDC(nal)}
+	h.idr = h.nalType == nalIDR
+	h.firstMB = int(r.ue())
+	st := int(r.ue())
+	if st > 9 {
+		return nil, errf("h264: bad slice_type")
 	}
-	h.FirstMbInSlice = r.ue()
-	h.SliceType = r.ue()
-	h.PPSID = r.ue()
-	if sps.SeparateColourPlane {
-		h.ColourPlaneID = r.u(2)
+	h.sliceType = st % 5
+	h.ppsID = int(r.ue())
+	if h.ppsID > 255 || ppsTab[h.ppsID] == nil {
+		return nil, errf("h264: slice references unknown PPS")
 	}
-	h.FrameNum = r.u(sps.Log2MaxFrameNum)
-	if !sps.FrameMbsOnly {
-		h.FieldPic = r.u1()
-		if h.FieldPic {
-			h.BottomField = r.u1()
-		}
+	pps := ppsTab[h.ppsID]
+	sps := spsTab[pps.SPSID]
+	if sps == nil {
+		return nil, errf("h264: slice references unknown SPS")
 	}
-	if nalTyp == nalIDR {
-		h.IDRPicID = r.ue()
+	h.sps, h.pps = sps, pps
+	if !sps.FrameMbsOnly || sps.ChromaFormatIDC != 1 || sps.BitDepthLuma != 8 || sps.BitDepthChroma != 8 {
+		return nil, ErrUnsupported
+	}
+	if h.sliceType == sliceSP || h.sliceType == sliceSI {
+		return nil, ErrUnsupported
+	}
+	h.frameNum = int(r.u(sps.Log2MaxFrameNum))
+	if h.idr {
+		h.idrPicID = int(r.ue())
 	}
 	switch sps.PicOrderCntType {
 	case 0:
-		h.PicOrderCntLsb = r.u(sps.Log2MaxPicOrderCntLsb)
-		if pps.BottomFieldPIC && !h.FieldPic {
-			h.DeltaPicOrderCntBottom = r.se()
+		h.pocLsb = int(r.u(sps.Log2MaxPicOrderCntLsb))
+		if pps.BottomFieldPicOrder {
+			h.deltaPOCBottom = int(r.se())
 		}
 	case 1:
 		if !sps.DeltaPicOrderAlwaysZero {
-			h.DeltaPicOrderCnt[0] = r.se()
-			if pps.BottomFieldPIC && !h.FieldPic {
-				h.DeltaPicOrderCnt[1] = r.se()
+			h.deltaPOC[0] = int(r.se())
+			if pps.BottomFieldPicOrder {
+				h.deltaPOC[1] = int(r.se())
 			}
 		}
 	}
-	if pps.RedundantPicCnt {
-		h.RedundantPicCnt = r.ue()
+	if pps.RedundantPicCntPresent {
+		h.redundantPicCnt = int(r.ue())
 	}
-	if sliceTypeIsB(h.SliceType) {
-		h.DirectSpatialMV = r.u1()
+	if h.isB() {
+		h.directSpatial = r.u1()
 	}
-	if sliceTypeIsP(h.SliceType) || sliceTypeIsSP(h.SliceType) || sliceTypeIsB(h.SliceType) {
+	h.numRefIdx = [2]int{pps.NumRefIdxL0Default, pps.NumRefIdxL1Default}
+	if !h.isI() {
 		if r.u1() { // num_ref_idx_active_override_flag
-			h.NumRefIdxL0Active = int(r.ue()) + 1
-			if sliceTypeIsB(h.SliceType) {
-				h.NumRefIdxL1Active = int(r.ue()) + 1
+			h.numRefIdx[0] = int(r.ue()) + 1
+			if h.isB() {
+				h.numRefIdx[1] = int(r.ue()) + 1
 			}
-		} else {
-			h.NumRefIdxL0Active = pps.NumRefIdxL0
-			h.NumRefIdxL1Active = pps.NumRefIdxL1
+		}
+		if h.numRefIdx[0] > 32 || h.numRefIdx[1] > 32 {
+			return nil, errf("h264: num_ref_idx_active too large")
 		}
 	}
-	if !sliceTypeIsI(h.SliceType) && !sliceTypeIsSI(h.SliceType) {
-		parseRefPicListReordering(r, sliceTypeIsB(h.SliceType))
+	if !h.isB() {
+		h.numRefIdx[1] = 0
 	}
-	if (pps.WeightedPred && (sliceTypeIsP(h.SliceType) || sliceTypeIsSP(h.SliceType))) ||
-		(pps.WeightedBipred == 1 && sliceTypeIsB(h.SliceType)) {
-		parsePredWeightTable(r, sps, h, sliceTypeIsB(h.SliceType))
+	if h.isI() {
+		h.numRefIdx[0] = 0
 	}
-	if nalRefIDC != 0 {
-		parseDecRefPicMarking(r, nalTyp, h.SliceType)
+	// ref_pic_list_modification()
+	for list := 0; list < 2; list++ {
+		if (list == 0 && h.isI()) || (list == 1 && !h.isB()) {
+			continue
+		}
+		if !r.u1() {
+			continue
+		}
+		for n := 0; ; n++ {
+			idc := int(r.ue())
+			if idc == 3 {
+				break
+			}
+			if idc > 2 || n > 64 || r.err() != nil {
+				return nil, errf("h264: bad ref_pic_list_modification")
+			}
+			h.refMod[list] = append(h.refMod[list], refModOp{idc: idc, val: int(r.ue())})
+		}
 	}
-	if pps.EntropyCoding && !sliceTypeIsI(h.SliceType) && !sliceTypeIsSI(h.SliceType) {
-		h.CabacInitIDC = r.ue()
+	if (pps.WeightedPred && h.isP()) || (pps.WeightedBipredIDC == 1 && h.isB()) {
+		h.hasWeights = true
+		h.lumaLog2WD = int(r.ue())
+		h.chromaLog2WD = int(r.ue())
+		if h.lumaLog2WD > 7 || h.chromaLog2WD > 7 {
+			return nil, errf("h264: bad weight denominator")
+		}
+		lists := 1
+		if h.isB() {
+			lists = 2
+		}
+		for l := 0; l < lists; l++ {
+			for i := 0; i < h.numRefIdx[l]; i++ {
+				h.lumaWeight[l][i] = 1 << uint(h.lumaLog2WD)
+				if r.u1() {
+					h.lumaWeightFlag[l][i] = true
+					h.lumaWeight[l][i] = int(r.se())
+					h.lumaOffset[l][i] = int(r.se())
+				}
+				h.chromaWeight[l][i] = [2]int{1 << uint(h.chromaLog2WD), 1 << uint(h.chromaLog2WD)}
+				if r.u1() {
+					h.chromaWFlag[l][i] = true
+					for c := 0; c < 2; c++ {
+						h.chromaWeight[l][i][c] = int(r.se())
+						h.chromaOffset[l][i][c] = int(r.se())
+					}
+				}
+			}
+		}
 	}
-	h.SliceQPDelta = r.se()
-	if pps.DeblockingCtl {
-		h.DisableDeblockingFilterIDC = r.ue()
-		if h.DisableDeblockingFilterIDC != 1 {
-			h.SliceAlphaC0OffsetDiv2 = r.se()
-			h.SliceBetaOffsetDiv2 = r.se()
+	if h.nalRefIDC != 0 {
+		if h.idr {
+			h.noOutputOfPriorPics = r.u1()
+			h.longTermReference = r.u1()
+		} else if r.u1() {
+			h.adaptiveMarking = true
+			for n := 0; ; n++ {
+				op := mmcoOp{op: int(r.ue())}
+				if op.op == 0 {
+					break
+				}
+				if op.op > 6 || n > 66 || r.err() != nil {
+					return nil, errf("h264: bad memory_management_control_operation")
+				}
+				if op.op == 1 || op.op == 3 {
+					op.diffPicNumsMinus1 = int(r.ue())
+				}
+				if op.op == 2 {
+					op.longTermPicNum = int(r.ue())
+				}
+				if op.op == 3 || op.op == 6 {
+					op.longTermFrameIdx = int(r.ue())
+				}
+				if op.op == 4 {
+					op.maxLongTermIdxPlus = int(r.ue())
+				}
+				h.mmco = append(h.mmco, op)
+			}
+		}
+	}
+	if pps.EntropyCodingCABAC && !h.isI() {
+		h.cabacInitIDC = int(r.ue())
+		if h.cabacInitIDC > 2 {
+			return nil, errf("h264: bad cabac_init_idc")
+		}
+	}
+	h.qpDelta = int(r.se())
+	if pps.DeblockingFilterCtl {
+		h.disableDeblock = int(r.ue())
+		if h.disableDeblock > 2 {
+			return nil, errf("h264: bad disable_deblocking_filter_idc")
+		}
+		if h.disableDeblock != 1 {
+			h.alphaOffset = int(r.se()) * 2
+			h.betaOffset = int(r.se()) * 2
 		}
 	}
 	if err := r.err(); err != nil {
 		return nil, err
 	}
+	qp := pps.PicInitQP + h.qpDelta
+	if qp < 0 || qp > 51 {
+		return nil, errf("h264: bad slice QP")
+	}
+	if h.firstMB >= sps.PicWidthInMbs*sps.FrameHeightInMbs() {
+		return nil, errf("h264: first_mb_in_slice out of range")
+	}
 	return h, nil
-}
-
-func parseRefPicListReordering(r *bitReader, isB bool) {
-	skipOne := func() {
-		for {
-			idc := r.ue()
-			if idc == 3 {
-				return
-			}
-			switch idc {
-			case 0, 1:
-				r.ue() // abs_diff_pic_num_minus1
-			case 2:
-				r.ue() // long_term_pic_num
-			default:
-				r.skip(0)
-				return
-			}
-		}
-	}
-	if r.u1() { // ref_pic_list_reordering_flag_l0
-		skipOne()
-	}
-	if isB && r.u1() { // ref_pic_list_reordering_flag_l1
-		skipOne()
-	}
-}
-
-func parsePredWeightTable(r *bitReader, sps *SPS, h *SliceHeader, isB bool) {
-	h.LumaLog2WeightDenom = int(r.ue())
-	if sps.ChromaFormatIDC != 0 {
-		h.ChromaLog2WeightDenom = int(r.ue())
-	}
-	read := func(n int) (lw, lo []int, cw, co [][2]int) {
-		lw = make([]int, n)
-		lo = make([]int, n)
-		cw = make([][2]int, n)
-		co = make([][2]int, n)
-		for i := 0; i < n; i++ {
-			lw[i] = 1 << uint(h.LumaLog2WeightDenom)
-			if r.u1() { // luma_weight_x_flag
-				lw[i] = int(r.se())
-				lo[i] = int(r.se())
-			}
-			if sps.ChromaFormatIDC != 0 {
-				cw[i] = [2]int{1 << uint(h.ChromaLog2WeightDenom), 1 << uint(h.ChromaLog2WeightDenom)}
-				if r.u1() { // chroma_weight_x_flag
-					for j := 0; j < 2; j++ {
-						cw[i][j] = int(r.se())
-						co[i][j] = int(r.se())
-					}
-				}
-			}
-		}
-		return
-	}
-	h.LumaWeightL0, h.LumaOffsetL0, h.ChromaWeightL0, h.ChromaOffsetL0 = read(h.NumRefIdxL0Active)
-	if isB {
-		h.LumaWeightL1, h.LumaOffsetL1, h.ChromaWeightL1, h.ChromaOffsetL1 = read(h.NumRefIdxL1Active)
-	}
-}
-
-func parseDecRefPicMarking(r *bitReader, nalTyp int, sliceType uint32) {
-	if nalTyp == nalIDR {
-		r.u1() // no_output_of_prior_pics_flag
-		r.u1() // long_term_reference_flag
-		return
-	}
-	if !r.u1() { // adaptive_ref_pic_marking_mode_flag
-		return
-	}
-	for {
-		mmco := r.ue()
-		switch mmco {
-		case 0:
-			return
-		case 1:
-			r.ue()
-		case 2:
-			r.ue()
-		case 3:
-			r.ue()
-			r.ue()
-		case 4:
-			r.ue()
-		case 5:
-			// no extra data
-		case 6:
-			r.ue()
-		default:
-			return
-		}
-	}
 }

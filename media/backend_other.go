@@ -2,18 +2,9 @@
 
 package media
 
-// Non-darwin / no-cgo fallback. No backend is registered, so every
-// public entry point returns ErrNotSupported. The package still
-// compiles and the rest of qui's test suite still passes on Linux
-// CI without a media stack.
-//
-// A real Linux backend would replace this file with backend_linux.go
-// + backend_linux_nvdec.c / backend_linux_nvdec.go that registers
-// itself via setBackend in init(), and adjust the build tag here to
-// exclude that case.
+// Non-darwin / no-cgo fallback. No *native* backend is registered here, so
+// the default ("auto") resolves to the pure-Go backend in
+// backend_golang.go. On platforms that add a native backend, register it as
+// "native" from that file's init().
 
-func init() {
-	// Intentionally leave currentBackend == nil. activeBackend()
-	// will return nil and AudioPlayer / VideoView will surface
-	// ErrNotSupported from Open.
-}
+func init() {}

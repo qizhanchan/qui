@@ -145,10 +145,9 @@ func debugf(format string, args ...interface{}) {
 	log.Printf("[media] "+format, args...)
 }
 
-// init registers the darwin backend. Runs before any user code; safe
-// to assume currentBackend is set by the time NewAudioPlayer is called.
+// init registers the darwin backend as "native". Runs before any user code.
 func init() {
-	setBackend(darwinBackend{})
+	setBackend("native", darwinBackend{})
 	flushTextureCache = flushFrameCache
 }
 

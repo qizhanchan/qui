@@ -25,17 +25,24 @@ type Format struct {
 // Sink is a running audio output. It owns its own playback thread; the methods
 // below are control-plane only and are safe to call from any goroutine.
 type Sink interface {
-	// Write queues interleaved PCM for playback. It returns the number of
-	// bytes accepted (which may be less than len(pcm) when the buffer is
-	// full) and an error.
+	// Write queues interleaved PCM for playback without blocking. It
+	// returns the number of bytes accepted (less than len(pcm) when the
+	// bounded buffer is full; callers retry later) and an error.
 	Write(pcm []byte) (int, error)
+	// Buffered reports how much accepted PCM is still queued.
+	Buffered() time.Duration
+	// Flush drops queued PCM and restarts HostTime at zero (after a seek).
+	Flush()
+	// SetRate sets the playback rate with pitch preservation (0.5–2.0).
+	SetRate(r float32)
 	// Play starts (or resumes) playback. Idempotent.
 	Play() error
 	// Pause halts playback at the current position. Idempotent.
 	Pause() error
 	// SetVolume sets the linear gain in [0, 1]; values outside are clamped.
 	SetVolume(v float32)
-	// HostTime is the sink's authoritative playback position from the audio
+	// HostTime is the content time (of the PCM written since Open or the
+	// last Flush) currently being heard, derived from the device's sample
 	// clock. Used as the master clock for A/V sync.
 	HostTime() time.Duration
 	// Close stops playback and releases the device. Idempotent.
