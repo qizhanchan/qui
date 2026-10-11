@@ -287,9 +287,59 @@ Open items: tile / dependent-slice vectors (from our encoder), Main 10,
 NEON deblocking and inverse transform, WPP row-parallel decoding.
 
 The HEVC **encoder** follows the decoder with the same milestone shape as
-R1 (intra → inter → rate control → in-loop decisions → performance),
-verified the same way (reconstruction == decode by us and by FFmpeg;
-quality vs `libx265 -preset ultrafast`).
+R1, verified the same way (reconstruction == decode by us and by FFmpeg;
+quality vs libx265):
+
+| # | Milestone | Contents |
+|---|---|---|
+| H0 | Bitstream | VPS/SPS/PPS, slice segment headers (explicit short-term RPS), Annex-B and length-prefixed output |
+| H1 | Intra | CABAC coder + bit estimator, coding quadtree by RD, 35-mode intra search, NxN, forward DST/DCT, dead-zone quantisation, sign data hiding |
+| H2 | Inter | skip / merge (the decoder's candidate derivation), AMVP with integer + quarter-sample motion search, multiple references |
+| H3 | Rate control | CQP, CRF, ABR, VBV (re-encode on overflow) |
+| H4 | B pictures, in-loop | mini-GOPs of non-reference B pictures, bi-prediction search, deblocking, SAO decisions |
+| H5 | Container | `mp4x` `hvc1`/`hvcC`, progressive and fragmented |
+| H6 | Performance | NEON SATD/SAD/forward transform (plus the decoder's MC), fast decisions, wavefront-parallel CTU rows, parallel deblocking / SAO statistics |
+
+**Encoder status: H0–H6 done (2026-10-11).**
+
+| Piece | Location | State |
+|---|---|---|
+| Reconstruction | `enc*.go` beside the decoder | an embedded `Decoder` holds the state: parameter sets and slice headers are parsed back by the decoder's parsers, CUs are reconstructed with its intra prediction / dequantisation / inverse transform / MC / state setters, pictures go through its DPB and loop filters |
+| Bitstream (H0) | `enc_bits.go`, `enc_params.go` | VPS/SPS/PPS (VUI colour + timing), slice headers, WPP / uniform tiles / slices / dependent slice segments with entry points counted over the escaped payload |
+| Intra (H1) | `enc_cabac.go`, `enc_syntax.go`, `enc_intra.go`, `enc_tq.go` | one `binSink` interface for the arithmetic coder and the estimator; syntax writers mirror the decoder's parsers; bottom-up quadtree with snapshot/restore; SATD-ranked modes then RD; sign data hiding by parity adjustment |
+| Inter (H2) | `enc_inter.go` | merge candidates from the decoder's own derivation tried as skip and merge-with-residual; AMVP 2Nx2N with diamond SAD search and half/quarter-sample SATD refinement; inferred-cbf rules respected (all-zero merges become skips) |
+| Rate control (H3) | `enc_rc.go` | the H.264 encoder's model: CQP with I/B offsets, CRF, ABR (I/B follow the P QP), VBV with predictors; an overflowing picture is re-coded after resetting only its frame context |
+| B pictures, in-loop (H4) | `enc.go`, `enc_sao.go` | up to 7 B pictures per mini-GOP (RPS keeps the anchors, reorder 1); pictures coded in three passes — decide, deblock + SAO decision (band / 4 edge classes / merge, deblocked-vs-source statistics), entropy-code |
+| Container (H5) | `mp4x` | `Packet.DTS` = coding index − `Reorder()`, muxed with an edit list |
+| Performance (H6) | `neon_arm64.s`, `enc.go` | early skip, gated intra in P/B, preset 0 inter CUs ≥ 16×16; pass A as a wavefront over CTB rows (deterministic for any core count) |
+
+Evidence:
+
+- **Self-consistency + conformance:** 15 configurations (intra / P / B,
+  CTU 16 / 32 / 64, 1–3 references, WPP, tiles, slices with dependent
+  segments, SAO on/off, sign hiding on/off, a VBV that forces re-encodes)
+  decode to exactly the reconstruction in our decoder and FFmpeg
+  (`TestEncoderReconMatchesDecoders`; on CTU-16 streams where FFmpeg's
+  software decoder shows its SAO deviation, VideoToolbox matches). These
+  streams are also the decoder's tile and dependent-slice coverage. MP4
+  round trips (progressive / fragmented, with B pictures) decode
+  identically in our stack and FFmpeg (`TestMP4RoundTrip`).
+  `testdata/encstreams.txt` pins every stream; NEON, `-tags purego` and 1
+  vs 10 cores produce identical streams.
+- **Quality** (BD-PSNR at equal bitrate, opt-in `TestQualityVsX265`, three B
+  pictures, x265 with `-tune psnr`), synthetic noisy 416×240 / screen
+  content 640×360: preset 0 **+0.17 / +6.8 dB** vs `ultrafast`, −0.26 /
+  −1.6 dB vs `veryfast`; preset 1 **−0.04 / +3.6 dB** vs `veryfast`, −0.18 /
+  +4.9 dB vs `medium`.
+- **Speed** (1080p, Apple silicon, 10 cores, `BenchmarkEncodeFile`):
+  preset 0 **38 ms/frame** (screen content) / **47 ms/frame** (high
+  motion); preset 1 with B pictures 52 / 68 ms; preset 0 on one core
+  170 ms.
+- **Rate control:** ABR within 15% at three rates, VBV never underflows,
+  CRF is monotonic (`enc_rc_test.go`).
+
+Open items: RQT (transform splits) and rectangular / AMP partitions,
+RDOQ, B-pyramids, adaptive quantisation, and NEON intra prediction.
 
 ### R3. AV1 decoder, then encoder (`media/internal/av1`)
 

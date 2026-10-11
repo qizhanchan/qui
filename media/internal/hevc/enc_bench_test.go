@@ -8,15 +8,17 @@ import (
 )
 
 // BenchmarkEncodeFile encodes HEVC_ENC_YUV (HEVC_ENC_SIZE, first 10
-// frames) at QP 30 with HEVC_ENC_PRESET and reports ms per frame.
+// frames) at QP 30 with HEVC_ENC_PRESET and HEVC_ENC_BFRAMES and reports
+// ms per frame.
 func BenchmarkEncodeFile(b *testing.B) {
 	path := os.Getenv("HEVC_ENC_YUV")
 	if path == "" {
 		b.Skip("HEVC_ENC_YUV not set")
 	}
-	var w, h, preset int
+	var w, h, preset, bframes int
 	fmt.Sscanf(os.Getenv("HEVC_ENC_SIZE"), "%dx%d", &w, &h)
 	fmt.Sscan(os.Getenv("HEVC_ENC_PRESET"), &preset)
+	fmt.Sscan(os.Getenv("HEVC_ENC_BFRAMES"), &bframes)
 	raw, _ := os.ReadFile(path)
 	fs := w * h * 3 / 2
 	n := min(10, len(raw)/fs)
@@ -31,10 +33,11 @@ func BenchmarkEncodeFile(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e, _ := NewEncoder(EncoderConfig{Width: w, Height: h, QP: 30, Preset: preset})
+		e, _ := NewEncoder(EncoderConfig{Width: w, Height: h, QP: 30, Preset: preset, BFrames: bframes})
 		for _, f := range frames {
 			e.Encode(f)
 		}
+		e.Flush()
 	}
 	b.ReportMetric(float64(b.Elapsed().Microseconds())/1000/float64(b.N*n), "ms/frame")
 

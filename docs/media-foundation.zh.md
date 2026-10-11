@@ -228,8 +228,39 @@ ffmpeg -i in.mp4 -c:v libx265 -pix_fmt yuv420p10le ...                          
 
 未完成项：tiles / dependent slice 向量（来自我们的编码器）、Main 10、NEON 去块与反变换、WPP 行并行解码。
 
-HEVC **编码器**在解码器之后，里程碑结构与 R1 相同（帧内 → 帧间 → 码率控制 → 环内决策 →
-性能），验证方式也相同（重建 == 我们与 FFmpeg 的解码结果；质量对比 `libx265 -preset ultrafast`）。
+HEVC **编码器**在解码器之后，里程碑结构与 R1 相同，验证方式也相同（重建 == 我们与 FFmpeg 的解码结果；质量对比 libx265）：
+
+| # | 里程碑 | 内容 |
+|---|---|---|
+| H0 | 码流 | VPS/SPS/PPS、slice segment 头（显式短期 RPS）、Annex-B 与长度前缀输出 |
+| H1 | 帧内 | CABAC 编码器 + 比特估计器、按 RD 的编码四叉树、35 模式帧内搜索、NxN、正向 DST/DCT、死区量化、符号隐藏 |
+| H2 | 帧间 | skip / merge（解码器自己的候选推导）、整数 + 1/4 像素运动搜索的 AMVP、多参考 |
+| H3 | 码率控制 | CQP、CRF、ABR、VBV（溢出时重编码） |
+| H4 | B 图像、环内 | 非参考 B 图像的 mini-GOP、双向预测搜索、去块、SAO 决策 |
+| H5 | 容器 | `mp4x` 的 `hvc1`/`hvcC`，普通与分片 MP4 |
+| H6 | 性能 | NEON SATD/SAD/正向变换（加上解码器的 MC）、快速决策、按 CTU 行波前并行、并行去块 / SAO 统计 |
+
+**编码器状态：H0–H6 已完成（2026-10-11）。**
+
+| 部分 | 位置 | 状态 |
+|---|---|---|
+| 重建 | 与解码器同包的 `enc*.go` | 内嵌一个 `Decoder` 保存状态：参数集与 slice 头由解码器自己的解析器读回，CU 用其帧内预测 / 反量化 / 反变换 / MC / 状态设置函数重建，图像经过其 DPB 与环内滤波 |
+| 码流（H0） | `enc_bits.go`、`enc_params.go` | VPS/SPS/PPS（VUI 颜色 + 时序）、slice 头、WPP / 均匀 tiles / slices / dependent slice segment，入口点按转义后的负载计数 |
+| 帧内（H1） | `enc_cabac.go`、`enc_syntax.go`、`enc_intra.go`、`enc_tq.go` | 算术编码器与估计器共用 `binSink` 接口；语法写入函数逐元素对应解码器的解析函数；自底向上的四叉树（快照 / 恢复）；SATD 排序后 RD；通过奇偶调整实现符号隐藏 |
+| 帧间（H2） | `enc_inter.go` | 解码器推导的 merge 候选分别按 skip 与带残差 merge 尝试；AMVP 2Nx2N 菱形 SAD 搜索加半 / 1/4 像素 SATD 细化；遵守推断 cbf 规则（全零 merge 变为 skip） |
+| 码率控制（H3） | `enc_rc.go` | H.264 编码器的模型：带 I/B 偏移的 CQP、CRF、ABR（I/B 跟随 P 的 QP）、带预测器的 VBV；溢出的图像只重置其帧上下文后重编码 |
+| B 图像、环内（H4） | `enc.go`、`enc_sao.go` | 每个 mini-GOP 最多 7 个 B 图像（RPS 保留锚点，重排深度 1）；图像分三遍编码——决策、去块 + SAO 决策（band / 4 种 edge 类 / merge，基于去块后与源图的统计）、熵编码 |
+| 容器（H5） | `mp4x` | `Packet.DTS` = 编码序号 − `Reorder()`，配合编辑列表复用 |
+| 性能（H6） | `neon_arm64.s`、`enc.go` | 提前 skip、P/B 中按条件尝试帧内、preset 0 帧间 CU ≥ 16×16；第一遍按 CTB 行波前并行（任意核数结果一致） |
+
+证据：
+
+- **自洽 + 一致性：** 15 种配置（帧内 / P / B，CTU 16 / 32 / 64，1–3 参考，WPP，tiles，带 dependent segment 的 slices，SAO 开 / 关，符号隐藏开 / 关，强制重编码的 VBV）在我们的解码器与 FFmpeg 中都精确解出重建结果（`TestEncoderReconMatchesDecoders`；在 FFmpeg 软件解码器出现其 SAO 偏差的 CTU-16 码流上，VideoToolbox 一致）。这些码流同时也是解码器 tiles 与 dependent slice 的覆盖。MP4 往返（普通 / 分片，含 B 图像）在我们的栈与 FFmpeg 中解码一致（`TestMP4RoundTrip`）。`testdata/encstreams.txt` 固定了每个码流；NEON、`-tags purego` 以及 1 核与 10 核产生的码流完全相同。
+- **质量**（等码率 BD-PSNR，需手动开启的 `TestQualityVsX265`，3 个 B 图像，x265 使用 `-tune psnr`），合成噪声 416×240 / 屏幕内容 640×360：preset 0 对 `ultrafast` **+0.17 / +6.8 dB**，对 `veryfast` −0.26 / −1.6 dB；preset 1 对 `veryfast` **−0.04 / +3.6 dB**，对 `medium` −0.18 / +4.9 dB。
+- **速度**（1080p，Apple 芯片，10 核，`BenchmarkEncodeFile`）：preset 0 **38 ms/帧**（屏幕内容）/ **47 ms/帧**（高运动）；preset 1 带 B 图像 52 / 68 ms；preset 0 单核 170 ms。
+- **码率控制：** ABR 在三种码率下误差 15% 以内，VBV 从不下溢，CRF 单调（`enc_rc_test.go`）。
+
+未完成项：RQT（变换划分）与矩形 / AMP 划分、RDOQ、B 金字塔、自适应量化、NEON 帧内预测。
 
 ### R3. AV1 解码器，然后编码器（`media/internal/av1`）
 
