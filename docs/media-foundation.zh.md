@@ -344,6 +344,44 @@ AV1 **编码器**沿用 HEVC 编码器的结构：内嵌一个 `Decoder` 保存�
 | AE5 | 容器 | `mp4x` 的 `av01` / `av1C`，普通与分片 MP4 |
 | AE6 | 性能 | NEON SAD / SATD / 正向变换、tile 与超级块行并行 |
 
+**编码器状态：AE0–AE5 已完成，AE6 部分完成（2026-10-11）。** 编码器尚未接入任何公开 API，目前只能从 `media/internal/av1` 的测试中调用。
+
+| 部分 | 位置 | 状态 |
+|---|---|---|
+| 码流（AE0） | `enc_bits.go`、`enc_msac.go` | 序列头和帧头由内嵌的 `Decoder` 回读解析。tile 数据由 libaom `od_ec` 区间编码器写出。符号在 pass A 中记录，确定 CDEF 和 LR 选择后再回放 |
+| 帧内（AE1） | `enc_block.go`、`enc_search.go`、`enc_tq.go`、`enc_fdct.go` | 用快照做 RD 分块搜索，再做一次记录式提交。支持带角度偏移的方向模式、smooth、Paeth、CfL。搜索变换类型和深度。快速 DCT-II 按解码器的变换缩放 |
+| 帧间（AE2） | `enc_inter.go` | 基于解码器 MV 栈的 NEAREST / NEAR / GLOBAL / NEW，整像素加亚像素搜索，skip mode，复合预测，插值滤波器搜索。候选先按 SATD 预排序 |
+| 码率控制（AE3） | `enc_rc.go` | CQP、CRF（qindex ≈ 4·CRF）、ABR、VBV（溢出时重编） |
+| 层级与环路滤波（AE4） | `enc_gop.go`、`enc_filter.go`、`enc_lr.go` | mini-GOP，隐藏 ALTREF 通过 `show_existing_frame` 显示。搜索去块级别、CDEF 强度集合，以及 Wiener / 自引导 LR |
+| 容器（AE5） | `mp4x` | `av01` / `av1C` 封装，普通和分片两种（`TestEncMP4RoundTrip`） |
+| 性能（AE6） | `enc.go` | 均匀 tile 并行搜索并并行回放（720p 起 2×2）。预设开关：帧间预排序、帧内跳过、无残差帧间块不再搜索分割、稀疏 CDEF 测量。环路滤波试算用满所有核 |
+
+证据：
+
+- 所有测试码流在本解码器和 libdav1d 中解出的结果都与编码器重建完全一致（`enc_test.go`）。
+- 质量（`TestQualityVsSVT`，BD-PSNR），640×360：
+  - 全帧内：对 SVT-AV1 preset 4 为 −0.01 dB；
+  - 低延迟：对 preset 8 为 +0.02 dB；
+  - 随机访问（MiniGOP 8）：对 preset 8 为 +0.14 dB；
+  - preset 0 对 SVT preset 10：随机访问 −0.56 dB，低延迟 −0.85 dB。
+- 速度（1080p，Apple M5 10 核，`BenchmarkEncodeFile`，qindex 128）：
+  - preset 0：约 550 ms/帧，单核 1.36 s；
+  - preset 1：6.8 s/帧；
+  - preset 2：12 s/帧。
+  - 1080p 下 4×2 tile 比 2×2 快 20%，质量损失 0.08 dB。
+
+剩余工作：
+
+1. **pass A 的超级块行波前。** 进行中，在分支 `wip/av1-sbrow-wavefront` 上。符号记录已改为按偏移引用 CDF，因此各行可以用各自的上下文副本搜索，再回放到 tile 唯一的上下文中。测试前还需要两处修复：
+   - 每行的 `prev` 改为取该 tile 的上一个任务；
+   - 复制上一行的 CDF 前，要等它完成 `min(2, cols)` 个超级块。
+
+   之后验证与 libdav1d 逐位一致，以及 1 核和 10 核产出相同码流。1080p 下还有两个瓶颈：4 个 tile 只用到 10 核中的约 2.5 核，pass A 约占帧时间的 70%。
+2. NEON SAD / SATD / 正向变换。现在 profile 已经很平（SATD 约占 5%），优先级低于第 1 项。
+3. 提速 preset 1。它比 preset 0 慢 12 倍，主要来自矩形分块、LR Wiener 和变换类型搜索。
+4. 像 H.264 / HEVC 那样，把编码器接入公开 API 或媒体管线。
+5. 尚未实现：10-bit 编码、面向屏幕内容的调色板和帧内块复制、自适应量化。
+
 ### 顺序与成本
 
 | 项目 | 大致工作量 | 备注 |

@@ -442,6 +442,57 @@ measured against SVT-AV1's fast presets.
 | AE5 | Container | `mp4x` `av01` / `av1C`, progressive and fragmented |
 | AE6 | Performance | NEON SAD / SATD / forward transforms, tile and superblock-row parallelism |
 
+**Encoder status: AE0–AE5 done, AE6 partly done (2026-10-11).** The encoder is
+not wired into any public API yet. It is only reachable from
+`media/internal/av1` tests.
+
+| Piece | Location | State |
+|---|---|---|
+| Bitstream (AE0) | `enc_bits.go`, `enc_msac.go` | sequence and frame headers are parsed back by the embedded `Decoder`. The libaom `od_ec` range encoder writes the tile data. Symbols are recorded during pass A and replayed once the CDEF and LR choices are known |
+| Intra (AE1) | `enc_block.go`, `enc_search.go`, `enc_tq.go`, `enc_fdct.go` | RD partition search using snapshots, then a recording commit. Directional modes with angle deltas, smooth, Paeth, CfL. Transform type and depth search. Fast DCT-II scaled to the decoder's transforms |
+| Inter (AE2) | `enc_inter.go` | NEAREST / NEAR / GLOBAL / NEW from the decoder's MV stack, integer + subpel search, skip mode, compound, interpolation-filter search. Candidates are pre-ranked by SATD |
+| Rate control (AE3) | `enc_rc.go` | CQP, CRF (qindex ≈ 4·CRF), ABR, VBV with re-encode |
+| Hierarchy, in-loop (AE4) | `enc_gop.go`, `enc_filter.go`, `enc_lr.go` | mini-GOPs with a hidden ALTREF shown via `show_existing_frame`. Deblocking level, CDEF strength sets and Wiener / self-guided LR searches |
+| Container (AE5) | `mp4x` | `av01` / `av1C` mux, progressive and fragmented (`TestEncMP4RoundTrip`) |
+| Performance (AE6) | `enc.go` | uniform tiles searched and replayed in parallel (2×2 from 720p). Preset knobs: inter pre-ranking, intra skip, no split under residual-free inter blocks, sparse CDEF measuring. Loop-filter trials run on all cores |
+
+Evidence:
+
+- Every test stream decodes in our decoder and in libdav1d to exactly the
+  encoder's reconstruction (`enc_test.go`).
+- Quality (`TestQualityVsSVT`, BD-PSNR) at 640×360:
+  - all-intra: −0.01 dB vs SVT-AV1 preset 4;
+  - low delay: +0.02 dB vs preset 8;
+  - random access with MiniGOP 8: +0.14 dB vs preset 8;
+  - preset 0 against SVT preset 10: −0.56 dB random access, −0.85 dB low delay.
+- Speed (1080p, Apple M5 with 10 cores, `BenchmarkEncodeFile`, qindex 128):
+  - preset 0: about 550 ms/frame, or 1.36 s on one core;
+  - preset 1: 6.8 s/frame;
+  - preset 2: 12 s/frame.
+  - At 1080p, 4×2 tiles are 20% faster than 2×2 for a 0.08 dB loss.
+
+Remaining work:
+
+1. **Superblock-row wavefront in pass A.** WIP on branch
+   `wip/av1-sbrow-wavefront`. Records already name their CDF by offset, so
+   rows searched with their own context copies can replay into the tile's
+   single context. Before testing, two fixes are still needed:
+   - compute each row's `prev` from that tile's last job;
+   - wait for `min(2, cols)` superblocks of the row above before copying its CDFs.
+
+   After that, check bit-exactness against libdav1d and that 1 core and
+   10 cores give the same stream. Two 1080p bottlenecks remain: four tiles
+   use only about 2.5 of 10 cores, and pass A takes about 70% of the frame
+   time.
+2. NEON SAD / SATD / forward transform. The profile is flat now (SATD is
+   about 5%), so this is lower priority than item 1.
+3. Make preset 1 faster. It is 12× slower than preset 0, mostly from
+   rectangular partitions, LR Wiener and transform-type search.
+4. Wire the encoder into a public API or the media pipeline, as for
+   H.264 / HEVC.
+5. 10-bit encoding, palette and intra block copy for screen content, and
+   adaptive quantisation are not implemented.
+
 ### Order and cost
 
 | Item | Rough effort | Note |
