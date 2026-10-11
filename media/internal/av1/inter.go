@@ -68,18 +68,7 @@ func hasNewmv(m int) bool {
 func (t *tile) interFrameModeInfo() error {
 	b := &t.b
 	h := t.h
-	p := &t.mvp
-	p.leftRef, p.aboveRef = [2]int{intraFrame, -1}, [2]int{intraFrame, -1}
-	if b.availL {
-		m := t.mi(b.miRow, b.miCol-1)
-		p.leftRef = [2]int{int(m.refFrame[0]), int(m.refFrame[1])}
-	}
-	if b.availU {
-		m := t.mi(b.miRow-1, b.miCol)
-		p.aboveRef = [2]int{int(m.refFrame[0]), int(m.refFrame[1])}
-	}
-	p.leftIntra, p.aboveIntra = p.leftRef[0] <= intraFrame, p.aboveRef[0] <= intraFrame
-	p.leftSingle, p.aboveSingle = p.leftRef[1] <= intraFrame, p.aboveRef[1] <= intraFrame
+	t.interNeighbors()
 	b.skip = false
 	t.interSegmentID(true)
 	t.readSkipMode()
@@ -104,6 +93,23 @@ func (t *tile) interFrameModeInfo() error {
 	b.yMode = t.ms.sym(t.cdf.yMode[sizeGroup[b.size]][:], intraModes)
 	t.intraModesRest()
 	return nil
+}
+
+// interNeighbors summarises the left and above blocks' references.
+func (t *tile) interNeighbors() {
+	b := &t.b
+	p := &t.mvp
+	p.leftRef, p.aboveRef = [2]int{intraFrame, -1}, [2]int{intraFrame, -1}
+	if b.availL {
+		m := t.mi(b.miRow, b.miCol-1)
+		p.leftRef = [2]int{int(m.refFrame[0]), int(m.refFrame[1])}
+	}
+	if b.availU {
+		m := t.mi(b.miRow-1, b.miCol)
+		p.aboveRef = [2]int{int(m.refFrame[0]), int(m.refFrame[1])}
+	}
+	p.leftIntra, p.aboveIntra = p.leftRef[0] <= intraFrame, p.aboveRef[0] <= intraFrame
+	p.leftSingle, p.aboveSingle = p.leftRef[1] <= intraFrame, p.aboveRef[1] <= intraFrame
 }
 
 func (t *tile) interSegmentID(preSkip bool) {

@@ -56,6 +56,7 @@ type Encoder struct {
 	srcStride [3]int
 
 	frameCount int64
+	keyFrame   int64 // input index of the last key frame
 	t          *tile
 	sc         tileScratch
 	sink       symSink
@@ -69,6 +70,8 @@ type Encoder struct {
 	nodes      []encNode // partition search arena (per superblock)
 	nodeTop    int
 	lumaBuf    []modeCand
+	interBuf   []blkChoice
+	interList  []blkChoice
 	chromaBuf  []modeCand
 	chromaOut  []modeCand
 
@@ -128,7 +131,11 @@ func (e *Encoder) Encode(img *image.YCbCr) (Packet, error) {
 		return Packet{}, errors.New("av1: image smaller than the configured size")
 	}
 	e.loadSource(img)
-	pkt, err := e.encodeKeyFrame()
+	key := e.frameCount-e.keyFrame >= int64(e.cfg.KeyInt) || e.frameCount == 0
+	if key {
+		e.keyFrame = e.frameCount
+	}
+	pkt, err := e.encodeFrame(key)
 	pkt.PTS = e.frameCount
 	e.frameCount++
 	return pkt, err
@@ -167,20 +174,29 @@ func (e *Encoder) loadSource(img *image.YCbCr) {
 	}
 }
 
-// frameHeader returns the header fields of a key frame.
-func (e *Encoder) keyHeader() encFrameHdr {
-	return encFrameHdr{
+// frameHeader returns the header fields of a key frame or of an inter
+// frame predicting from the previous frame (slot 0, all references).
+func (e *Encoder) frameHeader(key bool) encFrameHdr {
+	fh := encFrameHdr{
 		frameType: keyFrame, showFrame: true,
 		orderHint:   int(e.frameCount) & (1<<uint(e.seq.orderHintBits) - 1),
 		baseQ:       e.cfg.QIndex,
 		cdefDamping: 3,
 		txSelect:    true,
 	}
+	if !key {
+		fh.frameType = interFrame
+		fh.primaryRef = 0
+		fh.refresh = 1
+		fh.interp = filterEightTap
+		fh.useRefMVs = e.seq.refFrameMVs
+	}
+	return fh
 }
 
-func (e *Encoder) encodeKeyFrame() (Packet, error) {
+func (e *Encoder) encodeFrame(key bool) (Packet, error) {
 	d := e.d
-	fh := e.keyHeader()
+	fh := e.frameHeader(key)
 	var bw bitWriter
 	fh.write(d, &bw)
 	bw.trailing()
@@ -240,7 +256,10 @@ func (e *Encoder) encodeKeyFrame() (Packet, error) {
 	fh.write(d, &bw)
 	bw.byteAlign()
 	payload := append(bw.buf, tileData...)
-	out := append([]byte(nil), e.seqOBU...)
+	var out []byte
+	if key {
+		out = append(out, e.seqOBU...)
+	}
 	out = appendOBU(out, obuFrame, payload)
 
 	d.seenFrameHeader = false
@@ -248,7 +267,11 @@ func (e *Encoder) encodeKeyFrame() (Packet, error) {
 		return Packet{}, err
 	}
 	e.collectRecon()
-	return Packet{Data: out, Key: true, Type: 'K', QIndex: h.baseQIdx}, nil
+	typ := byte('K')
+	if !key {
+		typ = 'P'
+	}
+	return Packet{Data: out, Key: key, Type: typ, QIndex: h.baseQIdx}, nil
 }
 
 // collectRecon keeps (or drops) the decoder's output frames.

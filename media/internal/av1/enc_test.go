@@ -180,8 +180,22 @@ func TestEncodeIntra(t *testing.T) {
 	src := testSource(t, "ra_p4", 3)
 	for _, q := range []int{40, 128, 220} {
 		t.Run(fmt.Sprint(q), func(t *testing.T) {
-			_, n, ps := encodeCheck(t, EncoderConfig{Width: 320, Height: 180, QIndex: q}, src)
+			_, n, ps := encodeCheck(t, EncoderConfig{Width: 320, Height: 180, QIndex: q, KeyInt: 1}, src)
 			t.Logf("qindex %d: %d bytes/frame, PSNR %.2f dB", q, n/len(src), ps)
+		})
+	}
+}
+
+func TestEncodeInter(t *testing.T) {
+	src := testSource(t, "ra_p4", 6)
+	for _, q := range []int{60, 140, 220} {
+		t.Run(fmt.Sprint(q), func(t *testing.T) {
+			pkts, n, ps := encodeCheck(t, EncoderConfig{Width: 320, Height: 180, QIndex: q}, src)
+			sizes := []int{}
+			for _, p := range pkts {
+				sizes = append(sizes, len(p.Data))
+			}
+			t.Logf("qindex %d: %d bytes/frame %v, PSNR %.2f dB", q, n/len(src), sizes, ps)
 		})
 	}
 }

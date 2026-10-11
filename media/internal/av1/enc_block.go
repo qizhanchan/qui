@@ -5,13 +5,19 @@ import "math"
 // Block coding: partition walk, intra block decisions, and the syntax
 // writers that mirror the decoder's parsers (tile.go, block.go).
 
-// intraChoice is the mode decision of one intra block.
-type intraChoice struct {
+// blkChoice is the mode decision of one block: intra modes, or (inter)
+// the reference, the inter mode, the DRL index and the motion vector.
+type blkChoice struct {
 	yMode, angleY   int
 	uvMode, angleUV int
 	cflU, cflV      int
 	txDepth         int
 	skip            bool
+
+	inter  bool
+	ref    int
+	drlIdx int
+	mv     mv
 }
 
 // codePartition codes the fixed partition tree at (r, c): 16x16 blocks
@@ -38,8 +44,8 @@ func (e *Encoder) codePartition(r, c, bSize int) {
 	sub := partitionSubsize[part][bSize]
 	switch part {
 	case partNone:
-		ch := intraChoice{yMode: dcPred, uvMode: dcPred}
-		e.codeIntraBlock(r, c, sub, &ch)
+		ch := blkChoice{yMode: dcPred, uvMode: dcPred}
+		e.codeBlock(r, c, sub, &ch)
 	case partSplit:
 		for _, o := range [4][2]int{{0, 0}, {0, half}, {half, 0}, {half, half}} {
 			e.codePartition(r+o[0], c+o[1], sub)
@@ -95,7 +101,7 @@ func (e *Encoder) writePartition(r, c, bSize, part int) {
 // codeIntraBlock codes an intra block with the given choice: with the
 // sink recording, the mode info is written first and the coefficients as
 // the decoder's residual() asks for them. It returns the distortion.
-func (e *Encoder) codeIntraBlock(r, c, size int, ch *intraChoice) int64 {
+func (e *Encoder) codeIntraBlock(r, c, size int, ch *blkChoice) int64 {
 	t := e.t
 	b := &t.b
 	t.initBlock(r, c, size)
@@ -137,12 +143,23 @@ func (t *tile) setIntraTxSize() {
 	}
 }
 
-// writeIntraModeInfo mirrors intraFrameModeInfo and the intra transform
-// size (readTxSize).
+// writeIntraModeInfo mirrors intraFrameModeInfo (or, in inter frames,
+// interFrameModeInfo for an intra block) and the intra transform size
+// (readTxSize).
 func (e *Encoder) writeIntraModeInfo(txDepth int) {
 	t := e.t
 	b := &t.b
 	k := &e.sink
+	if !t.h.intra {
+		t.interNeighbors()
+		e.writeSkip()
+		e.writeCdef()
+		e.writeIsInter()
+		k.sym(t.cdf.yMode[sizeGroup[b.size]][:], b.yMode, intraModes)
+		e.writeIntraModesRest()
+		e.writeTxDepth(txDepth)
+		return
+	}
 	// skip
 	ctx := 0
 	if b.availU && t.mi(b.miRow-1, b.miCol).skip {

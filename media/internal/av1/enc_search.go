@@ -101,7 +101,7 @@ func (e *Encoder) unsnap() { e.snapTop-- }
 // directly, their choices (split nodes have kids).
 type encNode struct {
 	part int
-	ch   [4]intraChoice
+	ch   [4]blkChoice
 	kids [4]*encNode
 }
 
@@ -169,7 +169,7 @@ func (e *Encoder) applyNode(r, c, bSize int, n *encNode) {
 		br, bc := blocks[i][0], blocks[i][1]
 		if br < f.miRows && bc < f.miCols {
 			ch := n.ch[i]
-			e.codeIntraBlock(br, bc, sub, &ch)
+			e.codeBlock(br, bc, sub, &ch)
 		}
 	}
 }
@@ -265,25 +265,49 @@ func (e *Encoder) searchNode(r, c, bSize int, budget float64) (*encNode, float64
 
 // searchBlock picks the modes of an intra block and leaves its
 // reconstruction in place, returning the choice and its RD cost.
-func (e *Encoder) searchBlock(r, c, size int) (intraChoice, float64) {
+func (e *Encoder) searchBlock(r, c, size int) (blkChoice, float64) {
 	t := e.t
 	s0 := e.snap()
 	defer e.unsnap()
 	e.save(s0, r, c, num4x4W[size], num4x4H[size])
-	t.initBlock(r, c, size)
-	cands := e.rankLumaModes(r, c, size)
-	best := intraChoice{yMode: dcPred, uvMode: dcPred}
+	best := blkChoice{yMode: dcPred, uvMode: dcPred}
 	bestCost := math.Inf(1)
-	try := func(ch intraChoice) {
+	try := func(ch blkChoice) {
 		e.load(s0)
-		cost := e.trialIntra(r, c, size, &ch)
+		cost := e.trial(r, c, size, &ch)
 		if cost < bestCost {
 			best, bestCost = ch, cost
 		}
 	}
-	for _, m := range cands {
-		try(intraChoice{yMode: m.mode, angleY: m.angle, uvMode: dcPred})
+	if !t.h.intra {
+		inter := append(e.interList[:0], e.interCandidates(r, c, size, lastFrame)...)
+		e.interList = inter
+		for _, ch := range inter {
+			try(ch)
+		}
+		e.load(s0)
 	}
+	bestInter := best
+	t.initBlock(r, c, size)
+	cands := e.rankLumaModes(r, c, size)
+	intraBest := math.Inf(1)
+	for _, m := range cands {
+		ch := blkChoice{yMode: m.mode, angleY: m.angle, uvMode: dcPred}
+		e.load(s0)
+		if cost := e.trial(r, c, size, &ch); cost < intraBest {
+			intraBest = cost
+			if cost < bestCost {
+				best, bestCost = ch, cost
+			}
+		}
+	}
+	if best.inter {
+		e.load(s0)
+		ch := best
+		cost := e.trial(r, c, size, &ch)
+		return ch, cost
+	}
+	_ = bestInter
 	// Chroma: the luma choice with each chroma candidate.
 	if t.b.hasChroma || e.chromaCodedBy(r, c, size) {
 		y := best
@@ -307,8 +331,17 @@ func (e *Encoder) searchBlock(r, c, size int) (intraChoice, float64) {
 	}
 	e.load(s0)
 	ch := best
-	cost := e.trialIntra(r, c, size, &ch)
+	cost := e.trial(r, c, size, &ch)
 	return ch, cost
+}
+
+// trial codes the block with the sink estimating and returns its RD
+// cost.
+func (e *Encoder) trial(r, c, size int, ch *blkChoice) float64 {
+	if ch.inter {
+		return e.trialInter(r, c, size, ch)
+	}
+	return e.trialIntra(r, c, size, ch)
 }
 
 // chromaCodedBy reports whether a block without its own chroma is the
@@ -317,7 +350,7 @@ func (e *Encoder) chromaCodedBy(r, c, size int) bool { return false }
 
 // trialIntra codes the block with the sink estimating and returns its RD
 // cost; ch.skip is set when no coefficient is coded.
-func (e *Encoder) trialIntra(r, c, size int, ch *intraChoice) float64 {
+func (e *Encoder) trialIntra(r, c, size int, ch *blkChoice) float64 {
 	k := &e.sink
 	ch.skip = false
 	before := k.cost
@@ -351,14 +384,17 @@ func (e *Encoder) rankLumaModes(r, c, size int) []modeCand {
 	if blockW(size) > 64 || blockH(size) > 64 {
 		return []modeCand{{mode: dcPred}}
 	}
-	above, left := dcPred, dcPred
-	if b.availU {
-		above = int(t.mi(r-1, c).yMode)
+	modeCDF := t.cdf.yMode[sizeGroup[size]][:]
+	if t.h.intra {
+		above, left := dcPred, dcPred
+		if b.availU {
+			above = int(t.mi(r-1, c).yMode)
+		}
+		if b.availL {
+			left = int(t.mi(r, c-1).yMode)
+		}
+		modeCDF = t.cdf.kfYMode[intraModeContext[above]][intraModeContext[left]][:]
 	}
-	if b.availL {
-		left = int(t.mi(r, c-1).yMode)
-	}
-	modeCDF := t.cdf.kfYMode[intraModeContext[above]][intraModeContext[left]][:]
 	cands := e.lumaBuf[:0]
 	for mode := dcPred; mode <= paethPred; mode++ {
 		for angle := -3; angle <= 3; angle++ {
@@ -381,7 +417,7 @@ func (e *Encoder) rankLumaModes(r, c, size int) []modeCand {
 
 // rankChromaModes ranks chroma modes for a block whose luma is decided
 // (and reconstructed, for CfL).
-func (e *Encoder) rankChromaModes(r, c, size int, y *intraChoice) []modeCand {
+func (e *Encoder) rankChromaModes(r, c, size int, y *blkChoice) []modeCand {
 	t := e.t
 	b := &t.b
 	cflAllowed := !b.lossless && max(blockW(size), blockH(size)) <= 32
