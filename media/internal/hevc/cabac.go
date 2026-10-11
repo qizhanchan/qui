@@ -94,12 +94,12 @@ func (c *cabac) terminate() int {
 	return 0
 }
 
-// alignAfterTerminate positions the reader after a terminating bin equal
-// to 1: the bit that follows is the final '1' of the encoder's flush
-// (rbsp_stop_one_bit / alignment_bit_equal_to_one), then byte alignment.
-// It returns the byte offset of the next data.
+// alignAfterTerminate returns the byte offset of the data following a
+// terminating bin equal to 1. The encoder's flush ends with the stop bit,
+// which is already the last bit inside the 9-bit offset window, so the
+// next data starts at the following byte boundary (HM finish(), FFmpeg
+// skip_bytes).
 func (c *cabac) alignAfterTerminate() int {
-	c.pos++
 	return (c.pos + 7) >> 3
 }
 

@@ -102,6 +102,7 @@ type Decoder struct {
 
 	out     []*Frame
 	lastErr error
+	saoTmp  [3][]byte
 }
 
 // New returns a decoder.

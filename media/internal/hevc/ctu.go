@@ -417,6 +417,7 @@ func (s *sliceDec) codingUnit(x0, y0, log2, depth int) error {
 		s.intraSplit = s.predMode == modeIntra && s.partMode == partNxN
 	}
 	if s.predMode == modeIntra {
+		s.storeIntra(x0, y0, n)
 		if s.partMode == part2Nx2N && sp.PCM && log2 >= sp.Log2MinPCM && log2 <= sp.Log2MaxPCM {
 			pcm = s.cb.terminate() == 1
 		}
