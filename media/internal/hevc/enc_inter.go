@@ -237,14 +237,7 @@ func (e *Encoder) motionSearch(ref *picture, x0, y0, w, h int, mvp [2][2]int) ([
 	}
 	sad := func(ix, iy int) int {
 		b, bs := fetch(e.d.sd.mc.edge[:], ref.y, ref.ys, sp.Width, sp.Height, x0+ix, y0+iy, w, h, 0)
-		s := 0
-		for y := 0; y < h; y++ {
-			rs, rr := src[y*e.ys:y*e.ys+w], b[y*bs:y*bs+w]
-			for x, v := range rs {
-				s += iabs(int(v) - int(rr[x]))
-			}
-		}
-		return s
+		return sad(src, e.ys, b, bs, w, h)
 	}
 	rng := []int{16, 32, 64}[clip3(0, 2, e.cfg.Preset)]
 	bx, by := 0, 0
@@ -303,5 +296,5 @@ func (e *Encoder) predSATD(ref *picture, x0, y0, w, h int, mv [2]int) int {
 	for i, v := range p {
 		buf[i] = clipU8((int(v) + predOffset + 32) >> 6)
 	}
-	return satd(e.srcY[y0*e.ys+x0:], e.ys, buf, w, min(w, h))
+	return satdWH(e.srcY[y0*e.ys+x0:], e.ys, buf, w, w, h)
 }

@@ -74,8 +74,24 @@ type Encoder struct {
 	snaps [16]encSnap
 	tq    encTQ
 
+	arena []int32 // coefficient levels of the CTU being coded
+
 	keepRecon bool
 	recon     []*Frame
+}
+
+// allocLevels returns n zeroed levels from the CTU arena. Levels must
+// outlive the CTU's decision pass until it is written, so the arena is
+// only reset per CTU; growth copies are never needed for correctness
+// because slices keep the old backing array alive.
+func (e *Encoder) allocLevels(n int) []int32 {
+	if len(e.arena)+n > cap(e.arena) {
+		e.arena = make([]int32, 0, max(2*cap(e.arena), 1<<16))
+	}
+	l := e.arena[len(e.arena) : len(e.arena)+n]
+	e.arena = e.arena[:len(e.arena)+n]
+	clear(l)
+	return l
 }
 
 // NewEncoder returns an encoder for cfg.
@@ -531,6 +547,7 @@ func (e *Encoder) codeCTU(x0, y0 int) {
 	}
 	e.est.ctx = e.cab.ctx
 	e.est.bits = 0
+	e.arena = e.arena[:0]
 	root, _ := e.decideQT(x0, y0, sp.Log2Ctb, 0)
 	s.writeQuadtree(&e.cab, root, 0)
 }

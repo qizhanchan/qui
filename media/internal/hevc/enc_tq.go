@@ -7,17 +7,33 @@ var quantScale = [6]int32{26214, 23302, 20560, 18396, 16384, 14564}
 
 // forwardTransform turns the n x n residual r (raster) into coefficients
 // c: rows first, then columns, with HM's intermediate shifts for 8-bit
-// video. dst4 selects the 4x4 DST.
+// video. dst4 selects the 4x4 DST. tmp needs 2*n*n entries.
 func forwardTransform(c, r []int32, n int, dst4 bool, tmp []int32) {
 	m := basis[log2(n)-2]
 	if dst4 {
 		m = dstBasis
 	}
 	l := log2(n)
-	shift1 := uint(l - 1)
-	shift2 := uint(l + 6)
-	rnd1 := int32(1) << (shift1 - 1)
-	rnd2 := int32(1) << (shift2 - 1)
+	shift1, shift2 := l-1, l+6
+	if haveNEON {
+		// Rows as a column transform of the transpose, then columns.
+		t, x := tmp[:n*n], tmp[n*n:2*n*n]
+		for y := 0; y < n; y++ {
+			for k := 0; k < n; k++ {
+				t[k*n+y] = r[y*n+k]
+			}
+		}
+		neonColTransform(&x[0], &t[0], &m[0], n, shift1) // x = X^T
+		for y := 0; y < n; y++ {
+			for k := 0; k < n; k++ {
+				t[k*n+y] = x[y*n+k]
+			}
+		}
+		neonColTransform(&c[0], &t[0], &m[0], n, shift2)
+		return
+	}
+	rnd1 := int32(1) << uint(shift1-1)
+	rnd2 := int32(1) << uint(shift2-1)
 	// Rows: tmp[y][k] = sum_x M[k][x] * r[y][x].
 	for y := 0; y < n; y++ {
 		row := r[y*n : y*n+n]
@@ -27,7 +43,7 @@ func forwardTransform(c, r []int32, n int, dst4 bool, tmp []int32) {
 			for x, v := range row {
 				s += mk[x] * v
 			}
-			tmp[y*n+k] = (s + rnd1) >> shift1
+			tmp[y*n+k] = (s + rnd1) >> uint(shift1)
 		}
 	}
 	// Columns: c[j][k] = sum_y M[j][y] * tmp[y][k].
@@ -38,7 +54,7 @@ func forwardTransform(c, r []int32, n int, dst4 bool, tmp []int32) {
 			for y, v := range mj {
 				s += v * tmp[y*n+k]
 			}
-			c[j*n+k] = (s + rnd2) >> shift2
+			c[j*n+k] = (s + rnd2) >> uint(shift2)
 		}
 	}
 }

@@ -36,3 +36,8 @@ func neonPutWBi(dst *byte, ds int, a, b *int16, w, h, w0, w1, add, shift int) {
 }
 
 func neonCopyPred(dst *int16, src *byte, ss, w, h int) { panic("unreachable") }
+
+func neonSAD(a *byte, as int, b *byte, bs int, w, h int, out *int)  { panic("unreachable") }
+func neonSATD(a *byte, as int, b *byte, bs int, w, h int, out *int) { panic("unreachable") }
+
+func neonColTransform(dst, src, m *int32, n, shift int) { panic("unreachable") }

@@ -243,8 +243,10 @@ func scanIdxFor(predMode, log2, cIdx, mode int) int {
 	return 0
 }
 
-// searchLumaModes ranks the 35 luma modes of the n x n block at (x, y)
-// by SATD plus approximate mode bits and returns the best k.
+// searchLumaModes ranks the luma modes of the n x n block at (x, y) by
+// SATD plus approximate mode bits and returns the best k. The best preset
+// tries all 35; the others try planar, DC, every fourth angle and the
+// MPMs, then refine around the best angle.
 func (e *Encoder) searchLumaModes(x, y, n, k int) []int {
 	s := &e.d.sd
 	tq := &e.tq
@@ -256,7 +258,12 @@ func (e *Encoder) searchLumaModes(x, y, n, k int) []int {
 		c float64
 	}
 	best := make([]mc, 0, k+1)
-	for m := 0; m < 35; m++ {
+	var tried [35]bool
+	try := func(m int) {
+		if m < 0 || m > 34 || tried[m] {
+			return
+		}
+		tried[m] = true
 		predictIntra(tq.pred[:], n, &tq.refs, n, m, true, s.sps.StrongIntraSmoothing)
 		c := float64(satd(src, e.ys, tq.pred[:], n, n)) + e.sqrtL*modeBits(m, mpm)
 		i := len(best)
@@ -269,6 +276,37 @@ func (e *Encoder) searchLumaModes(x, y, n, k int) []int {
 			best[i] = mc{m, c}
 			if len(best) > k {
 				best = best[:k]
+			}
+		}
+	}
+	if e.cfg.Preset >= 2 {
+		for m := 0; m < 35; m++ {
+			try(m)
+		}
+	} else {
+		try(0)
+		try(1)
+		for m := 2; m <= 34; m += 4 {
+			try(m)
+		}
+		for _, m := range mpm {
+			try(m)
+		}
+		// Refine around the best angular mode.
+		ang := -1
+		for _, b := range best {
+			if b.m >= 2 {
+				ang = b.m
+				break
+			}
+		}
+		if ang >= 0 {
+			try(ang - 2)
+			try(ang + 2)
+			c := best[0].m
+			if c >= 2 {
+				try(c - 1)
+				try(c + 1)
 			}
 		}
 	}
@@ -310,8 +348,8 @@ func (e *Encoder) codeTU(cIdx, x, y, log2, mode int, intra bool) ([]int32, int64
 		}
 	}
 	dst4 := cIdx == 0 && n == 4 && intra
-	forwardTransform(tq.coef[:n*n], r, n, dst4, tq.tmp[:n*n])
-	levels := make([]int32, n*n)
+	forwardTransform(tq.coef[:n*n], r, n, dst4, tq.tmp[:])
+	levels := e.allocLevels(n * n)
 	qp := s.qpFor(cIdx)
 	nz := quantize(levels, tq.coef[:n*n], n, qp, intra, tq.frac[:n*n])
 	if nz > 0 && s.pps.SignDataHiding {
@@ -325,6 +363,7 @@ func (e *Encoder) codeTU(cIdx, x, y, log2, mode int, intra bool) ([]int32, int64
 		s.markTU(x, y, n, nz > 0)
 	}
 	if nz == 0 {
+		e.arena = e.arena[:len(e.arena)-n*n]
 		return nil, ssd(sr, ss, p, stride, n, n)
 	}
 	copy(s.coeff[:n*n], levels)

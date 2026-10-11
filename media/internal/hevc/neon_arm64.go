@@ -43,3 +43,12 @@ func neonPutWBi(dst *byte, ds int, a, b *int16, w, h, w0, w1, add, shift int)
 
 //go:noescape
 func neonCopyPred(dst *int16, src *byte, ss, w, h int)
+
+//go:noescape
+func neonSAD(a *byte, as int, b *byte, bs int, w, h int, out *int)
+
+//go:noescape
+func neonSATD(a *byte, as int, b *byte, bs int, w, h int, out *int)
+
+//go:noescape
+func neonColTransform(dst, src, m *int32, n, shift int)

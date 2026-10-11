@@ -7,7 +7,7 @@ package hevc
 type encTQ struct {
 	resid [32 * 32]int32
 	coef  [32 * 32]int32
-	tmp   [32 * 32]int32
+	tmp   [2 * 32 * 32]int32
 	frac  [32 * 32]int32
 	pred  [64 * 64]byte
 	refs  intraRefs
@@ -106,22 +106,39 @@ func ssd(a []byte, as int, b []byte, bs int, w, h int) int64 {
 	return s
 }
 
-// satd is the sum of absolute Hadamard-transformed differences of two
-// n x n blocks (4x4 transforms for n = 4, 8x8 otherwise).
-func satd(a []byte, as int, b []byte, bs int, n int) int {
-	if n == 4 {
-		return satd4(a, as, b, bs)
-	}
-	s := 0
-	for y := 0; y < n; y += 8 {
-		for x := 0; x < n; x += 8 {
-			s += satd8(a[y*as+x:], as, b[y*bs+x:], bs)
+// satd is the sum of absolute 4x4-Hadamard-transformed differences of
+// two n x n blocks, halved.
+func satd(a []byte, as int, b []byte, bs int, n int) int { return satdWH(a, as, b, bs, n, n) }
+
+// satdWH is satd for a w x h block (multiples of 4).
+func satdWH(a []byte, as int, b []byte, bs int, w, h int) int {
+	raw := 0
+	for x := 0; x < w; {
+		sw := 16
+		switch {
+		case w-x >= 16:
+		case w-x >= 8:
+			sw = 8
+		default:
+			sw = 4
 		}
+		if haveNEON {
+			var out int
+			neonSATD(&a[x], as, &b[x], bs, sw, h, &out)
+			raw += out
+		} else {
+			for y := 0; y < h; y += 4 {
+				for xx := x; xx < x+sw; xx += 4 {
+					raw += satd4Raw(a[y*as+xx:], as, b[y*bs+xx:], bs)
+				}
+			}
+		}
+		x += sw
 	}
-	return s
+	return (raw + 1) >> 1
 }
 
-func satd4(a []byte, as int, b []byte, bs int) int {
+func satd4Raw(a []byte, as int, b []byte, bs int) int {
 	var d [16]int
 	for y := 0; y < 4; y++ {
 		for x := 0; x < 4; x++ {
@@ -139,41 +156,34 @@ func satd4(a []byte, as int, b []byte, bs int) int {
 		d0, d1 := d[x]-d[4+x], d[8+x]-d[12+x]
 		sum += iabs(s0+s1) + iabs(s0-s1) + iabs(d0+d1) + iabs(d0-d1)
 	}
-	return (sum + 1) >> 1
+	return sum
 }
 
-func satd8(a []byte, as int, b []byte, bs int) int {
-	var d [64]int
-	for y := 0; y < 8; y++ {
-		for x := 0; x < 8; x++ {
-			d[y*8+x] = int(a[y*as+x]) - int(b[y*bs+x])
-		}
-	}
-	had8 := func(v []int, step int) {
-		var t [8]int
-		for i := 0; i < 8; i++ {
-			t[i] = v[i*step]
-		}
-		for k := 1; k < 8; k <<= 1 {
-			for i := 0; i < 8; i += 2 * k {
-				for j := i; j < i+k; j++ {
-					t[j], t[j+k] = t[j]+t[j+k], t[j]-t[j+k]
+// sad is the sum of absolute differences of two w x h blocks (w a
+// multiple of 4).
+func sad(a []byte, as int, b []byte, bs int, w, h int) int {
+	s := 0
+	if haveNEON && w&7 == 0 {
+		for y := 0; y < h; y += 16 {
+			hh := min(16, h-y)
+			for x := 0; x < w; {
+				sw := 16
+				if w-x < 16 {
+					sw = 8
 				}
+				var out int
+				neonSAD(&a[y*as+x], as, &b[y*bs+x], bs, sw, hh, &out)
+				s += out
+				x += sw
 			}
 		}
-		for i := 0; i < 8; i++ {
-			v[i*step] = t[i]
+		return s
+	}
+	for y := 0; y < h; y++ {
+		ra, rb := a[y*as:y*as+w], b[y*bs:y*bs+w]
+		for x, v := range ra {
+			s += iabs(int(v) - int(rb[x]))
 		}
 	}
-	for y := 0; y < 8; y++ {
-		had8(d[y*8:], 1)
-	}
-	sum := 0
-	for x := 0; x < 8; x++ {
-		had8(d[x:], 8)
-	}
-	for _, v := range d {
-		sum += iabs(v)
-	}
-	return (sum + 2) >> 2
+	return s
 }
