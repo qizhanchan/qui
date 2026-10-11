@@ -3,6 +3,7 @@ package av1
 import (
 	"errors"
 	"image"
+	"math"
 )
 
 // The AV1 encoder. It keeps its reconstruction in an embedded Decoder:
@@ -60,7 +61,14 @@ type Encoder struct {
 	sink       symSink
 	cdefSeen   []bool // per 64x64: CDEF index already coded (record pass)
 	lambda     float64
+	sqrtLambda float64
 	tq         encTQ
+	nonZero    bool // a coefficient was coded since the flag was cleared
+
+	// Search breadth.
+	allow4x4    bool
+	lumaCands   int
+	chromaCands int
 
 	keepRecon bool
 	recon     []*Frame
@@ -87,7 +95,7 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 	if cfg.Matrix == 0 {
 		cfg.Matrix = 1
 	}
-	e := &Encoder{cfg: cfg, d: New()}
+	e := &Encoder{cfg: cfg, d: New(), allow4x4: true, lumaCands: 3, chromaCands: 2}
 	e.seq = encSeq{
 		width: cfg.Width, height: cfg.Height, level: seqLevel(cfg.Width, cfg.Height),
 		fullRange: cfg.FullRange, matrix: cfg.Matrix, primaries: 1, transfer: 1,
@@ -173,6 +181,7 @@ func (e *Encoder) encodeKeyFrame() (Packet, error) {
 	}
 	f, h := d.fs, d.hdr
 	e.lambda = rdLambda(h.baseQIdx)
+	e.sqrtLambda = math.Sqrt(e.lambda)
 
 	// Pass A: decisions, reconstruction and symbol records.
 	t := &tile{f: f, h: h, seq: d.seq, mc: &e.sc.mc, recon: &e.sc.recon, enc: e}
@@ -245,7 +254,7 @@ func (e *Encoder) collectRecon() {
 // av1_compute_rd_mult does for 8-bit).
 func rdLambda(qindex int) float64 {
 	q := float64(acQ(8, qindex))
-	return 0.12 * q * q / 4 // per bit; q on the x4-scaled transform domain
+	return 0.0021 * q * q
 }
 
 // decideLoopFilter picks deblocking levels from the quantiser.

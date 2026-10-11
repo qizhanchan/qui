@@ -12,13 +12,7 @@ type intraChoice struct {
 	skip            bool
 }
 
-// encodeSB codes one superblock.
-func (e *Encoder) encodeSB(r, c int) {
-	e.sink.record = true
-	e.codePartition(r, c, e.t.sbSize())
-}
-
-// codePartition codes the partition tree at (r, c): for now 16x16 blocks
+// codePartition codes the fixed partition tree at (r, c): 16x16 blocks
 // (split above, forced splits at the frame edges).
 func (e *Encoder) codePartition(r, c, bSize int) {
 	t := e.t
@@ -181,7 +175,9 @@ func (e *Encoder) writeCdef() {
 	f := t.f
 	i := f.cdefIndex(b.miRow&^15, b.miCol&^15)
 	if !e.cdefSeen[i] {
-		e.cdefSeen[i] = true
+		if e.sink.record {
+			e.cdefSeen[i] = true
+		}
 		e.sink.cdefPlaceholder(i, h.cdefBits)
 	}
 }
@@ -363,6 +359,9 @@ func (e *Encoder) txBlock(t *tile, plane, startX, startY, tx int) int {
 	scan := scanFor(tx, typ)
 	eob := quantize(coef, levels, scan, dcq, acq, shift, 0.5, 0.33)
 	_ = b
+	if eob > 0 {
+		e.nonZero = true
+	}
 	t.writeCoeffs(&e.sink, plane, startX, startY, tx, typ, levels, eob)
 	t.planeType = typ
 	return eob
