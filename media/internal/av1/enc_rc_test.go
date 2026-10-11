@@ -28,11 +28,7 @@ func encodeSizes(t *testing.T, cfg EncoderConfig, frames []*image.YCbCr) (sizes,
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range frames {
-		p, err := e.Encode(f)
-		if err != nil {
-			t.Fatal(err)
-		}
+	for _, p := range encodeAll(t, e, frames) {
 		sizes = append(sizes, 8*len(p.Data))
 		qs = append(qs, p.QIndex)
 	}

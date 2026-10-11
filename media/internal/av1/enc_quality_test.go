@@ -64,6 +64,20 @@ func TestQualityVsSVT(t *testing.T) {
 		if v, err := strconv.Atoi(os.Getenv("AV1_ENC_KEYINT")); err == nil {
 			cfg.KeyInt = v
 		}
+		for _, kv := range strings.Fields(os.Getenv("AV1_ENC_CFG")) {
+			k, v, _ := strings.Cut(kv, "=")
+			iv, _ := strconv.Atoi(v)
+			switch k {
+			case "Preset":
+				cfg.Preset = iv
+			case "Refs":
+				cfg.Refs = iv
+			case "MiniGOP":
+				cfg.MiniGOP = iv
+			case "KeyInt":
+				cfg.KeyInt = iv
+			}
+		}
 		start := time.Now()
 		e, err := NewEncoder(cfg)
 		if err != nil {
@@ -71,11 +85,7 @@ func TestQualityVsSVT(t *testing.T) {
 		}
 		e.keepRecon = true
 		size := 0
-		for _, img := range frames {
-			p, err := e.Encode(img)
-			if err != nil {
-				t.Fatal(err)
-			}
+		for _, p := range encodeAll(t, e, frames) {
 			size += len(p.Data)
 		}
 		el := time.Since(start)

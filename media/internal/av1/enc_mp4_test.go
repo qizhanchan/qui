@@ -26,6 +26,8 @@ func TestEncMP4RoundTrip(t *testing.T) {
 	}{
 		{"p", EncoderConfig{QIndex: 120, KeyInt: 12}, false},
 		{"p_frag", EncoderConfig{CRF: 30, KeyInt: 10, Refs: 2}, true},
+		{"arf", EncoderConfig{QIndex: 120, KeyInt: 12, MiniGOP: 4}, false},
+		{"arf_frag", EncoderConfig{CRF: 32, KeyInt: 24, MiniGOP: 5, Refs: 2}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := tc.cfg
@@ -56,11 +58,7 @@ func TestEncMP4RoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, fr := range frames {
-				p, err := e.Encode(fr)
-				if err != nil {
-					t.Fatal(err)
-				}
+			for _, p := range encodeAll(t, e, frames) {
 				if err := mw.WriteSample(ti, mp4x.Sample{Data: p.Data, DTS: p.PTS * dur, Duration: dur, Sync: p.Key}); err != nil {
 					t.Fatal(err)
 				}

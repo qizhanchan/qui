@@ -32,6 +32,12 @@ type EncoderConfig struct {
 	VBVMaxRate, VBVBuffer int
 
 	KeyInt int // frames between key frames (default 250)
+	// MiniGOP is the number of frames per mini-GOP: with MiniGOP > 1 the
+	// last frame of each group is coded first as a hidden ALTREF the
+	// others also predict from, then shown with show_existing_frame
+	// (each temporal unit still holds one shown frame, in display order).
+	// 1 (the default) codes every frame from past frames only.
+	MiniGOP int
 	Refs   int // previous frames inter frames may reference, 1..3 (default by preset)
 
 	// Preset trades speed for compression: 0 fastest (the default), 1
@@ -64,8 +70,12 @@ type Encoder struct {
 	src       [3][]uint8
 	srcStride [3]int
 
-	frameCount int64
-	keyFrame   int64 // input index of the last key frame
+	frameCount int64 // display index of the frame being coded
+	keyFrame   int64 // display index of the last key frame
+	inCount    int64 // frames received
+	queue      []*image.YCbCr
+	slotPTS    [numRefFrames]int64 // display index held by each reference slot (-1: none)
+	pending    []byte              // OBUs of a hidden frame, sent with the next shown one
 	t          *tile
 	sc         tileScratch
 	sink       symSink
@@ -122,6 +132,10 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 		cfg.KeyInt = 250
 	}
 	cfg.Preset = clip3(0, 2, cfg.Preset)
+	if cfg.MiniGOP <= 0 {
+		cfg.MiniGOP = 1
+	}
+	cfg.MiniGOP = min(cfg.MiniGOP, 16)
 	if cfg.Refs <= 0 {
 		cfg.Refs = cfg.Preset + 1
 	}
@@ -130,6 +144,9 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 		cfg.Matrix = 1
 	}
 	e := &Encoder{cfg: cfg, d: New()}
+	for i := range e.slotPTS {
+		e.slotPTS[i] = -1
+	}
 	e.setPreset(cfg.Preset)
 	e.seq = encSeq{
 		width: cfg.Width, height: cfg.Height, level: seqLevel(cfg.Width, cfg.Height),
@@ -149,37 +166,6 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 
 // SequenceHeader returns the sequence header OBU (for av1C).
 func (e *Encoder) SequenceHeader() []byte { return e.seqOBU }
-
-// Encode codes one frame (img must be at least Width x Height, I420).
-func (e *Encoder) Encode(img *image.YCbCr) (Packet, error) {
-	if img.Rect.Dx() < e.cfg.Width || img.Rect.Dy() < e.cfg.Height {
-		return Packet{}, errors.New("av1: image smaller than the configured size")
-	}
-	e.loadSource(img)
-	key := e.frameCount-e.keyFrame >= int64(e.cfg.KeyInt) || e.frameCount == 0
-	if key {
-		e.keyFrame = e.frameCount
-	}
-	q := e.rc.frameQIndex(key, e)
-	pkt, err := e.encodeFrame(key, q)
-	// A frame that would overflow the VBV is coded again more coarsely
-	// (nothing is committed before finishFrame).
-	for tries := 0; err == nil && e.rc.vbvOverflow(len(pkt.Data)*8) && q < 255 && tries < 4; tries++ {
-		e.d.seenFrameHeader = false
-		q = qindexOf(qscaleOf(q) * 1.5)
-		pkt, err = e.encodeFrame(key, q)
-	}
-	if err != nil {
-		return pkt, err
-	}
-	if err := e.finishFrame(); err != nil {
-		return pkt, err
-	}
-	e.rc.update(key, q, len(pkt.Data)*8, e)
-	pkt.PTS = e.frameCount
-	e.frameCount++
-	return pkt, nil
-}
 
 // finishFrame commits the coded frame: in-loop filters, reference update
 // and the reconstruction.
@@ -225,51 +211,17 @@ func (e *Encoder) loadSource(img *image.YCbCr) {
 	}
 }
 
-// frameHeader returns the header fields of a key frame or of an inter
-// frame predicting from the previous frame (slot 0, all references).
-func (e *Encoder) frameHeader(key bool, q int) encFrameHdr {
-	fh := encFrameHdr{
-		frameType: keyFrame, showFrame: true,
-		orderHint:   int(e.frameCount) & (1<<uint(e.seq.orderHintBits) - 1),
-		baseQ:       q,
-		cdefDamping: 3,
-		txSelect:    true,
-	}
-	e.activeRefs = e.activeRefs[:0]
-	if !key {
-		// Frame k after the key frame writes slot k % Refs, so LAST,
-		// LAST2, ... are the previous frames' slots; the other references
-		// repeat LAST.
-		k := int(e.frameCount - e.keyFrame)
-		n := e.cfg.Refs
-		slot := func(j int) int { return ((k-j)%n + n) % n }
-		fh.frameType = interFrame
-		fh.primaryRef = 0
-		fh.refresh = 1 << uint(k%n)
-		for i := range fh.refIdx {
-			fh.refIdx[i] = slot(1)
-		}
-		for j := 1; j <= min(n, k); j++ {
-			fh.refIdx[j-1] = slot(j)
-			e.activeRefs = append(e.activeRefs, lastFrame+j-1)
-		}
-		fh.interp = filterSwitchable
-		fh.allowHP = fh.baseQ < 128
-		fh.useRefMVs = e.seq.refFrameMVs
-	}
-	return fh
-}
-
-// encodeFrame codes the loaded source as a key or inter frame at qindex
-// q, leaving the frame to finishFrame.
-func (e *Encoder) encodeFrame(key bool, q int) (Packet, error) {
+// encodeFrame codes the loaded source as the job describes, returning
+// its OBUs and leaving the frame to finishFrame.
+func (e *Encoder) encodeFrame(job *encJob, q int) ([]byte, error) {
 	d := e.d
-	fh := e.frameHeader(key, q)
+	key := job.key
+	fh := e.frameHeader(job, q)
 	var bw bitWriter
 	fh.write(d, &bw)
 	bw.trailing()
 	if err := d.DecodeTemporalUnit(appendOBU(nil, obuFrameHeader, bw.buf)); err != nil {
-		return Packet{}, err
+		return nil, err
 	}
 	f, h := d.fs, d.hdr
 	e.lambda = rdLambda(h.baseQIdx)
@@ -329,12 +281,7 @@ func (e *Encoder) encodeFrame(key bool, q int) (Packet, error) {
 		out = append(out, e.seqOBU...)
 	}
 	out = appendOBU(out, obuFrame, payload)
-
-	typ := byte('K')
-	if !key {
-		typ = 'P'
-	}
-	return Packet{Data: out, Key: key, Type: typ, QIndex: h.baseQIdx}, nil
+	return out, nil
 }
 
 // collectRecon keeps (or drops) the decoder's output frames.

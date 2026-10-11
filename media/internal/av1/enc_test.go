@@ -121,12 +121,8 @@ func encodeCheck(t *testing.T, cfg EncoderConfig, src []*image.YCbCr) (pkts []Pa
 		t.Fatal(err)
 	}
 	e.keepRecon = true
-	for _, img := range src {
-		p, err := e.Encode(img)
-		if err != nil {
-			t.Fatal(err)
-		}
-		pkts = append(pkts, p)
+	pkts = encodeAll(t, e, src)
+	for _, p := range pkts {
 		bytesTotal += len(p.Data)
 	}
 	if len(e.recon) != len(src) {
@@ -187,7 +183,7 @@ func TestEncodeIntra(t *testing.T) {
 }
 
 func TestEncodeInter(t *testing.T) {
-	src := testSource(t, "ra_p4", 6)
+	src := testSource(t, "ra_p4", 9)
 	for _, q := range []int{60, 140, 220} {
 		t.Run(fmt.Sprint(q), func(t *testing.T) {
 			pkts, n, ps := encodeCheck(t, EncoderConfig{Width: 320, Height: 180, QIndex: q, Preset: 2}, src)
@@ -196,6 +192,41 @@ func TestEncodeInter(t *testing.T) {
 				sizes = append(sizes, len(p.Data))
 			}
 			t.Logf("qindex %d: %d bytes/frame %v, PSNR %.2f dB", q, n/len(src), sizes, ps)
+		})
+	}
+}
+
+// encodeAll encodes the frames and flushes the encoder.
+func encodeAll(t testing.TB, e *Encoder, frames []*image.YCbCr) []Packet {
+	t.Helper()
+	var out []Packet
+	for _, img := range frames {
+		ps, err := e.Encode(img)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, ps...)
+	}
+	ps, err := e.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(out, ps...)
+}
+
+func TestEncodeMiniGOP(t *testing.T) {
+	src := testSource(t, "ra_p4", 12)
+	for _, gop := range []int{2, 4, 7} {
+		t.Run(fmt.Sprint(gop), func(t *testing.T) {
+			pkts, n, ps := encodeCheck(t, EncoderConfig{Width: 320, Height: 180, QIndex: 120, MiniGOP: gop, Refs: 2}, src)
+			var types []byte
+			for i, p := range pkts {
+				if p.PTS != int64(i) {
+					t.Fatalf("packet %d has PTS %d", i, p.PTS)
+				}
+				types = append(types, p.Type)
+			}
+			t.Logf("mini-GOP %d: %d bytes/frame %s, PSNR %.2f dB", gop, n/len(src), types, ps)
 		})
 	}
 }
