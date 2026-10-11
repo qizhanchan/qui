@@ -252,5 +252,27 @@ func (d *Decoder) output(f *frame, h *FrameHeader) {
 	d.out = append(d.out, f)
 }
 
-// postFilter applies the in-loop filters (not yet implemented).
-func (d *Decoder) postFilter(f *frameState) {}
+// postFilter applies the in-loop filters (spec 7.4 decode_frame_wrapup):
+// deblocking, CDEF, superres upscaling and loop restoration.
+func (d *Decoder) postFilter(f *frameState) {
+	h := f.hdr
+	cur := f.cur
+	d.deblock(f)
+	cdefF := cur
+	if d.seq.EnableCDEF && !h.codedLossless && !h.allowIntraBC {
+		cdefF = cloneFrame(cur)
+		d.cdef(f, cur, cdefF)
+	}
+	upCdef, upCur := cdefF, cur
+	if h.UpscaledWidth != h.Width {
+		upCdef = upscale(f, cdefF)
+		if h.usesLR {
+			upCur = upscale(f, cur)
+		}
+	}
+	final := upCdef
+	if h.usesLR {
+		final = d.restore(f, upCdef, upCur)
+	}
+	cur.planes = final.planes
+}

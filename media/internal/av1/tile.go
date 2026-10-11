@@ -96,7 +96,7 @@ type tile struct {
 	edges     intraEdges
 	coef      [32 * 32]int32 // Quant[] of the current transform block
 	planeType int            // PlaneTxType of the current transform block
-	recon reconScratch
+	recon     reconScratch
 }
 
 func (t *tile) mi(row, col int) *miInfo { return &t.f.mi[row*t.f.miCols+col] }
