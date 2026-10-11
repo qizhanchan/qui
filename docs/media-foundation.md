@@ -177,6 +177,44 @@ Verification:
   clips); target within ~1 dB of `ultrafast` before CABAC, within ~0.5 dB of
   `veryfast` after E4.
 
+**Status: E0–E6 done (2026-10-11).**
+
+| Piece | Location | State |
+|---|---|---|
+| Decoder kit | `h264/enckit.go` | the decoder's intra predictors, IDCT, dequant tables, MC, CAVLC/CABAC tables, 8×8 reference filter and deblocking, exported so the encoder reconstructs with exactly the decoding code |
+| Bitstream (E0) | `bits.go`, `headers.go` | bit writer, ue/se/te, emulation prevention, SPS (level picked from size/rate/DPB, cropping, VUI colour + timing + `max_num_reorder_frames`), PPS, slice header; Annex-B and length-prefixed output |
+| Intra (E1) | `intra.go`, `quant.go`, `cavlc.go` | I16×16 / I4×4 / chroma decisions on SATD + mode bits, forward 4×4 transform, deadzone quantisation, Hadamard DC paths, CAVLC |
+| Inter (E2) | `inter.go`, `hpel.go` | spec MV prediction, P_Skip, 16×16 / 16×8 / 8×16 / 8×8, hexagon (or diamond) integer search from predictor/neighbour/co-located candidates, half- then quarter-sample SATD refinement on precomputed half-sample planes, multiple references, inter decimation |
+| Rate control (E3) | `ratecontrol.go` | CQP with I/B offsets, CRF (calibrated against x264's QP mapping), ABR with refit rate factor + overflow correction, VBV leaky bucket with IDR look-ahead and re-encode on overflow |
+| CABAC + High (E4) | `cabac.go`, `transform8.go`, `bframes.go` | CABAC engine and all syntax elements (contexts mirror the decoder), Intra8×8 and the inter 8×8 transform (SA8D decision), B pictures: mini-GOPs, spatial direct, B_Skip, L0/L1/bi |
+| Container (E5) | `mp4x/writer.go` | progressive (`stts`/`ctts`/`stss`/`stsc`/`stsz`/`stco`/`co64`, edit list) and fragmented (`mvex`, `moof`/`traf`/`trun`) MP4 with `avc1`/`avcC` and `mp4a`/`esds` |
+| Performance (E6) | `neon_arm64.s` (from `neon_gen.go`) | NEON SAD, SATD and a fused 8×8 forward-transform + quantise; an early-exit skip probe; slice-parallel coding and parallel half-sample planes |
+
+Evidence:
+
+- **Self-consistency + conformance:** 22 configurations (Baseline / Main /
+  High, CAVLC / CABAC, B pictures, 1–3 references, slices, CRF, extreme QPs,
+  deblocking offsets) on two committed sources (one with cropping)
+  reconstruct byte-identically to both our decoder and FFmpeg, which reports
+  no errors (`TestReconMatchesDecoder`, `TestFFmpegConformance`). MP4 round
+  trips (progressive and fragmented, with B pictures) decode identically in
+  our stack and in FFmpeg (`TestMP4RoundTrip`, `mp4x.TestRemux`).
+  `testdata/streams.txt` pins every configuration's stream hash; NEON and
+  `-tags purego` builds produce identical streams.
+- **Quality** (BD-PSNR at equal bitrate, 30 frames, opt-in
+  `TestQualityVsX264`): fast preset **+4.1 dB** (360p) / **+3.2 dB** (1080p)
+  vs `x264 -preset ultrafast`; High + CABAC + 8×8 + B **+0.27 dB** /
+  **+0.12 dB** vs `x264 -preset veryfast -tune psnr`.
+- **Speed** (1080p, one Apple-silicon performance core, `BenchmarkEncode1080`):
+  fast **12.0 ms/frame** (~83 fps), medium 18.8 ms, High + CABAC + B 22.5 ms;
+  four slices roughly halve each.
+- **Rate control:** ABR lands within ±6% of target on real footage, VBV never
+  underflows, CRF is monotonic (`ratecontrol_test.go`).
+
+Open items: AQ / psy tuning (they trade PSNR for subjective quality), B_8x8
+and 16×8/8×16 B partitions, weighted prediction, frame-parallel encoding,
+and an AAC encoder.
+
 ### R2. H.265 / HEVC decoder, then encoder (`media/internal/hevc`)
 
 Decoder scope: Main profile (8-bit 4:2:0), progressive; Main 10 next.

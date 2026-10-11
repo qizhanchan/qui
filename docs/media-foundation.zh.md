@@ -153,6 +153,20 @@ H.264 + AAC 播放栈已完成。后续工作沿用同一套做法 —— 自研
   `libx264 -preset ultrafast/veryfast` 比较 PSNR / SSIM；CABAC 之前目标与 `ultrafast` 相差
   约 1 dB 以内，E4 之后与 `veryfast` 相差约 0.5 dB 以内。
 
+**状态：E0–E6 已完成（2026-10-11）。** 编码器通过 `h264/enckit.go` 复用解码器的帧内预测、
+IDCT、反量化、运动补偿、CAVLC/CABAC 表与去块，重建即解码。已实现：码流与参数集（E0）、
+I16×16/I4×4 帧内（E1）、P 帧全部分割 + 六边形/亚像素搜索 + 多参考（E2）、CQP/CRF/ABR/VBV
+码率控制（E3）、CABAC + High 8×8 + B 帧空间直接模式（E4）、渐进式与分片 MP4 写入（E5）、
+NEON SAD/SATD/变换量化 + 半像素平面 + 早退跳过探测 + 条带并行（E6）。
+
+证据：22 种配置在两个片段上与我们的解码器及 FFmpeg 逐字节一致；MP4 往返一致；
+`testdata/streams.txt` 固定码流哈希（NEON 与 purego 一致）。同码率 BD-PSNR：fast 预设比
+`x264 ultrafast` 高 +4.1 dB（360p）/ +3.2 dB（1080p）；High+CABAC+B 比
+`x264 veryfast -tune psnr` 高 +0.27 / +0.12 dB。1080p 单核：fast 12.0 ms/帧（约 83 fps），
+medium 18.8 ms，High+CABAC+B 22.5 ms；4 条带约快一倍。ABR 误差 ±6% 以内，VBV 不下溢。
+
+待办：AQ/psy、B_8x8 与 B 的 16×8/8×16 分割、加权预测、帧级并行、AAC 编码器。
+
 ### R2. H.265 / HEVC 解码器，然后编码器（`media/internal/hevc`）
 
 解码器范围：Main profile（8 bit 4:2:0）、逐行；随后做 Main 10。
