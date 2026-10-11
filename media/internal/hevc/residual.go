@@ -397,6 +397,14 @@ func (s *sliceDec) reconstruct(x0, y0, log2, cIdx int, tskip bool) error {
 // intraPredict predicts the n x n block of component cIdx at (x, y)
 // (component sample units) with mode and writes it into the picture.
 func (s *sliceDec) intraPredict(cIdx, x, y, n, mode int) {
+	var refs intraRefs
+	plane, stride := s.intraRefs(&refs, cIdx, x, y, n)
+	predictIntra(plane[y*stride+x:], stride, &refs, n, mode, cIdx == 0, s.sps.StrongIntraSmoothing)
+}
+
+// intraRefs gathers and substitutes the reference samples of the n x n
+// block of component cIdx at (x, y) (8.4.4.2.2) and returns the plane.
+func (s *sliceDec) intraRefs(refs *intraRefs, cIdx, x, y, n int) ([]byte, int) {
 	pic := s.pic
 	plane, stride := pic.y, pic.ys
 	scale := 1
@@ -418,7 +426,6 @@ func (s *sliceDec) intraPredict(cIdx, x, y, n, mode int) {
 		}
 		return !constrained || s.blk(lx, ly).predMode == modeIntra
 	}
-	var refs intraRefs
 	var ok [129]bool // index: left from bottom (0..2n-1) reversed, then corner, then top
 	// Gather in the substitution order: p[-1][2n-1] .. p[-1][-1], then
 	// p[0][-1] .. p[2n-1][-1], in units of 4 (or 2 for chroma) samples.
@@ -485,5 +492,5 @@ func (s *sliceDec) intraPredict(cIdx, x, y, n, mode int) {
 		refs.left[i+1] = vals[2*n-1-i]
 		refs.top[i+1] = vals[2*n+1+i]
 	}
-	predictIntra(plane[y*stride+x:], stride, &refs, n, mode, cIdx == 0, sp.StrongIntraSmoothing)
+	return plane, stride
 }

@@ -567,36 +567,7 @@ func (s *sliceDec) parseIntraModes(x0, y0, log2 int) {
 		} else {
 			rem = s.cb.bypassBits(5)
 		}
-		// Candidates (8.4.2).
-		candA, candB := 1, 1
-		if s.available(xp, yp, xp-1, yp) {
-			if b := s.blk(xp-1, yp); b.predMode == modeIntra && !b.pcmLike() {
-				candA = int(b.ipm)
-			}
-		}
-		if s.available(xp, yp, xp, yp-1) && yp-1 >= (yp>>sp.Log2Ctb)<<sp.Log2Ctb {
-			if b := s.blk(xp, yp-1); b.predMode == modeIntra && !b.pcmLike() {
-				candB = int(b.ipm)
-			}
-		}
-		var list [3]int
-		if candA == candB {
-			if candA < 2 {
-				list = [3]int{0, 1, 26}
-			} else {
-				list = [3]int{candA, 2 + (candA+29)%32, 2 + (candA-2+1)%32}
-			}
-		} else {
-			list[0], list[1] = candA, candB
-			switch {
-			case candA != 0 && candB != 0:
-				list[2] = 0
-			case candA != 1 && candB != 1:
-				list[2] = 1
-			default:
-				list[2] = 26
-			}
-		}
+		list := s.mpmCandidates(xp, yp)
 		var mode int
 		if prev[i] {
 			mode = list[mpm]
@@ -642,6 +613,42 @@ func (s *sliceDec) parseIntraModes(x0, y0, log2 int) {
 }
 
 func (b *blkInfo) pcmLike() bool { return false }
+
+// mpmCandidates derives candModeList for the luma prediction block at
+// (xp, yp) (8.4.2).
+func (s *sliceDec) mpmCandidates(xp, yp int) [3]int {
+	sp := s.sps
+	candA, candB := 1, 1
+	if s.available(xp, yp, xp-1, yp) {
+		if b := s.blk(xp-1, yp); b.predMode == modeIntra && !b.pcmLike() {
+			candA = int(b.ipm)
+		}
+	}
+	if s.available(xp, yp, xp, yp-1) && yp-1 >= (yp>>sp.Log2Ctb)<<sp.Log2Ctb {
+		if b := s.blk(xp, yp-1); b.predMode == modeIntra && !b.pcmLike() {
+			candB = int(b.ipm)
+		}
+	}
+	var list [3]int
+	if candA == candB {
+		if candA < 2 {
+			list = [3]int{0, 1, 26}
+		} else {
+			list = [3]int{candA, 2 + (candA+29)%32, 2 + (candA-2+1)%32}
+		}
+	} else {
+		list[0], list[1] = candA, candB
+		switch {
+		case candA != 0 && candB != 0:
+			list[2] = 0
+		case candA != 1 && candB != 1:
+			list[2] = 1
+		default:
+			list[2] = 26
+		}
+	}
+	return list
+}
 
 // transformTree parses transform_tree() (7.3.8.8). parentCbf holds the
 // parent's cbf_cb / cbf_cr.
