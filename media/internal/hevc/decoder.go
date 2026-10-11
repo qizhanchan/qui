@@ -46,6 +46,7 @@ type frameCtx struct {
 	ctbSlice     []int
 	sao          []saoParams
 	slices       []*sliceHeader
+	anyNoFilter  bool // some block skips the loop filters (pcm / bypass)
 }
 
 func (f *frameCtx) reset(sp *SPS) {
@@ -70,6 +71,7 @@ func (f *frameCtx) reset(sp *SPS) {
 	}
 	clear(f.sao)
 	f.slices = f.slices[:0]
+	f.anyNoFilter = false
 }
 
 // Decoder decodes an HEVC elementary stream NAL unit by NAL unit and

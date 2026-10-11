@@ -47,6 +47,7 @@ func init() {
 			}
 		}
 	}
+	initBasis()
 }
 
 // dequant scales levels in place (raster, n x n): coefficients from
@@ -85,52 +86,90 @@ func clip16(v int32) int32 {
 	return v
 }
 
-// inverseTransform turns d (raster n x n, in place) into residual
-// samples (8.6.4.2). dst4 selects the 4x4 DST.
-func inverseTransform(c []int32, n int, dst4 bool, tmp []int32) {
-	// Vertical (columns) first: e[x][y] = sum_j M[j][y] * d[x][j].
-	step := 32 / n
-	for x := 0; x < n; x++ {
-		// Last non-zero row in this column bounds the work.
-		last := -1
-		for j := n - 1; j >= 0; j-- {
-			if c[j*n+x] != 0 {
-				last = j
-				break
+// basis[k] is the n x n inverse-transform matrix for n = 4 << k
+// (basis[k][j*n+y] = transMatrix[j*32/n][y]); dstBasis is the 4x4 DST.
+// Both are filled by init after transMatrix.
+var (
+	basis    [4][]int32
+	dstBasis []int32
+)
+
+func initBasis() {
+	for k := 0; k < 4; k++ {
+		n := 4 << k
+		basis[k] = make([]int32, n*n)
+		for j := 0; j < n; j++ {
+			for y := 0; y < n; y++ {
+				basis[k][j*n+y] = transMatrix[j*32/n][y]
 			}
-		}
-		for y := 0; y < n; y++ {
-			var s int32
-			for j := 0; j <= last; j++ {
-				if dst4 {
-					s += dstMatrix[j][y] * c[j*n+x]
-				} else {
-					s += transMatrix[j*step][y] * c[j*n+x]
-				}
-			}
-			tmp[y*n+x] = clip16((s + 64) >> 7)
 		}
 	}
-	// Horizontal: r[x][y] = sum_j M[j][x] * g[j][y].
-	for y := 0; y < n; y++ {
-		row := tmp[y*n : y*n+n]
-		last := -1
-		for j := n - 1; j >= 0; j-- {
-			if row[j] != 0 {
-				last = j
-				break
+	dstBasis = make([]int32, 16)
+	for j := 0; j < 4; j++ {
+		for y := 0; y < 4; y++ {
+			dstBasis[j*4+y] = dstMatrix[j][y]
+		}
+	}
+}
+
+// inverseTransform turns d (raster n x n, in place) into residual
+// samples (8.6.4.2). dst4 selects the 4x4 DST. Both stages accumulate
+// basis rows scaled by the non-zero inputs only, which keeps sparse
+// blocks (the common case) cheap.
+func inverseTransform(c []int32, n int, dst4 bool, tmp []int32) {
+	var m []int32
+	switch {
+	case dst4:
+		m = dstBasis
+	default:
+		m = basis[log2(n)-2]
+	}
+	var acc [32]int32
+	// Vertical (columns): e[y][x] = sum_j M[j][y] * d[j][x].
+	maxCol := -1
+	for x := 0; x < n; x++ {
+		a := acc[:n]
+		clear(a)
+		any := false
+		for j := 0; j < n; j++ {
+			cj := c[j*n+x]
+			if cj == 0 {
+				continue
+			}
+			any = true
+			row := m[j*n : j*n+n]
+			for y, v := range row {
+				a[y] += v * cj
 			}
 		}
-		for x := 0; x < n; x++ {
-			var s int32
-			for j := 0; j <= last; j++ {
-				if dst4 {
-					s += dstMatrix[j][x] * row[j]
-				} else {
-					s += transMatrix[j*step][x] * row[j]
-				}
+		if !any {
+			for y := 0; y < n; y++ {
+				tmp[y*n+x] = 0
 			}
-			c[y*n+x] = (s + 2048) >> 12
+			continue
+		}
+		maxCol = x
+		for y, v := range a {
+			tmp[y*n+x] = clip16((v + 64) >> 7)
+		}
+	}
+	// Horizontal: r[y][x] = sum_j M[j][x] * g[y][j], j <= maxCol.
+	for y := 0; y < n; y++ {
+		g := tmp[y*n : y*n+maxCol+1]
+		a := acc[:n]
+		clear(a)
+		for j, gj := range g {
+			if gj == 0 {
+				continue
+			}
+			row := m[j*n : j*n+n]
+			for x, v := range row {
+				a[x] += v * gj
+			}
+		}
+		out := c[y*n : y*n+n]
+		for x, v := range a {
+			out[x] = (v + 2048) >> 12
 		}
 	}
 }

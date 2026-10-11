@@ -73,6 +73,7 @@ type sliceDec struct {
 
 	coeff [32 * 32]int32
 	tmp   [32 * 32]int32
+	mc    mcScratch
 }
 
 // ctbAddrOf returns the RS address of the CTB containing (x, y).
@@ -470,6 +471,7 @@ func (s *sliceDec) finishCUQP(x0, y0, n int) {
 			b.qp = int8(s.qpY)
 			if s.cuTransquantBypass {
 				b.noFilter = true
+				s.d.fc.anyNoFilter = true
 			}
 		}
 	}
@@ -825,6 +827,7 @@ func (s *sliceDec) decodePCM(x0, y0, log2 int) error {
 		for x := x0; x < min(x0+n, sp.Width); x += 4 {
 			b := s.blk(x, y)
 			b.noFilter = sp.PCMLoopFilterOff
+			s.d.fc.anyNoFilter = s.d.fc.anyNoFilter || sp.PCMLoopFilterOff
 			b.cbfY = true
 			b.ipm = 1
 		}
