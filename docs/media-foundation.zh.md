@@ -330,6 +330,20 @@ intra-only 帧）已实现但没有向量固定；12 bit 与 4:2:2 / 4:4:4（Hig
 后端把 10 bit 输出舍入为 8 bit；帧级并行解码（像 libdav1d 那样重叠多帧），以及 CDEF、LR、
 变换与 10 bit MC 的 NEON 版本。
 
+AV1 **编码器**沿用 HEVC 编码器的结构：内嵌一个 `Decoder` 保存状态（头部由它的解析器读回；块用它的
+预测、变换与滤波重建），语法写入函数逐一对应它的解析函数，重建结果必须等于我们的解码器与 libdav1d
+从码流解出的结果。质量以 SVT-AV1 的快速预设为参照。
+
+| # | 里程碑 | 内容 |
+|---|---|---|
+| AE0 | 码流 | sequence / frame 头与 tile group OBU、使用解码器 CDF 自适应的多符号区间编码器、temporal unit、IVF |
+| AE1 | 帧内 | 符号代价估计、RD 划分搜索、帧内模式（带角度偏移的方向预测、smooth、Paeth、CfL）、带类型与尺寸搜索的正向变换、量化、系数编码 |
+| AE2 | 帧间 | 基于解码器 MV 栈的 NEAREST / NEAR / GLOBAL / NEW、运动搜索（整数 + 亚像素）、skip、多参考 |
+| AE3 | 码率控制 | qindex 尺度上的 CQP、CRF、ABR、VBV（H.264 / HEVC 的模型） |
+| AE4 | 层级、环内 | 用 `show_existing_frame` 显示的隐藏 ALTREF 帧、复合预测、去块强度、CDEF 与 loop restoration 搜索 |
+| AE5 | 容器 | `mp4x` 的 `av01` / `av1C`，普通与分片 MP4 |
+| AE6 | 性能 | NEON SAD / SATD / 正向变换、tile 与超级块行并行 |
+
 ### 顺序与成本
 
 | 项目 | 大致工作量 | 备注 |

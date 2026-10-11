@@ -425,6 +425,23 @@ frames) are implemented but not pinned by vectors; 12-bit and 4:2:2 /
 output to 8 bits; frame-parallel decoding (overlapping frames, as libdav1d
 does), and NEON for CDEF, LR, transforms and 10-bit MC.
 
+The AV1 **encoder** follows with the same shape as the HEVC one: an
+embedded `Decoder` holds the state (headers are parsed back by its
+parsers; blocks are reconstructed with its prediction, transforms and
+filters), symbol writers mirror its parsers, and the reconstruction must
+equal what our decoder and libdav1d produce from the stream. Quality is
+measured against SVT-AV1's fast presets.
+
+| # | Milestone | Contents |
+|---|---|---|
+| AE0 | Bitstream | sequence / frame header and tile group OBUs, the multi-symbol range encoder with the decoder's CDF adaptation, temporal units, IVF |
+| AE1 | Intra | symbol cost estimation, RD partition search, intra modes (directional with angle deltas, smooth, Paeth, CfL), forward transforms with type and size search, quantisation, coefficient coding |
+| AE2 | Inter | NEAREST / NEAR / GLOBAL / NEW from the decoder's MV stack, motion search (integer + subpel), skip, several references |
+| AE3 | Rate control | CQP, CRF, ABR, VBV on the qindex scale (the H.264 / HEVC model) |
+| AE4 | Hierarchy, in-loop | hidden ALTREF frames shown with `show_existing_frame`, compound prediction, deblocking level, CDEF and loop-restoration searches |
+| AE5 | Container | `mp4x` `av01` / `av1C`, progressive and fragmented |
+| AE6 | Performance | NEON SAD / SATD / forward transforms, tile and superblock-row parallelism |
+
 ### Order and cost
 
 | Item | Rough effort | Note |
