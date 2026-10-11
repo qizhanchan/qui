@@ -17,6 +17,9 @@ type Decoder struct {
 	// outputInvisible also outputs frames that are not shown (as dav1d's
 	// --outputinvisible does), for testing.
 	outputInvisible bool
+
+	// noFilmGrain skips film grain synthesis on output.
+	noFilmGrain     bool
 	seenFrameHeader bool
 	tileNum         int // next expected tile
 

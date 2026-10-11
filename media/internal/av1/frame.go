@@ -267,10 +267,14 @@ func (d *Decoder) updateRefs(h *FrameHeader) {
 	}
 }
 
-// output queues a shown frame.
+// output queues a shown frame, with film grain when the header asks for
+// it.
 func (d *Decoder) output(f *frame, h *FrameHeader) {
 	if f == nil {
 		return
+	}
+	if h.grain.apply && !d.noFilmGrain && (h.ShowFrame || h.ShowExistingFrame) {
+		f = applyFilmGrain(f, &h.grain, d.seq)
 	}
 	d.out = append(d.out, f)
 }

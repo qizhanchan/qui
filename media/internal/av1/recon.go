@@ -1,5 +1,7 @@
 package av1
 
+import _ "embed"
+
 // Dequantization and reconstruction (spec 7.12.3, 7.13.3).
 
 var txRowShift = [txSizesAll]uint{0, 1, 2, 2, 2, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2}
@@ -47,7 +49,7 @@ func (t *tile) reconstruct(plane, x, y, tx int) {
 		dcq, acq = dcQ(bd, q+h.deltaQVDc), acQ(bd, q+h.deltaQVAc)
 	}
 	var qm []uint8
-	if h.usingQMatrix && !b.lossless {
+	if h.usingQMatrix && !b.lossless && t.planeType < idtx {
 		if lvl := h.segQMLevel[plane][b.segID]; lvl < 15 {
 			qm = quantMatrix(lvl, min(plane, 1), tx)
 		}
@@ -300,6 +302,36 @@ func (t *tile) addResidual(plane, x, y, w, h int) {
 	}
 }
 
-// quantMatrix returns the quantizer matrix of a level, plane type and
-// transform size (not yet available).
-func quantMatrix(level, ptype, tx int) []uint8 { return nil }
+// qmData holds the normative inverse quantizer matrices for levels 0-14
+// ([15][2][3344]: level, luma/chroma, then the matrices of the 14
+// transform sizes up to 32x32 in TX order).
+//
+//go:embed qm.bin
+var qmData []byte
+
+// qmOffset is the position of each transform size's matrix within a
+// level and plane type (sizes with a 64 dimension use their adjusted
+// size's matrix).
+var qmOffset [txSizesAll]int
+
+func init() {
+	off := 0
+	for tx := 0; tx < txSizesAll; tx++ {
+		if adjustedTx[tx] != tx {
+			continue
+		}
+		qmOffset[tx] = off
+		off += txW[tx] * txH[tx]
+	}
+	for tx := 0; tx < txSizesAll; tx++ {
+		qmOffset[tx] = qmOffset[adjustedTx[tx]]
+	}
+}
+
+// quantMatrix returns the inverse quantizer matrix of a level (< 15),
+// plane type and transform size, row-major at the adjusted size.
+func quantMatrix(level, ptype, tx int) []uint8 {
+	base := (level*2+ptype)*3344 + qmOffset[tx]
+	a := adjustedTx[tx]
+	return qmData[base : base+txW[a]*txH[a]]
+}

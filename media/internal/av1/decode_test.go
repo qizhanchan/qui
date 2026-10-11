@@ -37,6 +37,7 @@ func decodeIVF(data []byte) ([]*frame, error) {
 	}
 	d := New()
 	d.outputInvisible = os.Getenv("AV1_INVISIBLE") != ""
+	d.noFilmGrain = os.Getenv("AV1_GRAIN") == ""
 	var out []*frame
 	for i, tu := range tus {
 		if err := d.DecodeTemporalUnit(tu); err != nil {
@@ -75,7 +76,11 @@ func TestCompareFFmpeg(t *testing.T) {
 			// of resolution changes; AV1_INVISIBLE adds the frames that
 			// are not shown (decode order).
 			out := filepath.Join(t.TempDir(), "o.yuv")
-			args := []string{"-q", "--filmgrain", "0", "-i", file, "-o", out}
+			grain := "0"
+			if os.Getenv("AV1_GRAIN") != "" {
+				grain = "1"
+			}
+			args := []string{"-q", "--filmgrain", grain, "-i", file, "-o", out}
 			if os.Getenv("AV1_INVISIBLE") != "" {
 				args = append(args, "--outputinvisible", "1")
 			}
