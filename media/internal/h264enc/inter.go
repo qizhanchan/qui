@@ -343,9 +343,9 @@ func (s *sliceEnc) chromaInterCost() int {
 
 // candidates returns extra search starts: neighbour and co-located vectors.
 func (s *sliceEnc) candidates() [][2]int {
-	var c [][2]int
+	c := s.cands[:0]
 	s.done = 0
-	for _, p := range [][2]int{{-1, 0}, {0, -1}, {4, -1}} {
+	for _, p := range [3][2]int{{-1, 0}, {0, -1}, {4, -1}} {
 		if r, x, y := s.nbMotion(0, p[0], p[1]); r >= 0 {
 			c = append(c, [2]int{x, y})
 		}
@@ -368,12 +368,17 @@ func (s *sliceEnc) searchPartition(part, ref, mx, my, refBits int) int {
 	total := s.lambda * [4]int{1, 3, 3, 7}[part]
 	for i, g := range partGeom[part] {
 		pmx, pmy := s.mvPred(0, g[0], g[1], g[2], g[3], ref, part)
-		x, y, c := s.search(refs[ref], g[0]*4, g[1]*4, g[2]*4, g[3]*4, pmx, pmy, refBits, [][2]int{{mx, my}})
+		x, y, c := s.search(refs[ref], g[0]*4, g[1]*4, g[2]*4, g[3]*4, pmx, pmy, refBits, s.oneCand(mx, my))
 		s.tryRef[i], s.tryMV[i] = ref, [2]int{x, y}
 		s.setMotion(0, g[0], g[1], g[2], g[3], ref, x, y)
 		total += c
 	}
 	return total
+}
+
+func (s *sliceEnc) oneCand(mx, my int) [][2]int {
+	s.cands[0] = [2]int{mx, my}
+	return s.cands[:1]
 }
 
 // applyMotion stores the chosen partition motion, computes the predictors

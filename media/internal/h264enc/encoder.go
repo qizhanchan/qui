@@ -54,6 +54,7 @@ type Packet struct {
 	PTS  int64 // input frame index
 	DTS  int64
 	Type byte // 'I', 'P' or 'B'
+	QP   int  // slice QP
 }
 
 // Encoder encodes I420 frames.
@@ -71,8 +72,9 @@ type Encoder struct {
 	frameNum   int
 	idrID      int
 
-	src  *srcPic
-	refs []*refPic // most recent first
+	srcPool         []*srcPic
+	curSrc, prevSrc *srcPic
+	refs            []*refPic // most recent first
 	pool []*refPic
 	cur  *refPic
 
@@ -259,14 +261,16 @@ func (e *Encoder) pictureType() int {
 
 // loadSource copies img into macroblock-aligned planes, replicating edges.
 func (e *Encoder) loadSource(img *image.YCbCr) *srcPic {
-	s := e.src
-	if s == nil || len(img.Y) == 0 {
+	var s *srcPic
+	if n := len(e.srcPool); n > 0 {
+		s = e.srcPool[n-1]
+		e.srcPool = e.srcPool[:n-1]
+	} else {
 		s = &srcPic{ys: e.mbW * 16, cs: e.mbW * 8}
 		s.y = make([]byte, s.ys*e.mbH*16)
 		s.cb = make([]byte, s.cs*e.mbH*8)
 		s.cr = make([]byte, s.cs*e.mbH*8)
 	}
-	e.src = nil
 	w, h := e.cfg.Width, e.cfg.Height
 	copyPlane(s.y, s.ys, e.mbW*16, e.mbH*16, img.Y[img.YOffset(img.Rect.Min.X, img.Rect.Min.Y):], img.YStride, w, h)
 	co := img.COffset(img.Rect.Min.X, img.Rect.Min.Y)
@@ -354,6 +358,7 @@ func (e *Encoder) codePicture(src *srcPic, pts, poc int64, typ int, isRef bool) 
 		e.refs = e.refs[:0]
 		e.pocBase = poc
 	}
+	e.curSrc = src
 	qp := e.rc.pictureQP(typ, e)
 	cur := e.newRef()
 	cur.poc = int(2 * (poc - e.pocBase))
@@ -379,15 +384,28 @@ func (e *Encoder) codePicture(src *srcPic, pts, poc int64, typ int, isRef bool) 
 		hdr.numRefs = 0
 	}
 	e.setupLists(typ)
-	nals := e.codeSlices(src, &hdr)
-	e.deblockAndStore(cur)
+	var nals [][]byte
 	bits := 0
-	for _, n := range nals {
-		bits += 8 * len(n)
+	for attempt := 0; ; attempt++ {
+		nals = e.codeSlices(src, &hdr)
+		bits = 0
+		if idr {
+			bits = 8 * (len(e.sps) + len(e.pps))
+		}
+		for _, n := range nals {
+			bits += 8 * len(n)
+		}
+		if !e.rc.vbvOverflow(bits) || hdr.qp >= 51 {
+			break
+		}
+		// The picture would underflow the VBV: re-encode it coarser.
+		hdr.qp = min(51, hdr.qp+3+2*attempt)
 	}
+	qp = hdr.qp
+	e.deblockAndStore(cur)
 	e.rc.update(typ, qp, bits, e)
 
-	pkt := Packet{PTS: pts, DTS: e.coded, Key: idr}
+	pkt := Packet{PTS: pts, DTS: e.coded, Key: idr, QP: qp}
 	switch typ {
 	case sliceI:
 		pkt.Type = 'I'
@@ -413,7 +431,10 @@ func (e *Encoder) codePicture(src *srcPic, pts, poc int64, typ int, isRef bool) 
 	} else {
 		e.pool = append(e.pool, cur)
 	}
-	e.src = src
+	if e.prevSrc != nil {
+		e.srcPool = append(e.srcPool, e.prevSrc)
+	}
+	e.prevSrc, e.curSrc = src, nil
 	e.cur = nil
 	return pkt
 }

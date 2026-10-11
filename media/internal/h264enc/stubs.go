@@ -19,8 +19,3 @@ func (e *Encoder) setupBLists()                             {}
 func (e *Encoder) queueB(src *srcPic, pts int64) []Packet   { return nil }
 func (e *Encoder) flushB() []Packet                         { return nil }
 
-type rateControl struct{}
-
-func (r *rateControl) init(e *Encoder)                      {}
-func (r *rateControl) pictureQP(typ int, e *Encoder) int    { return e.cfg.QP }
-func (r *rateControl) update(typ, qp, bits int, e *Encoder) {}

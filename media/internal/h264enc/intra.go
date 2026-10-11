@@ -46,7 +46,7 @@ func (s *sliceEnc) intraNeighbours16() (top, left []byte, tl byte) {
 		top = Y[o-ys : o-ys+16]
 	}
 	if s.availA {
-		var l [16]byte
+		l := &s.leftY
 		for i := range l {
 			l[i] = Y[o+i*ys-1]
 		}
@@ -300,14 +300,14 @@ func (s *sliceEnc) codeI16() {
 	}
 }
 
-func (s *sliceEnc) chromaNeighbours(P []byte) (top, left []byte, tl byte) {
+func (s *sliceEnc) chromaNeighbours(P []byte, c int) (top, left []byte, tl byte) {
 	cs := s.cur.cs
 	o := s.cOff(0, 0)
 	if s.availB {
 		top = P[o-cs : o-cs+8]
 	}
 	if s.availA {
-		var l [8]byte
+		l := &s.leftC[c]
 		for i := range l {
 			l[i] = P[o+i*cs-1]
 		}
@@ -323,8 +323,8 @@ func (s *sliceEnc) chromaNeighbours(P []byte) (top, left []byte, tl byte) {
 // predCb/predCr) and returns its cost.
 func (s *sliceEnc) analyseChroma() int {
 	scb, scr, scs := s.srcC()
-	t0, l0, tl0 := s.chromaNeighbours(s.cur.cb)
-	t1, l1, tl1 := s.chromaNeighbours(s.cur.cr)
+	t0, l0, tl0 := s.chromaNeighbours(s.cur.cb, 0)
+	t1, l1, tl1 := s.chromaNeighbours(s.cur.cr, 1)
 	best, bestCost := 0, 1<<30
 	for mode := 0; mode < 4; mode++ {
 		switch mode {

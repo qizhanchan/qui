@@ -74,6 +74,9 @@ type sliceEnc struct {
 	mvp    [4][2][2]int // predictor per partition and list (mvd = pmv - mvp)
 	tryRef [4]int
 	tryMV  [4][2]int
+	cands  [8][2]int
+	leftY  [16]byte
+	leftC  [2][8]byte
 
 	predY   [256]byte
 	predI16 [256]byte
