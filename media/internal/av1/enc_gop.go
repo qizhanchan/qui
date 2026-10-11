@@ -270,6 +270,15 @@ func (e *Encoder) frameHeader(job *encJob, q int) encFrameHdr {
 		fh.interp = filterSwitchable
 		fh.allowHP = fh.baseQ < 128
 		fh.useRefMVs = e.seq.refFrameMVs
+		if job.future {
+			fh.refSelect = true
+			tmp := FrameHeader{referenceSelect: true, OrderHint: fh.orderHint}
+			for i := range tmp.refFrameIdx {
+				tmp.refFrameIdx[i] = fh.refIdx[i]
+			}
+			fh.skipModeAllowd = e.d.skipModeAllowed(&tmp)
+			fh.skipMode = fh.skipModeAllowd
+		}
 	}
 	return fh
 }

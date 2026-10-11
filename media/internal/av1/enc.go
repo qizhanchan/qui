@@ -38,7 +38,7 @@ type EncoderConfig struct {
 	// (each temporal unit still holds one shown frame, in display order).
 	// 1 (the default) codes every frame from past frames only.
 	MiniGOP int
-	Refs   int // previous frames inter frames may reference, 1..3 (default by preset)
+	Refs    int // previous frames inter frames may reference, 1..3 (default by preset)
 
 	// Preset trades speed for compression: 0 fastest (the default), 1
 	// balanced, 2 best.
@@ -70,30 +70,32 @@ type Encoder struct {
 	src       [3][]uint8
 	srcStride [3]int
 
-	frameCount int64 // display index of the frame being coded
-	keyFrame   int64 // display index of the last key frame
-	inCount    int64 // frames received
-	queue      []*image.YCbCr
-	slotPTS    [numRefFrames]int64 // display index held by each reference slot (-1: none)
-	pending    []byte              // OBUs of a hidden frame, sent with the next shown one
-	t          *tile
-	sc         tileScratch
-	sink       symSink
-	cdefSeen   []bool // per 64x64: CDEF index already coded (record pass)
-	lambda     float64
-	sqrtLambda float64
-	tq         encTQ
-	nonZero    bool // a coefficient was coded since the flag was cleared
-	snaps      []*encSnap
-	snapTop    int
-	nodes      []encNode // partition search arena (per superblock)
-	nodeTop    int
-	lumaBuf    []modeCand
-	interBuf   []blkChoice
-	activeRefs []int // references searched in the current inter frame
-	interList  []blkChoice
-	chromaBuf  []modeCand
-	chromaOut  []modeCand
+	frameCount      int64 // display index of the frame being coded
+	keyFrame        int64 // display index of the last key frame
+	inCount         int64 // frames received
+	queue           []*image.YCbCr
+	slotPTS         [numRefFrames]int64 // display index held by each reference slot (-1: none)
+	pending         []byte              // OBUs of a hidden frame, sent with the next shown one
+	t               *tile
+	sc              tileScratch
+	sink            symSink
+	cdefSeen        []bool // per 64x64: CDEF index already coded (record pass)
+	lambda          float64
+	sqrtLambda      float64
+	tq              encTQ
+	nonZero         bool // a coefficient was coded since the flag was cleared
+	snaps           []*encSnap
+	snapTop         int
+	nodes           []encNode // partition search arena (per superblock)
+	nodeTop         int
+	lumaBuf         []modeCand
+	interBuf        []blkChoice
+	searched        [numRefFrames]mv // NEWMV search result per reference (current block)
+	compoundAllRefs bool
+	activeRefs      []int // references searched in the current inter frame
+	interList       []blkChoice
+	chromaBuf       []modeCand
+	chromaOut       []modeCand
 
 	// Search breadth.
 	allow4x4     bool
@@ -224,6 +226,9 @@ func (e *Encoder) encodeFrame(job *encJob, q int) ([]byte, error) {
 		return nil, err
 	}
 	f, h := d.fs, d.hdr
+	if encFrameHook != nil {
+		encFrameHook()
+	}
 	e.lambda = rdLambda(h.baseQIdx)
 	e.sqrtLambda = math.Sqrt(e.lambda)
 

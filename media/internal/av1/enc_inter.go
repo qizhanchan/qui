@@ -29,7 +29,17 @@ func (e *Encoder) setupInter(r, c, size int, ch *blkChoice) {
 	b.segID = 0
 	b.lossless = h.lossless[0]
 	b.skip = ch.skip
+	b.skipMode = ch.skipMode
+	if b.skipMode {
+		b.skip = true
+		ch.ref, ch.ref2 = h.skipModeFrame[0], h.skipModeFrame[1]
+		ch.yMode = nearestNearestMV
+	}
 	b.refFrame = [2]int{ch.ref, -1}
+	if ch.ref2 > 0 {
+		b.refFrame[1] = ch.ref2
+	}
+	compound := ch.ref2 > 0
 	b.yMode = ch.yMode
 	b.interpFilter = [2]int{h.interpFilter, h.interpFilter}
 	if h.interpFilter == filterSwitchable {
@@ -42,22 +52,28 @@ func (e *Encoder) setupInter(r, c, size int, ch *blkChoice) {
 	if b.lossless {
 		b.txSize = tx4x4
 	}
-	t.findMvStack(false)
+	t.findMvStack(compound)
 	p := &t.mvp
 	p.refMvIdx = ch.drlIdx
-	switch b.yMode {
-	case globalMV:
-		p.predMv[0] = p.globalMvs[0]
-	default:
-		pos := p.refMvIdx
-		if b.yMode == nearestMV || b.yMode == newMV && p.numMvFound <= 1 {
-			pos = 0
-		}
-		p.predMv[0] = p.refStack[pos][0]
+	n := 1
+	if compound {
+		n = 2
 	}
-	b.mv[0] = p.predMv[0]
-	if b.yMode == newMV {
-		b.mv[0] = ch.mv
+	for i := 0; i < n; i++ {
+		mode := compMode(b.yMode, i)
+		if mode == globalMV {
+			p.predMv[i] = p.globalMvs[i]
+		} else {
+			pos := p.refMvIdx
+			if mode == nearestMV || mode == newMV && p.numMvFound <= 1 {
+				pos = 0
+			}
+			p.predMv[i] = p.refStack[pos][i]
+		}
+		b.mv[i] = p.predMv[i]
+		if mode == newMV {
+			b.mv[i] = [2]mv{ch.mv, ch.mv2}[i]
+		}
 	}
 	if h.interpFilter == filterSwitchable && !t.needsInterpFilter() {
 		b.interpFilter = [2]int{filterEightTap, filterEightTap}
@@ -83,6 +99,9 @@ func (e *Encoder) codeInterBlock(r, c, size int, ch *blkChoice) int64 {
 		t.resetBlockContext()
 	}
 	t.storeModeInfo()
+	if encHook != nil && e.sink.record {
+		encHook(t)
+	}
 	_ = t.computePrediction()
 	_ = t.residual()
 	return e.blockSSD(r, c, size)
@@ -100,6 +119,23 @@ func (e *Encoder) writeSkip() {
 		ctx++
 	}
 	e.sink.flag(t.cdf.skip[ctx][:], b.skip)
+}
+
+// writeSkipMode mirrors readSkipMode.
+func (e *Encoder) writeSkipMode() {
+	t := e.t
+	b := &t.b
+	if !t.h.skipModePresent || blockW(b.size) < 8 || blockH(b.size) < 8 {
+		return
+	}
+	ctx := 0
+	if b.availU && t.mi(b.miRow-1, b.miCol).skipMode {
+		ctx++
+	}
+	if b.availL && t.mi(b.miRow, b.miCol-1).skipMode {
+		ctx++
+	}
+	e.sink.flag(t.cdf.skipMode[ctx][:], b.skipMode)
 }
 
 // writeIsInter mirrors readIsInter.
@@ -135,37 +171,67 @@ func (e *Encoder) writeInterModeInfo() {
 	p := &t.mvp
 	c := &t.cdf
 	k := &e.sink
+	h := t.h
+	e.writeSkipMode()
+	if b.skipMode {
+		return
+	}
 	e.writeSkip()
 	e.writeCdef()
 	e.writeIsInter()
-	// Single reference (reference_select is off).
+	compound := b.refFrame[1] > intraFrame
+	if h.referenceSelect && min(b.bw4, b.bh4) >= 2 {
+		k.flag(c.compInter[t.compModeCtx()][:], compound)
+	}
 	ref := b.refFrame[0]
-	bwd := ref >= bwdrefFrame
-	k.flag(c.singleRef[t.refCtx(refsFwd, refsBwd)][0][:], bwd)
-	if bwd {
-		k.flag(c.singleRef[t.refCtx(refsBA2, refsAlt)][1][:], ref == altrefFrame)
-		if ref != altrefFrame {
-			k.flag(c.singleRef[t.refCtx(refsBwd1, refsAlt2)][5][:], ref == altref2Frame)
+	if compound {
+		// Bidirectional pairs only: LAST..GOLDEN with BWDREF..ALTREF.
+		k.flag(c.compRefType[t.compRefTypeCtx()][:], true)
+		l3g := ref == last3Frame || ref == goldenFrame
+		k.flag(c.compRef[t.refCtx(refsLL2, refsL3G)][0][:], l3g)
+		if l3g {
+			k.flag(c.compRef[t.refCtx(refsL3, refsGold)][2][:], ref == goldenFrame)
+		} else {
+			k.flag(c.compRef[t.refCtx(refsLast, refsL2)][1][:], ref == last2Frame)
+		}
+		ref2 := b.refFrame[1]
+		k.flag(c.compBwdRef[t.refCtx(refsBA2, refsAlt)][0][:], ref2 == altrefFrame)
+		if ref2 != altrefFrame {
+			k.flag(c.compBwdRef[t.refCtx(refsBwd1, refsAlt2)][1][:], ref2 == altref2Frame)
 		}
 	} else {
-		l3g := ref == last3Frame || ref == goldenFrame
-		k.flag(c.singleRef[t.refCtx(refsLL2, refsL3G)][2][:], l3g)
-		if l3g {
-			k.flag(c.singleRef[t.refCtx(refsL3, refsGold)][4][:], ref == goldenFrame)
+		bwd := ref >= bwdrefFrame
+		k.flag(c.singleRef[t.refCtx(refsFwd, refsBwd)][0][:], bwd)
+		if bwd {
+			k.flag(c.singleRef[t.refCtx(refsBA2, refsAlt)][1][:], ref == altrefFrame)
+			if ref != altrefFrame {
+				k.flag(c.singleRef[t.refCtx(refsBwd1, refsAlt2)][5][:], ref == altref2Frame)
+			}
 		} else {
-			k.flag(c.singleRef[t.refCtx(refsLast, refsL2)][3][:], ref == last2Frame)
+			l3g := ref == last3Frame || ref == goldenFrame
+			k.flag(c.singleRef[t.refCtx(refsLL2, refsL3G)][2][:], l3g)
+			if l3g {
+				k.flag(c.singleRef[t.refCtx(refsL3, refsGold)][4][:], ref == goldenFrame)
+			} else {
+				k.flag(c.singleRef[t.refCtx(refsLast, refsL2)][3][:], ref == last2Frame)
+			}
 		}
 	}
 	mode := b.yMode
-	k.flag(c.newMV[p.newMvCtx][:], mode != newMV)
-	if mode != newMV {
-		k.flag(c.zeroMV[p.zeroMvCtx][:], mode != globalMV)
-		if mode != globalMV {
-			k.flag(c.refMV[p.refMvCtx][:], mode == nearMV)
+	if compound {
+		ctx := compoundModeCtxMap[p.refMvCtx>>1][min(p.newMvCtx, 4)]
+		k.sym(c.compoundMode[ctx][:], mode-nearestNearestMV, 8)
+	} else {
+		k.flag(c.newMV[p.newMvCtx][:], mode != newMV)
+		if mode != newMV {
+			k.flag(c.zeroMV[p.zeroMvCtx][:], mode != globalMV)
+			if mode != globalMV {
+				k.flag(c.refMV[p.refMvCtx][:], mode == nearMV)
+			}
 		}
 	}
 	switch mode {
-	case newMV:
+	case newMV, newNewMV:
 		for idx := 0; idx < 2; idx++ {
 			if p.numMvFound > idx+1 {
 				k.flag(c.drl[p.drlCtx[idx]][:], p.refMvIdx > idx)
@@ -174,8 +240,7 @@ func (e *Encoder) writeInterModeInfo() {
 				}
 			}
 		}
-		e.writeMv(mv{b.mv[0].row - p.predMv[0].row, b.mv[0].col - p.predMv[0].col})
-	case nearMV:
+	case nearMV, nearNearMV, nearNewMV, newNearMV:
 		for idx := 1; idx < 3; idx++ {
 			if p.numMvFound > idx+1 {
 				k.flag(c.drl[p.drlCtx[idx]][:], p.refMvIdx > idx)
@@ -183,6 +248,15 @@ func (e *Encoder) writeInterModeInfo() {
 					break
 				}
 			}
+		}
+	}
+	n := 1
+	if compound {
+		n = 2
+	}
+	for i := 0; i < n; i++ {
+		if compMode(mode, i) == newMV {
+			e.writeMv(mv{b.mv[i].row - p.predMv[i].row, b.mv[i].col - p.predMv[i].col})
 		}
 	}
 	if t.h.interpFilter == filterSwitchable && t.needsInterpFilter() {
@@ -280,7 +354,7 @@ func (e *Encoder) mvBits(d mv) int64 {
 // cost (see trialIntra).
 func (e *Encoder) trialInter(r, c, size int, ch *blkChoice) float64 {
 	k := &e.sink
-	ch.skip = false
+	ch.skip = ch.skipMode
 	before := k.cost
 	e.nonZero = false
 	dist := e.codeInterBlock(r, c, size, ch)
@@ -314,7 +388,43 @@ func (e *Encoder) interCandidates(r, c, size, ref int) []blkChoice {
 	out = append(out, blkChoice{inter: true, ref: ref, yMode: globalMV})
 	// NEWMV: search around the best predictor.
 	best, bestDrl := e.motionSearch(r, c, size, ref)
+	e.searched[ref] = best
 	out = append(out, blkChoice{inter: true, ref: ref, yMode: newMV, drlIdx: bestDrl, mv: best})
+	e.interBuf = out
+	return out
+}
+
+// compoundCandidates lists the compound choices of a past reference with
+// a future one (after both were searched as single references): the
+// predictor pairs at each DRL index, GLOBAL_GLOBAL and NEW_NEW with the
+// searched vectors.
+func (e *Encoder) compoundCandidates(r, c, size, ref, ref2 int) []blkChoice {
+	t := e.t
+	if min(num4x4W[size], num4x4H[size]) < 2 {
+		return nil
+	}
+	ch := blkChoice{inter: true, ref: ref, ref2: ref2, yMode: nearestNearestMV}
+	e.setupInter(r, c, size, &ch)
+	p := &t.mvp
+	out := e.interBuf[:0]
+	out = append(out, ch)
+	for idx := 1; idx < min(max(p.numMvFound, 2), 3); idx++ {
+		out = append(out, blkChoice{inter: true, ref: ref, ref2: ref2, yMode: nearNearMV, drlIdx: idx})
+	}
+	out = append(out, blkChoice{inter: true, ref: ref, ref2: ref2, yMode: globalGlobalMV})
+	nn := blkChoice{inter: true, ref: ref, ref2: ref2, yMode: newNewMV, mv: e.searched[ref], mv2: e.searched[ref2]}
+	if p.numMvFound > 1 {
+		// The DRL index whose predictors are closest to the vectors.
+		best := math.MaxInt
+		for i := 0; i < min(p.numMvFound, 3); i++ {
+			s := p.refStack[i]
+			d := abs(int(s[0].row-nn.mv.row)) + abs(int(s[0].col-nn.mv.col)) + abs(int(s[1].row-nn.mv2.row)) + abs(int(s[1].col-nn.mv2.col))
+			if d < best {
+				best, nn.drlIdx = d, i
+			}
+		}
+	}
+	out = append(out, nn)
 	e.interBuf = out
 	return out
 }

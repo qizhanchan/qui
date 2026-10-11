@@ -14,11 +14,14 @@ type blkChoice struct {
 	txDepth         int
 	skip            bool
 
-	inter  bool
-	ref    int
-	drlIdx int
-	mv     mv
-	interp int // interpolation filter (switchable frames)
+	inter    bool
+	ref      int
+	ref2     int // second reference of a compound block (0: single)
+	drlIdx   int
+	mv       mv
+	mv2      mv
+	interp   int // interpolation filter (switchable frames)
+	skipMode bool
 }
 
 // codePartition codes the fixed partition tree at (r, c): 16x16 blocks
@@ -128,6 +131,9 @@ func (e *Encoder) codeIntraBlock(r, c, size int, ch *blkChoice) int64 {
 		t.resetBlockContext()
 	}
 	t.storeModeInfo()
+	if encHook != nil && e.sink.record {
+		encHook(t)
+	}
 	_ = t.residual()
 	return e.blockSSD(r, c, size)
 }
@@ -153,6 +159,7 @@ func (e *Encoder) writeIntraModeInfo(txDepth int) {
 	k := &e.sink
 	if !t.h.intra {
 		t.interNeighbors()
+		e.writeSkipMode()
 		e.writeSkip()
 		e.writeCdef()
 		e.writeIsInter()
@@ -505,3 +512,10 @@ func (e *Encoder) residualSSD(t *tile, tq *txQuant, res []int32, typ int, levels
 	}
 	return ssd
 }
+
+// Test hooks: every committed block, and the start of each coded frame.
+var (
+	encHook      func(t *tile)
+	encFrameHook func()
+	debugFrame   func()
+)

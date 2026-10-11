@@ -287,6 +287,19 @@ func (e *Encoder) searchBlock(r, c, size int) (blkChoice, float64) {
 		for _, ref := range e.activeRefs {
 			inter = append(inter, e.interCandidates(r, c, size, ref)...)
 		}
+		if t.h.referenceSelect {
+			for _, ref := range e.activeRefs {
+				if ref < bwdrefFrame {
+					inter = append(inter, e.compoundCandidates(r, c, size, ref, altrefFrame)...)
+					if !e.compoundAllRefs {
+						break
+					}
+				}
+			}
+		}
+		if t.h.skipModePresent && blockW(size) >= 8 && blockH(size) >= 8 {
+			inter = append(inter, blkChoice{inter: true, skipMode: true})
+		}
 		e.interList = inter
 		for _, ch := range inter {
 			try(ch)

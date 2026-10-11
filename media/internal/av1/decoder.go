@@ -98,6 +98,9 @@ func (d *Decoder) decodeOBU(o *obu) error {
 		}
 		d.seenFrameHeader = true
 		d.tileNum = 0
+		if debugFrame != nil {
+			debugFrame()
+		}
 		if err := d.startFrame(h); err != nil {
 			return err
 		}
