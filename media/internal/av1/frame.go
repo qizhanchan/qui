@@ -112,8 +112,12 @@ func unitsInFrame(unit, size int) int { return max((size+unit>>1)/unit, 1) }
 // startFrame allocates the frame and loads the entropy state.
 func (d *Decoder) startFrame(h *FrameHeader) error {
 	s := d.seq
-	if h.Width > s.MaxWidth || h.Height > s.MaxHeight {
-		return fmt.Errorf("%w: frame %dx%d above the sequence maximum", ErrInvalid, h.Width, h.Height)
+	// libsvtav1's resize mode codes frames rounded up to 8 lines beyond
+	// max_frame_height; libdav1d accepts them, so only the level limit
+	// (8.3: at most 2^16 in each direction, 35651584 luma samples) is
+	// enforced.
+	if h.Width > 1<<16 || h.Height > 1<<16 || h.UpscaledWidth*h.Height > 35651584 {
+		return fmt.Errorf("%w: frame %dx%d too large", ErrInvalid, h.UpscaledWidth, h.Height)
 	}
 	f := &frameState{hdr: h, seq: s, miCols: h.miCols, miRows: h.miRows}
 	d.fs = f

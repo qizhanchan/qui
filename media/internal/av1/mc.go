@@ -47,6 +47,11 @@ func (t *tile) scaleMv(rp refPic, plane, x, y int, m mv) (startX, startY, xStep,
 	ss := min(plane, 1)
 	xScale := ((rp.upscaledW << 14) + h.Width/2) / h.Width
 	yScale := ((rp.height << 14) + h.Height/2) / h.Height
+	if t.b.useIntraBC {
+		// The current frame is never scaled; its MiCols / MiRows size
+		// only sets the clamping edges.
+		xScale, yScale = 1<<14, 1<<14
+	}
 	origX := (x << 4) + ((2 * int(m.col)) >> ss) + 8
 	origY := (y << 4) + ((2 * int(m.row)) >> ss) + 8
 	baseX := int64(origX)*int64(xScale) - 8<<14
