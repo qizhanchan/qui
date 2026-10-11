@@ -55,7 +55,7 @@ type Packet struct {
 	NALs [][]byte // VPS/SPS/PPS precede IDR pictures, then slice segments
 	Key  bool
 	PTS  int64 // input frame index
-	DTS  int64
+	DTS  int64 // coding index minus Encoder.Reorder(), so DTS <= PTS
 	Type byte // 'I', 'P' or 'B'
 	QP   int
 }
@@ -206,6 +206,11 @@ func pickLevel(w, h, num, den int) int {
 	}
 	return 186
 }
+
+// Reorder is the number of pictures by which decoding order runs ahead of
+// output order (sps_max_num_reorder_pics): 1 with B pictures, else 0.
+// Muxers delay presentation by this many frame durations.
+func (e *Encoder) Reorder() int { return e.seq.numReorder }
 
 // Headers returns the VPS, SPS and PPS NAL units.
 func (e *Encoder) Headers() (vps, sps, pps []byte) { return e.vps, e.sps, e.pps }
@@ -391,7 +396,7 @@ func (e *Encoder) codePicture(f *encFrame, typ int, key, ref bool) Packet {
 		sl.tmvp = q.tmvp
 		sl.colFromL0 = typ == sliceP
 	}
-	pkt := Packet{Key: key, PTS: f.pts, DTS: e.coded, Type: "BPI"[typ]}
+	pkt := Packet{Key: key, PTS: f.pts, DTS: e.coded - int64(e.Reorder()), Type: "BPI"[typ]}
 	qp := e.rc.pictureQP(typ, e)
 	bits := 0
 	for attempt := 0; ; attempt++ {
