@@ -16,7 +16,8 @@ import (
 // the same files; the streams were made with libsvtav1 to cover intra and
 // screen-content tools, random access at presets 0 and 4 with tiles,
 // S-frames, superres, reference scaling, film grain, quantiser matrices
-// with segmentation, lossless and 10-bit.
+// with segmentation, lossless, 10-bit and global motion (a synthetic
+// zoom and rotation, ROTZOOM parameters).
 func TestVectors(t *testing.T) {
 	f, err := os.Open("testdata/vectors.txt")
 	if err != nil {
