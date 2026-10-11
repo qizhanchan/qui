@@ -144,6 +144,7 @@ type encTQ struct {
 	tmp    [64 * 64]float64
 	coef   [32 * 32]float64
 	levels [32 * 32]int32
+	best   [32 * 32]int32
 }
 
 // txTypeIndex maps a transform type to its symbol in each set:

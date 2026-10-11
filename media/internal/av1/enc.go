@@ -66,9 +66,10 @@ type Encoder struct {
 	nonZero    bool // a coefficient was coded since the flag was cleared
 
 	// Search breadth.
-	allow4x4    bool
-	lumaCands   int
-	chromaCands int
+	allow4x4     bool
+	lumaCands    int
+	chromaCands  int
+	txTypeSearch int // 0 DCT only, 1 four types, 2 the whole set
 
 	keepRecon bool
 	recon     []*Frame
@@ -95,7 +96,7 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 	if cfg.Matrix == 0 {
 		cfg.Matrix = 1
 	}
-	e := &Encoder{cfg: cfg, d: New(), allow4x4: true, lumaCands: 3, chromaCands: 2}
+	e := &Encoder{cfg: cfg, d: New(), allow4x4: true, lumaCands: 3, chromaCands: 2, txTypeSearch: 2}
 	e.seq = encSeq{
 		width: cfg.Width, height: cfg.Height, level: seqLevel(cfg.Width, cfg.Height),
 		fullRange: cfg.FullRange, matrix: cfg.Matrix, primaries: 1, transfer: 1,
@@ -209,11 +210,16 @@ func (e *Encoder) encodeKeyFrame() (Packet, error) {
 		}
 	}
 
-	// Pass B: in-loop filters.
+	// Pass B: in-loop filters, measured on the reconstruction, which is
+	// then left unfiltered for finishFrame.
+	backup := d.cloneFrame(f.cur)
 	e.decideLoopFilter(&fh)
 	h.lf.level = fh.lfLevel
 	h.lf.sharpness = fh.lfSharpness
+	d.deblock(f)
 	e.decideCDEF(&fh)
+	copyPlanes(f.cur, backup)
+	d.release(&backup.planes, backup.numPlanes)
 
 	// Tile data: replay the records from the initial CDFs.
 	t.cdf = initCDF
@@ -257,29 +263,3 @@ func rdLambda(qindex int) float64 {
 	return 0.0021 * q * q
 }
 
-// decideLoopFilter picks deblocking levels from the quantiser.
-func (e *Encoder) decideLoopFilter(fh *encFrameHdr) {
-	q := float64(acQ(8, fh.baseQ)) / 4
-	lvl := clip3(0, 63, int(q*0.33+0.5))
-	if fh.baseQ < 20 {
-		lvl = 0
-	}
-	fh.lfLevel = [4]int{lvl, lvl, lvl, lvl}
-}
-
-// decideCDEF leaves CDEF off (one strength, zero) for now: every 64x64
-// with a coded block gets index 0.
-func (e *Encoder) decideCDEF(fh *encFrameHdr) {
-	f := e.d.fs
-	h := e.d.hdr
-	fh.cdefBits = 0
-	h.cdefBits = 0
-	h.cdefYPri[0], h.cdefYSec[0], h.cdefUVPri[0], h.cdefUVSec[0] = 0, 0, 0, 0
-	for i, seen := range e.cdefSeen {
-		if seen {
-			f.cdefIdx[i] = 0
-		} else {
-			f.cdefIdx[i] = -1
-		}
-	}
-}
