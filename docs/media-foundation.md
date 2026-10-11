@@ -361,6 +361,70 @@ Oracle: FFmpeg with **libdav1d**; vectors encoded locally with
 same source clips. The AV1 **encoder** comes last, starting from SVT-AV1's
 fast presets as the quality reference.
 
+Vectors are made with FFmpeg's libsvtav1 from raw clips, for example:
+
+```bash
+ffmpeg -f rawvideo -pix_fmt yuv420p -s 320x180 -i clip.yuv -frames:v 12 \
+  -c:v libsvtav1 -preset 4 -svtav1-params keyint=12:tile-columns=1 ra_p4.ivf
+```
+
+and compared against the `dav1d` CLI (libdav1d without FFmpeg's scaling on
+resolution changes; `--outputinvisible 1` also checks the frames that are
+never shown, `--filmgrain 0/1` the grain-free reference and the output).
+
+**Decoder status: A0–A7 done (2026-10-11).**
+
+| Piece | Location | State |
+|---|---|---|
+| Bitstream (A0) | `obu.go`, `seq.go`, `header.go`, `ivf.go`, `config.go`; `mp4x` | OBUs, sequence header (operating points, timing / decoder model, colour config), the full uncompressed header (frame refs short signaling, tile info, quantisation, segmentation, delta q / lf, loop filter, CDEF, LR, skip mode, global motion, film grain parameters), IVF; `av01` + `av1C` read and written by `mp4x`, played by the pure-Go backend |
+| Entropy (A1) | `msac.go`, `cdf.go`, `cdf_tables.go`, `residual.go` | windowed multi-symbol arithmetic decoder with adaptation, 66 default CDF tables, coefficient coding with all contexts and scans |
+| Intra (A2) | `intra.go`, `block.go` | directional with angle deltas and edge filtering / upsampling, smooth (H/V), Paeth, recursive filter intra, CfL, palette (with colour cache), intra block copy |
+| Inter (A3) | `inter.go`, `mvpred.go`, `mfmv.go`, `mc.go` | MV prediction stack (spatial, temporal from the projected motion field, extra search), single / compound with wedge, difference-weighted, distance-weighted and inter-intra masks, OBMC, local warped and global motion, 8-tap filters incl. dual filter, reference scaling, skip mode, S-frames |
+| Transforms (A4) | `transform.go`, `recon.go` | DCT 4–64, ADST 4/8/16, flipADST, identity, WHT for lossless; quantiser matrices |
+| Loop filters (A5) | `lf.go`, `cdef.go`, `restoration.go`, `lr.go` | deblocking, CDEF, superres upscaling, loop restoration (Wiener, self-guided) |
+| Film grain (A6) | `filmgrain.go` | grain synthesis on output (8 / 10-bit, chroma from luma, overlap, clipping), never in references |
+| Performance (A7) | `mc_fast.go`, `neon_arm64.s` (from `neon_gen.go`), `parallel.go` | unscaled MC reads the reference in place with NEON 8-tap kernels (halved taps keep the 8-bit horizontal pass exact in int16); stripe-buffered loop restoration; CDEF on a per-block neighbourhood copy; **tiles decode in parallel**; deblocking (row / column bands), CDEF (64×64 rows) and LR (stripes) run on all cores; pooled frame and scratch buffers |
+
+Where the specification and the reference decoders differ in detail
+(inverse-transform butterfly signs and intermediate clamps, warp-sample
+steps, the interintra context, the partition gather order, quantiser
+matrices only below `IDTX`, OBMC on small chroma, superres over the full
+width), the decoder follows libaom / libdav1d, as conformant streams
+require. The inverse transforms were also checked one-dimensionally
+against SVT-AV1's own (`AV1_TX_VECTORS`).
+
+Evidence:
+
+- **Bit-exact vs libdav1d:** 14 committed vectors (`testdata/vectors.txt`,
+  320×180: intra and screen content, random access at presets 0 and 4
+  with tiles, low-delay S-frames, superres, reference scaling, film grain
+  8 / 10-bit, quantiser matrices with segmentation, lossless, 10-bit,
+  global motion), plus corpus runs including the invisible frames: intra
+  and random access at every preset 0–8, low delay, deblocking / CDEF /
+  LR / superres variants, 10-bit, 2–8 tiles, screen content with intra
+  block copy, resize, S-frames, segmentation (AQ and variance boost),
+  overlays, lossless, quantiser matrices, film grain, ROTZOOM global
+  motion, and 1080p. The AV1 + AAC MP4 plays through the pure-Go backend
+  with frames matching libdav1d, precise seek and scrubbing
+  (`TestGolangBackendMatchesFFmpeg`, `TestGolangBackendPreciseSeek`).
+- **Robustness:** damaged temporal units return errors and never panic
+  (`TestDecodeCorrupt`; `Decode` recovers, and panics in tile / filter
+  workers are re-raised to it). The race detector is clean.
+- **Speed** (1080p random access, SVT-AV1 preset 8, Apple silicon,
+  `BenchmarkDecodeFile`): one tile **15.1 ms/frame** on 10 cores, 21.4 ms
+  on one core (libdav1d single-threaded: 1.9 ms); four tiles **6.5 ms**,
+  eight tiles 5.5 ms. Through the backend a 1080p MP4 plays at 63 fps
+  (one tile) / 157 fps (four tiles). NEON and `-tags purego` builds
+  decode identically (`TestMcNEON` checks the kernels for every filter,
+  phase and width).
+
+Open items: tools no local encoder emits (chroma palettes,
+distance-weighted compound, dual filter, delta loop filter, intra-only
+frames) are implemented but not pinned by vectors; 12-bit and 4:2:2 /
+4:4:4 (High / Professional) are rejected; the backend rounds 10-bit
+output to 8 bits; frame-parallel decoding (overlapping frames, as libdav1d
+does), and NEON for CDEF, LR, transforms and 10-bit MC.
+
 ### Order and cost
 
 | Item | Rough effort | Note |

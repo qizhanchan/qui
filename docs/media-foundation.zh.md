@@ -280,6 +280,56 @@ HEVC **编码器**在解码器之后，里程碑结构与 R1 相同，验证方�
 预言机：FFmpeg 搭配 **libdav1d**；向量用 **libsvtav1** 从同一批源片段本地编码（预设覆盖各工具，
 胶片颗粒开 / 关）。AV1 **编码器**放在最后，以 SVT-AV1 的快速预设为质量参照。
 
+向量用 FFmpeg 的 libsvtav1 从原始片段生成，例如：
+
+```bash
+ffmpeg -f rawvideo -pix_fmt yuv420p -s 320x180 -i clip.yuv -frames:v 12 \
+  -c:v libsvtav1 -preset 4 -svtav1-params keyint=12:tile-columns=1 ra_p4.ivf
+```
+
+并与 `dav1d` 命令行比对（libdav1d，不经过 FFmpeg 在分辨率变化时的缩放；`--outputinvisible 1`
+连从不显示的帧也一并比对，`--filmgrain 0/1` 分别比对无颗粒的参考与最终输出）。
+
+**解码器状态：A0–A7 已完成（2026-10-11）。**
+
+| 部分 | 位置 | 状态 |
+|---|---|---|
+| 码流（A0） | `obu.go`、`seq.go`、`header.go`、`ivf.go`、`config.go`；`mp4x` | OBU、sequence 头（operating point、时序 / 解码器模型、颜色配置）、完整的 uncompressed header（frame refs short signaling、tile 信息、量化、分割、delta q / lf、环路滤波、CDEF、LR、skip mode、全局运动、胶片颗粒参数）、IVF；`mp4x` 读写 `av01` + `av1C`，纯 Go 后端可播放 |
+| 熵编码（A1） | `msac.go`、`cdf.go`、`cdf_tables.go`、`residual.go` | 带自适应的窗口化多符号算术解码器、66 张默认 CDF 表、含全部上下文与扫描顺序的系数编码 |
+| 帧内（A2） | `intra.go`、`block.go` | 带角度偏移与边缘滤波 / 上采样的方向预测、smooth（H/V）、Paeth、递归 filter intra、CfL、调色板（含颜色缓存）、intra block copy |
+| 帧间（A3） | `inter.go`、`mvpred.go`、`mfmv.go`、`mc.go` | MV 预测栈（空域、由投影运动场得到的时域、扩展搜索）、单 / 复合预测及 wedge、差值加权、距离加权与 inter-intra 掩码、OBMC、局部 warp 与全局运动、8 抽头滤波（含双滤波器）、参考缩放、skip mode、S 帧 |
+| 变换（A4） | `transform.go`、`recon.go` | DCT 4–64、ADST 4/8/16、flipADST、identity、无损用 WHT；量化矩阵 |
+| 环路滤波（A5） | `lf.go`、`cdef.go`、`restoration.go`、`lr.go` | 去块、CDEF、superres 上采样、loop restoration（Wiener、self-guided） |
+| 胶片颗粒（A6） | `filmgrain.go` | 在输出上合成颗粒（8 / 10 bit、色度随亮度、重叠、裁剪），不进入参考帧 |
+| 性能（A7） | `mc_fast.go`、`neon_arm64.s`（由 `neon_gen.go` 生成）、`parallel.go` | 无缩放 MC 直接读取参考帧并使用 NEON 8 抽头内核（taps 减半，使 8 bit 水平级在 int16 中精确）；按 stripe 缓冲的 loop restoration；CDEF 在每块邻域副本上计算；**tiles 并行解码**；去块（行 / 列带）、CDEF（64×64 行）与 LR（stripe）在所有核上运行；帧与临时缓冲区复用 |
+
+规范与参考解码器在细节上有出入之处（反变换蝶形的符号与中间裁剪、warp 采样步长、interintra
+上下文、partition gather 顺序、量化矩阵只用于 `IDTX` 以下的类型、小尺寸色度的 OBMC、superres
+覆盖整个宽度），解码器遵循 libaom / libdav1d，这是一致性码流所要求的。反变换还逐个一维地与
+SVT-AV1 自身的实现比对过（`AV1_TX_VECTORS`）。
+
+证据：
+
+- **与 libdav1d 逐位一致：** 14 个已提交向量（`testdata/vectors.txt`，320×180：帧内与屏幕内容、
+  preset 0 与 4 的随机访问（含 tiles）、低延迟 S 帧、superres、参考缩放、8 / 10 bit 胶片颗粒、
+  量化矩阵加分割、无损、10 bit、全局运动），以及包括不可见帧在内的语料比对：preset 0–8 的
+  帧内与随机访问、低延迟、去块 / CDEF / LR / superres 的各种组合、10 bit、2–8 个 tile、带 intra
+  block copy 的屏幕内容、分辨率变化、S 帧、分割（AQ 与 variance boost）、overlay、无损、量化
+  矩阵、胶片颗粒、ROTZOOM 全局运动，以及 1080p。AV1 + AAC 的 MP4 经纯 Go 后端播放，帧与
+  libdav1d 一致，精确 seek 与拖动预览正常（`TestGolangBackendMatchesFFmpeg`、
+  `TestGolangBackendPreciseSeek`）。
+- **健壮性：** 损坏的 temporal unit 返回错误而不会 panic（`TestDecodeCorrupt`；`Decode` 会
+  recover，tile / 滤波 worker 中的 panic 会转交给它）。race 检测干净。
+- **速度**（1080p 随机访问，SVT-AV1 preset 8，Apple 芯片，`BenchmarkDecodeFile`）：单 tile
+  10 核 **15.1 ms/帧**，单核 21.4 ms（libdav1d 单线程：1.9 ms）；4 个 tile **6.5 ms**，8 个 tile
+  5.5 ms。经后端播放 1080p MP4 为 63 fps（单 tile）/ 157 fps（4 tile）。NEON 与 `-tags purego`
+  构建解码结果相同（`TestMcNEON` 对每种滤波器、相位与宽度检查内核）。
+
+未完成项：本地编码器都不产生的工具（色度调色板、距离加权复合、双滤波器、delta 环路滤波、
+intra-only 帧）已实现但没有向量固定；12 bit 与 4:2:2 / 4:4:4（High / Professional）会被拒绝；
+后端把 10 bit 输出舍入为 8 bit；帧级并行解码（像 libdav1d 那样重叠多帧），以及 CDEF、LR、
+变换与 10 bit MC 的 NEON 版本。
+
 ### 顺序与成本
 
 | 项目 | 大致工作量 | 备注 |
