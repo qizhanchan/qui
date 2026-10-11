@@ -34,7 +34,7 @@ func (t *tile) reconstruct(plane, x, y, tx int) {
 	b := &t.b
 	h := t.h
 	bd := t.seq.BitDepth
-	rs := &t.recon
+	rs := t.recon
 	a := adjustedTx[tx]
 	tw, th := txW[a], txH[a]
 	w, hh := txW[tx], txH[tx]
@@ -92,7 +92,7 @@ func (t *tile) reconstruct(plane, x, y, tx int) {
 // (bd+8)-bit clamp of the row input, row shift, a max(bd+6, 16)-bit clamp
 // of the column input, column shift 4; flips are applied here.
 func (t *tile) inverseTransform(tx, typ int, lossless bool) {
-	rs := &t.recon
+	rs := t.recon
 	bd := t.seq.BitDepth
 	w, h := txW[tx], txH[tx]
 	lw, lh := txWLog2[tx], txHLog2[tx]
@@ -256,7 +256,7 @@ func tx1D(v []int32, n, kind int) {
 
 // inverseWHT is the lossless 4x4 Walsh-Hadamard inverse (spec 7.13.2.10).
 func (t *tile) inverseWHT() {
-	rs := &t.recon
+	rs := t.recon
 	wht := func(v []int32, stride int, shift uint) {
 		a := v[0] >> shift
 		c := v[stride] >> shift

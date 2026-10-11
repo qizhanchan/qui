@@ -121,7 +121,7 @@ func (d *Decoder) startFrame(h *FrameHeader) error {
 	}
 	f := &frameState{hdr: h, seq: s, miCols: h.miCols, miRows: h.miRows}
 	d.fs = f
-	f.cur = newFrame(h.Width, h.Height, s.BitDepth, s.NumPlanes())
+	f.cur = d.newFrame(h.Width, h.Height, s.BitDepth, s.NumPlanes())
 	f.cur.upscaledW = h.UpscaledWidth
 	f.cur.showable = h.Showable
 	f.cur.frameType = h.FrameType
@@ -182,12 +182,12 @@ func (d *Decoder) startFrame(h *FrameHeader) error {
 }
 
 // decodeTile decodes tile number tn of the current frame.
-func (d *Decoder) decodeTile(tn int, b []byte) error {
+func (d *Decoder) decodeTile(tn int, b []byte, sc *tileScratch) error {
 	f := d.fs
 	h := f.hdr
 	ti := &h.tiles
 	row, col := tn/ti.cols, tn%ti.cols
-	t := &tile{f: f, h: h, seq: d.seq}
+	t := &tile{f: f, h: h, seq: d.seq, mc: &sc.mc, recon: &sc.recon}
 	t.miRowStart, t.miRowEnd = ti.miRowStarts[row], ti.miRowStarts[row+1]
 	t.miColStart, t.miColEnd = ti.miColStarts[col], ti.miColStarts[col+1]
 	t.currentQ = h.baseQIdx
@@ -288,10 +288,11 @@ func (d *Decoder) output(f *frame, h *FrameHeader) {
 func (d *Decoder) postFilter(f *frameState) {
 	h := f.hdr
 	cur := f.cur
+	orig := cur.planes
 	d.deblock(f)
 	cdefF := cur
 	if d.seq.EnableCDEF && !h.codedLossless && !h.allowIntraBC {
-		cdefF = cloneFrame(cur)
+		cdefF = d.cloneFrame(cur)
 		d.cdef(f, cur, cdefF)
 	}
 	upCdef, upCur := cdefF, cur
@@ -306,4 +307,88 @@ func (d *Decoder) postFilter(f *frameState) {
 		final = d.restore(f, upCdef, upCur)
 	}
 	cur.planes = final.planes
+	// The intermediate frames' buffers are free again.
+	done := []*[3]planeBuf{&final.planes}
+next:
+	for _, ps := range []*[3]planeBuf{&orig, &cdefF.planes, &upCdef.planes, &upCur.planes} {
+		for _, q := range done {
+			if samePlanes(ps, q) {
+				continue next
+			}
+		}
+		done = append(done, ps)
+		d.release(ps, cur.numPlanes)
+	}
+}
+
+// samePlanes reports whether a and b share their luma buffer.
+func samePlanes(a, b *[3]planeBuf) bool {
+	if a[0].pix16 != nil {
+		return b[0].pix16 != nil && &a[0].pix16[0] == &b[0].pix16[0]
+	}
+	return b[0].pix8 != nil && &a[0].pix8[0] == &b[0].pix8[0]
+}
+
+// release returns plane buffers to the pool.
+func (d *Decoder) release(ps *[3]planeBuf, n int) {
+	const maxFree = 12
+	for p := 0; p < n; p++ {
+		if b := ps[p].pix16; b != nil && len(d.free16) < maxFree {
+			d.free16 = append(d.free16, b)
+		}
+		if b := ps[p].pix8; b != nil && len(d.free8) < maxFree {
+			d.free8 = append(d.free8, b)
+		}
+	}
+}
+
+func take[T uint8 | uint16](free *[][]T, n int) []T {
+	for i, b := range *free {
+		if len(b) == n {
+			l := len(*free) - 1
+			(*free)[i] = (*free)[l]
+			*free = (*free)[:l]
+			return b
+		}
+	}
+	return make([]T, n)
+}
+
+// newFrame is newFrame with zeroed buffers from the pool when possible.
+func (d *Decoder) newFrame(w, h, bitDepth, numPlanes int) *frame {
+	f := &frame{w: w, h: h, upscaledW: w, bitDepth: bitDepth, numPlanes: numPlanes}
+	aw, ah := (w+127)&^127, (h+127)&^127
+	for p := 0; p < numPlanes; p++ {
+		pw, ph, apw, aph := w, h, aw, ah
+		if p > 0 {
+			pw, ph, apw, aph = (w+1)>>1, (h+1)>>1, aw>>1, ah>>1
+		}
+		pb := &f.planes[p]
+		pb.w, pb.h = pw, ph
+		pb.stride = apw
+		if bitDepth > 8 {
+			pb.pix16 = take(&d.free16, pb.stride*aph)
+			clear(pb.pix16)
+		} else {
+			pb.pix8 = take(&d.free8, pb.stride*aph)
+			clear(pb.pix8)
+		}
+	}
+	return f
+}
+
+// cloneFrame is cloneFrame with buffers from the pool when possible.
+func (d *Decoder) cloneFrame(f *frame) *frame {
+	g := *f
+	for p := 0; p < f.numPlanes; p++ {
+		if b := f.planes[p].pix16; b != nil {
+			g.planes[p].pix16 = take(&d.free16, len(b))
+			copy(g.planes[p].pix16, b)
+		} else {
+			b := f.planes[p].pix8
+			g.planes[p].pix8 = take(&d.free8, len(b))
+			copy(g.planes[p].pix8, b)
+		}
+	}
+	return &g
 }

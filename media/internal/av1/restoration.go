@@ -118,7 +118,7 @@ func (s *lrState) loadStripe(plane, stripeStart, stripeEnd, top, bot, planeEndY 
 // Stripes are filtered in parallel, each worker with its own buffers.
 func (d *Decoder) restore(f *frameState, cdefF, deblockF *frame) *frame {
 	h := f.hdr
-	out := cloneFrame(cdefF)
+	out := d.cloneFrame(cdefF)
 	states := make([]lrState, workers())
 	for p := 0; p < cdefF.numPlanes; p++ {
 		if h.lrType[p] == restoreNone {

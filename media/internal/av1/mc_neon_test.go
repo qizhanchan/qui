@@ -17,7 +17,7 @@ func TestMcNEON(t *testing.T) {
 	for i := range src {
 		src[i] = uint8(rng.Intn(256))
 	}
-	tl := &tile{}
+	tl := &tile{mc: new(mcScratch)}
 	want := make([]int32, 128*128)
 	got := make([]int32, 128*128)
 	for _, sz := range [][2]int{{4, 4}, {8, 4}, {4, 16}, {8, 8}, {16, 8}, {32, 32}, {64, 16}, {128, 128}} {

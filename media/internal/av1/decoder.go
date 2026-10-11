@@ -26,6 +26,12 @@ type Decoder struct {
 	// trace, when set, receives the header syntax elements (see bitReader)
 	// with positions relative to the start of each OBU.
 	trace func(pos, val int)
+
+	scratch []*tileScratch // per tile-decoding goroutine
+
+	// Plane buffers of intermediate post-filter frames, for reuse.
+	free8  [][]uint8
+	free16 [][]uint16
 }
 
 // New returns a decoder.
@@ -123,6 +129,11 @@ func (d *Decoder) tileGroup(b []byte, base int) error {
 		return fmt.Errorf("%w: tile group %d..%d (expected start %d of %d)", ErrInvalid, start, end, d.tileNum, numTiles)
 	}
 	p := r.pos >> 3
+	type job struct {
+		tn   int
+		data []byte
+	}
+	var jobs []job
 	for tn := start; tn <= end; tn++ {
 		size := len(b) - p
 		if tn != end {
@@ -139,10 +150,24 @@ func (d *Decoder) tileGroup(b []byte, base int) error {
 				return fmt.Errorf("%w: tile of %d bytes exceeds the %d left", ErrInvalid, size, len(b)-p)
 			}
 		}
-		if err := d.decodeTile(tn, b[p:p+size]); err != nil {
+		jobs = append(jobs, job{tn, b[p : p+size]})
+		p += size
+	}
+	// Tiles are independent (contexts, availability and entropy state
+	// are per tile; each writes only its own region of the frame state),
+	// so they decode concurrently.
+	nw := min(workers(), len(jobs))
+	for len(d.scratch) < nw {
+		d.scratch = append(d.scratch, new(tileScratch))
+	}
+	errs := make([]error, len(jobs))
+	parallelFor(len(jobs), func(w, i int) {
+		errs[i] = d.decodeTile(jobs[i].tn, jobs[i].data, d.scratch[w])
+	})
+	for _, err := range errs {
+		if err != nil {
 			return err
 		}
-		p += size
 	}
 	d.tileNum = end + 1
 	if end == numTiles-1 {

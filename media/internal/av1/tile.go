@@ -96,10 +96,17 @@ type tile struct {
 	mvp mvPred
 
 	edges     intraEdges
-	mc        mcScratch
+	mc        *mcScratch
 	coef      [32 * 32]int32 // Quant[] of the current transform block
 	planeType int            // PlaneTxType of the current transform block
-	recon     reconScratch
+	recon     *reconScratch
+}
+
+// tileScratch is the large per-goroutine scratch of tile decoding, kept
+// by the Decoder across frames.
+type tileScratch struct {
+	mc    mcScratch
+	recon reconScratch
 }
 
 func (t *tile) mi(row, col int) *miInfo { return &t.f.mi[row*t.f.miCols+col] }
