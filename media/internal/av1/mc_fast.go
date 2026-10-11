@@ -11,12 +11,19 @@ const mcEdgeStride = 128 + 7
 
 // mcEdge holds the clamped footprint of a block that reaches past the
 // reference edges.
+// The extra row lets the NEON kernels read 16 bytes past a row start.
 type mcEdge struct {
-	pix8  [mcEdgeStride * (128 + 7)]uint8
-	pix16 [mcEdgeStride * (128 + 7)]uint16
+	pix8    [mcEdgeStride * (128 + 8)]uint8
+	pix16   [mcEdgeStride * (128 + 8)]uint16
+	inter16 [(128+7)*128 + 8]int16
 }
 
-func (t *tile) interPredUnscaled(pb *planeBuf, lastX, lastY, x, y, w, h int, fx, fy *[16][8]int32, r0, r1 uint, pred []int32) {
+// subpelHalf is subpelFilters with every tap halved (all are even), so
+// the 8-bit horizontal pass fits int16: (sum + 4) >> 3 of the full taps
+// equals (sum + 2) >> 2 of the halved ones. Filled with subpelFilters.
+var subpelHalf [6][16][8]int16
+
+func (t *tile) interPredUnscaled(pb *planeBuf, lastX, lastY, x, y, w, h int, fx, fy *[16][8]int32, fi [2]int, r0, r1 uint, pred []int32) {
 	fracX, fracY := (x>>6)&15, (y>>6)&15
 	x0, y0 := (x>>10)-3, (y>>10)-3
 	inside := x0 >= 0 && y0 >= 0 && x0+w+7 <= lastX+1 && y0+h+7 <= lastY+1
@@ -31,8 +38,13 @@ func (t *tile) interPredUnscaled(pb *planeBuf, lastX, lastY, x, y, w, h int, fx,
 	}
 	src, stride := pb.pix8, pb.stride
 	off := y0*stride + x0
-	if !inside {
+	// The NEON kernels read up to 16 bytes from the last group's start.
+	if !inside || off+(h+6)*stride+w+16 > len(src) {
 		src, stride, off = gatherEdge(t.mc.edge.pix8[:], pb.pix8, pb.stride, lastX, lastY, x0, y0, w, h), mcEdgeStride, 0
+	}
+	if haveNEON && w&3 == 0 {
+		t.mcNEON(src[off:], stride, w, h, fracX, fracY, &subpelHalf[fi[0]][fracX], &subpelHalf[fi[1]][fracY], r1, pred)
+		return
 	}
 	mcKernel(src[off:], stride, w, h, fracX, fracY, &fx[fracX], &fy[fracY], r0, r1, t.mc.inter[:], pred)
 }
@@ -103,4 +115,35 @@ func mcKernel[T uint8 | uint16](src []T, stride, w, h, fracX, fracY int, kx, ky 
 			d[c] = (v + rnd1) >> r1
 		}
 	}
+}
+
+// mcNEON is mcKernel for 8-bit samples (r0 = 3) and w a multiple of 4.
+func (t *tile) mcNEON(src []uint8, stride, w, h, fracX, fracY int, kx, ky *[8]int16, r1 uint, pred []int32) {
+	r0Row, nRows := 0, h+7
+	if fracY == 0 {
+		r0Row, nRows = 3, h
+	}
+	inter := t.mc.edge.inter16[:]
+	if fracX == 0 {
+		for r := 0; r < nRows; r++ {
+			s := src[(r0Row+r)*stride+3:]
+			s = s[:w]
+			d := inter[r*w : r*w+w]
+			for c, v := range s {
+				d[c] = int16(v) << 4
+			}
+		}
+	} else {
+		_ = src[r0Row*stride+(nRows-1)*stride+w+15]
+		neonMcH(&inter[0], &src[r0Row*stride], stride, w, nRows, &kx[0])
+	}
+	pred = pred[:w*h]
+	if fracY == 0 {
+		rnd1 := int32(1) << (r1 - 1)
+		for i, v := range inter[:w*h] {
+			pred[i] = (int32(v)<<7 + rnd1) >> r1
+		}
+		return
+	}
+	neonMcV(&pred[0], &inter[0], w, h, &ky[0], int(r1-1))
 }

@@ -115,10 +115,11 @@ func (s *lrState) loadStripe(plane, stripeStart, stripeEnd, top, bot, planeEndY 
 }
 
 // restore applies loop restoration, returning the restored frame.
+// Stripes are filtered in parallel, each worker with its own buffers.
 func (d *Decoder) restore(f *frameState, cdefF, deblockF *frame) *frame {
 	h := f.hdr
 	out := cloneFrame(cdefF)
-	s := &lrState{cdef: cdefF, deblock: deblockF, bd: cdefF.bitDepth}
+	states := make([]lrState, workers())
 	for p := 0; p < cdefF.numPlanes; p++ {
 		if h.lrType[p] == restoreNone {
 			continue
@@ -128,17 +129,20 @@ func (d *Decoder) restore(f *frameState, cdefF, deblockF *frame) *frame {
 		unit := h.lrUnitSize[p]
 		planeEndX := (h.UpscaledWidth+ss)>>ss - 1
 		planeEndY := (h.Height+ss)>>ss - 1
-		s.planeW = planeEndX + 1
-		s.stride = s.planeW + 6
-		if need := s.stride * (64 + 6); len(s.buf) < need {
-			s.buf = make([]int32, need)
-		}
-		for stripe := 0; ; stripe++ {
+		nStripes := (planeEndY + 1 + 8>>ss + 64>>ss - 1) / (64 >> ss)
+		parallelFor(nStripes, func(wk, stripe int) {
+			s := &states[wk]
+			s.cdef, s.deblock, s.bd = cdefF, deblockF, cdefF.bitDepth
+			s.planeW = planeEndX + 1
+			s.stride = s.planeW + 6
+			if need := s.stride * (64 + 6); len(s.buf) < need {
+				s.buf = make([]int32, need)
+			}
 			stripeStart := (-8 + stripe*64) >> ss
 			stripeEnd := stripeStart + 64>>ss - 1
 			top, bot := max(stripeStart, 0), min(stripeEnd, planeEndY)
 			if top > planeEndY {
-				break
+				return
 			}
 			unitRow := min(lp.rows-1, (top+8>>ss)/unit)
 			loaded := false
@@ -165,7 +169,7 @@ func (d *Decoder) restore(f *frameState, cdefF, deblockF *frame) *frame {
 					s.selfGuided(out, p, u, x0, x1-x0, bot-top+1)
 				}
 			}
-		}
+		})
 	}
 	return out
 }

@@ -83,10 +83,11 @@ func (t *tile) blockInterPred(rp refPic, plane, x, y, xStep, yStep, w, h int, in
 	lastX := (rp.upscaledW+ss)>>ss - 1
 	lastY := (rp.height+ss)>>ss - 1
 	interH := (((h-1)*yStep + 1<<10 - 1) >> 10) + 8
-	fx := &subpelFilters[filterIndex(int(interp[1]), w)]
-	fy := &subpelFilters[filterIndex(int(interp[0]), h)]
+	fix, fiy := filterIndex(int(interp[1]), w), filterIndex(int(interp[0]), h)
+	fx := &subpelFilters[fix]
+	fy := &subpelFilters[fiy]
 	if xStep == 1<<10 && yStep == 1<<10 {
-		t.interPredUnscaled(pb, lastX, lastY, x, y, w, h, fx, fy, r0, r1, pred)
+		t.interPredUnscaled(pb, lastX, lastY, x, y, w, h, fx, fy, [2]int{fix, fiy}, r0, r1, pred)
 		return
 	}
 	inter := t.mc.inter[:interH*w]

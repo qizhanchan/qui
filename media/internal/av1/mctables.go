@@ -38,7 +38,12 @@ func init() {
 	for i := range subpelFilters {
 		for j := 0; j < 16; j++ {
 			for k := 0; k < 8; k++ {
-				subpelFilters[i][j][k] = subpelFlat[(i*16+j)*8+k]
+				v := subpelFlat[(i*16+j)*8+k]
+				if v&1 != 0 {
+					panic("av1: odd subpel tap")
+				}
+				subpelFilters[i][j][k] = v
+				subpelHalf[i][j][k] = int16(v / 2)
 			}
 		}
 	}

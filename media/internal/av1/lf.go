@@ -56,11 +56,25 @@ func (d *Decoder) deblock(f *frameState) {
 			if plane > 0 {
 				step = 2
 			}
-			for row := 0; row < f.miRows; row += step {
-				for col := 0; col < f.miCols; col += step {
-					d.edgeFilter(f, plane, pass, row, col)
-				}
+			// Vertical edges (pass 0) only change samples in their own
+			// rows, horizontal ones only in their own columns, so bands of
+			// 16 mi rows / columns filter independently.
+			const band = 16
+			n := (f.miRows + band - 1) / band
+			if pass == 1 {
+				n = (f.miCols + band - 1) / band
 			}
+			parallelFor(n, func(_, b int) {
+				r0, r1, c0, c1 := b*band, min((b+1)*band, f.miRows), 0, f.miCols
+				if pass == 1 {
+					r0, r1, c0, c1 = 0, f.miRows, b*band, min((b+1)*band, f.miCols)
+				}
+				for row := r0; row < r1; row += step {
+					for col := c0; col < c1; col += step {
+						d.edgeFilter(f, plane, pass, row, col)
+					}
+				}
+			})
 		}
 	}
 }

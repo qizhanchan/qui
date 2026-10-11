@@ -15,7 +15,8 @@ var (
 // cdef filters src (the deblocked frame) into dst (initially a copy).
 func (d *Decoder) cdef(f *frameState, src, dst *frame) {
 	h := f.hdr
-	for r := 0; r < f.miRows; r += 16 {
+	parallelFor((f.miRows+15)/16, func(_, fbRow int) {
+		r := fbRow * 16
 		for c := 0; c < f.miCols; c += 16 {
 			idx := int(f.cdefIdx[f.cdefIndex(r, c)])
 			if idx == -1 {
@@ -27,7 +28,7 @@ func (d *Decoder) cdef(f *frameState, src, dst *frame) {
 				}
 			}
 		}
-	}
+	})
 }
 
 func (d *Decoder) cdefBlock(f *frameState, src, dst *frame, r, c, idx int, h *FrameHeader) {
@@ -85,9 +86,19 @@ func floorLog2(x int) int {
 func cdefDirection(pb *planeBuf, x0, y0, bd int) (int, int32) {
 	var cost [8]int32
 	var partial [8][15]int32
+	var px [8]int32
 	for i := 0; i < 8; i++ {
-		for j := 0; j < 8; j++ {
-			x := pb.get(x0+j, y0+i)>>(bd-8) - 128
+		o := (y0+i)*pb.stride + x0
+		if pb.pix16 != nil {
+			for j, v := range pb.pix16[o : o+8] {
+				px[j] = int32(v)>>(bd-8) - 128
+			}
+		} else {
+			for j, v := range pb.pix8[o : o+8] {
+				px[j] = int32(v) - 128
+			}
+		}
+		for j, x := range px {
 			partial[0][i+j] += x
 			partial[1][i+j/2] += x
 			partial[2][i] += x
@@ -132,16 +143,29 @@ func constrain(diff, threshold int32, damping int) int32 {
 	if threshold == 0 {
 		return 0
 	}
-	adj := max(0, damping-floorLog2(int(threshold)))
-	a := iabs32(diff)
-	v := min(a, max(0, threshold-a>>uint(adj)))
+	return constrainAdj(diff, threshold, uint(max(0, damping-floorLog2(int(threshold)))))
+}
+
+func constrainAdj(diff, threshold int32, adj uint) int32 {
+	a := diff
+	if a < 0 {
+		a = -a
+	}
+	v := min(a, max(0, threshold-a>>adj))
 	if diff < 0 {
 		return -v
 	}
 	return v
 }
 
+// cdefNA marks a tap outside the frame (CdefAvailable false).
+const cdefNA = int32(1) << 24
+
 func cdefFilter(f *frameState, src, dst *frame, plane, r, c int, priStr, secStr int32, damping, dir int) {
+	if priStr == 0 && secStr == 0 {
+		// The sum is zero and the sample is its own clamp.
+		return
+	}
 	ss := min(plane, 1)
 	x0, y0 := (c*4)>>ss, (r*4)>>ss
 	w, h := 8>>ss, 8>>ss
@@ -150,37 +174,93 @@ func cdefFilter(f *frameState, src, dst *frame, plane, r, c int, priStr, secStr 
 	cs := uint(src.bitDepth - 8)
 	pt := &cdefPriTaps[(priStr>>cs)&1]
 	st := &cdefSecTaps[(priStr>>cs)&1]
+	// The block with a two-sample border, stride 12.
+	const bs = 12
+	var blk [bs * bs]int32
+	for i := -2; i < h+2; i++ {
+		yy := y0 + i
+		row := blk[(i+2)*bs : (i+2)*bs+w+4]
+		if yy < 0 || yy >= maxY {
+			for j := range row {
+				row[j] = cdefNA
+			}
+			continue
+		}
+		o := yy * sp.stride
+		for j := range row {
+			xx := x0 + j - 2
+			switch {
+			case xx < 0 || xx >= maxX:
+				row[j] = cdefNA
+			case sp.pix16 != nil:
+				row[j] = int32(sp.pix16[o+xx])
+			default:
+				row[j] = int32(sp.pix8[o+xx])
+			}
+		}
+	}
+	var priOff [2][2]int
+	for k := 0; k < 2; k++ {
+		d := &cdefDirections[dir][k]
+		priOff[k] = [2]int{d[0]*bs + d[1], -(d[0]*bs + d[1])}
+	}
+	var secDirs = [2]int{(dir + 2) & 7, (dir - 2) & 7}
+	var secOffs [2][4]int
+	for k := 0; k < 2; k++ {
+		n := 0
+		for _, d2 := range secDirs {
+			d := &cdefDirections[d2][k]
+			o := d[0]*bs + d[1]
+			secOffs[k][n], secOffs[k][n+1] = o, -o
+			n += 2
+		}
+	}
+	var priAdj, secAdj uint
+	if priStr != 0 {
+		priAdj = uint(max(0, damping-floorLog2(int(priStr))))
+	}
+	if secStr != 0 {
+		secAdj = uint(max(0, damping-floorLog2(int(secStr))))
+	}
 	for i := 0; i < h; i++ {
 		for j := 0; j < w; j++ {
-			x := sp.get(x0+j, y0+i)
+			ci := (i+2)*bs + j + 2
+			x := blk[ci]
 			sum := int32(0)
 			mx, mn := x, x
 			for k := 0; k < 2; k++ {
-				for sign := -1; sign <= 1; sign += 2 {
-					yy := y0 + i + sign*cdefDirections[dir][k][0]
-					xx := x0 + j + sign*cdefDirections[dir][k][1]
-					if yy >= 0 && yy < maxY && xx >= 0 && xx < maxX {
-						p := sp.get(xx, yy)
-						sum += pt[k] * constrain(p-x, priStr, damping)
-						mx, mn = max(p, mx), min(p, mn)
+				for _, o := range priOff[k] {
+					p := blk[ci+o]
+					if p == cdefNA {
+						continue
 					}
-					for off := -2; off <= 2; off += 4 {
-						d2 := (dir + off) & 7
-						yy := y0 + i + sign*cdefDirections[d2][k][0]
-						xx := x0 + j + sign*cdefDirections[d2][k][1]
-						if yy >= 0 && yy < maxY && xx >= 0 && xx < maxX {
-							s0 := sp.get(xx, yy)
-							sum += st[k] * constrain(s0-x, secStr, damping)
-							mx, mn = max(s0, mx), min(s0, mn)
-						}
+					if priStr != 0 {
+						sum += pt[k] * constrainAdj(p-x, priStr, priAdj)
 					}
+					mx, mn = max(p, mx), min(p, mn)
+				}
+				for _, o := range secOffs[k] {
+					p := blk[ci+o]
+					if p == cdefNA {
+						continue
+					}
+					if secStr != 0 {
+						sum += st[k] * constrainAdj(p-x, secStr, secAdj)
+					}
+					mx, mn = max(p, mx), min(p, mn)
 				}
 			}
 			neg := int32(0)
 			if sum < 0 {
 				neg = 1
 			}
-			dp.set(x0+j, y0+i, min(max(x+((8+sum-neg)>>4), mn), mx))
+			v := min(max(x+((8+sum-neg)>>4), mn), mx)
+			o := (y0+i)*dp.stride + x0 + j
+			if dp.pix16 != nil {
+				dp.pix16[o] = uint16(v)
+			} else {
+				dp.pix8[o] = uint8(v)
+			}
 		}
 	}
 }
