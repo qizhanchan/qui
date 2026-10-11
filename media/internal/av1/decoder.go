@@ -1,0 +1,144 @@
+package av1
+
+import (
+	"fmt"
+)
+
+// Decoder decodes an AV1 bitstream (low-overhead OBU format) one temporal
+// unit at a time.
+type Decoder struct {
+	seq *SequenceHeader
+	ref [numRefFrames]refSlot
+
+	hdr             *FrameHeader // current frame header
+	seenFrameHeader bool
+	tileNum         int // next expected tile
+
+	// trace, when set, receives the header syntax elements (see bitReader)
+	// with positions relative to the start of each OBU.
+	trace func(pos, val int)
+}
+
+// New returns a decoder.
+func New() *Decoder { return &Decoder{} }
+
+// Sequence returns the active sequence header, or nil.
+func (d *Decoder) Sequence() *SequenceHeader { return d.seq }
+
+// DecodeTemporalUnit decodes one temporal unit (the OBUs of an IVF frame
+// or an MP4 sample).
+func (d *Decoder) DecodeTemporalUnit(b []byte) error {
+	obus, err := splitOBUs(b)
+	if err != nil {
+		return err
+	}
+	for i := range obus {
+		if err := d.decodeOBU(&obus[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// reader returns a bit reader over o's payload whose trace positions are
+// relative to the start of the OBU, like FFmpeg's.
+func (d *Decoder) reader(o *obu) *bitReader {
+	return &bitReader{data: o.payload, trace: d.trace, base: 8 * o.hdrLen}
+}
+
+func (d *Decoder) decodeOBU(o *obu) error {
+	if o.typ != obuSequenceHeader && o.typ != obuTemporalDelimiter && d.seq != nil && d.seq.OperatingPointIdc != 0 && o.hasExt {
+		idc := d.seq.OperatingPointIdc
+		if (idc>>o.temporalID)&1 == 0 || (idc>>(o.spatialID+8))&1 == 0 {
+			return nil
+		}
+	}
+	switch o.typ {
+	case obuSequenceHeader:
+		s, err := parseSequenceHeader(d.reader(o))
+		if err != nil {
+			return err
+		}
+		d.seq = s
+	case obuTemporalDelimiter:
+		d.seenFrameHeader = false
+	case obuFrameHeader, obuRedundantFrameHeader, obuFrame:
+		r := d.reader(o)
+		if d.seenFrameHeader {
+			if o.typ == obuFrame {
+				return fmt.Errorf("%w: frame OBU while a frame is in progress", ErrInvalid)
+			}
+			return nil // frame_header_copy
+		}
+		h, err := d.parseFrameHeader(r, o.temporalID, o.spatialID)
+		if err != nil {
+			return err
+		}
+		d.hdr = h
+		if h.ShowExistingFrame {
+			return d.showExisting(h)
+		}
+		d.seenFrameHeader = true
+		d.tileNum = 0
+		if err := d.startFrame(h); err != nil {
+			return err
+		}
+		if o.typ == obuFrame {
+			r.byteAlign()
+			return d.tileGroup(o.payload[r.pos>>3:], r.base+r.pos)
+		}
+	case obuTileGroup:
+		if !d.seenFrameHeader {
+			return fmt.Errorf("%w: tile group without a frame header", ErrInvalid)
+		}
+		return d.tileGroup(o.payload, 8*o.hdrLen)
+	}
+	return nil
+}
+
+// tileGroup parses tile_group_obu (spec 5.11.1) and decodes its tiles.
+// base is the bit offset of b in its OBU (for tracing).
+func (d *Decoder) tileGroup(b []byte, base int) error {
+	h := d.hdr
+	t := &h.tiles
+	r := &bitReader{data: b, trace: d.trace, base: base}
+	numTiles := t.cols * t.rows
+	start, end := 0, numTiles-1
+	if numTiles > 1 && r.flag() {
+		bits := t.colsLog2 + t.rowsLog2
+		start = r.f(bits)
+		end = r.f(bits)
+	}
+	r.byteAlign()
+	if start != d.tileNum || end < start || end >= numTiles {
+		return fmt.Errorf("%w: tile group %d..%d (expected start %d of %d)", ErrInvalid, start, end, d.tileNum, numTiles)
+	}
+	p := r.pos >> 3
+	for tn := start; tn <= end; tn++ {
+		size := len(b) - p
+		if tn != end {
+			if p+t.sizeBytes > len(b) {
+				return fmt.Errorf("%w: truncated tile size", ErrInvalid)
+			}
+			size = 0
+			for i := 0; i < t.sizeBytes; i++ {
+				size |= int(b[p+i]) << (8 * i)
+			}
+			size++
+			p += t.sizeBytes
+			if size > len(b)-p {
+				return fmt.Errorf("%w: tile of %d bytes exceeds the %d left", ErrInvalid, size, len(b)-p)
+			}
+		}
+		if err := d.decodeTile(tn, b[p:p+size]); err != nil {
+			return err
+		}
+		p += size
+	}
+	d.tileNum = end + 1
+	if end == numTiles-1 {
+		d.seenFrameHeader = false
+		return d.finishFrame()
+	}
+	return nil
+}

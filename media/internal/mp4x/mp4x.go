@@ -63,7 +63,7 @@ type fragSample = sample
 type Track struct {
 	ID        uint32
 	Kind      Kind
-	Codec     string // "h264" | "hevc" | "aac"
+	Codec     string // "h264" | "hevc" | "av1" | "aac"
 	Timescale uint32
 	Duration  time.Duration
 
@@ -95,6 +95,7 @@ type Track struct {
 
 	avcC *mp4.AVCDecoderConfiguration
 	hvcC *mp4.HvcC
+	av1C *mp4.Av1C
 	asc  []byte
 }
 
@@ -191,6 +192,8 @@ func (r *Reader) readTrakExtras(byID map[uint32]*Track, movieTimescale uint32) e
 			{mp4.BoxTypeMdia(), mp4.BoxTypeMinf(), mp4.BoxTypeStbl(), mp4.BoxTypeStsd(), mp4.BoxTypeHvc1(), mp4.BoxTypeHvcC()},
 			{mp4.BoxTypeMdia(), mp4.BoxTypeMinf(), mp4.BoxTypeStbl(), mp4.BoxTypeStsd(), mp4.BoxTypeHev1()},
 			{mp4.BoxTypeMdia(), mp4.BoxTypeMinf(), mp4.BoxTypeStbl(), mp4.BoxTypeStsd(), mp4.BoxTypeHev1(), mp4.BoxTypeHvcC()},
+			{mp4.BoxTypeMdia(), mp4.BoxTypeMinf(), mp4.BoxTypeStbl(), mp4.BoxTypeStsd(), mp4.BoxTypeAv01()},
+			{mp4.BoxTypeMdia(), mp4.BoxTypeMinf(), mp4.BoxTypeStbl(), mp4.BoxTypeStsd(), mp4.BoxTypeAv01(), mp4.BoxTypeAv1C()},
 		})
 		if err != nil {
 			return err
@@ -209,9 +212,17 @@ func (r *Reader) readTrakExtras(byID map[uint32]*Track, movieTimescale uint32) e
 				if t != nil && t.avcC == nil {
 					t.avcC = b
 				}
-			case *mp4.VisualSampleEntry: // hvc1 / hev1
+			case *mp4.VisualSampleEntry: // hvc1 / hev1 / av01
 				if t != nil && t.Kind == KindUnknown {
-					t.setHEVC(int(b.Width), int(b.Height))
+					codec := "hevc"
+					if bip.Info.Type == mp4.BoxTypeAv01() {
+						codec = "av1"
+					}
+					t.setVideo(codec, int(b.Width), int(b.Height))
+				}
+			case *mp4.Av1C:
+				if t != nil && t.av1C == nil {
+					t.av1C = b
 				}
 			case *mp4.HvcC:
 				if t != nil && t.hvcC == nil {
@@ -400,7 +411,18 @@ func (r *Reader) Keyframes(t *Track) []int {
 		return t.keyfr
 	}
 	t.keyfrOK = true
-	if !t.hasStss && len(t.frag) == 0 && (t.avcC != nil || t.hvcC != nil) {
+	if !t.hasStss && len(t.frag) == 0 && t.av1C != nil {
+		// Classify AV1 samples by their first frame header.
+		var buf []byte
+		for i := range t.samples {
+			b, err := r.ReadSampleInto(buf, t, i)
+			if err != nil {
+				break
+			}
+			buf = b
+			t.samples[i].sync = av1KeyFrame(b)
+		}
+	} else if !t.hasStss && len(t.frag) == 0 && (t.avcC != nil || t.hvcC != nil) {
 		// No stss means "all samples are sync" — but some muxers omit it
 		// for ordinary IDR/P streams, so classify by NAL unit type.
 		hevc := t.avcC == nil
@@ -488,6 +510,51 @@ func (r *Reader) HVCCParameterSets() (vps, sps, pps [][]byte, lengthSize int, er
 	return vps, sps, pps, int(t.hvcC.LengthSizeMinusOne) + 1, nil
 }
 
+// AV1ConfigOBUs returns the configOBUs of the video track's av1C (the
+// sequence header OBU, possibly with metadata OBUs).
+func (r *Reader) AV1ConfigOBUs() ([]byte, error) {
+	if r.video == nil || r.video.av1C == nil {
+		return nil, fmt.Errorf("mp4x: av1C not found")
+	}
+	return r.video.av1C.ConfigOBUs, nil
+}
+
+// av1KeyFrame reports whether an AV1 sample (OBUs with size fields)
+// starts with a shown key frame: its first frame header has
+// show_existing_frame = 0, frame_type = KEY_FRAME and show_frame = 1.
+func av1KeyFrame(b []byte) bool {
+	for len(b) > 0 {
+		h := b[0]
+		n := 1
+		if h&4 != 0 {
+			n = 2
+		}
+		if h&2 == 0 || n >= len(b) {
+			return false
+		}
+		size, l := uint64(0), 0
+		for ; l < 8 && n+l < len(b); l++ {
+			size |= uint64(b[n+l]&0x7f) << (7 * l)
+			if b[n+l]&0x80 == 0 {
+				break
+			}
+		}
+		n += l + 1
+		if uint64(len(b)-n) < size {
+			return false
+		}
+		switch typ := h >> 3 & 15; typ {
+		case 3, 6: // frame header, frame
+			if size == 0 {
+				return false
+			}
+			return b[n]&0xf0 == 0x10 // 0, 00 (key), 1 (shown)
+		}
+		b = b[n+int(size):]
+	}
+	return false
+}
+
 // AudioSpecificConfig returns the AAC AudioSpecificConfig bytes for the
 // audio track.
 func (r *Reader) AudioSpecificConfig() ([]byte, error) {
@@ -525,11 +592,11 @@ func newTrack(raw *mp4.Track) *Track {
 	return t
 }
 
-// setHEVC marks t as an HEVC video track (go-mp4 does not classify hvc1 /
-// hev1 sample entries).
-func (t *Track) setHEVC(w, h int) {
+// setVideo marks t as an HEVC or AV1 video track (go-mp4 does not
+// classify hvc1 / hev1 / av01 sample entries).
+func (t *Track) setVideo(codec string, w, h int) {
 	t.Kind = KindVideo
-	t.Codec = "hevc"
+	t.Codec = codec
 	t.Width, t.Height = w, h
 	if n := len(t.raw.Samples); n > 0 && t.Duration > 0 {
 		t.FPS = float32(float64(n) / t.Duration.Seconds())

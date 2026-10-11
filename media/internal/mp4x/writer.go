@@ -9,18 +9,21 @@ import (
 
 // MP4 writer: progressive files (ftyp, mdat, moov at the end) and
 // fragmented files (ftyp, moov with mvex, then moof+mdat fragments), for
-// H.264 (avc1/avcC) or HEVC (hvc1/hvcC) video and AAC audio (esds).
+// H.264 (avc1/avcC), HEVC (hvc1/hvcC) or AV1 (av01/av1C) video and AAC
+// audio (esds).
 
 // TrackConfig describes a track to write.
 type TrackConfig struct {
 	Kind      Kind
 	Timescale uint32
 
-	// Video: Codec is "h264" (the default) or "hevc"; display size and
-	// the parameter sets for avcC / hvcC (VPS for HEVC only).
+	// Video: Codec is "h264" (the default), "hevc" or "av1"; display size
+	// and the parameter sets for avcC / hvcC (VPS for HEVC only), or the
+	// complete AV1CodecConfigurationRecord for av1C.
 	Codec         string
 	Width, Height int
 	VPS, SPS, PPS [][]byte
+	AV1C          []byte
 
 	// Audio (AAC): AudioSpecificConfig for esds.
 	SampleRate, Channels int
@@ -35,7 +38,8 @@ type TrackConfig struct {
 
 // Sample is one access unit. DTS and Duration are in track timescale
 // units; CTSOffset is PTS - DTS (non-negative). Video data is
-// length-prefixed (4-byte lengths).
+// length-prefixed (4-byte lengths) for H.264 / HEVC; AV1 samples are OBUs
+// with size fields and no temporal delimiter.
 type Sample struct {
 	Data      []byte
 	DTS       int64
@@ -469,8 +473,11 @@ func (w *Writer) stsd(x *boxBuf, t *wTrack) {
 		x.close(e)
 	} else {
 		entry, cfg := "avc1", "avcC"
-		if c.Codec == "hevc" {
+		switch c.Codec {
+		case "hevc":
 			entry, cfg = "hvc1", "hvcC"
+		case "av1":
+			entry, cfg = "av01", "av1C"
 		}
 		e := x.open(entry)
 		x.zeros(6)
@@ -486,9 +493,12 @@ func (w *Writer) stsd(x *boxBuf, t *wTrack) {
 		x.u16(0x0018)
 		x.u16(0xffff)
 		ac := x.open(cfg)
-		if c.Codec == "hevc" {
+		switch c.Codec {
+		case "hevc":
 			x.raw(HEVCDecoderConfig(c.VPS, c.SPS, c.PPS))
-		} else {
+		case "av1":
+			x.raw(c.AV1C)
+		default:
 			x.raw(AVCDecoderConfig(c.SPS, c.PPS))
 		}
 		x.close(ac)
