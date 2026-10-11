@@ -85,6 +85,18 @@ func (e *Encoder) load(s *encSnap) {
 	t.blockDecoded = s.bd
 }
 
+// snap returns a snapshot from the pool; release it with unsnap (LIFO).
+func (e *Encoder) snap() *encSnap {
+	if e.snapTop == len(e.snaps) {
+		e.snaps = append(e.snaps, new(encSnap))
+	}
+	s := e.snaps[e.snapTop]
+	e.snapTop++
+	return s
+}
+
+func (e *Encoder) unsnap() { e.snapTop-- }
+
 // encNode is a decided partition: its type and, for the blocks it codes
 // directly, their choices (split nodes have kids).
 type encNode struct {
@@ -93,15 +105,28 @@ type encNode struct {
 	kids [4]*encNode
 }
 
+// newNode returns a zeroed node from the superblock's arena.
+func (e *Encoder) newNode(part int) *encNode {
+	if e.nodeTop == len(e.nodes) {
+		e.nodes = append(e.nodes, make([]encNode, 256)...)
+	}
+	n := &e.nodes[e.nodeTop]
+	e.nodeTop++
+	*n = encNode{part: part}
+	return n
+}
+
 // encodeSB searches the superblock's partition tree and commits it.
 func (e *Encoder) encodeSB(r, c int) {
 	t := e.t
+	e.nodeTop = 0
 	sb := t.sbSize()
-	var s0 encSnap
-	e.save(&s0, r, c, num4x4W[sb], num4x4H[sb])
+	s0 := e.snap()
+	defer e.unsnap()
+	e.save(s0, r, c, num4x4W[sb], num4x4H[sb])
 	e.sink.record = false
 	node, _ := e.searchNode(r, c, sb, math.Inf(1))
-	e.load(&s0)
+	e.load(s0)
 	e.sink.record = true
 	e.applyNode(r, c, sb, node)
 }
@@ -166,38 +191,40 @@ func (e *Encoder) searchNode(r, c, bSize int, budget float64) (*encNode, float64
 	t := e.t
 	f := t.f
 	if r >= f.miRows || c >= f.miCols {
-		return &encNode{part: partNone}, 0
+		return e.newNode(partNone), 0
 	}
 	half := num4x4W[bSize] >> 1
 	hasRows := r+half < f.miRows
 	hasCols := c+half < f.miCols
-	var parts []int
+	var partBuf [4]int
+	parts := partBuf[:0]
 	switch {
 	case bSize == block4x4:
-		parts = []int{partNone}
+		parts = append(parts, partNone)
 	case hasRows && hasCols:
-		parts = []int{partNone, partHorz, partVert}
+		parts = append(parts, partNone, partHorz, partVert)
 		if bSize > block8x8 || e.allow4x4 {
 			parts = append(parts, partSplit)
 		}
 	case hasCols:
-		parts = []int{partHorz, partSplit}
+		parts = append(parts, partHorz, partSplit)
 	case hasRows:
-		parts = []int{partVert, partSplit}
+		parts = append(parts, partVert, partSplit)
 	default:
-		parts = []int{partSplit}
+		parts = append(parts, partSplit)
 	}
-	var s0 encSnap
-	e.save(&s0, r, c, num4x4W[bSize], num4x4H[bSize])
+	s0 := e.snap()
+	defer e.unsnap()
+	e.save(s0, r, c, num4x4W[bSize], num4x4H[bSize])
 	var best *encNode
 	bestCost := budget
 	lastBest := false
 	for pi, part := range parts {
 		if pi > 0 {
-			e.load(&s0)
+			e.load(s0)
 		}
 		cost := e.partCost(r, c, bSize, part)
-		node := &encNode{part: part}
+		node := e.newNode(part)
 		if part == partSplit {
 			sub := partitionSubsize[partSplit][bSize]
 			for i, o := range [4][2]int{{0, 0}, {0, half}, {half, 0}, {half, half}} {
@@ -226,11 +253,11 @@ func (e *Encoder) searchNode(r, c, bSize int, budget float64) (*encNode, float64
 		}
 	}
 	if best == nil {
-		e.load(&s0)
-		return &encNode{part: parts[0]}, math.Inf(1)
+		e.load(s0)
+		return e.newNode(parts[0]), math.Inf(1)
 	}
 	if !lastBest {
-		e.load(&s0)
+		e.load(s0)
 		e.applyNode(r, c, bSize, best)
 	}
 	return best, bestCost
@@ -240,14 +267,15 @@ func (e *Encoder) searchNode(r, c, bSize int, budget float64) (*encNode, float64
 // reconstruction in place, returning the choice and its RD cost.
 func (e *Encoder) searchBlock(r, c, size int) (intraChoice, float64) {
 	t := e.t
-	var s0 encSnap
-	e.save(&s0, r, c, num4x4W[size], num4x4H[size])
+	s0 := e.snap()
+	defer e.unsnap()
+	e.save(s0, r, c, num4x4W[size], num4x4H[size])
 	t.initBlock(r, c, size)
 	cands := e.rankLumaModes(r, c, size)
 	best := intraChoice{yMode: dcPred, uvMode: dcPred}
 	bestCost := math.Inf(1)
 	try := func(ch intraChoice) {
-		e.load(&s0)
+		e.load(s0)
 		cost := e.trialIntra(r, c, size, &ch)
 		if cost < bestCost {
 			best, bestCost = ch, cost
@@ -277,7 +305,7 @@ func (e *Encoder) searchBlock(r, c, size int) (intraChoice, float64) {
 			try(ch)
 		}
 	}
-	e.load(&s0)
+	e.load(s0)
 	ch := best
 	cost := e.trialIntra(r, c, size, &ch)
 	return ch, cost
@@ -331,7 +359,7 @@ func (e *Encoder) rankLumaModes(r, c, size int) []modeCand {
 		left = int(t.mi(r, c-1).yMode)
 	}
 	modeCDF := t.cdf.kfYMode[intraModeContext[above]][intraModeContext[left]][:]
-	var cands []modeCand
+	cands := e.lumaBuf[:0]
 	for mode := dcPred; mode <= paethPred; mode++ {
 		for angle := -3; angle <= 3; angle++ {
 			if angle != 0 && (!isDirectional(mode) || size < block8x8) {
@@ -347,6 +375,7 @@ func (e *Encoder) rankLumaModes(r, c, size int) []modeCand {
 		}
 	}
 	b.angleDeltaY = 0
+	e.lumaBuf = cands
 	return topCands(cands, e.lumaCands)
 }
 
@@ -356,7 +385,7 @@ func (e *Encoder) rankChromaModes(r, c, size int, y *intraChoice) []modeCand {
 	t := e.t
 	b := &t.b
 	cflAllowed := !b.lossless && max(blockW(size), blockH(size)) <= 32
-	var cands []modeCand
+	cands := e.chromaBuf[:0]
 	n, cdf := 13, t.cdf.uvMode[0][y.yMode][:]
 	if cflAllowed {
 		n, cdf = 14, t.cdf.uvMode[1][y.yMode][:]
@@ -370,7 +399,9 @@ func (e *Encoder) rankChromaModes(r, c, size int, y *intraChoice) []modeCand {
 		sad := e.predSATD(1, r, c, size, mode) + e.predSATD(2, r, c, size, mode)
 		cands = append(cands, modeCand{mode: mode, score: float64(sad) + e.sqrtLambda*float64(bits)/256})
 	}
-	out := topCands(cands, e.chromaCands)
+	e.chromaBuf = cands
+	out := append(e.chromaOut[:0], topCands(cands, e.chromaCands)...)
+	defer func() { e.chromaOut = out }()
 	if cflAllowed {
 		for _, a := range e.cflAlphas() {
 			out = append(out, modeCand{mode: uvCflPred, cflU: a[0], cflV: a[1]})

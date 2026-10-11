@@ -64,6 +64,13 @@ type Encoder struct {
 	sqrtLambda float64
 	tq         encTQ
 	nonZero    bool // a coefficient was coded since the flag was cleared
+	snaps      []*encSnap
+	snapTop    int
+	nodes      []encNode // partition search arena (per superblock)
+	nodeTop    int
+	lumaBuf    []modeCand
+	chromaBuf  []modeCand
+	chromaOut  []modeCand
 
 	// Search breadth.
 	allow4x4     bool
@@ -262,4 +269,3 @@ func rdLambda(qindex int) float64 {
 	q := float64(acQ(8, qindex))
 	return 0.0021 * q * q
 }
-
