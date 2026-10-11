@@ -26,3 +26,13 @@ func neonPutUni(dst *byte, ds int, src *int16, w, h int)                        
 func neonPutBi(dst *byte, ds int, a, b *int16, w, h int)                        { panic("unreachable") }
 
 func neonSAOEdge(dst, src *byte, stride, aoff, boff, w, h int, tbl *[16]int8) { panic("unreachable") }
+
+func neonPutWUni(dst *byte, ds int, src *int16, w, h, wt, rnd, shift, off int) {
+	panic("unreachable")
+}
+
+func neonPutWBi(dst *byte, ds int, a, b *int16, w, h, w0, w1, add, shift int) {
+	panic("unreachable")
+}
+
+func neonCopyPred(dst *int16, src *byte, ss, w, h int) { panic("unreachable") }

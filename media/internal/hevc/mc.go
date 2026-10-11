@@ -113,6 +113,10 @@ var lumaCoef, chromaCoef = func() (l [4][8]int16, c [8][4]int16) {
 }()
 
 func copyPred(dst []int16, src []byte, ss, w, h int) {
+	if haveNEON && w&3 == 0 {
+		neonCopyPred(&dst[0], &src[0], ss, w, h)
+		return
+	}
 	for y := 0; y < h; y++ {
 		row := src[y*ss : y*ss+w]
 		d := dst[y*w : y*w+w]
@@ -365,6 +369,10 @@ func (s *sliceDec) writePred(dst []byte, ds int, p0, p1 []int16, w, h, comp int,
 	if p0 != nil && p1 != nil {
 		w0, w1 := wt[0], wt[1]
 		add := (of[0]+of[1]+1)<<log2WD + predOffset*(w0+w1)
+		if haveNEON && w&3 == 0 {
+			neonPutWBi(&dst[0], ds, &p0[0], &p1[0], w, h, w0, w1, add, int(log2WD+1))
+			return
+		}
 		for y := 0; y < h; y++ {
 			row := dst[y*ds : y*ds+w]
 			a, b := p0[y*w:y*w+w], p1[y*w:y*w+w]
@@ -380,6 +388,10 @@ func (s *sliceDec) writePred(dst []byte, ds int, p0, p1 []int16, w, h, comp int,
 	}
 	wl, ol := wt[l], of[l]
 	rnd := 1<<(log2WD-1) + predOffset*wl
+	if haveNEON && w&3 == 0 {
+		neonPutWUni(&dst[0], ds, &p0[0], w, h, wl, rnd, int(log2WD), ol)
+		return
+	}
 	for y := 0; y < h; y++ {
 		row := dst[y*ds : y*ds+w]
 		a := p0[y*w : y*w+w]

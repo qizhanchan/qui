@@ -407,3 +407,132 @@ TEXT ·neonSAOEdge(SB), NOSPLIT, $0-64
 	WORD $0xf10004c6 // subs x6, x6, #1
 	WORD $0x54fffc01 // b.ne 1b
 	RET
+
+// func neonPutWUni(dst, ds, src, w, h, wt, rnd, shift, off)
+TEXT ·neonPutWUni(SB), NOSPLIT, $0-72
+	MOVD dst+0(FP), R0
+	MOVD ds+8(FP), R1
+	MOVD src+16(FP), R2
+	MOVD w+24(FP), R3
+	MOVD h+32(FP), R4
+	MOVD wt+40(FP), R5
+	MOVD rnd+48(FP), R6
+	MOVD shift+56(FP), R7
+	MOVD off+64(FP), R8
+	WORD $0x4e020cbc // dup v28.8h, w5
+	WORD $0x4e040cdd // dup v29.4s, w6
+	WORD $0xcb0703e7 // neg x7, x7
+	WORD $0x4e040cfe // dup v30.4s, w7
+	WORD $0x4e020d1f // dup v31.8h, w8
+	WORD $0xaa0003e9 // mov x9, x0
+	WORD $0xaa0303ea // mov x10, x3
+	WORD $0xf100215f // cmp x10, #8
+	WORD $0x5400020b // b.lt 3f
+	WORD $0x4cdf7440 // ld1 {v0.8h}, [x2], #16
+	WORD $0x0e7cc001 // smull v1.4s, v0.4h, v28.4h
+	WORD $0x4e7cc002 // smull2 v2.4s, v0.8h, v28.8h
+	WORD $0x4ebd8421 // add v1.4s, v1.4s, v29.4s
+	WORD $0x4ebd8442 // add v2.4s, v2.4s, v29.4s
+	WORD $0x4ebe4421 // sshl v1.4s, v1.4s, v30.4s
+	WORD $0x4ebe4442 // sshl v2.4s, v2.4s, v30.4s
+	WORD $0x0e614823 // sqxtn v3.4h, v1.4s
+	WORD $0x4e614843 // sqxtn2 v3.8h, v2.4s
+	WORD $0x4e7f0c63 // sqadd v3.8h, v3.8h, v31.8h
+	WORD $0x2e212863 // sqxtun v3.8b, v3.8h
+	WORD $0x0c9f7123 // st1 {v3.8b}, [x9], #8
+	WORD $0xf100214a // subs x10, x10, #8
+	WORD $0x54fffe21 // b.ne 2b
+	WORD $0x14000009 // b 4f
+	WORD $0x0cdf7440 // ld1 {v0.4h}, [x2], #8
+	WORD $0x0e7cc001 // smull v1.4s, v0.4h, v28.4h
+	WORD $0x4ebd8421 // add v1.4s, v1.4s, v29.4s
+	WORD $0x4ebe4421 // sshl v1.4s, v1.4s, v30.4s
+	WORD $0x0e614823 // sqxtn v3.4h, v1.4s
+	WORD $0x0e7f0c63 // sqadd v3.4h, v3.4h, v31.4h
+	WORD $0x2e212863 // sqxtun v3.8b, v3.8h
+	WORD $0x0d008123 // st1 {v3.s}[0], [x9]
+	WORD $0x8b010000 // add x0, x0, x1
+	WORD $0xf1000484 // subs x4, x4, #1
+	WORD $0x54fffc61 // b.ne 1b
+	RET
+
+// func neonPutWBi(dst, ds, a, b, w, h, w0, w1, add, shift)
+TEXT ·neonPutWBi(SB), NOSPLIT, $0-80
+	MOVD dst+0(FP), R0
+	MOVD ds+8(FP), R1
+	MOVD a+16(FP), R2
+	MOVD b+24(FP), R3
+	MOVD w+32(FP), R4
+	MOVD h+40(FP), R5
+	MOVD w0+48(FP), R6
+	MOVD w1+56(FP), R7
+	MOVD add+64(FP), R8
+	MOVD shift+72(FP), R9
+	WORD $0x4e020cda // dup v26.8h, w6
+	WORD $0x4e020cfb // dup v27.8h, w7
+	WORD $0x4e040d1d // dup v29.4s, w8
+	WORD $0xcb0903e9 // neg x9, x9
+	WORD $0x4e040d3e // dup v30.4s, w9
+	WORD $0xaa0003ea // mov x10, x0
+	WORD $0xaa0403eb // mov x11, x4
+	WORD $0xf100217f // cmp x11, #8
+	WORD $0x5400024b // b.lt 3f
+	WORD $0x4cdf7440 // ld1 {v0.8h}, [x2], #16
+	WORD $0x4cdf7461 // ld1 {v1.8h}, [x3], #16
+	WORD $0x0e7ac002 // smull v2.4s, v0.4h, v26.4h
+	WORD $0x4e7ac003 // smull2 v3.4s, v0.8h, v26.8h
+	WORD $0x0e7b8022 // smlal v2.4s, v1.4h, v27.4h
+	WORD $0x4e7b8023 // smlal2 v3.4s, v1.8h, v27.8h
+	WORD $0x4ebd8442 // add v2.4s, v2.4s, v29.4s
+	WORD $0x4ebd8463 // add v3.4s, v3.4s, v29.4s
+	WORD $0x4ebe4442 // sshl v2.4s, v2.4s, v30.4s
+	WORD $0x4ebe4463 // sshl v3.4s, v3.4s, v30.4s
+	WORD $0x0e614844 // sqxtn v4.4h, v2.4s
+	WORD $0x4e614864 // sqxtn2 v4.8h, v3.4s
+	WORD $0x2e212884 // sqxtun v4.8b, v4.8h
+	WORD $0x0c9f7144 // st1 {v4.8b}, [x10], #8
+	WORD $0xf100216b // subs x11, x11, #8
+	WORD $0x54fffde1 // b.ne 2b
+	WORD $0x1400000a // b 4f
+	WORD $0x0cdf7440 // ld1 {v0.4h}, [x2], #8
+	WORD $0x0cdf7461 // ld1 {v1.4h}, [x3], #8
+	WORD $0x0e7ac002 // smull v2.4s, v0.4h, v26.4h
+	WORD $0x0e7b8022 // smlal v2.4s, v1.4h, v27.4h
+	WORD $0x4ebd8442 // add v2.4s, v2.4s, v29.4s
+	WORD $0x4ebe4442 // sshl v2.4s, v2.4s, v30.4s
+	WORD $0x0e614844 // sqxtn v4.4h, v2.4s
+	WORD $0x2e212884 // sqxtun v4.8b, v4.8h
+	WORD $0x0d008144 // st1 {v4.s}[0], [x10]
+	WORD $0x8b010000 // add x0, x0, x1
+	WORD $0xf10004a5 // subs x5, x5, #1
+	WORD $0x54fffc01 // b.ne 1b
+	RET
+
+// func neonCopyPred(dst, src, ss, w, h)
+TEXT ·neonCopyPred(SB), NOSPLIT, $0-40
+	MOVD dst+0(FP), R0
+	MOVD src+8(FP), R1
+	MOVD ss+16(FP), R2
+	MOVD w+24(FP), R3
+	MOVD h+32(FP), R4
+	WORD $0x5284000c // mov w12, #8192
+	WORD $0x4e020d9f // dup v31.8h, w12
+	WORD $0xaa0103e9 // mov x9, x1
+	WORD $0xaa0303ea // mov x10, x3
+	WORD $0xf100215f // cmp x10, #8
+	WORD $0x5400010b // b.lt 3f
+	WORD $0x0cdf7120 // ld1 {v0.8b}, [x9], #8
+	WORD $0x2f0ea400 // ushll v0.8h, v0.8b, #6
+	WORD $0x6e7f8400 // sub v0.8h, v0.8h, v31.8h
+	WORD $0x4c9f7400 // st1 {v0.8h}, [x0], #16
+	WORD $0xf100214a // subs x10, x10, #8
+	WORD $0x54ffff21 // b.ne 2b
+	WORD $0x14000005 // b 4f
+	WORD $0x0d408120 // ld1 {v0.s}[0], [x9]
+	WORD $0x2f0ea400 // ushll v0.8h, v0.8b, #6
+	WORD $0x6e7f8400 // sub v0.8h, v0.8h, v31.8h
+	WORD $0x0c9f7400 // st1 {v0.4h}, [x0], #8
+	WORD $0x8b020021 // add x1, x1, x2
+	WORD $0xf1000484 // subs x4, x4, #1
+	WORD $0x54fffde1 // b.ne 1b
+	RET

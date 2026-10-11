@@ -439,6 +439,138 @@ var kernels = []kernel{
 	b.ne 1b
 `,
 	},
+	{
+		// Explicit weighted uni-prediction: dst = clip(((p*wt + rnd) >>
+		// shift) + off). Saturating narrowing only acts far outside
+		// [0, 255], so the final clip is exact. x0 dst, x1 stride, x2 src,
+		// x3 w, x4 h, x5 wt, x6 rnd, x7 shift, x8 off.
+		name: "neonPutWUni",
+		args: []string{"dst", "ds", "src", "w", "h", "wt", "rnd", "shift", "off"},
+		body: `
+	dup v28.8h, w5
+	dup v29.4s, w6
+	neg x7, x7
+	dup v30.4s, w7
+	dup v31.8h, w8
+1:
+	mov x9, x0
+	mov x10, x3
+2:
+	cmp x10, #8
+	b.lt 3f
+	ld1 {v0.8h}, [x2], #16
+	smull v1.4s, v0.4h, v28.4h
+	smull2 v2.4s, v0.8h, v28.8h
+	add v1.4s, v1.4s, v29.4s
+	add v2.4s, v2.4s, v29.4s
+	sshl v1.4s, v1.4s, v30.4s
+	sshl v2.4s, v2.4s, v30.4s
+	sqxtn v3.4h, v1.4s
+	sqxtn2 v3.8h, v2.4s
+	sqadd v3.8h, v3.8h, v31.8h
+	sqxtun v3.8b, v3.8h
+	st1 {v3.8b}, [x9], #8
+	subs x10, x10, #8
+	b.ne 2b
+	b 4f
+3:
+	ld1 {v0.4h}, [x2], #8
+	smull v1.4s, v0.4h, v28.4h
+	add v1.4s, v1.4s, v29.4s
+	sshl v1.4s, v1.4s, v30.4s
+	sqxtn v3.4h, v1.4s
+	sqadd v3.4h, v3.4h, v31.4h
+	sqxtun v3.8b, v3.8h
+	st1 {v3.s}[0], [x9]
+4:
+	add x0, x0, x1
+	subs x4, x4, #1
+	b.ne 1b
+`,
+	},
+	{
+		// Explicit weighted bi-prediction: dst = clip((a*w0 + b*w1 + add)
+		// >> shift). x0 dst, x1 stride, x2 a, x3 b, x4 w, x5 h, x6 w0,
+		// x7 w1, x8 add, x9 shift.
+		name: "neonPutWBi",
+		args: []string{"dst", "ds", "a", "b", "w", "h", "w0", "w1", "add", "shift"},
+		body: `
+	dup v26.8h, w6
+	dup v27.8h, w7
+	dup v29.4s, w8
+	neg x9, x9
+	dup v30.4s, w9
+1:
+	mov x10, x0
+	mov x11, x4
+2:
+	cmp x11, #8
+	b.lt 3f
+	ld1 {v0.8h}, [x2], #16
+	ld1 {v1.8h}, [x3], #16
+	smull v2.4s, v0.4h, v26.4h
+	smull2 v3.4s, v0.8h, v26.8h
+	smlal v2.4s, v1.4h, v27.4h
+	smlal2 v3.4s, v1.8h, v27.8h
+	add v2.4s, v2.4s, v29.4s
+	add v3.4s, v3.4s, v29.4s
+	sshl v2.4s, v2.4s, v30.4s
+	sshl v3.4s, v3.4s, v30.4s
+	sqxtn v4.4h, v2.4s
+	sqxtn2 v4.8h, v3.4s
+	sqxtun v4.8b, v4.8h
+	st1 {v4.8b}, [x10], #8
+	subs x11, x11, #8
+	b.ne 2b
+	b 4f
+3:
+	ld1 {v0.4h}, [x2], #8
+	ld1 {v1.4h}, [x3], #8
+	smull v2.4s, v0.4h, v26.4h
+	smlal v2.4s, v1.4h, v27.4h
+	add v2.4s, v2.4s, v29.4s
+	sshl v2.4s, v2.4s, v30.4s
+	sqxtn v4.4h, v2.4s
+	sqxtun v4.8b, v4.8h
+	st1 {v4.s}[0], [x10]
+4:
+	add x0, x0, x1
+	subs x5, x5, #1
+	b.ne 1b
+`,
+	},
+	{
+		// Integer-position prediction: dst = (src << 6) - 8192 as int16.
+		// x0 dst (stride w), x1 src, x2 src stride, x3 w, x4 h.
+		name: "neonCopyPred",
+		args: []string{"dst", "src", "ss", "w", "h"},
+		body: `
+	mov w12, #8192
+	dup v31.8h, w12
+1:
+	mov x9, x1
+	mov x10, x3
+2:
+	cmp x10, #8
+	b.lt 3f
+	ld1 {v0.8b}, [x9], #8
+	ushll v0.8h, v0.8b, #6
+	sub v0.8h, v0.8h, v31.8h
+	st1 {v0.8h}, [x0], #16
+	subs x10, x10, #8
+	b.ne 2b
+	b 4f
+3:
+	ld1 {v0.s}[0], [x9]
+	ushll v0.8h, v0.8b, #6
+	sub v0.8h, v0.8h, v31.8h
+	st1 {v0.4h}, [x0], #8
+4:
+	add x1, x1, x2
+	subs x4, x4, #1
+	b.ne 1b
+`,
+	},
 }
 
 func main() {

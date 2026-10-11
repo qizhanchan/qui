@@ -34,3 +34,12 @@ func neonPutBi(dst *byte, ds int, a, b *int16, w, h int)
 
 //go:noescape
 func neonSAOEdge(dst, src *byte, stride, aoff, boff, w, h int, tbl *[16]int8)
+
+//go:noescape
+func neonPutWUni(dst *byte, ds int, src *int16, w, h, wt, rnd, shift, off int)
+
+//go:noescape
+func neonPutWBi(dst *byte, ds int, a, b *int16, w, h, w0, w1, add, shift int)
+
+//go:noescape
+func neonCopyPred(dst *int16, src *byte, ss, w, h int)
