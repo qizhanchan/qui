@@ -134,6 +134,7 @@ const (
 	recBool        // non-adaptive binary symbol of probability val (icdf[0])
 	recLit         // n literal bits of val
 	recCdef        // the CDEF index of the 64x64 at f.cdefIdx[val]
+	recLR          // restoration unit val of plane n
 )
 
 type symRec struct {
@@ -195,7 +196,7 @@ func (k *symSink) cdefPlaceholder(idx, bits int) {
 
 // replay codes the records with e. The CDFs the records point into must
 // hold the state they had when recording started.
-func (k *symSink) replay(e *msacEnc, cdefIdx []int8, cdefBits int) {
+func (k *symSink) replay(e *msacEnc, cdefIdx []int8, cdefBits int, lr func(me *msacEnc, p, unit int)) {
 	for i := range k.recs {
 		r := &k.recs[i]
 		switch r.kind {
@@ -214,6 +215,8 @@ func (k *symSink) replay(e *msacEnc, cdefIdx []int8, cdefBits int) {
 			for b := cdefBits - 1; b >= 0; b-- {
 				e.bit(v >> uint(b) & 1)
 			}
+		case recLR:
+			lr(e, int(r.n), int(r.val))
 		}
 	}
 }

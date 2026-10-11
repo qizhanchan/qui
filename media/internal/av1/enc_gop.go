@@ -260,6 +260,10 @@ func (e *Encoder) frameHeader(job *encJob, q int) encFrameHdr {
 		txSelect:    true,
 	}
 	e.activeRefs = append(e.activeRefs[:0], job.active...)
+	if e.lrWiener || len(e.sgrSets) > 0 {
+		fh.lrType = [3]int{restoreSwitchable, restoreSwitchable, restoreSwitchable}
+		fh.lrUnitShift = lrUnitShift(e.cfg.Width, e.cfg.Height)
+	}
 	if !job.key {
 		fh.frameType = interFrame
 		fh.showFrame = !job.hidden

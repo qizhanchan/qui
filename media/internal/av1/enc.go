@@ -108,6 +108,9 @@ type Encoder struct {
 	txTypeSearch int // 0 DCT only, 1 four types, 2 the whole set
 	interpSearch bool
 	cdefCands    [][2]int
+	lrWiener     bool
+	sgrSets      []int
+	lrForce      bool // tests: restore every unit
 
 	rc rateControl
 
@@ -254,6 +257,7 @@ func (e *Encoder) encodeFrame(job *encJob, q int) ([]byte, error) {
 		for c := t.miColStart; c < t.miColEnd; c += sb4 {
 			f.clearCdef(r, c)
 			t.clearBlockDecoded(r, c, sb4)
+			e.writeLRPlaceholders(r, c, t.sbSize())
 			e.encodeSB(r, c)
 		}
 	}
@@ -266,6 +270,12 @@ func (e *Encoder) encodeFrame(job *encJob, q int) ([]byte, error) {
 	h.lf.sharpness = fh.lfSharpness
 	d.deblock(f)
 	e.decideCDEF(&fh)
+	if h.usesLR {
+		cdefF := d.cloneFrame(f.cur)
+		d.cdef(f, f.cur, cdefF)
+		e.decideLR(&fh, cdefF, f.cur)
+		d.release(&cdefF.planes, cdefF.numPlanes)
+	}
 	copyPlanes(f.cur, backup)
 	d.release(&backup.planes, backup.numPlanes)
 
@@ -273,7 +283,9 @@ func (e *Encoder) encodeFrame(job *encJob, q int) ([]byte, error) {
 	t.cdf = initCDF
 	var me msacEnc
 	me.init()
-	e.sink.replay(&me, f.cdefIdx, h.cdefBits)
+	e.sink.replay(&me, f.cdefIdx, h.cdefBits, func(me *msacEnc, p, unit int) {
+		e.writeLRUnit(me, p, &f.lr[p].units[unit])
+	})
 	tileData := me.done()
 	f.savedCDF = t.cdf
 
@@ -319,10 +331,14 @@ func (e *Encoder) setPreset(p int) {
 		e.lumaCands, e.chromaCands, e.cflCands = 2, 1, 4
 		e.txTypeSearch = 1
 		e.cdefCands = cdefStrengthSubset([]int{0, 1, 2, 3, 4, 6, 8, 12}, []int{0, 1, 2})
+		e.lrWiener = true
+		e.sgrSets = []int{0, 4, 10, 14}
 	default:
 		e.allow4x4, e.rectParts, e.angleDeltas, e.txDepth, e.interpSearch = true, true, true, true, true
 		e.lumaCands, e.chromaCands, e.cflCands = 3, 2, 8
 		e.txTypeSearch = 2
 		e.cdefCands = cdefStrengths
+		e.lrWiener = true
+		e.sgrSets = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 	}
 }

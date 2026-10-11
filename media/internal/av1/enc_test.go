@@ -120,6 +120,11 @@ func encodeCheck(t *testing.T, cfg EncoderConfig, src []*image.YCbCr) (pkts []Pa
 	if err != nil {
 		t.Fatal(err)
 	}
+	return encodeCheckWith(t, e, cfg, src)
+}
+
+func encodeCheckWith(t *testing.T, e *Encoder, cfg EncoderConfig, src []*image.YCbCr) (pkts []Packet, bytesTotal int, quality float64) {
+	t.Helper()
 	e.keepRecon = true
 	pkts = encodeAll(t, e, src)
 	for _, p := range pkts {
@@ -227,6 +232,48 @@ func TestEncodeMiniGOP(t *testing.T) {
 				types = append(types, p.Type)
 			}
 			t.Logf("mini-GOP %d: %d bytes/frame %s, PSNR %.2f dB", gop, n/len(src), types, ps)
+		})
+	}
+}
+
+// TestEncodePresets runs the fuller searches (loop restoration, compound,
+// rectangular partitions, transform depth and types) through the same
+// checks.
+func TestEncodePresets(t *testing.T) {
+	src := testSource(t, "ra_p4", 7)
+	for _, p := range []int{1, 2} {
+		for _, q := range []int{60, 180} {
+			t.Run(fmt.Sprintf("p%d_q%d", p, q), func(t *testing.T) {
+				var lrTypes [3]int
+				lrStatsHook = func(_, typ int) { lrTypes[typ]++ }
+				_, n, ps := encodeCheck(t, EncoderConfig{Width: 320, Height: 180, QIndex: q, Preset: p, MiniGOP: 3}, src)
+				lrStatsHook = nil
+				t.Logf("preset %d qindex %d: %d bytes/frame, PSNR %.2f dB, LR units none/wiener/sgr %v", p, q, n/len(src), ps, lrTypes)
+			})
+		}
+	}
+}
+
+// TestEncodeLR forces loop restoration on every unit (Wiener and
+// self-guided alternating) to check its syntax and reconstruction.
+func TestEncodeLR(t *testing.T) {
+	src := testSource(t, "ra_p4", 4)
+	for _, q := range []int{40, 200} {
+		t.Run(fmt.Sprint(q), func(t *testing.T) {
+			var lrTypes [3]int
+			lrStatsHook = func(_, typ int) { lrTypes[typ]++ }
+			defer func() { lrStatsHook = nil }()
+			cfg := EncoderConfig{Width: 320, Height: 180, QIndex: q, Preset: 1, MiniGOP: 2}
+			e, err := NewEncoder(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			e.lrForce = true
+			_, n, ps := encodeCheckWith(t, e, cfg, src)
+			t.Logf("qindex %d: %d bytes/frame, PSNR %.2f dB, LR units none/wiener/sgr %v", q, n/len(src), ps, lrTypes)
+			if lrTypes[restoreWiener] == 0 || lrTypes[restoreSgrproj] == 0 {
+				t.Errorf("restoration units %v", lrTypes)
+			}
 		})
 	}
 }
