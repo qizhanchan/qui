@@ -11,6 +11,9 @@ type reconScratch struct {
 	tmp [64]int32
 }
 
+// debugTx, when set (tests), sees every coded transform block.
+var debugTx func(t *tile, plane, x, y, tx, typ, eob int)
+
 // planeTxSize is get_tx_size.
 func (t *tile) planeTxSize(plane, tx int) int {
 	if plane == 0 {
@@ -172,6 +175,9 @@ func (t *tile) transformBlock(plane, baseX, baseY, tx, x, y int) error {
 		eob, err := t.coeffs(plane, startX, startY, tx)
 		if err != nil {
 			return err
+		}
+		if debugTx != nil {
+			debugTx(t, plane, startX, startY, tx, t.planeType, eob)
 		}
 		if eob > 0 {
 			t.reconstruct(plane, startX, startY, tx)

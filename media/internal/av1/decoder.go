@@ -10,9 +10,13 @@ type Decoder struct {
 	seq *SequenceHeader
 	ref [numRefFrames]refSlot
 
-	hdr             *FrameHeader // current frame header
-	fs              *frameState  // frame being decoded
-	out             []*frame     // shown frames not yet returned
+	hdr *FrameHeader // current frame header
+	fs  *frameState  // frame being decoded
+	out []*frame     // shown frames not yet returned
+
+	// outputInvisible also outputs frames that are not shown (as dav1d's
+	// --outputinvisible does), for testing.
+	outputInvisible bool
 	seenFrameHeader bool
 	tileNum         int // next expected tile
 

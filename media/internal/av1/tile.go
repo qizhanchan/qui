@@ -27,6 +27,7 @@ type miInfo struct {
 	compoundIdx  uint8
 	deltaLF      [4]int8
 	paletteColor [2][8]uint16
+	written      bool // decoded in the current frame
 }
 
 // block is the state of the block being decoded.
@@ -91,9 +92,11 @@ type tile struct {
 	readDeltas   bool
 	blockDecoded [3][34][34]bool // [plane][y+1][x+1] within the superblock
 
-	b block
+	b   block
+	mvp mvPred
 
 	edges     intraEdges
+	mc        mcScratch
 	coef      [32 * 32]int32 // Quant[] of the current transform block
 	planeType int            // PlaneTxType of the current transform block
 	recon     reconScratch

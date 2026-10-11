@@ -23,6 +23,8 @@ type frame struct {
 	refFrames      [][2]int8 // per mi, for the motion field
 	mvs            [][2]mv
 	segIDs         []uint8
+	mfRef          []int8 // per 8x8: reference of the saved motion vector
+	mfMv           []mv
 	cdf            cdfContext
 	showable       bool
 	frameType      int
@@ -78,10 +80,14 @@ type frameState struct {
 	lfStride       [3]int
 	lr             [3]lrPlane
 
-	cdf      cdfContext // context every tile starts from
-	savedCDF cdfContext // from tile context_update_tile_id
-	prevSeg  []uint8    // segment ids of the primary reference
-	tiles    []*tile
+	refs        [numRefFrames]refSlot // reference slots by RefFrame (1..7)
+	scaled      [numRefFrames]bool
+	gmValid     [numRefFrames]bool
+	motionField []tplMv
+	cdf         cdfContext // context every tile starts from
+	savedCDF    cdfContext // from tile context_update_tile_id
+	prevSeg     []uint8    // segment ids of the primary reference
+	tiles       []*tile
 }
 
 func (f *frameState) cdefIndex(r, c int) int { return (r>>4)*f.cdefStride + c>>4 }
@@ -138,6 +144,22 @@ func (d *Decoder) startFrame(h *FrameHeader) error {
 			lp.units = make([]lrUnit, lp.rows*lp.cols)
 		}
 	}
+	if !h.intra {
+		for i := 0; i < refsPerFrame; i++ {
+			slot := d.ref[h.refFrameIdx[i]]
+			f.refs[lastFrame+i] = slot
+			xs := ((slot.upscaledWidth << 14) + h.Width/2) / h.Width
+			ys := ((slot.frameHeight << 14) + h.Height/2) / h.Height
+			f.scaled[lastFrame+i] = xs != 1<<14 || ys != 1<<14
+			if h.gmType[lastFrame+i] > gmTranslation {
+				gm := h.gmParams[lastFrame+i]
+				_, _, _, _, f.gmValid[lastFrame+i] = setupShear(&gm)
+			}
+		}
+		if h.useRefFrameMVs {
+			d.motionFieldEstimation(f)
+		}
+	}
 	// Entropy state: defaults or the primary reference frame's.
 	if h.primaryRefFrame == primaryRefNone {
 		f.cdf.initNonCoeff()
@@ -192,9 +214,10 @@ func (d *Decoder) finishFrame() error {
 	for i := range f.mi {
 		cur.segIDs[i] = f.mi[i].segID
 	}
+	f.saveMotionField()
 	d.postFilter(f)
 	d.updateRefs(h)
-	if h.ShowFrame {
+	if h.ShowFrame || d.outputInvisible {
 		d.output(cur, h)
 	}
 	return nil

@@ -52,6 +52,7 @@ func (t *tile) decodeBlock(r, c, size int) error {
 		mv:       b.mv, interp: [2]uint8{uint8(b.interpFilter[0]), uint8(b.interpFilter[1])},
 		txSize: uint8(b.txSize), paletteSize: [2]uint8{uint8(b.paletteSizeY), uint8(b.paletteSizeUV)},
 		compGroupIdx: uint8(b.compGroupIdx), compoundIdx: uint8(b.compoundIdx),
+		written: true,
 	}
 	for i := 0; i < 4; i++ {
 		m.deltaLF[i] = int8(t.deltaLF[i])
@@ -72,6 +73,9 @@ func (t *tile) decodeBlock(r, c, size int) error {
 			}
 			row[x] = m
 		}
+	}
+	if debugBlock != nil {
+		debugBlock(t)
 	}
 	if err := t.computePrediction(); err != nil {
 		return err
@@ -732,5 +736,8 @@ func (t *tile) resetBlockContext() {
 		}
 	}
 }
+
+// debugBlock, when set (tests), is called for every decoded block.
+var debugBlock func(t *tile)
 
 var errNotImplemented = fmt.Errorf("%w: not implemented yet", ErrUnsupported)

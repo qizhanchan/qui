@@ -36,6 +36,7 @@ func decodeIVF(data []byte) ([]*frame, error) {
 		return nil, err
 	}
 	d := New()
+	d.outputInvisible = os.Getenv("AV1_INVISIBLE") != ""
 	var out []*frame
 	for i, tu := range tus {
 		if err := d.DecodeTemporalUnit(tu); err != nil {
@@ -48,8 +49,8 @@ func decodeIVF(data []byte) ([]*frame, error) {
 }
 
 // TestCompareFFmpeg (opt-in: AV1_DIR with *.ivf, AV1_ONLY to filter)
-// decodes each stream and compares every frame with FFmpeg's libdav1d
-// output.
+// decodes each stream and compares every frame with libdav1d (the dav1d
+// CLI, film grain off).
 func TestCompareFFmpeg(t *testing.T) {
 	dir := os.Getenv("AV1_DIR")
 	if dir == "" {
@@ -70,11 +71,18 @@ func TestCompareFFmpeg(t *testing.T) {
 			if len(frames) == 0 {
 				t.Fatalf("no frames: %v", derr)
 			}
-			pf := "yuv420p"
-			if frames[0].bitDepth > 8 {
-				pf = "yuv420p10le"
+			// The dav1d CLI decodes with libdav1d without FFmpeg's scaling
+			// of resolution changes; AV1_INVISIBLE adds the frames that
+			// are not shown (decode order).
+			out := filepath.Join(t.TempDir(), "o.yuv")
+			args := []string{"-q", "--filmgrain", "0", "-i", file, "-o", out}
+			if os.Getenv("AV1_INVISIBLE") != "" {
+				args = append(args, "--outputinvisible", "1")
 			}
-			want, err := exec.Command("ffmpeg", "-v", "error", "-c:v", "libdav1d", "-i", file, "-f", "rawvideo", "-pix_fmt", pf, "-").Output()
+			if msg, err := exec.Command("dav1d", args...).CombinedOutput(); err != nil {
+				t.Fatalf("dav1d: %v %s", err, msg)
+			}
+			want, err := os.ReadFile(out)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -85,6 +93,9 @@ func TestCompareFFmpeg(t *testing.T) {
 					t.Fatalf("frame %d: FFmpeg has fewer frames", i)
 				}
 				if w := want[off : off+len(got)]; !bytes.Equal(got, w) {
+					if os.Getenv("AV1_DIFFS") != "" {
+						listDiffs(t, fr, got, w)
+					}
 					t.Fatalf("frame %d differs: %s", i, firstDiff(fr, got, w))
 				}
 				off += len(got)
@@ -117,4 +128,27 @@ func firstDiff(f *frame, got, want []byte) string {
 		off += n
 	}
 	return "?"
+}
+
+// listDiffs logs the 8x8 luma blocks that differ (up to 40).
+func listDiffs(t *testing.T, f *frame, got, want []byte) {
+	pb := &f.planes[0]
+	seen := map[[2]int]int{}
+	var order [][2]int
+	for i := 0; i < pb.w*pb.h; i++ {
+		if got[i] != want[i] {
+			k := [2]int{(i % pb.w) / 8 * 8, (i / pb.w) / 8 * 8}
+			if seen[k] == 0 {
+				order = append(order, k)
+			}
+			seen[k]++
+		}
+	}
+	for i, k := range order {
+		if i >= 40 {
+			break
+		}
+		t.Logf("diff block x=%d y=%d: %d samples", k[0], k[1], seen[k])
+	}
+	t.Logf("%d differing 8x8 blocks", len(order))
 }
