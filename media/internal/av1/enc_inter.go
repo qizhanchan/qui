@@ -32,6 +32,9 @@ func (e *Encoder) setupInter(r, c, size int, ch *blkChoice) {
 	b.refFrame = [2]int{ch.ref, -1}
 	b.yMode = ch.yMode
 	b.interpFilter = [2]int{h.interpFilter, h.interpFilter}
+	if h.interpFilter == filterSwitchable {
+		b.interpFilter = [2]int{ch.interp, ch.interp}
+	}
 	b.motionMode = motionSimple
 	b.compoundType = compoundAverage
 	b.compGroupIdx, b.compoundIdx = 0, 1
@@ -55,6 +58,9 @@ func (e *Encoder) setupInter(r, c, size int, ch *blkChoice) {
 	b.mv[0] = p.predMv[0]
 	if b.yMode == newMV {
 		b.mv[0] = ch.mv
+	}
+	if h.interpFilter == filterSwitchable && !t.needsInterpFilter() {
+		b.interpFilter = [2]int{filterEightTap, filterEightTap}
 	}
 }
 
@@ -178,6 +184,9 @@ func (e *Encoder) writeInterModeInfo() {
 				}
 			}
 		}
+	}
+	if t.h.interpFilter == filterSwitchable && t.needsInterpFilter() {
+		k.sym(c.interpFilter[t.interpCtx(0)][:], b.interpFilter[0], 3)
 	}
 	e.writeInterTxSize()
 }

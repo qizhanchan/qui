@@ -18,6 +18,7 @@ type blkChoice struct {
 	ref    int
 	drlIdx int
 	mv     mv
+	interp int // interpolation filter (switchable frames)
 }
 
 // codePartition codes the fixed partition tree at (r, c): 16x16 blocks
@@ -407,6 +408,13 @@ var intraTxTypes = [3][]int{
 	2: {dctDct, adstDct, dctAdst, adstAdst, idtx},
 }
 
+// interTxTypes are the luma transform types tried per inter set.
+var interTxTypes = [4][]int{
+	1: {dctDct, adstDct, dctAdst, adstAdst, idtx, vDct, hDct, flipadstDct, dctFlipadst},
+	2: {dctDct, adstDct, dctAdst, adstAdst, idtx, vDct, hDct, flipadstDct, dctFlipadst},
+	3: {dctDct, idtx},
+}
+
 // searchTxType picks the luma transform type of a transform block by RD
 // (exact coefficient bits from the live CDFs, distortion through the
 // decoder's inverse transform) and leaves its levels in levels.
@@ -414,10 +422,15 @@ func (e *Encoder) searchTxType(t *tile, tq *txQuant, startX, startY int, res []i
 	b := &t.b
 	tx := tq.tx
 	set := t.txSet(tx)
-	if set == 0 || t.h.baseQIdx == 0 || b.lossless || e.txTypeSearch == 0 || b.isInter {
+	if set == 0 || t.h.baseQIdx == 0 || b.lossless || e.txTypeSearch == 0 {
 		return dctDct, e.quantTx(tq, res, dctDct, levels)
 	}
-	types := intraTxTypes[set]
+	var types []int
+	if b.isInter {
+		types = interTxTypes[set]
+	} else {
+		types = intraTxTypes[set]
+	}
 	if e.txTypeSearch == 1 {
 		types = types[:min(len(types), 4)]
 	}

@@ -280,10 +280,26 @@ func (e *Encoder) searchBlock(r, c, size int) (blkChoice, float64) {
 		}
 	}
 	if !t.h.intra {
-		inter := append(e.interList[:0], e.interCandidates(r, c, size, lastFrame)...)
+		inter := e.interList[:0]
+		for _, ref := range e.activeRefs {
+			inter = append(inter, e.interCandidates(r, c, size, ref)...)
+		}
 		e.interList = inter
 		for _, ch := range inter {
 			try(ch)
+		}
+		// Interpolation filters for the best inter choice.
+		if best.inter && t.h.interpFilter == filterSwitchable {
+			base := best
+			e.load(s0)
+			e.setupInter(r, c, size, &base)
+			if t.needsInterpFilter() {
+				for _, fl := range []int{filterEightTapSmooth, filterEightTapSharp} {
+					ch := base
+					ch.interp = fl
+					try(ch)
+				}
+			}
 		}
 		e.load(s0)
 	}

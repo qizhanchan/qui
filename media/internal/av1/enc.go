@@ -28,6 +28,7 @@ type EncoderConfig struct {
 	QIndex int
 
 	KeyInt int // frames between key frames (default 250)
+	Refs   int // previous frames inter frames may reference, 1..3 (default 2)
 
 	FullRange bool
 	Matrix    int // H.273 matrix_coefficients: 1 BT.709 (default), 6 BT.601
@@ -71,6 +72,7 @@ type Encoder struct {
 	nodeTop    int
 	lumaBuf    []modeCand
 	interBuf   []blkChoice
+	activeRefs []int // references searched in the current inter frame
 	interList  []blkChoice
 	chromaBuf  []modeCand
 	chromaOut  []modeCand
@@ -103,6 +105,10 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 	if cfg.KeyInt <= 0 {
 		cfg.KeyInt = 250
 	}
+	if cfg.Refs <= 0 {
+		cfg.Refs = 2
+	}
+	cfg.Refs = min(cfg.Refs, 3)
 	if cfg.Matrix == 0 {
 		cfg.Matrix = 1
 	}
@@ -110,7 +116,7 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 	e.seq = encSeq{
 		width: cfg.Width, height: cfg.Height, level: seqLevel(cfg.Width, cfg.Height),
 		fullRange: cfg.FullRange, matrix: cfg.Matrix, primaries: 1, transfer: 1,
-		orderHintBits: 7,
+		orderHintBits: 7, refFrameMVs: true,
 	}
 	if cfg.Matrix == 6 {
 		e.seq.primaries, e.seq.transfer = 6, 6
@@ -184,11 +190,26 @@ func (e *Encoder) frameHeader(key bool) encFrameHdr {
 		cdefDamping: 3,
 		txSelect:    true,
 	}
+	e.activeRefs = e.activeRefs[:0]
 	if !key {
+		// Frame k after the key frame writes slot k % Refs, so LAST,
+		// LAST2, ... are the previous frames' slots; the other references
+		// repeat LAST.
+		k := int(e.frameCount - e.keyFrame)
+		n := e.cfg.Refs
+		slot := func(j int) int { return ((k-j)%n + n) % n }
 		fh.frameType = interFrame
 		fh.primaryRef = 0
-		fh.refresh = 1
-		fh.interp = filterEightTap
+		fh.refresh = 1 << uint(k%n)
+		for i := range fh.refIdx {
+			fh.refIdx[i] = slot(1)
+		}
+		for j := 1; j <= min(n, k); j++ {
+			fh.refIdx[j-1] = slot(j)
+			e.activeRefs = append(e.activeRefs, lastFrame+j-1)
+		}
+		fh.interp = filterSwitchable
+		fh.allowHP = fh.baseQ < 128
 		fh.useRefMVs = e.seq.refFrameMVs
 	}
 	return fh

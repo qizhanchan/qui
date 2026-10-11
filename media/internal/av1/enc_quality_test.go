@@ -61,6 +61,9 @@ func TestQualityVsSVT(t *testing.T) {
 	for _, qp := range []int{24, 32, 40, 48} {
 		qindex := qp * 4
 		cfg := EncoderConfig{Width: w, Height: h, QIndex: qindex}
+		if v, err := strconv.Atoi(os.Getenv("AV1_ENC_KEYINT")); err == nil {
+			cfg.KeyInt = v
+		}
 		start := time.Now()
 		e, err := NewEncoder(cfg)
 		if err != nil {
