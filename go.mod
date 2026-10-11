@@ -3,6 +3,7 @@ module github.com/qizhanchan/qui
 go 1.25.0
 
 require (
+	github.com/abema/go-mp4 v1.7.3
 	github.com/go-gl/gl v0.0.0-20211210172815-726fda9656d6
 	github.com/go-gl/glfw/v3.3/glfw v0.0.0-20250301202403-da16c1255728
 	github.com/go-text/typesetting v0.3.4
@@ -12,3 +13,5 @@ require (
 	golang.org/x/sys v0.46.0
 	golang.org/x/text v0.38.0
 )
+
+require github.com/google/uuid v1.1.2 // indirect
