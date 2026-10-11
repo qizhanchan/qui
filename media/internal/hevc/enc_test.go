@@ -179,6 +179,14 @@ func TestEncoderReconMatchesDecoders(t *testing.T) {
 				t.Fatalf("ffmpeg: %v", err)
 			}
 			if !bytes.Equal(out, all) {
+				// FFmpeg's software decoder deviates on some CTU-16 streams
+				// with deblocking and SAO (see vectors_test.go); defer to
+				// VideoToolbox when it is available.
+				vt, err := exec.Command(ff, "-v", "error", "-hwaccel", "videotoolbox", "-i", in, "-f", "rawvideo", "-pix_fmt", "yuv420p", "-").Output()
+				if err == nil && bytes.Equal(vt, all) && !bytes.Equal(vt, out) {
+					t.Logf("FFmpeg differs; VideoToolbox matches the reconstruction")
+					return
+				}
 				fs := w * h * 3 / 2
 				for i := 0; i*fs < len(out) && i*fs < len(all); i++ {
 					if !bytes.Equal(out[i*fs:(i+1)*fs], all[i*fs:(i+1)*fs]) {

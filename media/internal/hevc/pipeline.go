@@ -98,6 +98,8 @@ type loopFilter struct {
 	fc     *frameCtx
 	saoTmp [3][]byte
 	copied int // luma lines copied into saoTmp
+
+	noDeblock bool // the encoder deblocked the picture already
 }
 
 // run deblocks and applies SAO to pic CTB row by CTB row, calling publish
@@ -110,8 +112,10 @@ func (d *loopFilter) run(pic *picture, publish func(lines int)) {
 	for r := 0; r <= rows; r++ {
 		if r < rows {
 			top, bot := r<<sp.Log2Ctb, min((r+1)<<sp.Log2Ctb, H)
-			d.deblockEdges(pic, true, top, bot)
-			d.deblockEdges(pic, false, top, bot)
+			if !d.noDeblock {
+				d.deblockEdges(pic, true, top, bot)
+				d.deblockEdges(pic, false, top, bot)
+			}
 			if sao {
 				// The next row's top edge may still change three lines
 				// above it (one in chroma).

@@ -74,16 +74,17 @@ type Encoder struct {
 	snaps [16]encSnap
 	tq    encTQ
 
-	arena []int32 // coefficient levels of the CTU being coded
+	arena    []int32  // coefficient levels of the picture being coded
+	roots    []*encCU // decided coding quadtrees by CTB (raster)
+	saoMerge []int8   // per CTB: 0 explicit SAO, 1 merge left, 2 merge up
 
 	keepRecon bool
 	recon     []*Frame
 }
 
-// allocLevels returns n zeroed levels from the CTU arena. Levels must
-// outlive the CTU's decision pass until it is written, so the arena is
-// only reset per CTU; growth copies are never needed for correctness
-// because slices keep the old backing array alive.
+// allocLevels returns n zeroed levels from the picture's arena. Levels
+// must outlive the decision pass until the picture is written; growing
+// allocates a new block (earlier slices keep the old one alive).
 func (e *Encoder) allocLevels(n int) []int32 {
 	if len(e.arena)+n > cap(e.arena) {
 		e.arena = make([]int32, 0, max(2*cap(e.arena), 1<<16))
@@ -323,14 +324,44 @@ func (e *Encoder) codePicture(pts int64, typ int, key bool) Packet {
 		sl.colFromL0 = true
 	}
 	sl.qpDelta = qp - q.initQP
-	segs := e.segments()
 	picSize := d.sps[0].PicWCtb * d.sps[0].PicHCtb
+	segs := e.segments()
+	es := make([]encSeg, len(segs))
 	for i, sg := range segs {
-		s := sl
-		s.first = i == 0
-		s.dependent = sg.dependent
-		s.address = d.pps[0].ctbTsToRs[sg.start]
-		pkt.NALs = append(pkt.NALs, e.codeSegment(&s, sg, picSize))
+		es[i].sl = sl
+		es[i].sl.first = i == 0
+		es[i].sl.dependent = sg.dependent
+		es[i].sl.address = d.pps[0].ctbTsToRs[sg.start]
+		es[i].sg = sg
+	}
+	// Pass A: decide every CTU (reconstructing it), with the estimator's
+	// contexts evolving as the coder's will.
+	e.arena = e.arena[:0]
+	if len(e.roots) < picSize {
+		e.roots = make([]*encCU, picSize)
+		e.saoMerge = make([]int8, picSize)
+	}
+	var ca ctxStore
+	for i := range es {
+		e.beginSegment(&es[i], picSize)
+		e.walkSegment(&es[i], &e.est.ctx, &ca, func(x0, y0, rs int) {
+			root, _ := e.decideQT(x0, y0, d.active.Log2Ctb, 0)
+			e.roots[rs] = root
+		}, nil)
+	}
+	// In-loop filter decisions: deblock here, choose SAO from the
+	// deblocked picture, and let the decoder's filter job apply SAO only.
+	d.waitFilter()
+	d.lf.noDeblock = false
+	if sl.sao[0] || sl.sao[1] {
+		e.deblockPicture()
+		e.decideSAO(sl.sao)
+		d.lf.noDeblock = true
+	}
+	// Pass B: entropy coding.
+	var cb ctxStore
+	for i := range es {
+		pkt.NALs = append(pkt.NALs, e.writeSegment(&es[i], picSize, &cb))
 	}
 	d.EndOfPicture()
 	if e.keepRecon {
@@ -344,15 +375,30 @@ func (e *Encoder) codePicture(pts int64, typ int, key bool) Packet {
 	return pkt
 }
 
-// codeSegment codes one slice segment and returns its NAL unit.
-func (e *Encoder) codeSegment(sl *encSlice, sg segment, picSize int) []byte {
+// encSeg is one slice segment of the picture being coded.
+type encSeg struct {
+	sl       encSlice
+	sg       segment
+	h        *sliceHeader
+	sliceIdx int
+}
+
+// ctxStore holds the contexts carried between CTUs: the WPP storage and
+// the end of the previous slice segment (for dependent segments).
+type ctxStore struct {
+	wpp      [numCtx]uint8
+	wppValid bool
+	ds       [numCtx]uint8
+	dsValid  bool
+}
+
+// beginSegment parses the segment's header back and sets up the decoder
+// state for it (a picture start for the first segment).
+func (e *Encoder) beginSegment(es *encSeg, picSize int) {
 	d := e.d
-	q := &e.seq
-	// Parse the header back to set up the decoder state (entry points do
-	// not affect it).
 	var hw bitWriter
-	q.header(&hw, sl, picSize)
-	hnal := nalUnit(sl.nalType, hw.buf)
+	e.seq.header(&hw, &es.sl, picSize)
+	hnal := nalUnit(es.sl.nalType, hw.buf)
 	var r bitReader
 	r.reset(unescape(nil, hnal[2:]))
 	h, err := parseSliceHeader(&r, hnal, d.sps[:], d.pps[:], d.lastIndep)
@@ -375,16 +421,140 @@ func (e *Encoder) codeSegment(sl *encSlice, sg segment, picSize int) []byte {
 	}
 	fc := d.fc
 	fc.slices = append(fc.slices, h)
-	s := &d.sd
-	s.d, s.h, s.sps, s.pps, s.pic = d, h, h.sps, h.pps, d.cur
-	s.sliceIdx = len(fc.slices) - 1
+	es.h, es.sliceIdx = h, len(fc.slices)-1
 	if !h.dependent {
+		e.useSegment(es)
 		d.buildRefLists(h)
 	}
-	data, subs := e.codeSliceData(sg)
+}
+
+// useSegment points the slice state at segment es.
+func (e *Encoder) useSegment(es *encSeg) {
+	d := e.d
+	s := &d.sd
+	h := es.h
+	s.d, s.h, s.sps, s.pps, s.pic = d, h, h.sps, h.pps, d.cur
+	s.sliceIdx = es.sliceIdx
+}
+
+// walkSegment visits the CTUs of a segment in decoding order, keeping ctx
+// as the decoder initialises and synchronises its contexts (9.3.1) and
+// recording the slice addresses. fn handles each CTU; sub, when not nil,
+// is called after each CTU with whether it ends the segment (true) or a
+// substream (false), or not called when neither.
+func (e *Encoder) walkSegment(es *encSeg, ctx *[numCtx]uint8, st *ctxStore, fn func(x0, y0, rs int), sub func(ctx *[numCtx]uint8, endSeg bool)) {
+	d := e.d
+	e.useSegment(es)
+	s := &d.sd
+	sp, p, h := s.sps, s.pps, s.h
+	fc := d.fc
+	sliceQP := p.InitQP + h.qpDelta
+	initType := 0
+	switch h.typ {
+	case sliceP:
+		initType = 1
+	case sliceB:
+		initType = 2
+	}
+	s.qpY, s.qpYPred = sliceQP, sliceQP
+	s.firstQG = true
+	sliceAddr := h.address
+	if h.dependent {
+		sliceAddr = d.sliceAddrRs
+	} else {
+		d.sliceAddrRs = h.address
+	}
+	sg := es.sg
+	first := true
+	for ts := sg.start; ts < sg.end; ts++ {
+		rs := p.ctbTsToRs[ts]
+		s.ctbAddrRs, s.ctbAddrTs = rs, ts
+		s.ctbX, s.ctbY = rs%sp.PicWCtb, rs/sp.PicWCtb
+		fc.ctbSliceAddr[rs] = sliceAddr
+		fc.ctbSlice[rs] = s.sliceIdx
+		x0, y0 := s.ctbX<<sp.Log2Ctb, s.ctbY<<sp.Log2Ctb
+		tileStart := ts == 0 || p.tileID[ts] != p.tileID[ts-1]
+		rowStart := p.EntropySync && s.ctbX == p.colBd[s.tileCol()]
+		switch {
+		case tileStart:
+			initContexts(ctx, initType, sliceQP)
+		case rowStart:
+			initContexts(ctx, initType, sliceQP)
+			if st.wppValid && s.available(x0, y0, x0+sp.CtbSize, y0-sp.CtbSize) {
+				*ctx = st.wpp
+			}
+		case first && h.dependent && st.dsValid:
+			*ctx = st.ds
+		case first:
+			initContexts(ctx, initType, sliceQP)
+		}
+		if tileStart || rowStart {
+			s.firstQG = true
+			s.qpY, s.qpYPred = sliceQP, sliceQP
+		}
+		first = false
+		fn(x0, y0, rs)
+		end := ts == sg.end-1
+		if p.EntropySync {
+			col := s.tileCol()
+			if s.ctbX == p.colBd[col]+1 || (p.colBd[col+1]-p.colBd[col] == 1 && s.ctbX == p.colBd[col]) {
+				st.wpp = *ctx
+				st.wppValid = true
+			}
+		}
+		if end {
+			st.ds = *ctx
+			st.dsValid = true
+			if sub != nil {
+				sub(ctx, true)
+			}
+			break
+		}
+		nextRs := p.ctbTsToRs[ts+1]
+		newTile := p.tileID[ts+1] != p.tileID[ts]
+		newRow := p.EntropySync && nextRs%sp.PicWCtb == p.colBd[s.tileColOf(nextRs%sp.PicWCtb)]
+		if (newTile || newRow) && sub != nil {
+			sub(ctx, false)
+		} else if sub != nil {
+			e.cab.terminate(0) // end_of_slice_segment_flag = 0
+		}
+	}
+}
+
+// writeSegment entropy-codes a decided segment and returns its NAL unit.
+func (e *Encoder) writeSegment(es *encSeg, picSize int, st *ctxStore) []byte {
+	d := e.d
+	q := &e.seq
+	s := &d.sd
+	fc := d.fc
+	e.bw.reset()
+	e.cab.start(&e.bw)
+	var subs []int
+	subStart := 0
+	e.walkSegment(es, &e.cab.ctx, st, func(x0, y0, rs int) {
+		if s.h.saoLuma || s.h.saoChroma {
+			s.writeSAO(&e.cab, &fc.sao[rs], int(e.saoMerge[rs]))
+		}
+		s.writeQuadtree(&e.cab, e.roots[rs], 0)
+	}, func(ctx *[numCtx]uint8, endSeg bool) {
+		if endSeg {
+			e.cab.terminate(1) // end_of_slice_segment_flag
+			return
+		}
+		e.cab.terminate(0)
+		e.cab.terminate(1) // end_of_subset_one_bit
+		e.bw.alignZero()
+		subs = append(subs, len(e.bw.buf)-subStart)
+		subStart = len(e.bw.buf)
+		e.cab.start(&e.bw)
+	})
+	e.bw.alignZero()
+	data := e.bw.buf
 	// Entry points count emulation prevention bytes: iterate until the
 	// header's offsets match the escaped substream sizes.
+	sl := &es.sl
 	sl.entries = append(sl.entries[:0], subs...)
+	var hw bitWriter
 	var nal []byte
 	for iter := 0; ; iter++ {
 		hw.reset()
@@ -444,110 +614,3 @@ func escapedSizes(payload []byte, start int, subs []int) []int {
 	return out
 }
 
-// codeSliceData codes the CTUs of a segment and returns the slice data
-// and the unescaped sizes of the substreams after the first (the entry
-// points).
-func (e *Encoder) codeSliceData(sg segment) ([]byte, []int) {
-	d := e.d
-	s := &d.sd
-	sp, p, h := s.sps, s.pps, s.h
-	fc := d.fc
-	sliceQP := p.InitQP + h.qpDelta
-	initType := 0
-	switch h.typ {
-	case sliceP:
-		initType = 1
-	case sliceB:
-		initType = 2
-	}
-	if h.dependent {
-		s.qpY, s.qpYPred = d.dsQP[0], d.dsQP[1]
-	} else {
-		s.qpY, s.qpYPred = sliceQP, sliceQP
-		s.firstQG = true
-	}
-	sliceAddr := h.address
-	if h.dependent {
-		sliceAddr = d.sliceAddrRs
-	} else {
-		d.sliceAddrRs = h.address
-	}
-	e.bw.reset()
-	e.cab.start(&e.bw)
-	var subs []int
-	subStart := 0
-	first := true
-	for ts := sg.start; ts < sg.end; ts++ {
-		rs := p.ctbTsToRs[ts]
-		s.ctbAddrRs, s.ctbAddrTs = rs, ts
-		s.ctbX, s.ctbY = rs%sp.PicWCtb, rs/sp.PicWCtb
-		fc.ctbSliceAddr[rs] = sliceAddr
-		fc.ctbSlice[rs] = s.sliceIdx
-		x0, y0 := s.ctbX<<sp.Log2Ctb, s.ctbY<<sp.Log2Ctb
-		tileStart := ts == 0 || p.tileID[ts] != p.tileID[ts-1]
-		rowStart := p.EntropySync && s.ctbX == p.colBd[s.tileCol()]
-		switch {
-		case tileStart:
-			initContexts(&e.cab.ctx, initType, sliceQP)
-		case rowStart:
-			initContexts(&e.cab.ctx, initType, sliceQP)
-			if d.wppValid && s.available(x0, y0, x0+sp.CtbSize, y0-sp.CtbSize) {
-				e.cab.ctx = d.wppCtx
-			}
-		case first && h.dependent && d.dsCtxValid:
-			e.cab.ctx = d.dsCtx
-		case first:
-			initContexts(&e.cab.ctx, initType, sliceQP)
-		}
-		if tileStart || rowStart {
-			s.firstQG = true
-			s.qpY, s.qpYPred = sliceQP, sliceQP
-		}
-		first = false
-		e.codeCTU(x0, y0)
-		end := ts == sg.end-1
-		e.cab.terminate(boolInt(end)) // end_of_slice_segment_flag
-		if p.EntropySync {
-			col := s.tileCol()
-			if s.ctbX == p.colBd[col]+1 || (p.colBd[col+1]-p.colBd[col] == 1 && s.ctbX == p.colBd[col]) {
-				d.wppCtx = e.cab.ctx
-				d.wppValid = true
-			}
-		}
-		if end {
-			d.dsCtx = e.cab.ctx
-			d.dsCtxValid = true
-			d.dsQP = [2]int{s.qpY, s.qpYPred}
-			break
-		}
-		nextRs := p.ctbTsToRs[ts+1]
-		newTile := p.tileID[ts+1] != p.tileID[ts]
-		newRow := p.EntropySync && nextRs%sp.PicWCtb == p.colBd[s.tileColOf(nextRs%sp.PicWCtb)]
-		if newTile || newRow {
-			e.cab.terminate(1) // end_of_subset_one_bit
-			e.bw.alignZero()
-			subs = append(subs, len(e.bw.buf)-subStart)
-			subStart = len(e.bw.buf)
-			e.cab.start(&e.bw)
-		}
-	}
-	e.bw.alignZero()
-	// The entry points are the sizes of all substreams but the last.
-	return e.bw.buf, subs
-}
-
-// codeCTU decides and writes one CTU.
-func (e *Encoder) codeCTU(x0, y0 int) {
-	s := &e.d.sd
-	sp := s.sps
-	if s.h.saoLuma || s.h.saoChroma {
-		prm := &e.d.fc.sao[s.ctbAddrRs]
-		*prm = saoParams{}
-		s.writeSAO(&e.cab, prm, 0)
-	}
-	e.est.ctx = e.cab.ctx
-	e.est.bits = 0
-	e.arena = e.arena[:0]
-	root, _ := e.decideQT(x0, y0, sp.Log2Ctb, 0)
-	s.writeQuadtree(&e.cab, root, 0)
-}
