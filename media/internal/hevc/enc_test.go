@@ -133,6 +133,9 @@ var encConfigs = []struct {
 	{"p_refs3_wpp", EncoderConfig{QP: 32, Refs: 3, WPP: true}},
 	{"p_qp38_nosao_nosdh", EncoderConfig{QP: 38, NoSAO: true, NoSignHiding: true, Preset: 2}},
 	{"p_tiles_slices", EncoderConfig{QP: 30, TileCols: 2, Slices: 2, CTU: 16}},
+	{"b3_qp30", EncoderConfig{QP: 30, BFrames: 3}},
+	{"b2_refs2_wpp_ctu64", EncoderConfig{QP: 27, BFrames: 2, Refs: 2, WPP: true, CTU: 64}},
+	{"b1_keyint4", EncoderConfig{QP: 33, BFrames: 1, KeyInt: 4}},
 }
 
 // TestEncoderReconMatchesDecoders checks, for each configuration, that
@@ -140,7 +143,7 @@ var encConfigs = []struct {
 // encoder's reconstruction.
 func TestEncoderReconMatchesDecoders(t *testing.T) {
 	const w, h = 176, 144
-	frames := testSource(t, w, h, 4)
+	frames := testSource(t, w, h, 9)
 	for _, c := range encConfigs {
 		t.Run(c.name, func(t *testing.T) {
 			cfg := c.cfg

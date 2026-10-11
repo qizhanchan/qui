@@ -21,6 +21,10 @@ type EncoderConfig struct {
 	QP     int // constant QP 0..51 (default 30)
 	KeyInt int // frames between IDR pictures (default 250)
 	Refs   int // reference pictures for P pictures (default 1)
+	// BFrames is the number of non-reference B pictures between anchors
+	// (0 = P pictures only). B pictures predict from the previous Refs
+	// anchors and the next one.
+	BFrames int
 
 	// Preset trades speed for compression: 0 fastest ... 2 best (default 1).
 	Preset int
@@ -62,8 +66,10 @@ type Encoder struct {
 
 	frameCount int64
 	coded      int64
-	sinceKey   int
-	poc        int
+	keyPTS     int64     // input index of the last IDR picture
+	anchors    []int     // POCs of the reference pictures since the IDR
+	queue      []*encFrame // frames waiting for their mini-GOP's anchor
+	framePool  []*encFrame
 
 	cab    cabacEnc
 	bw     bitWriter
@@ -140,8 +146,14 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 	q.sdh = !cfg.NoSignHiding
 	q.tmvp = true
 	q.log2MaxPOCLsb = 8
+	cfg.BFrames = clip3(0, 7, cfg.BFrames)
+	e.cfg.BFrames = cfg.BFrames
 	q.numReorder = 0
 	q.maxDecPicBuf = cfg.Refs + 1
+	if cfg.BFrames > 0 {
+		q.numReorder = 1
+		q.maxDecPicBuf = cfg.Refs + 2
+	}
 	q.level = pickLevel(q.width, q.height, cfg.FPSNum, cfg.FPSDen)
 	q.initQP = cfg.QP
 	q.deblockOff = cfg.NoDeblock
@@ -162,9 +174,6 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 	}
 	e.d.pps[0].derive(e.d.sps[0])
 	e.ys, e.cs = q.width, q.width/2
-	e.srcY = make([]byte, q.width*q.height)
-	e.srcCb = make([]byte, q.width*q.height/4)
-	e.srcCr = make([]byte, q.width*q.height/4)
 	return e, nil
 }
 
@@ -193,7 +202,15 @@ func pickLevel(w, h, num, den int) int {
 // Headers returns the VPS, SPS and PPS NAL units.
 func (e *Encoder) Headers() (vps, sps, pps []byte) { return e.vps, e.sps, e.pps }
 
-// Encode codes one frame.
+// encFrame is a padded source frame.
+type encFrame struct {
+	y, cb, cr []byte
+	pts       int64
+}
+
+// Encode codes one frame. With B pictures, frames are held until their
+// mini-GOP's anchor arrives, so a call may return no packets or several
+// (in decoding order).
 func (e *Encoder) Encode(img *image.YCbCr) ([]Packet, error) {
 	if img.SubsampleRatio != image.YCbCrSubsampleRatio420 {
 		return nil, errors.New("hevc: only 4:2:0 input is supported")
@@ -201,29 +218,59 @@ func (e *Encoder) Encode(img *image.YCbCr) ([]Packet, error) {
 	if img.Rect.Dx() < e.cfg.Width || img.Rect.Dy() < e.cfg.Height {
 		return nil, errors.New("hevc: frame smaller than the configured size")
 	}
-	e.loadSource(img)
-	pts := e.frameCount
+	f := e.loadSource(img)
+	f.pts = e.frameCount
 	e.frameCount++
-	key := e.coded == 0 || e.sinceKey >= e.cfg.KeyInt
-	typ := sliceP
+	key := e.coded == 0 && len(e.queue) == 0 || f.pts-e.keyPTS >= int64(e.cfg.KeyInt)
 	if key {
-		typ = sliceI
+		pkts := e.flushQueue()
+		return append(pkts, e.codePicture(f, sliceI, true, true)), nil
 	}
-	return []Packet{e.codePicture(pts, typ, key)}, nil
+	if e.cfg.BFrames == 0 {
+		return []Packet{e.codePicture(f, sliceP, false, true)}, nil
+	}
+	e.queue = append(e.queue, f)
+	if len(e.queue) == e.cfg.BFrames+1 {
+		return e.flushQueue(), nil
+	}
+	return nil, nil
 }
 
-// Flush returns any pictures still held (none: there is no reordering).
-func (e *Encoder) Flush() ([]Packet, error) { return nil, nil }
+// flushQueue codes the queued frames: the last as the anchor (P), then
+// the others as B pictures in display order.
+func (e *Encoder) flushQueue() []Packet {
+	if len(e.queue) == 0 {
+		return nil
+	}
+	n := len(e.queue)
+	pkts := []Packet{e.codePicture(e.queue[n-1], sliceP, false, true)}
+	for _, f := range e.queue[:n-1] {
+		pkts = append(pkts, e.codePicture(f, sliceB, false, false))
+	}
+	e.framePool = append(e.framePool, e.queue...)
+	e.queue = e.queue[:0]
+	return pkts
+}
 
-// loadSource copies img into the padded source planes, repeating the last
+// Flush codes any frames still held.
+func (e *Encoder) Flush() ([]Packet, error) { return e.flushQueue(), nil }
+
+// loadSource copies img into padded source planes, repeating the last
 // column and row into the padding.
-func (e *Encoder) loadSource(img *image.YCbCr) {
+func (e *Encoder) loadSource(img *image.YCbCr) *encFrame {
 	q := &e.seq
+	var f *encFrame
+	if n := len(e.framePool); n > 0 {
+		f = e.framePool[n-1]
+		e.framePool = e.framePool[:n-1]
+	} else {
+		f = &encFrame{y: make([]byte, q.width*q.height), cb: make([]byte, q.width*q.height/4), cr: make([]byte, q.width*q.height/4)}
+	}
 	w, h := e.cfg.Width, e.cfg.Height
 	for y := 0; y < q.height; y++ {
 		sy := min(y, h-1)
 		row := img.Y[img.YOffset(img.Rect.Min.X, img.Rect.Min.Y+sy):]
-		dst := e.srcY[y*e.ys : y*e.ys+q.width]
+		dst := f.y[y*e.ys : y*e.ys+q.width]
 		copy(dst, row[:w])
 		for x := w; x < q.width; x++ {
 			dst[x] = dst[w-1]
@@ -234,9 +281,9 @@ func (e *Encoder) loadSource(img *image.YCbCr) {
 		sy := min(y, ch-1)
 		off := img.COffset(img.Rect.Min.X, img.Rect.Min.Y+2*sy)
 		for c, src := range [2][]byte{img.Cb, img.Cr} {
-			dst := e.srcCb
+			dst := f.cb
 			if c == 1 {
-				dst = e.srcCr
+				dst = f.cr
 			}
 			d := dst[y*e.cs : y*e.cs+q.width/2]
 			copy(d, src[off:off+cw])
@@ -245,6 +292,7 @@ func (e *Encoder) loadSource(img *image.YCbCr) {
 			}
 		}
 	}
+	return f
 }
 
 // segment is one slice segment of a picture: CTBs [start, end) in tile
@@ -290,16 +338,27 @@ func (e *Encoder) segments() []segment {
 	return out
 }
 
-// codePicture codes the loaded source as one picture.
-func (e *Encoder) codePicture(pts int64, typ int, key bool) Packet {
+// codePicture codes frame f as one picture of slice type typ; ref
+// pictures become anchors for later pictures.
+func (e *Encoder) codePicture(f *encFrame, typ int, key, ref bool) Packet {
 	d := e.d
 	q := &e.seq
-	qp := e.cfg.QP
+	e.srcY, e.srcCb, e.srcCr = f.y, f.cb, f.cr
 	if key {
-		e.sinceKey = 0
-		e.poc = 0
+		e.keyPTS = f.pts
+		e.anchors = e.anchors[:0]
 	}
-	pkt := Packet{Key: key, PTS: pts, DTS: e.coded, Type: "BPI"[typ], QP: qp}
+	poc := int(f.pts - e.keyPTS)
+	// x265's constant-QP convention: I pictures 3 below, B pictures 2
+	// above the configured (P) QP.
+	qp := e.cfg.QP
+	switch typ {
+	case sliceI:
+		qp = max(0, qp-3)
+	case sliceB:
+		qp = min(51, qp+2)
+	}
+	pkt := Packet{Key: key, PTS: f.pts, DTS: e.coded, Type: "BPI"[typ], QP: qp}
 	if key {
 		pkt.NALs = append(pkt.NALs, e.vps, e.sps, e.pps)
 	}
@@ -308,20 +367,39 @@ func (e *Encoder) codePicture(pts int64, typ int, key bool) Packet {
 		e.lambda = 0.68 * math.Pow(2, float64(qp-12)/3)
 	}
 	e.sqrtL = math.Sqrt(e.lambda)
-	sl := encSlice{nalType: nalTrailR, typ: typ, pocLsb: e.poc & (1<<q.log2MaxPOCLsb - 1), sao: [2]bool{q.sao, q.sao}, maxMerge: 5}
-	if key {
+	sl := encSlice{nalType: nalTrailR, typ: typ, pocLsb: poc & (1<<q.log2MaxPOCLsb - 1), sao: [2]bool{q.sao, q.sao}, maxMerge: 5}
+	switch {
+	case key:
 		sl.nalType = nalIDRWRADL
+	case !ref:
+		sl.nalType = nalTrailN
 	}
 	if typ != sliceI {
-		// Short-term RPS: the previous Refs pictures in coding order.
-		nref := min(e.cfg.Refs, e.sinceKey)
-		for i := 1; i <= nref; i++ {
-			sl.negDelta = append(sl.negDelta, -i)
+		// Short-term RPS: the last Refs anchors before the picture, and
+		// for B pictures the anchor after it.
+		var before []int
+		for i := len(e.anchors) - 1; i >= 0 && len(before) < e.cfg.Refs; i-- {
+			if a := e.anchors[i]; a < poc {
+				before = append(before, a)
+			}
+		}
+		for _, a := range before {
+			sl.negDelta = append(sl.negDelta, a-poc)
 			sl.negUsed = append(sl.negUsed, true)
 		}
-		sl.numRefIdx[0] = nref
+		sl.numRefIdx[0] = len(before)
+		if typ == sliceB {
+			for _, a := range e.anchors {
+				if a > poc {
+					sl.posDelta = append(sl.posDelta, a-poc)
+					sl.posUsed = append(sl.posUsed, true)
+					break
+				}
+			}
+			sl.numRefIdx[1] = len(sl.posDelta)
+		}
 		sl.tmvp = q.tmvp
-		sl.colFromL0 = true
+		sl.colFromL0 = typ == sliceP
 	}
 	sl.qpDelta = qp - q.initQP
 	picSize := d.sps[0].PicWCtb * d.sps[0].PicHCtb
@@ -369,9 +447,13 @@ func (e *Encoder) codePicture(pts int64, typ int, key bool) Packet {
 			e.recon = append(e.recon, f)
 		}
 	}
+	if ref {
+		e.anchors = append(e.anchors, poc)
+		if len(e.anchors) > e.cfg.Refs+1 {
+			e.anchors = e.anchors[1:]
+		}
+	}
 	e.coded++
-	e.sinceKey++
-	e.poc++
 	return pkt
 }
 

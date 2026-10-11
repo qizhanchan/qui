@@ -60,6 +60,8 @@ func TestQualityVsX265(t *testing.T) {
 			cfg.Refs = iv
 		case "KeyInt":
 			cfg.KeyInt = iv
+		case "BFrames":
+			cfg.BFrames = iv
 		case "NoSAO":
 			cfg.NoSAO = iv != 0
 		case "WPP":

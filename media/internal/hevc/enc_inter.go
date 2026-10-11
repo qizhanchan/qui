@@ -192,35 +192,88 @@ func mvdBits(d [2]int) float64 {
 }
 
 // searchPU finds the best AMVP motion for the w x h prediction block at
-// (x0, y0) over the L0 references (P slices). The CU state must be set
-// up for a 2Nx2N inter CU.
+// (x0, y0): per list the best reference and vector, and for B slices the
+// bi-prediction of the two. The CU state must be set up for a 2Nx2N
+// inter CU.
 func (e *Encoder) searchPU(x0, y0, w, h, log2, depth int) (encPU, bool) {
 	s := &e.d.sd
 	hd := s.h
 	e.setupCU(x0, y0, log2, depth, modeInter, part2Nx2N, false)
-	best := encPU{idc: predL0}
-	bestCost := math.Inf(1)
-	for r := 0; r < hd.numRefIdx[0] && r < len(hd.refList[0]); r++ {
-		ref := hd.refList[0][r].pic
-		mvp := s.amvp(x0, y0, w, h, 0, 0, r)
-		mv, cost := e.motionSearch(ref, x0, y0, w, h, mvp)
-		refBits := 0.0
-		if hd.numRefIdx[0] > 1 {
-			refBits = float64(min(r+1, hd.numRefIdx[0]-1))
-		}
-		cost += e.sqrtL * refBits
-		if cost < bestCost {
-			bestCost = cost
-			idx := 0
-			if mvdBits(sub2(mv, mvp[1])) < mvdBits(sub2(mv, mvp[0])) {
-				idx = 1
+	type uni struct {
+		ok     bool
+		ref    int
+		mv     [2]int
+		mvpIdx int
+		mvp    [2]int
+		cost   float64
+	}
+	var best [2]uni
+	lists := 1
+	if hd.typ == sliceB {
+		lists = 2
+	}
+	for l := 0; l < lists; l++ {
+		best[l].cost = math.Inf(1)
+		for r := 0; r < hd.numRefIdx[l] && r < len(hd.refList[l]); r++ {
+			ref := hd.refList[l][r].pic
+			mvp := s.amvp(x0, y0, w, h, 0, l, r)
+			mv, cost := e.motionSearch(ref, x0, y0, w, h, mvp)
+			if hd.numRefIdx[l] > 1 {
+				cost += e.sqrtL * float64(min(r+1, hd.numRefIdx[l]-1))
 			}
-			best = encPU{idc: predL0, refIdx: [2]int{r, 0}, mvpIdx: [2]int{idx, 0}}
-			best.mvd[0] = sub2(mv, mvp[idx])
-			best.m = motion{pred: [2]bool{true, false}, ref: [2]int{r, 0}, mv: [2][2]int{mv, {}}}
+			if cost < best[l].cost {
+				idx := 0
+				if mvdBits(sub2(mv, mvp[1])) < mvdBits(sub2(mv, mvp[0])) {
+					idx = 1
+				}
+				best[l] = uni{true, r, mv, idx, mvp[idx], cost}
+			}
 		}
 	}
-	return best, bestCost < math.Inf(1)
+	if !best[0].ok && !best[1].ok {
+		return encPU{}, false
+	}
+	idc := predL0
+	if hd.typ == sliceB {
+		// inter_pred_idc bits: about one for bi, two for a single list.
+		c0, c1 := best[0].cost+2*e.sqrtL, best[1].cost+2*e.sqrtL
+		cBi := math.Inf(1)
+		if best[0].ok && best[1].ok {
+			r0, r1 := hd.refList[0][best[0].ref].pic, hd.refList[1][best[1].ref].pic
+			cBi = float64(e.predBiSATD(r0, best[0].mv, r1, best[1].mv, x0, y0, w, h)) + e.sqrtL*(1+mvdBits(sub2(best[0].mv, best[0].mvp))+mvdBits(sub2(best[1].mv, best[1].mvp)))
+		}
+		switch {
+		case cBi < c0 && cBi < c1:
+			idc = predBi
+		case c1 < c0:
+			idc = predL1
+		}
+	}
+	pu := encPU{idc: idc}
+	for l := 0; l < 2; l++ {
+		if idc == predBi || idc == l {
+			b := best[l]
+			pu.refIdx[l], pu.mvpIdx[l], pu.mvd[l] = b.ref, b.mvpIdx, sub2(b.mv, b.mvp)
+			pu.m.pred[l], pu.m.ref[l], pu.m.mv[l] = true, b.ref, b.mv
+		}
+	}
+	return pu, true
+}
+
+// predBiSATD is the SATD of the bi-prediction from (ref0, mv0) and
+// (ref1, mv1) against the source block.
+func (e *Encoder) predBiSATD(ref0 *picture, mv0 [2]int, ref1 *picture, mv1 [2]int, x0, y0, w, h int) int {
+	s := &e.d.sd
+	sp := s.sps
+	mc := &s.mc
+	p0, p1 := mc.pred[0][:w*h], mc.pred[1][:w*h]
+	mc.interpLuma(p0, ref0.y, ref0.ys, sp.Width, sp.Height, x0+mv0[0]>>2, y0+mv0[1]>>2, mv0[0]&3, mv0[1]&3, w, h)
+	mc.interpLuma(p1, ref1.y, ref1.ys, sp.Width, sp.Height, x0+mv1[0]>>2, y0+mv1[1]>>2, mv1[0]&3, mv1[1]&3, w, h)
+	buf := e.tq.pred[:w*h]
+	for i := range buf {
+		buf[i] = clipU8((int(p0[i]) + int(p1[i]) + 2*predOffset + 64) >> 7)
+	}
+	return satdWH(e.srcY[y0*e.ys+x0:], e.ys, buf, w, w, h)
 }
 
 func sub2(a, b [2]int) [2]int { return [2]int{a[0] - b[0], a[1] - b[1]} }
