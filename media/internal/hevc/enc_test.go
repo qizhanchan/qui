@@ -136,6 +136,8 @@ var encConfigs = []struct {
 	{"b3_qp30", EncoderConfig{QP: 30, BFrames: 3}},
 	{"b2_refs2_wpp_ctu64", EncoderConfig{QP: 27, BFrames: 2, Refs: 2, WPP: true, CTU: 64}},
 	{"b1_keyint4", EncoderConfig{QP: 33, BFrames: 1, KeyInt: 4}},
+	// A tight VBV forces pictures to be coded again at higher QPs.
+	{"vbv_reencode", EncoderConfig{QP: 20, VBVMaxRate: 60000, VBVBuffer: 20000, BFrames: 1}},
 }
 
 // TestEncoderReconMatchesDecoders checks, for each configuration, that

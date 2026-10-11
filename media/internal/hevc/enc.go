@@ -18,7 +18,13 @@ type EncoderConfig struct {
 	Width, Height  int
 	FPSNum, FPSDen int // frame rate (default 30/1)
 
-	QP     int // constant QP 0..51 (default 30)
+	// Rate control: constant QP when Bitrate and CRF are zero.
+	QP      int     // 0..51 (default 30; also the starting QP of ABR)
+	CRF     float64 // constant rate factor (x264/x265-like scale), 0 = off
+	Bitrate int     // average bits/s (ABR), 0 = off
+	// VBV: maximum bits/s and buffer size in bits (0 = unconstrained).
+	VBVMaxRate, VBVBuffer int
+
 	KeyInt int // frames between IDR pictures (default 250)
 	Refs   int // reference pictures for P pictures (default 1)
 	// BFrames is the number of non-reference B pictures between anchors
@@ -66,8 +72,8 @@ type Encoder struct {
 
 	frameCount int64
 	coded      int64
-	keyPTS     int64     // input index of the last IDR picture
-	anchors    []int     // POCs of the reference pictures since the IDR
+	keyPTS     int64       // input index of the last IDR picture
+	anchors    []int       // POCs of the reference pictures since the IDR
 	queue      []*encFrame // frames waiting for their mini-GOP's anchor
 	framePool  []*encFrame
 
@@ -79,6 +85,7 @@ type Encoder struct {
 
 	snaps [16]encSnap
 	tq    encTQ
+	rc    rateControl
 
 	arena    []int32  // coefficient levels of the picture being coded
 	roots    []*encCU // decided coding quadtrees by CTB (raster)
@@ -174,6 +181,7 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 	}
 	e.d.pps[0].derive(e.d.sps[0])
 	e.ys, e.cs = q.width, q.width/2
+	e.rc.init(e)
 	return e, nil
 }
 
@@ -349,24 +357,6 @@ func (e *Encoder) codePicture(f *encFrame, typ int, key, ref bool) Packet {
 		e.anchors = e.anchors[:0]
 	}
 	poc := int(f.pts - e.keyPTS)
-	// x265's constant-QP convention: I pictures 3 below, B pictures 2
-	// above the configured (P) QP.
-	qp := e.cfg.QP
-	switch typ {
-	case sliceI:
-		qp = max(0, qp-3)
-	case sliceB:
-		qp = min(51, qp+2)
-	}
-	pkt := Packet{Key: key, PTS: f.pts, DTS: e.coded, Type: "BPI"[typ], QP: qp}
-	if key {
-		pkt.NALs = append(pkt.NALs, e.vps, e.sps, e.pps)
-	}
-	e.lambda = 0.57 * math.Pow(2, float64(qp-12)/3)
-	if typ != sliceI {
-		e.lambda = 0.68 * math.Pow(2, float64(qp-12)/3)
-	}
-	e.sqrtL = math.Sqrt(e.lambda)
 	sl := encSlice{nalType: nalTrailR, typ: typ, pocLsb: poc & (1<<q.log2MaxPOCLsb - 1), sao: [2]bool{q.sao, q.sao}, maxMerge: 5}
 	switch {
 	case key:
@@ -401,7 +391,52 @@ func (e *Encoder) codePicture(f *encFrame, typ int, key, ref bool) Packet {
 		sl.tmvp = q.tmvp
 		sl.colFromL0 = typ == sliceP
 	}
-	sl.qpDelta = qp - q.initQP
+	pkt := Packet{Key: key, PTS: f.pts, DTS: e.coded, Type: "BPI"[typ]}
+	qp := e.rc.pictureQP(typ, e)
+	bits := 0
+	for attempt := 0; ; attempt++ {
+		pkt.NALs = pkt.NALs[:0]
+		if key {
+			pkt.NALs = append(pkt.NALs, e.vps, e.sps, e.pps)
+		}
+		pkt.QP = qp
+		e.lambda = 0.57 * math.Pow(2, float64(qp-12)/3)
+		if typ != sliceI {
+			e.lambda = 0.68 * math.Pow(2, float64(qp-12)/3)
+		}
+		e.sqrtL = math.Sqrt(e.lambda)
+		sl.qpDelta = qp - q.initQP
+		bits = e.codeSlices(&pkt, sl, attempt > 0)
+		// A picture that overflows the VBV buffer is coded again at a
+		// higher QP; the picture was started already, so only its frame
+		// context is reset.
+		if !e.rc.vbvOverflow(bits) || qp >= 51 || attempt >= 4 {
+			break
+		}
+		qp = min(51, qp+2+attempt)
+	}
+	e.rc.update(typ, qp, bits, e)
+	d.EndOfPicture()
+	if e.keepRecon {
+		for f := d.Next(); f != nil; f = d.Next() {
+			e.recon = append(e.recon, f)
+		}
+	}
+	if ref {
+		e.anchors = append(e.anchors, poc)
+		if len(e.anchors) > e.cfg.Refs+1 {
+			e.anchors = e.anchors[1:]
+		}
+	}
+	e.coded++
+	return pkt
+}
+
+// codeSlices decides, filters and writes the slice segments of the
+// current picture, appending their NAL units to pkt, and returns the
+// picture's coded bits. restart re-codes a picture already started.
+func (e *Encoder) codeSlices(pkt *Packet, sl encSlice, restart bool) int {
+	d := e.d
 	picSize := d.sps[0].PicWCtb * d.sps[0].PicHCtb
 	segs := e.segments()
 	es := make([]encSeg, len(segs))
@@ -421,7 +456,7 @@ func (e *Encoder) codePicture(f *encFrame, typ int, key, ref bool) Packet {
 	}
 	var ca ctxStore
 	for i := range es {
-		e.beginSegment(&es[i], picSize)
+		e.beginSegment(&es[i], picSize, restart && i == 0)
 		e.walkSegment(&es[i], &e.est.ctx, &ca, func(x0, y0, rs int) {
 			root, _ := e.decideQT(x0, y0, d.active.Log2Ctb, 0)
 			e.roots[rs] = root
@@ -438,23 +473,13 @@ func (e *Encoder) codePicture(f *encFrame, typ int, key, ref bool) Packet {
 	}
 	// Pass B: entropy coding.
 	var cb ctxStore
+	bits := 0
 	for i := range es {
-		pkt.NALs = append(pkt.NALs, e.writeSegment(&es[i], picSize, &cb))
+		nal := e.writeSegment(&es[i], picSize, &cb)
+		pkt.NALs = append(pkt.NALs, nal)
+		bits += 8 * len(nal)
 	}
-	d.EndOfPicture()
-	if e.keepRecon {
-		for f := d.Next(); f != nil; f = d.Next() {
-			e.recon = append(e.recon, f)
-		}
-	}
-	if ref {
-		e.anchors = append(e.anchors, poc)
-		if len(e.anchors) > e.cfg.Refs+1 {
-			e.anchors = e.anchors[1:]
-		}
-	}
-	e.coded++
-	return pkt
+	return bits
 }
 
 // encSeg is one slice segment of the picture being coded.
@@ -476,7 +501,7 @@ type ctxStore struct {
 
 // beginSegment parses the segment's header back and sets up the decoder
 // state for it (a picture start for the first segment).
-func (e *Encoder) beginSegment(es *encSeg, picSize int) {
+func (e *Encoder) beginSegment(es *encSeg, picSize int, restart bool) {
 	d := e.d
 	var hw bitWriter
 	e.seq.header(&hw, &es.sl, picSize)
@@ -487,7 +512,10 @@ func (e *Encoder) beginSegment(es *encSeg, picSize int) {
 	if err != nil {
 		panic("hevc: encoder wrote an unparsable slice header: " + err.Error())
 	}
-	if h.firstInPic {
+	if restart {
+		d.fc.reset(h.sps)
+		d.lastIndep = nil
+	} else if h.firstInPic {
 		d.EndOfPicture()
 		d.lastIndep = nil
 		if err := d.startPicture(h); err != nil {
@@ -695,4 +723,3 @@ func escapedSizes(payload []byte, start int, subs []int) []int {
 	}
 	return out
 }
-
