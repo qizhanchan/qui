@@ -94,7 +94,7 @@ func (s *sliceDec) available(xCur, yCur, xN, yN int) bool {
 	if zN > zC {
 		return false
 	}
-	fc := &s.d.fc
+	fc := s.d.fc
 	cn, cc := s.ctbAddrOf(xN, yN), s.ctbAddrOf(xCur, yCur)
 	if fc.ctbSliceAddr[cn] != fc.ctbSliceAddr[cc] {
 		return false
@@ -103,7 +103,7 @@ func (s *sliceDec) available(xCur, yCur, xN, yN int) bool {
 }
 
 func (s *sliceDec) blk(x, y int) *blkInfo {
-	fc := &s.d.fc
+	fc := s.d.fc
 	return &fc.blk[(y>>2)*fc.w4+x>>2]
 }
 
@@ -111,7 +111,7 @@ func (s *sliceDec) blk(x, y int) *blkInfo {
 // the RBSP.
 func (s *sliceDec) decode(rbsp []byte, off int) error {
 	sp, p, h := s.sps, s.pps, s.h
-	fc := &s.d.fc
+	fc := s.d.fc
 	s.ctbAddrRs = h.address
 	s.ctbAddrTs = p.ctbRsToTs[h.address]
 	sliceQP := 26 + (p.InitQP - 26) + h.qpDelta
@@ -229,7 +229,7 @@ func (s *sliceDec) tileColOf(x int) int {
 // parseSAO parses sao() for the current CTB (7.3.8.3).
 func (s *sliceDec) parseSAO() {
 	sp, p, h := s.sps, s.pps, s.h
-	fc := &s.d.fc
+	fc := s.d.fc
 	rx, ry := s.ctbX, s.ctbY
 	cur := &fc.sao[s.ctbAddrRs]
 	*cur = saoParams{}
@@ -369,7 +369,7 @@ func (h *sliceHeader) sliceQP() int { return h.pps.InitQP + h.qpDelta }
 // codingUnit parses coding_unit() (7.3.8.5) and reconstructs intra CUs.
 func (s *sliceDec) codingUnit(x0, y0, log2, depth int) error {
 	sp, p, h := s.sps, s.pps, s.h
-	fc := &s.d.fc
+	fc := s.d.fc
 	n := 1 << log2
 	s.cuX, s.cuY, s.cuLog2 = x0, y0, log2
 	s.cuTransquantBypass = false

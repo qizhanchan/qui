@@ -15,8 +15,8 @@ var tcTable = [54]int{
 
 // edgeBS returns the boundary strength between 4x4 blocks p and q, or 0
 // when the edge is not filtered. vertical selects the edge direction.
-func (d *Decoder) edgeBS(pic *picture, xq, yq int, vertical bool) int {
-	fc := &d.fc
+func (d *loopFilter) edgeBS(pic *picture, xq, yq int, vertical bool) int {
+	fc := d.fc
 	q := &fc.blk[(yq>>2)*fc.w4+xq>>2]
 	xp, yp := xq, yq-1
 	isEdge, tuEdge := q.edgeH, q.tuEdgeH
@@ -108,14 +108,18 @@ func motionBS(pic *picture, i, j int) int {
 	return 0
 }
 
-func (d *Decoder) deblock(pic *picture) {
+// deblockEdges filters the vertical or horizontal edges whose q samples
+// lie in luma rows [y0, y1) (y0 a multiple of 8). Filtering all vertical
+// then all horizontal edges of successive CTB rows equals the picture-wide
+// order of 8.7.2: a row's horizontal edges read only lines already final
+// for vertical filtering, and modify at most three lines above the row.
+func (d *loopFilter) deblockEdges(pic *picture, vertical bool, y0, y1 int) {
 	sp := d.active
-	fc := &d.fc
-	W, H := sp.Width, sp.Height
-	for dir := 0; dir < 2; dir++ {
-		vertical := dir == 0
+	fc := d.fc
+	W := sp.Width
+	{
 		// Luma.
-		for y := 0; y < H; y += 4 {
+		for y := y0; y < y1; y += 4 {
 			for x := 0; x < W; x += 4 {
 				if vertical && (x == 0 || x&7 != 0) || !vertical && (y == 0 || y&7 != 0) {
 					continue
@@ -164,9 +168,9 @@ func (d *Decoder) deblock(pic *picture) {
 }
 
 // sliceAt returns the header of the slice containing luma sample (x, y).
-func (d *Decoder) sliceAt(x, y int) *sliceHeader {
+func (d *loopFilter) sliceAt(x, y int) *sliceHeader {
 	sp := d.active
-	fc := &d.fc
+	fc := d.fc
 	return fc.slices[fc.ctbSlice[(y>>sp.Log2Ctb)*sp.PicWCtb+x>>sp.Log2Ctb]]
 }
 

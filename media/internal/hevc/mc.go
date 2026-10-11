@@ -207,6 +207,10 @@ func (s *sliceDec) motionCompensate(x0, y0, w, h int, m *motion) {
 	for l := 0; l < 2; l++ {
 		if m.pred[l] {
 			refs[l] = hd.refList[l][m.ref[l]].pic
+			// Wait for the reference's in-loop filters to finish the lines
+			// the interpolation taps reach (pipeline.go).
+			need := max(y0+m.mv[l][1]>>2+h+4, 2*(y0/2+m.mv[l][1]>>3+h/2+2))
+			refs[l].prog.waitLines(min(need, sp.Height))
 		}
 	}
 	for comp := 0; comp < 3; comp++ {

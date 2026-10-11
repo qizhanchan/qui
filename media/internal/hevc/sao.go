@@ -10,44 +10,69 @@ var saoEO = [4][2][2]int{ // [class][neighbour a/b] = (dx, dy)
 	{{1, -1}, {-1, 1}},
 }
 
-func (d *Decoder) applySAO(pic *picture) {
-	sp := d.active
-	fc := &d.fc
+// saoBegin prepares SAO for pic and reports whether any slice uses it.
+// SAO reads deblocked samples, so saoCopy keeps a copy of the lines that
+// deblocking has finished, ahead of saoRow overwriting them.
+func (d *loopFilter) saoBegin(pic *picture) bool {
 	any := false
-	for _, h := range fc.slices {
+	for _, h := range d.fc.slices {
 		if h.saoLuma || h.saoChroma {
 			any = true
 		}
 	}
 	if !any {
+		return false
+	}
+	for c, n := range [3]int{len(pic.y), len(pic.cb), len(pic.cr)} {
+		if cap(d.saoTmp[c]) < n {
+			d.saoTmp[c] = make([]byte, n)
+		}
+		d.saoTmp[c] = d.saoTmp[c][:n]
+	}
+	d.copied = 0
+	return true
+}
+
+// saoCopy copies deblocked luma lines [copied, lines) and the chroma lines
+// they cover into the SAO source buffers.
+func (d *loopFilter) saoCopy(pic *picture, lines int) {
+	lines = min(lines, pic.h)
+	if lines <= d.copied {
 		return
 	}
-	// SAO reads deblocked samples: keep a copy.
-	src := [3][]byte{
-		append(d.saoTmp[0][:0], pic.y...),
-		append(d.saoTmp[1][:0], pic.cb...),
-		append(d.saoTmp[2][:0], pic.cr...),
+	y0, y1 := d.copied, lines
+	copy(d.saoTmp[0][y0*pic.ys:y1*pic.ys], pic.y[y0*pic.ys:y1*pic.ys])
+	c0, c1 := y0/2*pic.cs, y1/2*pic.cs
+	if lines == pic.h {
+		c1 = len(pic.cb)
 	}
-	d.saoTmp = src
+	copy(d.saoTmp[1][c0:c1], pic.cb[c0:c1])
+	copy(d.saoTmp[2][c0:c1], pic.cr[c0:c1])
+	d.copied = lines
+}
+
+// saoRow applies SAO to the CTBs of CTB row cy.
+func (d *loopFilter) saoRow(pic *picture, cy int) {
+	sp := d.active
+	fc := d.fc
 	dst := [3][]byte{pic.y, pic.cb, pic.cr}
-	for ctb := 0; ctb < sp.PicWCtb*sp.PicHCtb; ctb++ {
+	for ctb := cy * sp.PicWCtb; ctb < (cy+1)*sp.PicWCtb; ctb++ {
 		if fc.ctbSliceAddr[ctb] < 0 {
 			continue
 		}
 		prm := &fc.sao[ctb]
 		for c := 0; c < 3; c++ {
-			if prm.typ[c] == 0 {
-				continue
+			if prm.typ[c] != 0 {
+				d.saoCTB(pic, ctb, c, prm, d.saoTmp[c], dst[c])
 			}
-			d.saoCTB(pic, ctb, c, prm, src[c], dst[c])
 		}
 	}
 }
 
 // saoCTB applies SAO to component c of CTB ctb.
-func (d *Decoder) saoCTB(pic *picture, ctb, c int, prm *saoParams, src, dst []byte) {
+func (d *loopFilter) saoCTB(pic *picture, ctb, c int, prm *saoParams, src, dst []byte) {
 	sp := d.active
-	fc := &d.fc
+	fc := d.fc
 	scale, stride := 1, pic.ys
 	if c > 0 {
 		scale, stride = 2, pic.cs
@@ -189,9 +214,9 @@ func (d *Decoder) saoCTB(pic *picture, ctb, c int, prm *saoParams, src, dst []by
 // (xn, yn) (component coordinates; scale converts to luma): inside the
 // picture, decoded, and not across a slice or tile boundary that forbids
 // in-loop filtering.
-func (d *Decoder) saoNeighbourOK(ctb, xn, yn, w, h, scale int) bool {
+func (d *loopFilter) saoNeighbourOK(ctb, xn, yn, w, h, scale int) bool {
 	sp := d.active
-	fc := &d.fc
+	fc := d.fc
 	if xn < 0 || yn < 0 || xn >= w || yn >= h {
 		return false
 	}
@@ -231,7 +256,7 @@ func sign(v int) int {
 
 // saoSkip reports samples SAO leaves alone (pcm with the loop filter off,
 // transquant bypass).
-func (d *Decoder) saoSkip(xl, yl int) bool {
-	fc := &d.fc
+func (d *loopFilter) saoSkip(xl, yl int) bool {
+	fc := d.fc
 	return fc.blk[(yl>>2)*fc.w4+xl>>2].noFilter
 }

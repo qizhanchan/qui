@@ -34,8 +34,10 @@ type picture struct {
 	refLT  [2][]bool
 	intra  []bool
 	w4     int
-	// Reference lists of each slice by slice index, with POCs, for TMVP of
-	// later pictures (col block's references).
+
+	prog       progress // in-loop filtering (pipeline.go)
+	outPending int      // queued output copies not yet made
+	limbo      bool     // released from the DPB while output is pending
 }
 
 // frameCtx is the per-picture decoding state.
@@ -84,7 +86,9 @@ type Decoder struct {
 	dpb    []*picture
 	pool   []*picture
 	cur    *picture
-	fc     frameCtx
+	fc     *frameCtx // the current picture's; alternates within fcs
+	fcs    [2]frameCtx
+	fcIdx  int
 	sd     sliceDec
 	rbsp   []byte
 
@@ -103,12 +107,27 @@ type Decoder struct {
 	tag         int64
 
 	out     []*Frame
+	pend    []pendingOut // output order, copied once filtered
 	lastErr error
-	saoTmp  [3][]byte
+
+	lf         loopFilter
+	filtering  *picture // picture whose filter job may be running
+	syncFilter bool     // filter in place (tests)
+}
+
+// pendingOut is a picture queued for output with the SPS it was decoded
+// with (for cropping and colour).
+type pendingOut struct {
+	p  *picture
+	sp *SPS
 }
 
 // New returns a decoder.
-func New() *Decoder { return &Decoder{first: true} }
+func New() *Decoder {
+	d := &Decoder{first: true}
+	d.fc = &d.fcs[0]
+	return d
+}
 
 // SetTag sets the value attached to the next picture (see Frame.Tag).
 func (d *Decoder) SetTag(tag int64) { d.tag = tag }
@@ -167,8 +186,11 @@ func (d *Decoder) DecodeNALs(nals [][]byte) error {
 	return first
 }
 
-// Next returns the next output frame, or nil.
+// Next returns the next output frame, or nil. A picture whose in-loop
+// filtering is still running is returned by a later call (or after
+// Flush).
 func (d *Decoder) Next() *Frame {
+	d.drain(false)
 	if len(d.out) == 0 {
 		return nil
 	}
@@ -177,11 +199,34 @@ func (d *Decoder) Next() *Frame {
 	return f
 }
 
+// drain copies queued pictures out in order, stopping at the first one
+// still being filtered unless wait is set.
+func (d *Decoder) drain(wait bool) {
+	for len(d.pend) > 0 {
+		e := d.pend[0]
+		if !e.p.prog.finished() {
+			if !wait {
+				return
+			}
+			e.p.prog.wait()
+		}
+		d.out = append(d.out, frameOf(e.p, e.sp))
+		d.pend = d.pend[1:]
+		e.p.outPending--
+		if e.p.outPending == 0 && e.p.limbo {
+			e.p.limbo = false
+			d.pool = append(d.pool, e.p)
+		}
+	}
+}
+
 // Flush finishes the current picture and outputs everything still held.
 func (d *Decoder) Flush() {
 	d.EndOfPicture()
 	for d.bump() {
 	}
+	d.waitFilter()
+	d.drain(true)
 }
 
 // DecodeAnnexB decodes a complete Annex-B stream.
@@ -238,7 +283,7 @@ func (d *Decoder) decodeSlice(nal []byte, typ int) error {
 	if h.sps != d.active {
 		return errCorrupt
 	}
-	fc := &d.fc
+	fc := d.fc
 	fc.slices = append(fc.slices, h)
 	sd := &d.sd
 	sd.d, sd.h, sd.sps, sd.pps, sd.pic = d, h, h.sps, h.pps, d.cur
@@ -512,7 +557,11 @@ func (d *Decoder) newPicture(sp *SPS) *picture {
 		}
 		p.intra = make([]bool, n)
 	}
+	// A recycled buffer may still be filtered in the background.
+	p.prog.wait()
+	p.prog.complete(p.h)
 	p.isRef, p.longTerm, p.needOutput, p.latency = false, false, false, 0
+	p.outPending, p.limbo = 0, false
 	return p
 }
 
@@ -529,8 +578,10 @@ func (d *Decoder) EndOfPicture() {
 			d.lastErr = errCorrupt
 		}
 	}()
-	d.deblock(p)
-	d.applySAO(p)
+	d.waitFilter()
+	d.startFilter(p)
+	d.fcIdx ^= 1
+	d.fc = &d.fcs[d.fcIdx]
 	p.isRef = true
 	p.longTerm = false
 	for _, q := range d.dpb {
@@ -574,7 +625,8 @@ func (d *Decoder) bump() bool {
 		return false
 	}
 	best.needOutput = false
-	d.out = append(d.out, d.frameOf(best))
+	best.outPending++
+	d.pend = append(d.pend, pendingOut{best, d.active})
 	d.pruneDPB()
 	return true
 }
@@ -587,15 +639,18 @@ func (d *Decoder) pruneDPB() {
 			d.dpb[k] = p
 			k++
 		} else if p != d.cur {
-			d.pool = append(d.pool, p)
+			if p.outPending > 0 {
+				p.limbo = true
+			} else {
+				d.pool = append(d.pool, p)
+			}
 		}
 	}
 	d.dpb = d.dpb[:k]
 }
 
-// frameOf copies a picture out, cropped to the conformance window.
-func (d *Decoder) frameOf(p *picture) *Frame {
-	sp := d.active
+// frameOf copies a picture out, cropped to the conformance window of sp.
+func frameOf(p *picture, sp *SPS) *Frame {
 	w := p.w - sp.ConfLeft - sp.ConfRight
 	h := p.h - sp.ConfTop - sp.ConfBottom
 	cw, ch := (w+1)/2, (h+1)/2

@@ -51,24 +51,35 @@ func (s *sliceDec) motionAt(x, y int) motion {
 func (s *sliceDec) storeMotion(x0, y0, w, h int, m *motion) {
 	pic := s.pic
 	sp := s.sps
-	for y := y0; y < min(y0+h, sp.Height); y += 4 {
-		i := (y>>2)*pic.w4 + x0>>2
-		for x := x0; x < min(x0+w, sp.Width); x += 4 {
-			pic.intra[i] = false
-			for l := 0; l < 2; l++ {
-				if m.pred[l] {
-					e := &s.h.refList[l][m.ref[l]]
-					pic.refIdx[l][i] = int8(m.ref[l])
-					pic.mv[l][i] = packMV(m.mv[l][0], m.mv[l][1])
-					pic.refPOC[l][i] = int32(e.poc)
-					pic.refLT[l][i] = e.lt
-				} else {
-					pic.refIdx[l][i] = -1
-					pic.mv[l][i] = 0
+	xe, ye := min(x0+w, sp.Width), min(y0+h, sp.Height)
+	n := (xe - x0 + 3) >> 2
+	for l := 0; l < 2; l++ {
+		idx, mv, poc, lt := int8(-1), int32(0), int32(0), false
+		if m.pred[l] {
+			e := &s.h.refList[l][m.ref[l]]
+			idx, mv, poc, lt = int8(m.ref[l]), packMV(m.mv[l][0], m.mv[l][1]), int32(e.poc), e.lt
+		}
+		for y := y0; y < ye; y += 4 {
+			i := (y>>2)*pic.w4 + x0>>2
+			ri := pic.refIdx[l][i : i+n]
+			for k := range ri {
+				ri[k] = idx
+			}
+			mvs := pic.mv[l][i : i+n]
+			for k := range mvs {
+				mvs[k] = mv
+			}
+			if idx >= 0 {
+				rp, rl := pic.refPOC[l][i:i+n], pic.refLT[l][i:i+n]
+				for k := range rp {
+					rp[k], rl[k] = poc, lt
 				}
 			}
-			i++
 		}
+	}
+	for y := y0; y < ye; y += 4 {
+		i := (y>>2)*pic.w4 + x0>>2
+		clear(pic.intra[i : i+n])
 	}
 }
 
