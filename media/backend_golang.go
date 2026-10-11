@@ -10,11 +10,13 @@ import (
 	"time"
 
 	"github.com/qizhanchan/qui/media/internal/h264"
+	"github.com/qizhanchan/qui/media/internal/hevc"
 	"github.com/qizhanchan/qui/media/internal/mp4x"
 )
 
 // The pure-Go pipeline backend: MP4 demux (internal/mp4x) + the self-written
-// H.264 decoder (internal/h264) + GPU YUV→RGB (gl_yuv.go), with no ffmpeg
+// H.264 and HEVC decoders (internal/h264, internal/hevc) + GPU YUV→RGB
+// (gl_yuv.go), with no ffmpeg
 // and no platform framework. Audio (AAC-LC) is decoded by internal/aac and
 // played through internal/audioout when available.
 //
@@ -26,7 +28,7 @@ type golangBackend struct{}
 
 func (golangBackend) Capabilities() Capabilities {
 	c := Capabilities{
-		VideoCodecs: []string{"h264"},
+		VideoCodecs: []string{"h264", "hevc"},
 		Containers:  []string{"mp4", "mov", "m4v", "m4a"},
 	}
 	if golangAudioAvailable() {
@@ -41,7 +43,7 @@ func (golangBackend) OpenSource(path string) (Source, error) {
 		return nil, err
 	}
 	s := &golangSource{r: r}
-	if vt := r.VideoTrack(); vt != nil && vt.Codec == "h264" {
+	if vt := r.VideoTrack(); vt != nil && (vt.Codec == "h264" || vt.Codec == "hevc") {
 		if err := s.openVideo(vt); err != nil {
 			_ = r.Close()
 			return nil, err
@@ -65,7 +67,8 @@ type golangSource struct {
 
 	vt        *mp4x.Track
 	video     *VideoTrackInfo
-	sps, pps  [][]byte
+	hevc      bool     // HEVC rather than H.264
+	params    [][]byte // parameter sets fed before the first sample
 	lenSize   int
 	audio     *golangAudio
 	scrub     *golangScrub
@@ -77,22 +80,52 @@ type golangSource struct {
 }
 
 func (s *golangSource) openVideo(vt *mp4x.Track) error {
-	sps, pps, ls, err := s.r.AVCCParameterSets()
-	if err != nil {
-		return err
-	}
-	if len(sps) == 0 || len(pps) == 0 || ls < 1 || ls > 4 || vt.SampleCount() == 0 {
+	if vt.SampleCount() == 0 {
 		return ErrCodecUnsupported
 	}
-	p, err := h264.ParseSPS(sps[0])
-	if err != nil {
-		return ErrCodecUnsupported
+	var w, h int
+	var fpsVUI float64
+	if vt.Codec == "hevc" {
+		vps, sps, pps, ls, err := s.r.HVCCParameterSets()
+		if err != nil {
+			return err
+		}
+		if len(vps) == 0 || len(sps) == 0 || len(pps) == 0 || ls < 1 || ls > 4 {
+			return ErrCodecUnsupported
+		}
+		// ParseSPS rejects what the decoder cannot handle (Main 10,
+		// 4:2:2 / 4:4:4).
+		p, err := hevc.ParseSPS(sps[0])
+		if err != nil {
+			return ErrCodecUnsupported
+		}
+		w, h = p.DisplaySize()
+		fpsVUI = p.FPS()
+		s.hevc = true
+		s.params = append(append(append([][]byte{}, vps...), sps...), pps...)
+		s.lenSize = ls
+	} else {
+		sps, pps, ls, err := s.r.AVCCParameterSets()
+		if err != nil {
+			return err
+		}
+		if len(sps) == 0 || len(pps) == 0 || ls < 1 || ls > 4 {
+			return ErrCodecUnsupported
+		}
+		p, err := h264.ParseSPS(sps[0])
+		if err != nil {
+			return ErrCodecUnsupported
+		}
+		if !p.FrameMbsOnly || p.ChromaFormatIDC != 1 || p.BitDepthLuma != 8 || p.BitDepthChroma != 8 {
+			// Interlaced / 4:2:2 / 4:4:4 / >8-bit streams are not decoded.
+			return ErrCodecUnsupported
+		}
+		w, h = p.Width, p.Height
+		fpsVUI = p.FPS()
+		s.params = append(append([][]byte{}, sps...), pps...)
+		s.lenSize = ls
 	}
-	if !p.FrameMbsOnly || p.ChromaFormatIDC != 1 || p.BitDepthLuma != 8 || p.BitDepthChroma != 8 {
-		// Interlaced / 4:2:2 / 4:4:4 / >8-bit streams are not decoded.
-		return ErrCodecUnsupported
-	}
-	s.vt, s.sps, s.pps, s.lenSize = vt, sps, pps, ls
+	s.vt = vt
 	s.r.Keyframes(vt) // build the index before any concurrent use
 	dur := vt.Duration
 	if n := vt.SampleCount(); n > 0 {
@@ -103,12 +136,12 @@ func (s *golangSource) openVideo(vt *mp4x.Track) error {
 	}
 	fps := vt.FPS
 	if fps == 0 {
-		fps = float32(p.FPS())
+		fps = float32(fpsVUI)
 	}
 	s.video = &VideoTrackInfo{
-		Codec:       "h264",
-		Width:       p.Width,
-		Height:      p.Height,
+		Codec:       vt.Codec,
+		Width:       w,
+		Height:      h,
 		FPS:         fps,
 		Duration:    dur,
 		PixelFormat: "yuv420p",
@@ -269,11 +302,22 @@ func (s *golangSource) Close() error {
 	return err
 }
 
-// videoDecoder feeds samples from the video track into an h264.Decoder and
-// yields pictures in display order with their presentation times.
+// videoCodec is the decoder interface shared by h264.Decoder and
+// hevc.Decoder (both output h264.Frame pictures from one frame pool).
+type videoCodec interface {
+	SetTag(tag int64)
+	DecodeNAL(nal []byte) error
+	DecodeNALs(nals [][]byte) error
+	Next() *h264.Frame
+	Flush()
+}
+
+// videoDecoder feeds samples from the video track into the H.264 or HEVC
+// decoder and yields pictures in display order with their presentation
+// times.
 type videoDecoder struct {
 	s       *golangSource
-	dec     *h264.Decoder
+	dec     videoCodec
 	next    int  // next sample to feed
 	flushed bool // end of track reached and decoder flushed
 	// Frames before minPTS are dropped: leading pictures of an open GOP
@@ -293,11 +337,12 @@ func (s *golangSource) newVideoDecoder() *videoDecoder {
 // start restarts decoding at sample idx.
 func (v *videoDecoder) start(idx int, target time.Duration, precise bool) {
 	s := v.s
-	v.dec = h264.New()
-	for _, n := range s.sps {
-		_ = v.dec.DecodeNAL(n)
+	if s.hevc {
+		v.dec = hevc.New()
+	} else {
+		v.dec = h264.New()
 	}
-	for _, n := range s.pps {
+	for _, n := range s.params {
 		_ = v.dec.DecodeNAL(n)
 	}
 	v.next = idx
@@ -350,13 +395,18 @@ func (v *videoDecoder) feed(i int) error {
 		return err
 	}
 	v.buf = b
-	nals, err := h264.SplitLengthPrefixed(b, s.lenSize)
+	var nals [][]byte
+	if s.hevc {
+		nals, err = hevc.SplitLengthPrefixed(b, s.lenSize)
+	} else {
+		nals, err = h264.SplitLengthPrefixed(b, s.lenSize)
+	}
 	if err != nil && len(nals) == 0 {
 		v.errs++
 	}
 	v.dec.SetTag(int64(i))
 	if err := v.dec.DecodeNALs(nals); err != nil {
-		if errors.Is(err, h264.ErrUnsupported) {
+		if errors.Is(err, h264.ErrUnsupported) || errors.Is(err, hevc.ErrUnsupported) {
 			return ErrCodecUnsupported
 		}
 		v.errs++

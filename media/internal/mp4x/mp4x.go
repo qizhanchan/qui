@@ -8,7 +8,7 @@
 //     sync flag) built once at open
 //   - sample bytes by index
 //   - keyframe indexing (stss) and keyframe-accurate seek
-//   - codec configuration (avcC SPS/PPS, AudioSpecificConfig)
+//   - codec configuration (avcC / hvcC parameter sets, AudioSpecificConfig)
 //
 // Presentation timestamps apply the composition offsets (ctts / trun) and
 // the first edit-list entry, so they start at (about) zero for files whose
@@ -63,7 +63,7 @@ type fragSample = sample
 type Track struct {
 	ID        uint32
 	Kind      Kind
-	Codec     string // "h264" | "aac"
+	Codec     string // "h264" | "hevc" | "aac"
 	Timescale uint32
 	Duration  time.Duration
 
@@ -94,6 +94,7 @@ type Track struct {
 	keyfrOK bool
 
 	avcC *mp4.AVCDecoderConfiguration
+	hvcC *mp4.HvcC
 	asc  []byte
 }
 
@@ -127,9 +128,19 @@ func Open(path string) (*Reader, error) {
 	}
 	r := &Reader{f: f, info: info}
 	byID := map[uint32]*Track{}
+	var tracks []*Track
 	for _, raw := range info.Tracks {
 		t := newTrack(raw)
 		byID[t.ID] = t
+		tracks = append(tracks, t)
+	}
+	// The extras also classify HEVC tracks, which go-mp4 leaves unknown.
+	if err := r.readTrakExtras(byID, info.Timescale); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	for _, t := range tracks {
+		raw := t.raw
 		switch t.Kind {
 		case KindVideo:
 			if r.video == nil && !raw.Encrypted {
@@ -140,10 +151,6 @@ func Open(path string) (*Reader, error) {
 				r.audio = t
 			}
 		}
-	}
-	if err := r.readTrakExtras(byID, info.Timescale); err != nil {
-		_ = f.Close()
-		return nil, err
 	}
 	for _, t := range []*Track{r.video, r.audio} {
 		if t != nil && len(t.raw.Samples) > 0 {
@@ -180,6 +187,10 @@ func (r *Reader) readTrakExtras(byID map[uint32]*Track, movieTimescale uint32) e
 			{mp4.BoxTypeMdia(), mp4.BoxTypeMinf(), mp4.BoxTypeStbl(), mp4.BoxTypeStss()},
 			{mp4.BoxTypeMdia(), mp4.BoxTypeMinf(), mp4.BoxTypeStbl(), mp4.BoxTypeStsd(), mp4.BoxTypeAvc1(), mp4.BoxTypeAvcC()},
 			{mp4.BoxTypeMdia(), mp4.BoxTypeMinf(), mp4.BoxTypeStbl(), mp4.BoxTypeStsd(), mp4.BoxTypeMp4a(), mp4.BoxTypeEsds()},
+			{mp4.BoxTypeMdia(), mp4.BoxTypeMinf(), mp4.BoxTypeStbl(), mp4.BoxTypeStsd(), mp4.BoxTypeHvc1()},
+			{mp4.BoxTypeMdia(), mp4.BoxTypeMinf(), mp4.BoxTypeStbl(), mp4.BoxTypeStsd(), mp4.BoxTypeHvc1(), mp4.BoxTypeHvcC()},
+			{mp4.BoxTypeMdia(), mp4.BoxTypeMinf(), mp4.BoxTypeStbl(), mp4.BoxTypeStsd(), mp4.BoxTypeHev1()},
+			{mp4.BoxTypeMdia(), mp4.BoxTypeMinf(), mp4.BoxTypeStbl(), mp4.BoxTypeStsd(), mp4.BoxTypeHev1(), mp4.BoxTypeHvcC()},
 		})
 		if err != nil {
 			return err
@@ -197,6 +208,14 @@ func (r *Reader) readTrakExtras(byID map[uint32]*Track, movieTimescale uint32) e
 			case *mp4.AVCDecoderConfiguration:
 				if t != nil && t.avcC == nil {
 					t.avcC = b
+				}
+			case *mp4.VisualSampleEntry: // hvc1 / hev1
+				if t != nil && t.Kind == KindUnknown {
+					t.setHEVC(int(b.Width), int(b.Height))
+				}
+			case *mp4.HvcC:
+				if t != nil && t.hvcC == nil {
+					t.hvcC = b
 				}
 			case *mp4.Esds:
 				if t != nil && t.asc == nil {
@@ -381,10 +400,16 @@ func (r *Reader) Keyframes(t *Track) []int {
 		return t.keyfr
 	}
 	t.keyfrOK = true
-	if !t.hasStss && len(t.frag) == 0 && t.avcC != nil {
+	if !t.hasStss && len(t.frag) == 0 && (t.avcC != nil || t.hvcC != nil) {
 		// No stss means "all samples are sync" — but some muxers omit it
 		// for ordinary IDR/P streams, so classify by NAL unit type.
-		ls := int(t.avcC.LengthSizeMinusOne) + 1
+		hevc := t.avcC == nil
+		var ls int
+		if hevc {
+			ls = int(t.hvcC.LengthSizeMinusOne) + 1
+		} else {
+			ls = int(t.avcC.LengthSizeMinusOne) + 1
+		}
 		var buf []byte
 		for i := range t.samples {
 			b, err := r.ReadSampleInto(buf, t, i)
@@ -392,7 +417,7 @@ func (r *Reader) Keyframes(t *Track) []int {
 				break
 			}
 			buf = b
-			t.samples[i].sync = hasIDR(b, ls)
+			t.samples[i].sync = hasRandomAccess(b, ls, hevc)
 		}
 	}
 	for i := range t.samples {
@@ -441,6 +466,28 @@ func (r *Reader) AVCCParameterSets() (sps, pps [][]byte, lengthSize int, err err
 	return sps, pps, int(t.avcC.LengthSizeMinusOne) + 1, nil
 }
 
+// HVCCParameterSets returns the VPS, SPS and PPS NAL units from the video
+// track's hvcC and the NAL length prefix size.
+func (r *Reader) HVCCParameterSets() (vps, sps, pps [][]byte, lengthSize int, err error) {
+	t := r.video
+	if t == nil || t.hvcC == nil {
+		return nil, nil, nil, 0, fmt.Errorf("mp4x: hvcC not found")
+	}
+	for _, a := range t.hvcC.NaluArrays {
+		for _, n := range a.Nalus {
+			switch a.NaluType {
+			case 32:
+				vps = append(vps, n.NALUnit)
+			case 33:
+				sps = append(sps, n.NALUnit)
+			case 34:
+				pps = append(pps, n.NALUnit)
+			}
+		}
+	}
+	return vps, sps, pps, int(t.hvcC.LengthSizeMinusOne) + 1, nil
+}
+
 // AudioSpecificConfig returns the AAC AudioSpecificConfig bytes for the
 // audio track.
 func (r *Reader) AudioSpecificConfig() ([]byte, error) {
@@ -478,8 +525,20 @@ func newTrack(raw *mp4.Track) *Track {
 	return t
 }
 
-// hasIDR reports whether a length-prefixed AVC sample contains an IDR slice.
-func hasIDR(b []byte, ls int) bool {
+// setHEVC marks t as an HEVC video track (go-mp4 does not classify hvc1 /
+// hev1 sample entries).
+func (t *Track) setHEVC(w, h int) {
+	t.Kind = KindVideo
+	t.Codec = "hevc"
+	t.Width, t.Height = w, h
+	if n := len(t.raw.Samples); n > 0 && t.Duration > 0 {
+		t.FPS = float32(float64(n) / t.Duration.Seconds())
+	}
+}
+
+// hasRandomAccess reports whether a length-prefixed sample starts a
+// decodable point: an IDR slice (AVC) or an IRAP picture (HEVC).
+func hasRandomAccess(b []byte, ls int, hevc bool) bool {
 	for len(b) >= ls {
 		n := 0
 		for k := 0; k < ls; k++ {
@@ -489,7 +548,11 @@ func hasIDR(b []byte, ls int) bool {
 		if n <= 0 || n > len(b) {
 			return false
 		}
-		if b[0]&0x1f == 5 {
+		if hevc {
+			if t := b[0] >> 1 & 63; t >= 16 && t <= 23 {
+				return true
+			}
+		} else if b[0]&0x1f == 5 {
 			return true
 		}
 		b = b[n:]

@@ -596,17 +596,20 @@ func (d *Decoder) frameOf(p *picture) *Frame {
 	sp := d.active
 	w := p.w - sp.ConfLeft - sp.ConfRight
 	h := p.h - sp.ConfTop - sp.ConfBottom
-	f := &Frame{Width: w, Height: h, POC: p.poc, Tag: p.tag, KeyFrame: p.key, FullRange: sp.FullRange, Matrix: sp.Matrix}
-	cp := func(src []byte, ss, x0, y0, w, h int) *Plane {
-		pl := &Plane{Pix: make([]byte, w*h), Stride: w, W: w, H: h}
-		for y := 0; y < h; y++ {
-			copy(pl.Pix[y*w:], src[(y0+y)*ss+x0:(y0+y)*ss+x0+w])
-		}
-		return pl
+	cw, ch := (w+1)/2, (h+1)/2
+	f := h264.NewFrame(w, h)
+	f.POC, f.Tag, f.KeyFrame = p.poc, p.tag, p.key
+	f.FullRange, f.Matrix = sp.FullRange, sp.Matrix
+	for y := 0; y < h; y++ {
+		o := (y+sp.ConfTop)*p.ys + sp.ConfLeft
+		copy(f.Y.Pix[y*w:y*w+w], p.y[o:o+w])
 	}
-	f.Y = cp(p.y, p.ys, sp.ConfLeft, sp.ConfTop, w, h)
-	f.Cb = cp(p.cb, p.cs, sp.ConfLeft/2, sp.ConfTop/2, w/2, h/2)
-	f.Cr = cp(p.cr, p.cs, sp.ConfLeft/2, sp.ConfTop/2, w/2, h/2)
+	cl, ct := sp.ConfLeft/2, sp.ConfTop/2
+	for y := 0; y < ch; y++ {
+		o := (y+ct)*p.cs + cl
+		copy(f.Cb.Pix[y*cw:y*cw+cw], p.cb[o:o+cw])
+		copy(f.Cr.Pix[y*cw:y*cw+cw], p.cr[o:o+cw])
+	}
 	return f
 }
 

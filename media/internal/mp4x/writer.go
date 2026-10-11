@@ -9,16 +9,18 @@ import (
 
 // MP4 writer: progressive files (ftyp, mdat, moov at the end) and
 // fragmented files (ftyp, moov with mvex, then moof+mdat fragments), for
-// H.264 video (avcC) and AAC audio (esds).
+// H.264 (avc1/avcC) or HEVC (hvc1/hvcC) video and AAC audio (esds).
 
 // TrackConfig describes a track to write.
 type TrackConfig struct {
 	Kind      Kind
 	Timescale uint32
 
-	// Video (H.264): display size and parameter sets for avcC.
+	// Video: Codec is "h264" (the default) or "hevc"; display size and
+	// the parameter sets for avcC / hvcC (VPS for HEVC only).
+	Codec         string
 	Width, Height int
-	SPS, PPS      [][]byte
+	VPS, SPS, PPS [][]byte
 
 	// Audio (AAC): AudioSpecificConfig for esds.
 	SampleRate, Channels int
@@ -466,7 +468,11 @@ func (w *Writer) stsd(x *boxBuf, t *wTrack) {
 		x.close(es)
 		x.close(e)
 	} else {
-		e := x.open("avc1")
+		entry, cfg := "avc1", "avcC"
+		if c.Codec == "hevc" {
+			entry, cfg = "hvc1", "hvcC"
+		}
+		e := x.open(entry)
 		x.zeros(6)
 		x.u16(1)
 		x.zeros(16)
@@ -479,8 +485,12 @@ func (w *Writer) stsd(x *boxBuf, t *wTrack) {
 		x.zeros(32)
 		x.u16(0x0018)
 		x.u16(0xffff)
-		ac := x.open("avcC")
-		x.raw(AVCDecoderConfig(c.SPS, c.PPS))
+		ac := x.open(cfg)
+		if c.Codec == "hevc" {
+			x.raw(HEVCDecoderConfig(c.VPS, c.SPS, c.PPS))
+		} else {
+			x.raw(AVCDecoderConfig(c.SPS, c.PPS))
+		}
 		x.close(ac)
 		x.close(e)
 	}
@@ -704,4 +714,153 @@ func (w *Writer) flushFragment() {
 		t.samples = append(t.samples, t.frag...)
 		t.frag = t.frag[:0]
 	}
+}
+
+// HEVCDecoderConfig builds an HEVCDecoderConfigurationRecord (ISO/IEC
+// 14496-15 8.3.3; 4-byte NAL lengths) from VPS, SPS and PPS NAL units.
+// Profile, tier, level, chroma format and bit depths come from the first
+// SPS.
+func HEVCDecoderConfig(vps, sps, pps [][]byte) []byte {
+	var info hevcSPSInfo
+	if len(sps) > 0 {
+		info = parseHEVCSPS(sps[0])
+	}
+	var x boxBuf
+	x.u8(1)
+	x.raw(info.ptl[:]) // profile space / tier / idc, compatibility, constraints, level
+	x.u16(0xf000)      // min_spatial_segmentation_idc
+	x.u8(0xfc)         // parallelismType: unknown
+	x.u8(0xfc | info.chroma)
+	x.u8(0xf8 | info.depthL)
+	x.u8(0xf8 | info.depthC)
+	x.u16(0) // avgFrameRate
+	nest := uint8(0)
+	if info.nested {
+		nest = 1
+	}
+	x.u8((info.subLayers&7)<<3 | nest<<2 | 3)
+	var arrays [][][]byte
+	var types []uint8
+	for i, a := range [][][]byte{vps, sps, pps} {
+		if len(a) > 0 {
+			arrays = append(arrays, a)
+			types = append(types, uint8(32+i))
+		}
+	}
+	x.u8(uint8(len(arrays)))
+	for i, a := range arrays {
+		x.u8(0x80 | types[i]) // array_completeness
+		x.u16(uint16(len(a)))
+		for _, n := range a {
+			x.u16(uint16(len(n)))
+			x.raw(n)
+		}
+	}
+	return x.b
+}
+
+type hevcSPSInfo struct {
+	ptl            [12]byte
+	chroma         uint8
+	depthL, depthC uint8
+	subLayers      uint8
+	nested         bool
+}
+
+// parseHEVCSPS reads the fields hvcC repeats from an SPS NAL unit
+// (header included). A truncated SPS yields Main 4:2:0 8-bit defaults.
+func parseHEVCSPS(nal []byte) hevcSPSInfo {
+	info := hevcSPSInfo{chroma: 1, subLayers: 1}
+	var rbsp []byte
+	zeros := 0
+	for i, b := range nal {
+		if i < 2 {
+			continue
+		}
+		if zeros >= 2 && b == 3 {
+			zeros = 0
+			continue
+		}
+		if b == 0 {
+			zeros++
+		} else {
+			zeros = 0
+		}
+		rbsp = append(rbsp, b)
+	}
+	if len(rbsp) < 13 {
+		return info
+	}
+	maxSub := int(rbsp[0]>>1) & 7
+	info.subLayers = uint8(maxSub + 1)
+	info.nested = rbsp[0]&1 == 1
+	copy(info.ptl[:], rbsp[1:13])
+	r := expGolomb{b: rbsp, pos: 13 * 8}
+	var subProfile, subLevel [8]bool
+	for i := 0; i < maxSub; i++ {
+		subProfile[i] = r.u(1) == 1
+		subLevel[i] = r.u(1) == 1
+	}
+	if maxSub > 0 {
+		r.u(2 * (8 - maxSub))
+	}
+	for i := 0; i < maxSub; i++ {
+		if subProfile[i] {
+			r.u(88)
+		}
+		if subLevel[i] {
+			r.u(8)
+		}
+	}
+	r.ue() // sps_seq_parameter_set_id
+	chroma := r.ue()
+	if chroma == 3 {
+		r.u(1)
+	}
+	r.ue() // width
+	r.ue() // height
+	if r.u(1) == 1 {
+		r.ue()
+		r.ue()
+		r.ue()
+		r.ue()
+	}
+	dl, dc := r.ue(), r.ue()
+	if r.bad || chroma > 3 || dl > 7 || dc > 7 {
+		return info
+	}
+	info.chroma, info.depthL, info.depthC = uint8(chroma), uint8(dl), uint8(dc)
+	return info
+}
+
+// expGolomb is a minimal bit reader for parseHEVCSPS.
+type expGolomb struct {
+	b   []byte
+	pos int
+	bad bool
+}
+
+func (r *expGolomb) u(n int) uint32 {
+	var v uint32
+	for i := 0; i < n; i++ {
+		if r.pos>>3 >= len(r.b) {
+			r.bad = true
+			return 0
+		}
+		v = v<<1 | uint32(r.b[r.pos>>3]>>(7-uint(r.pos&7))&1)
+		r.pos++
+	}
+	return v
+}
+
+func (r *expGolomb) ue() uint32 {
+	n := 0
+	for r.u(1) == 0 && !r.bad {
+		n++
+		if n > 31 {
+			r.bad = true
+			return 0
+		}
+	}
+	return 1<<uint(n) - 1 + r.u(n)
 }

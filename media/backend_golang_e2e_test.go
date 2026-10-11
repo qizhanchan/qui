@@ -12,24 +12,39 @@ import (
 	"time"
 )
 
-// bframes_aac_160x90.mp4: 1 s of x264 High profile (B-pyramid, 3 refs,
-// weighted P) at 24 fps plus AAC-LC stereo, as written by FFmpeg with an
-// edit list. The hash is FFmpeg's decode of all 24 frames as I420.
-const (
-	e2eFile       = "testdata/bframes_aac_160x90.mp4"
-	e2eFrames     = 24
-	e2eFFmpegHash = "12751dbb2428437074dae7f56db9f14707cd013c6353d3afbc4d6d4942556fc3"
-)
+// e2eClips are 1 s at 24 fps plus AAC-LC stereo, as written by FFmpeg with
+// an edit list:
+//   - bframes_aac_160x90.mp4: x264 High profile (B-pyramid, 3 refs,
+//     weighted P);
+//   - hevc_aac_160x90.mp4: the same picture re-encoded with libx265 (3 B
+//     frames, closed GOP of 12), tagged hvc1.
+//
+// The hashes are FFmpeg's decode of all 24 frames as I420 (VideoToolbox
+// agrees for the HEVC clip).
+var e2eClips = []struct {
+	file, codec, hash string
+}{
+	{"testdata/bframes_aac_160x90.mp4", "h264", "12751dbb2428437074dae7f56db9f14707cd013c6353d3afbc4d6d4942556fc3"},
+	{"testdata/hevc_aac_160x90.mp4", "hevc", "e2cbb5109bb5d1e0deb1a3e4f3a5572eb642d16caedb5737e516c48fcd1d8f3b"},
+}
+
+const e2eFrames = 24
 
 func TestGolangBackendMatchesFFmpeg(t *testing.T) {
-	src, err := golangBackend{}.OpenSource(e2eFile)
+	for _, c := range e2eClips {
+		t.Run(c.codec, func(t *testing.T) { testMatchesFFmpeg(t, c.file, c.codec, c.hash) })
+	}
+}
+
+func testMatchesFFmpeg(t *testing.T, file, codec, hash string) {
+	src, err := golangBackend{}.OpenSource(file)
 	if err != nil {
 		t.Fatalf("OpenSource: %v", err)
 	}
 	defer src.Close()
 	vt := src.VideoTrack()
-	if vt.Width != 160 || vt.Height != 90 {
-		t.Fatalf("size %dx%d", vt.Width, vt.Height)
+	if vt.Width != 160 || vt.Height != 90 || vt.Codec != codec {
+		t.Fatalf("track %s %dx%d", vt.Codec, vt.Width, vt.Height)
 	}
 	h := sha256.New()
 	var last time.Duration = -1
@@ -59,13 +74,19 @@ func TestGolangBackendMatchesFFmpeg(t *testing.T) {
 	if n != e2eFrames {
 		t.Fatalf("decoded %d frames, want %d", n, e2eFrames)
 	}
-	if got := hex.EncodeToString(h.Sum(nil)); got != e2eFFmpegHash {
-		t.Errorf("decoded planes differ from FFmpeg:\n got  %s\n want %s", got, e2eFFmpegHash)
+	if got := hex.EncodeToString(h.Sum(nil)); got != hash {
+		t.Errorf("decoded planes differ from FFmpeg:\n got  %s\n want %s", got, hash)
 	}
 }
 
 func TestGolangBackendPreciseSeek(t *testing.T) {
-	src, err := golangBackend{}.OpenSource(e2eFile)
+	for _, c := range e2eClips {
+		t.Run(c.codec, func(t *testing.T) { testPreciseSeek(t, c.file) })
+	}
+}
+
+func testPreciseSeek(t *testing.T, file string) {
+	src, err := golangBackend{}.OpenSource(file)
 	if err != nil {
 		t.Fatal(err)
 	}

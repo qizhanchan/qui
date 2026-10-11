@@ -181,6 +181,11 @@ func getFrame(w, h int) *Frame {
 	}
 }
 
+// NewFrame returns a w x h I420 frame, reusing a recycled one when
+// possible. Every field other than the plane geometry may hold stale
+// values and must be set by the caller (other decoders share the pool).
+func NewFrame(w, h int) *Frame { return getFrame(w, h) }
+
 // Recycle returns a Frame obtained from a Decoder for reuse by later
 // output. The caller must not touch f (or its planes) afterwards. Calling
 // it is optional.

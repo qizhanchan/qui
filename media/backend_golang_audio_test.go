@@ -53,7 +53,7 @@ func (c *captureSink) samples() []int16 {
 
 func openTestAudio(t *testing.T) (*golangAudio, *captureSink) {
 	t.Helper()
-	r, err := mp4x.Open(e2eFile)
+	r, err := mp4x.Open(e2eClips[0].file)
 	if err != nil {
 		t.Fatal(err)
 	}

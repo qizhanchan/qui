@@ -386,6 +386,19 @@ func parseVUI(r *bitReader, s *SPS) {
 	}
 }
 
+// FPS returns the VUI frame rate, or 0 when the SPS carries no timing.
+func (s *SPS) FPS() float64 {
+	if s.FrameRateD == 0 {
+		return 0
+	}
+	return float64(s.FrameRateN) / float64(s.FrameRateD)
+}
+
+// DisplaySize returns the picture size after the conformance window.
+func (s *SPS) DisplaySize() (w, h int) {
+	return s.Width - s.ConfLeft - s.ConfRight, s.Height - s.ConfTop - s.ConfBottom
+}
+
 // parsePPS parses a picture parameter set NAL unit.
 func parsePPS(nal []byte, sps func(int) *SPS) (*PPS, error) {
 	var r bitReader
