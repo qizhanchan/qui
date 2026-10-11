@@ -10,42 +10,27 @@ import (
 	"testing"
 )
 
-// testSource returns n frames of the committed 176x144 clip as I420
-// images (from the HEVC vectors' source when HEVC_SRC is set, else a
-// synthetic moving pattern).
+// testSource returns n frames of real content: the raw clip in HEVC_SRC
+// when set, else the committed vector b_weighted.265 decoded (rcSource).
 func testSource(t testing.TB, w, h, n int) []*image.YCbCr {
 	t.Helper()
-	var raw []byte
-	if f := os.Getenv("HEVC_SRC"); f != "" {
-		raw, _ = os.ReadFile(f)
+	f := os.Getenv("HEVC_SRC")
+	if f == "" {
+		return rcSource(t, n)
+	}
+	raw, err := os.ReadFile(f)
+	if err != nil {
+		t.Fatal(err)
 	}
 	fs := w * h * 3 / 2
-	out := make([]*image.YCbCr, n)
-	for i := range out {
+	out := make([]*image.YCbCr, 0, n)
+	for i := 0; i < n && (i+1)*fs <= len(raw); i++ {
 		img := image.NewYCbCr(image.Rect(0, 0, w, h), image.YCbCrSubsampleRatio420)
-		if len(raw) >= (i+1)*fs {
-			f := raw[i*fs:]
-			copy(img.Y, f[:w*h])
-			copy(img.Cb, f[w*h:w*h+w*h/4])
-			copy(img.Cr, f[w*h+w*h/4:fs])
-		} else {
-			for y := 0; y < h; y++ {
-				for x := 0; x < w; x++ {
-					v := (x*3 + y*2 + i*4) & 255
-					if (x/16+y/16+i/3)&1 == 0 {
-						v = 255 - v/2
-					}
-					img.Y[y*img.YStride+x] = byte(v)
-				}
-			}
-			for y := 0; y < h/2; y++ {
-				for x := 0; x < w/2; x++ {
-					img.Cb[y*img.CStride+x] = byte(128 + (x-y+i)%40)
-					img.Cr[y*img.CStride+x] = byte(100 + (x+y*2)%60)
-				}
-			}
-		}
-		out[i] = img
+		fr := raw[i*fs:]
+		copy(img.Y, fr[:w*h])
+		copy(img.Cb, fr[w*h:w*h+w*h/4])
+		copy(img.Cr, fr[w*h+w*h/4:fs])
+		out = append(out, img)
 	}
 	return out
 }
