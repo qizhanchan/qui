@@ -454,10 +454,10 @@ func (w *Writer) stsd(x *boxBuf, t *wTrack) {
 		x.u8(0x40) // MPEG-4 audio
 		x.u8(0x15) // audio stream
 		x.u8(0)
-		x.u16(0)       // bufferSizeDB
-		x.u32(0)       // maxBitrate
-		x.u32(0)       // avgBitrate
-		x.u8(5)        // DecoderSpecificInfo
+		x.u16(0) // bufferSizeDB
+		x.u32(0) // maxBitrate
+		x.u32(0) // avgBitrate
+		x.u8(5)  // DecoderSpecificInfo
 		x.u8(uint8(dsi))
 		x.raw(c.ASC)
 		x.u8(6) // SLConfigDescriptor
