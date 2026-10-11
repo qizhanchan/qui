@@ -246,6 +246,46 @@ ffmpeg -i in.mp4 -c:v libx265 -pix_fmt yuv420p10le ...                          
 Small clips (≤ 160×90, a few frames) go into `testdata` with frame hashes,
 as for H.264; the 1080p clips stay opt-in corpus runs.
 
+**Decoder status: V0–V7 done (2026-10-11).** Tiles and dependent slices
+are implemented but no encoder at hand emits them (x265 and VideoToolbox do
+not); the HEVC encoder below will, and will pin them with vectors.
+
+| Piece | Location | State |
+|---|---|---|
+| Bitstream (V0) | `bits.go`, `params.go`, `slice.go`, `scaling.go`; `mp4x` | VPS/SPS/PPS with VUI, short-term RPS with inter-RPS prediction, long-term references, slice segment header, scaling lists; `hvc1`/`hev1` + `hvcC` read and written by `mp4x`, played by the pure-Go backend |
+| Entropy (V1) | `cabac.go`, `ctu.go`, `residual.go` | CABAC with the HEVC init tables, coding quadtree (CTU 16–64, implicit splits at picture edges), transform tree, residual coding with sign hiding and Rice adaptation, cu_qp_delta quantisation groups, PCM |
+| Intra (V2) | `intra.go`, `transform.go` | 35 modes with reference substitution / smoothing / strong smoothing and boundary filters, 4×4 DST, 4–32 inverse DCT accumulated over non-zero inputs, transform skip, lossless (transquant bypass), constrained intra |
+| Inter (V3) | `inter.go`, `mc.go` | merge (spatial, temporal, combined bi, zero), AMVP with scaling, TMVP, 8-/4-tap interpolation, explicit weighted prediction, AMP |
+| In-loop (V4) | `deblock.go`, `sao.go` | deblocking with slice / tile boundary rules, SAO band / edge with per-CTB neighbour validity |
+| DPB (V5) | `decoder.go` | POC, RPS marking, C.5.2.2 bumping (reorder and latency limits), missing-reference generation; CRA / BLA random access drops RASL pictures |
+| Parallel tools (V6) | `ctu.go`, `params.go` | tiles (address maps, per-tile context reset), WPP context storage / sync and substream restarts, dependent slice segments |
+| Performance (V7) | `neon_arm64.s` (from `neon_gen.go`), `pipeline.go` | NEON interpolation (8-/4-tap, both stages), uni / bi / weighted output, SAO edge offset; integer-MV copies and averages; deblocking + SAO pipelined on their own goroutine by CTB rows |
+
+Evidence:
+
+- **Plane-exact vs FFmpeg:** 16 committed vectors (`testdata/vectors.txt`:
+  AMP, transform skip, B pyramid with 4 references, weighted prediction,
+  lossless and cu-lossless, scaling lists, slices + WPP, CTU 16 / 32 with
+  deep TU trees, open-GOP CRA, constrained intra, 8×8 quantisation groups,
+  and decoding from a CRA / BLA with RASL dropped), a 24-configuration x265
+  stress corpus at 416×240, and 1080p corpus runs (x265 medium, B + 4 refs
+  + weighted, WPP + CTU 32, lossless, scaling lists, and two
+  `hevc_videotoolbox` streams). The HEVC + AAC MP4 plays through the
+  pure-Go backend with frames matching FFmpeg (`TestGolangBackendMatchesFFmpeg`).
+- **Second oracle:** VideoToolbox's hardware decoder agrees with us on all
+  42 small corpus streams. On the two CTU-16 streams where FFmpeg's software
+  decoder disagrees with VideoToolbox (one SAO sample next to a CTB corner),
+  we match VideoToolbox; `ctu16_sao_vt` pins that case.
+- **Speed** (1080p, Apple-silicon performance core plus the filter
+  goroutine, `BenchmarkDecodeFile`): high-motion x265 medium **6.5 ms/frame**
+  (FFmpeg `-threads 1`: 3.8 ms); typical screen content 1.9–2.5 ms
+  (FFmpeg 1.2–1.3 ms). NEON and `-tags purego` builds decode identically;
+  pipelined and in-place filtering are pinned equal
+  (`TestPipelinedFilterMatchesInPlace`, race detector clean).
+
+Open items: tile / dependent-slice vectors (from our encoder), Main 10,
+NEON deblocking and inverse transform, WPP row-parallel decoding.
+
 The HEVC **encoder** follows the decoder with the same milestone shape as
 R1 (intra → inter → rate control → in-loop decisions → performance),
 verified the same way (reconstruction == decode by us and by FFmpeg;

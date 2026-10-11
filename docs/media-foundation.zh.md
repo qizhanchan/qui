@@ -196,6 +196,38 @@ ffmpeg -i in.mp4 -c:v libx265 -pix_fmt yuv420p10le ...                          
 
 与 H.264 一样，小片段（≤ 160×90，数帧）连同帧哈希放入 `testdata`；1080p 片段保留为需手动开启的语料比对。
 
+**解码器状态：V0–V7 已完成（2026-10-11）。** tiles 与 dependent slice 已实现，但手头的编码器
+（x265、VideoToolbox）都不产生这类码流；下面的 HEVC 编码器会产生它们，并以测试向量固定。
+
+| 部分 | 位置 | 状态 |
+|---|---|---|
+| 码流（V0） | `bits.go`、`params.go`、`slice.go`、`scaling.go`；`mp4x` | VPS/SPS/PPS（含 VUI）、带帧间 RPS 预测的短期 RPS、长期参考、slice segment 头、缩放列表；`mp4x` 读写 `hvc1`/`hev1` + `hvcC`，纯 Go 后端可播放 |
+| 熵编码（V1） | `cabac.go`、`ctu.go`、`residual.go` | 使用 HEVC 初始化表的 CABAC、编码四叉树（CTU 16–64，图像边缘隐式划分）、变换树、含符号隐藏与 Rice 自适应的残差编码、cu_qp_delta 量化组、PCM |
+| 帧内（V2） | `intra.go`、`transform.go` | 35 种模式（参考替换 / 平滑 / 强平滑与边界滤波）、4×4 DST、只累加非零输入的 4–32 反 DCT、transform skip、无损（transquant bypass）、受限帧内 |
+| 帧间（V3） | `inter.go`、`mc.go` | merge（空域、时域、组合双向、零）、带缩放的 AMVP、TMVP、8 / 4 抽头插值、显式加权预测、AMP |
+| 环内滤波（V4） | `deblock.go`、`sao.go` | 含 slice / tile 边界规则的去块、按 CTB 判定邻居可用性的 SAO band / edge |
+| DPB（V5） | `decoder.go` | POC、RPS 标记、C.5.2.2 输出（重排与延迟限制）、缺失参考生成；CRA / BLA 随机访问丢弃 RASL 图像 |
+| 并行工具（V6） | `ctu.go`、`params.go` | tiles（地址映射、每 tile 上下文重置）、WPP 上下文存储 / 同步与子流重启、dependent slice segment |
+| 性能（V7） | `neon_arm64.s`（由 `neon_gen.go` 生成）、`pipeline.go` | NEON 插值（8 / 4 抽头，两级）、单向 / 双向 / 加权输出、SAO edge；整数 MV 直接拷贝与平均；去块 + SAO 按 CTB 行在独立 goroutine 上流水化 |
+
+证据：
+
+- **与 FFmpeg 逐平面一致：** 16 个已提交向量（`testdata/vectors.txt`：AMP、transform skip、
+  4 参考 B 金字塔、加权预测、无损与 cu 级无损、缩放列表、slices + WPP、CTU 16 / 32 与深 TU 树、
+  开放 GOP 的 CRA、受限帧内、8×8 量化组，以及从 CRA / BLA 起解码并丢弃 RASL）、416×240 上 24 种
+  x265 配置的压力语料，以及 1080p 语料（x265 medium、B + 4 参考 + 加权、WPP + CTU 32、无损、
+  缩放列表、两段 `hevc_videotoolbox` 码流）。HEVC + AAC 的 MP4 经纯 Go 后端播放，帧与 FFmpeg
+  一致（`TestGolangBackendMatchesFFmpeg`）。
+- **第二个参照：** VideoToolbox 硬件解码器在全部 42 个小语料码流上与我们一致。在 FFmpeg 软件
+  解码器与 VideoToolbox 不一致的两个 CTU-16 码流上（CTB 角附近一个 SAO 样本），我们与
+  VideoToolbox 一致；`ctu16_sao_vt` 固定了这一情形。
+- **速度**（1080p，Apple 芯片一个性能核加滤波 goroutine，`BenchmarkDecodeFile`）：高运动 x265
+  medium **6.5 ms/帧**（FFmpeg `-threads 1`：3.8 ms）；典型屏幕内容 1.9–2.5 ms（FFmpeg 1.2–1.3 ms）。
+  NEON 与 `-tags purego` 构建解码结果相同；流水化滤波与原地滤波结果相同
+  （`TestPipelinedFilterMatchesInPlace`，race 检测干净）。
+
+未完成项：tiles / dependent slice 向量（来自我们的编码器）、Main 10、NEON 去块与反变换、WPP 行并行解码。
+
 HEVC **编码器**在解码器之后，里程碑结构与 R1 相同（帧内 → 帧间 → 码率控制 → 环内决策 →
 性能），验证方式也相同（重建 == 我们与 FFmpeg 的解码结果；质量对比 `libx265 -preset ultrafast`）。
 
