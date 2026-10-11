@@ -11,6 +11,8 @@ type Decoder struct {
 	ref [numRefFrames]refSlot
 
 	hdr             *FrameHeader // current frame header
+	fs              *frameState  // frame being decoded
+	out             []*frame     // shown frames not yet returned
 	seenFrameHeader bool
 	tileNum         int // next expected tile
 
