@@ -29,26 +29,44 @@ func cdefStrengthSubset(pri, sec []int) (s [][2]int) {
 }
 
 // planesSSD is the squared error of the frame's visible samples against
-// the source, per plane.
+// the source, per plane (in row bands on all cores).
 func (e *Encoder) planesSSD(fr *frame) (ssd [3]int64) {
 	for p := 0; p < fr.numPlanes; p++ {
 		pb := &fr.planes[p]
 		src, ss := e.src[p], e.srcStride[p]
-		for y := 0; y < pb.h; y++ {
-			a := src[y*ss : y*ss+pb.w]
-			b := pb.pix8[y*pb.stride : y*pb.stride+pb.w]
-			for i, v := range a {
-				d := int64(v) - int64(b[i])
-				ssd[p] += d * d
+		const band = 32
+		nb := (pb.h + band - 1) / band
+		part := make([]int64, nb)
+		parallelFor(nb, func(_, b int) {
+			var sum int64
+			for y := b * band; y < min(pb.h, (b+1)*band); y++ {
+				a := src[y*ss : y*ss+pb.w]
+				r := pb.pix8[y*pb.stride : y*pb.stride+pb.w]
+				for i, v := range a {
+					d := int64(v) - int64(r[i])
+					sum += d * d
+				}
 			}
+			part[b] = sum
+		})
+		for _, v := range part {
+			ssd[p] += v
 		}
 	}
 	return
 }
 
+// copyPlanes copies src's samples into dst (same geometry), in bands on
+// all cores.
 func copyPlanes(dst, src *frame) {
+	const chunk = 256 << 10
 	for p := 0; p < src.numPlanes; p++ {
-		copy(dst.planes[p].pix8, src.planes[p].pix8)
+		d, s := dst.planes[p].pix8, src.planes[p].pix8
+		n := (len(s) + chunk - 1) / chunk
+		parallelFor(n, func(_, i int) {
+			lo, hi := i*chunk, min(len(s), (i+1)*chunk)
+			copy(d[lo:hi], s[lo:hi])
+		})
 	}
 }
 

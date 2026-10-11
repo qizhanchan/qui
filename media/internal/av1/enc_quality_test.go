@@ -76,6 +76,10 @@ func TestQualityVsSVT(t *testing.T) {
 				cfg.MiniGOP = iv
 			case "KeyInt":
 				cfg.KeyInt = iv
+			case "TileCols":
+				cfg.TileCols = iv
+			case "TileRows":
+				cfg.TileRows = iv
 			}
 		}
 		start := time.Now()

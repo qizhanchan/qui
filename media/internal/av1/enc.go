@@ -122,6 +122,7 @@ type Encoder struct {
 	lfStep         int     // finest deblocking level step searched
 	interRank      int     // inter candidates coded in full (0: all)
 	intraSkipBelow float64 // no intra trial when the best inter cost per sample is below
+	skipNoSplit    bool    // no split search under an unsplit inter block without residual
 	scoreBuf       []modeCand
 	rankedBuf      []blkChoice
 
@@ -393,6 +394,7 @@ func (e *Encoder) setPreset(p int) {
 		e.lumaCands, e.chromaCands, e.cflCands = 1, 1, 2
 		e.cdefSparse, e.lfStep = true, 4
 		e.interRank, e.intraSkipBelow = 2, 4
+		e.skipNoSplit = true
 		e.cdefCands = cdefStrengthSubset([]int{0, 2, 4, 8}, []int{0, 2})
 	case 1:
 		e.rectParts, e.angleDeltas, e.txDepth, e.interpSearch = true, true, true, true

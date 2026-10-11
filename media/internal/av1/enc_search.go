@@ -253,6 +253,9 @@ func (e *Encoder) searchNode(r, c, bSize int, budget float64) (*encNode, float64
 		lastBest = cost < bestCost
 		if lastBest {
 			best, bestCost = node, cost
+			if e.skipNoSplit && part == partNone && node.ch[0].inter && node.ch[0].skip {
+				break
+			}
 		}
 	}
 	if best == nil {
