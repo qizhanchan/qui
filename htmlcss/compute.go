@@ -97,6 +97,10 @@ type ComputedStyle struct {
 	OutlineWidth float32
 	OutlineColor qui.Color
 	HasOutline   bool
+	// OutlineNone records an explicit `outline: none` (or a zero
+	// outline-width): it also suppresses a text control's native focus
+	// ring, the way browsers let a stylesheet drop the default ring.
+	OutlineNone bool
 
 	// Sizing.
 	Width     float32
@@ -1024,6 +1028,7 @@ func parseOutline(m map[string]string, cs *ComputedStyle, fs float32) {
 	haveW, haveC := false, false
 	if v, ok := m["outline"]; ok && strings.TrimSpace(v) != "" {
 		if strings.EqualFold(strings.TrimSpace(v), "none") {
+			cs.OutlineNone = true
 			return
 		}
 		for _, f := range strings.Fields(v) {
@@ -1045,6 +1050,10 @@ func parseOutline(m map[string]string, cs *ComputedStyle, fs float32) {
 		}
 	}
 	if !haveW && !haveC {
+		return
+	}
+	if haveW && width == 0 {
+		cs.OutlineNone = true
 		return
 	}
 	if !haveW {

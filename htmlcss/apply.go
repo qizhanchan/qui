@@ -625,6 +625,14 @@ func syncControlStates(ss *qui.StateStyle, cs *ComputedStyle, native **qui.State
 		overlayStateChrome(*slot, cs, v)
 	}
 	overlay(&ss.Hover, cs.Hover)
+	// `outline: none` (on the control or its :focus rule) drops the native
+	// focus ring: focus keeps the resting border, and only an author :focus
+	// border — overlaid next — changes it.
+	if fv := focusVariant(cs); ss.Focused != nil && (cs.OutlineNone || (fv != nil && fv.OutlineNone)) {
+		f := ss.Focused
+		f.Border, f.BorderSize = ss.Base.Border, ss.Base.BorderSize
+		f.BorderWidths, f.BorderColors = ss.Base.BorderWidths, ss.Base.BorderColors
+	}
 	overlay(&ss.Focused, focusVariant(cs))
 	overlay(&ss.Pressed, cs.Active)
 }

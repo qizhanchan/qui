@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/qizhanchan/qui"
+	"github.com/qizhanchan/qui/widgets"
 )
 
 // A <textarea> built through the live-element API must deliver keystrokes to
@@ -61,5 +62,34 @@ func TestTextareaOnInputWiredBeforeBacking(t *testing.T) {
 	}
 	if fired == 0 {
 		t.Error("OnInput never fired for a handler installed before the backing existed")
+	}
+}
+
+func TestSelectTextSelectsWholeInputValue(t *testing.T) {
+	eng := NewStyleEngine("")
+	app := eng.NewEl("div")
+	in := eng.NewEl("input")
+	in.SetElementID("q")
+	app.SetElementChildren([]qui.Widget{in})
+	eng.SetRoot(app)
+	win := qui.NewTestWindow(qui.Size{W: 400, H: 300})
+	win.SetRoot(app)
+	eng.Restyle()
+	app.Layout(qui.Rect{X: 0, Y: 0, W: 400, H: 300})
+
+	if err := win.Type("#q", "old query", qui.TypeOptions{}); err != nil {
+		t.Fatalf("Type: %v", err)
+	}
+	if !in.SelectText() {
+		t.Fatal("SelectText reported no text backing on an <input>")
+	}
+	if err := win.Type("#q", "new", qui.TypeOptions{}); err != nil {
+		t.Fatalf("Type: %v", err)
+	}
+	if got := in.backing.(*widgets.Input).Text; got != "new" {
+		t.Fatalf("value after select + type = %q, want %q", got, "new")
+	}
+	if eng.NewEl("div").SelectText() {
+		t.Fatal("SelectText on a <div> should report false")
 	}
 }

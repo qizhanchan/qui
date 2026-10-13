@@ -72,6 +72,11 @@ type ScrollView struct {
 	Orientation ScrollOrientation
 	// ScrollStep is the pixel delta per wheel notch. 0 means the default.
 	ScrollStep float32
+	// FocusDelegated makes the view unfocusable because the widget hosting
+	// it takes focus instead (an htmlcss overflow element with tabindex)
+	// and forwards its scrolling keys through ScrollKey — so the pair is
+	// one Tab stop and one click-focus target, not two.
+	FocusDelegated bool
 
 	// scrollOff is the main-axis offset (Y for vertical, X for
 	// horizontal). Kept under one field so the layout / bar / drag
@@ -176,7 +181,7 @@ func (s *ScrollView) ChildList() []Widget {
 	return []Widget{s.Content}
 }
 
-func (s *ScrollView) Focusable() bool { return s.Enabled() }
+func (s *ScrollView) Focusable() bool { return s.Enabled() && !s.FocusDelegated }
 func (s *ScrollView) CancelInteraction() {
 	if s.barDragging {
 		s.barDragging = false
@@ -416,27 +421,32 @@ func (s *ScrollView) Handle(event Event) bool {
 			}
 		}
 	case KeyEvent:
-		if s.focused && e.Type() == EventKeyDown {
-			if s.Orientation == ScrollHorizontal {
-				switch e.Key {
-				case KeyLeft:
-					s.scrollBy(-defaultKeyStep)
-					return true
-				case KeyRight:
-					s.scrollBy(defaultKeyStep)
-					return true
-				}
-			} else {
-				switch e.Key {
-				case KeyUp:
-					s.scrollBy(-defaultKeyStep)
-					return true
-				case KeyDown:
-					s.scrollBy(defaultKeyStep)
-					return true
-				}
-			}
+		if s.focused {
+			return s.ScrollKey(e)
 		}
+	}
+	return false
+}
+
+// ScrollKey applies the view's keyboard scrolling (the arrow keys along its
+// axis) to a key-down and reports whether it scrolled. Handle calls it
+// while the view is focused; a host with FocusDelegated calls it for the
+// keys its own focused widget didn't use.
+func (s *ScrollView) ScrollKey(e KeyEvent) bool {
+	if e.Type() != EventKeyDown {
+		return false
+	}
+	back, fwd := KeyUp, KeyDown
+	if s.Orientation == ScrollHorizontal {
+		back, fwd = KeyLeft, KeyRight
+	}
+	switch e.Key {
+	case back:
+		s.scrollBy(-defaultKeyStep)
+		return true
+	case fwd:
+		s.scrollBy(defaultKeyStep)
+		return true
 	}
 	return false
 }

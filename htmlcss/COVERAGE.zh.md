@@ -110,7 +110,7 @@
 | `border-style` | 🟡 | solid/dashed/dotted/none；double/groove/ridge/inset/outset 退化为 solid |
 | `border-radius` | ✅ | 统一半径 + 单角 + 1–4 值简写 + 椭圆 `a / b`；`overflow:hidden` 按圆角裁子元素。限制：box-shadow 仍按统一 `Radius` |
 | `box-sizing` | ✅ | 默认 `content-box`，支持 `border-box`。border 画在内、不额外占布局，故 content 面积可能差 border 厚度 |
-| `outline` | ✅ | `outline`/`-width`/`-color` → 边框外描一圈（不占布局）；无 `outline-offset`/style |
+| `outline` | ✅ | `outline`/`-width`/`-color` → 边框外描一圈（不占布局）；无 `outline-offset`/style。`<input>`/`<textarea>`/`<select>` 或其 `:focus` 规则上的 `outline: none`（或宽度 0）会去掉原生焦点环 |
 
 ### 背景 / 视觉效果
 
@@ -214,12 +214,14 @@
 | 粘贴钩子 | ✅ | `OnPaste(text) bool` 在元素内先于获焦输入框拦截 Cmd/Ctrl+V |
 | `<canvas>` 绘制 | ✅ | `SetCanvasDraw`，或带计算样式的 `SetCanvasPaint` / `h.Canvas`（`ctx.Color`、`ctx.Font`、`ctx.Style.Var`） |
 | `app-region: drag / no-drag` | ✅ | 可继承（Electron `-webkit-app-region` 别名）；`drag` 声明在标题栏条上，整个子树可拖窗，`no-drag` 子元素挖回来。落到 `Window.BeginWindowDrag()`。只在 `Window.SetTitlebarStyle(qui.TitlebarOverlay)` 的窗口有意义；不支持的平台退化为普通按下 |
-| 键盘焦点 / Tab 循环 | ✅ | 框架层；控件编辑走 backing widget。可选中的文字能点击聚焦（用于复制），但不是 Tab 停靠点。`El.RequestFocus()` 可以用代码设置焦点 |
+| 键盘焦点 / Tab 循环 | ✅ | 框架层；控件编辑走 backing widget。可选中的文字能点击聚焦（用于复制），但不是 Tab 停靠点。`El.RequestFocus()` 可以用代码设置焦点；`tabindex` 调整顺序 |
+| `scrollIntoView` | ✅ | `El.ScrollIntoView(block)`——`ScrollBlockNearest` / `Center` / `Start` / `End`，外加 `CenterIfNeeded`（WebKit 的 `scrollIntoViewIfNeeded`）；由内向外滚动所有外层 `overflow:auto` 元素，按内容边界截断 |
 | HTML `disabled` 属性 | ✅ | 禁用 backing 控件；`El.SetDisabled(bool)` 运行时切换并 relink `:disabled` |
 | HTML `title` 属性 → hover tooltip | ✅ | restyle 时推到 widget `SetTooltip`；折叠进行内元素无独立 widget |
 | HTML `hidden` 属性 | ✅ | 按 UA 规则实现（tier 0 的 `display:none`），作者 CSS 可覆盖。静态 `Render` 下命中 display:none 的编译期剪枝 |
 | `autofocus` | ✅ | 元素首次挂载时聚焦一次，表单元素会聚焦到它的编辑控件；在 portal 里同样有效 |
-| `tabindex` / `accesskey` / `minlength` / `pattern` / `rows` / `cols` / `inputmode` / `spellcheck` | ❌ | 不读取 |
+| `tabindex` | ✅ | 任意整数都让元素可聚焦（点击、`RequestFocus`、接收按键）；Tab 顺序同 HTML——正值优先、升序（相同值按文档顺序），然后是 `0` 和原生可聚焦元素按文档顺序；负值只能点击/代码聚焦，Tab 跳过。点击 tabindex 元素里的文字聚焦的是该元素（点击时判定，之后新增的行同样生效）。用在表单控件上时调整/移除其 backing 控件的 Tab 停靠。带 tabindex 的 `overflow:auto` 元素只算一个焦点目标：内部 ScrollView 让出焦点，元素自己用方向键滚动。非整数值忽略。DSL：`h.Div().TabIndex(0)` |
+| `accesskey` / `minlength` / `pattern` / `rows` / `cols` / `inputmode` / `spellcheck` | ❌ | 不读取 |
 | `label[for]` 点击聚焦控件 | ✅ | toggle / select / focus |
 | AX 角色（button/link/textbox/img/list/heading…） | ✅ | `El.Role()` + `AccessibleName()`，agent 可寻址 |
 
@@ -229,7 +231,7 @@
 
 按桌面应用需要它的高频程度分组。
 
-**高价值（原生 + 日常）：** `aspect-ratio`；`position: sticky`；`::placeholder` 与 `:placeholder-shown`/`:valid`/`:invalid`/`:indeterminate`/`:default`（共用「值变化 → 作用域 restyle」实时钩子）；`::selection`/`::marker`；`:is()`/`:where()`/CSS 嵌套；`transition`；`scroll` 与 `change` 事件；`tabindex`/`minlength`/`pattern`/`rows`/`cols`/`inputmode`/`spellcheck` 属性。
+**高价值（原生 + 日常）：** `aspect-ratio`；`position: sticky`；`::placeholder` 与 `:placeholder-shown`/`:valid`/`:invalid`/`:indeterminate`/`:default`（共用「值变化 → 作用域 restyle」实时钩子）；`::selection`/`::marker`；`:is()`/`:where()`/CSS 嵌套；`transition`；`scroll` 与 `change` 事件；`minlength`/`pattern`/`rows`/`cols`/`inputmode`/`spellcheck` 属性。
 
 **中价值：** Grid `justify-items`/`justify-self`/`place-*`/`grid-auto-*`/隐式轨道；`min-content`/`max-content`/`fit-content` 尺寸关键字；`@media` 响应式重算与 `prefers-color-scheme`/`(hover)`/`(pointer)`/`prefers-reduced-motion`；`@container`；`color-scheme`；`oklch()`/`color-mix()`/`light-dark()`/`hwb()`/`lab()`；`text-shadow`；文本抛光（`text-wrap`、`hyphens`、`tab-size`、`font-variant*`、`font-feature-settings`、`text-underline-offset`）；`background-position`/`-repeat`/显式 `background-size`/repeating 渐变；远程图片 URL / `srcset`；滚动与 resize 抛光（`resize`、`appearance`、`caret-color`、`scrollbar-width`/`scrollbar-gutter`、`overscroll-behavior`、`scroll-behavior`、scroll-snap）；`<select multiple>`/`size`；原生日期 / 颜色选择器；`<a target>`/`download`。
 

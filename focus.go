@@ -1,11 +1,16 @@
 package qui
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 // Focus navigation — Tab / Shift+Tab to cycle through focusable widgets,
 // Esc to clear. Focus order follows DFS traversal of the widget tree
-// (document order), which is the least-surprising default. Custom tab
-// orders can come later via a per-widget TabIndex hint.
+// (document order), adjusted by TabIndexer the way HTML's tabindex
+// adjusts it: positive indices first in ascending order, then everything
+// else in document order; a negative index leaves the widget out of the
+// Tab cycle (it still takes focus from a click or SetFocus).
 
 type childLister = ChildLister
 
@@ -28,10 +33,76 @@ type TabStopper interface {
 }
 
 func isTabStop(w Widget) bool {
-	if t, ok := w.(TabStopper); ok {
-		return t.TabStop()
+	if t, ok := w.(TabStopper); ok && !t.TabStop() {
+		return false
+	}
+	if i, ok := tabIndexOf(w); ok && i < 0 {
+		return false
 	}
 	return true
+}
+
+// TextFocusClaimer is optional for focusable containers. One whose
+// ClaimsTextFocus returns true takes click focus for a click on selectable
+// text inside it (text is focusable but not a Tab stop) — HTML's "a click
+// on text in a tabindex element focuses the element".
+type TextFocusClaimer interface {
+	ClaimsTextFocus() bool
+}
+
+// TabIndexer is optional for focusable widgets: HTML's tabindex. ok=false
+// means no explicit index (document order). A positive index moves the
+// widget ahead of the unindexed ones, lowest first; 0 is document order;
+// a negative index takes it out of the Tab cycle.
+type TabIndexer interface {
+	TabIndex() (index int, ok bool)
+}
+
+// TabIndexHost lets a container supply the index of a child that carries
+// its focus — an HTML form element whose focus lives on its backing
+// control: `<input tabindex=2>` orders the control, not the element.
+type TabIndexHost interface {
+	TabIndexFor(child Widget) (index int, ok bool)
+}
+
+// tabIndexOf resolves w's explicit tab index from w itself, else from its
+// parent hosting it.
+func tabIndexOf(w Widget) (int, bool) {
+	if t, ok := w.(TabIndexer); ok {
+		if i, ok := t.TabIndex(); ok {
+			return i, true
+		}
+	}
+	if p := w.Parent(); p != nil {
+		if h, ok := p.(TabIndexHost); ok {
+			return h.TabIndexFor(w)
+		}
+	}
+	return 0, false
+}
+
+// sortTabOrder applies tabindex order to a document-order focusable list:
+// positive indices first (ascending, ties in document order), then the
+// rest in document order.
+func sortTabOrder(list []Widget) []Widget {
+	positive := false
+	for _, w := range list {
+		if i, ok := tabIndexOf(w); ok && i > 0 {
+			positive = true
+			break
+		}
+	}
+	if !positive {
+		return list
+	}
+	key := func(w Widget) int {
+		if i, ok := tabIndexOf(w); ok && i > 0 {
+			return i
+		}
+		return int(^uint(0) >> 1) // unindexed / 0: after every positive index
+	}
+	sort.SliceStable(list, func(a, b int) bool { return key(list[a]) < key(list[b]) })
+	return list
 }
 
 type modalOverlay = ModalOverlay
@@ -98,14 +169,14 @@ func (w *Window) CollectFocusables() []Widget {
 	// overlay and return — focus is trapped within it.
 	if m := w.topModalIndex(); m >= 0 {
 		walk(w.overlays[m])
-		return result
+		return sortTabOrder(result)
 	}
 	// No modal: main tree then all overlays in stack order.
 	walk(w.root)
 	for _, ov := range w.overlays {
 		walk(ov)
 	}
-	return result
+	return sortTabOrder(result)
 }
 
 // SetFocus moves focus to the given widget, firing SetFocused(false)

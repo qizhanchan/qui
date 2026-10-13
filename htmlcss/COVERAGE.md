@@ -110,7 +110,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | `border-style` | 🟡 | solid/dashed/dotted/none; double/groove/ridge/inset/outset degrade to solid |
 | `border-radius` | ✅ | uniform + per-corner + 1–4 value shorthand + elliptical `a / b`; `overflow:hidden` clips children to the rounded shape. Limit: `box-shadow` still uses the uniform radius |
 | `box-sizing` | ✅ | default `content-box`; `border-box` supported. Border is drawn inside and does not add layout extent, so the content area can differ by the border thickness |
-| `outline` | ✅ | `outline`/`-width`/`-color` → a stroke outside the border (does not affect layout); no `outline-offset`/style |
+| `outline` | ✅ | `outline`/`-width`/`-color` → a stroke outside the border (does not affect layout); no `outline-offset`/style. `outline: none` (or a 0 width) on an `<input>`/`<textarea>`/`<select>` or its `:focus` rule drops the native focus ring |
 
 ### Background / visual effects
 
@@ -214,12 +214,14 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | Paste hook | ✅ | `OnPaste(text) bool` intercepts Cmd/Ctrl+V inside the element, ahead of the focused field |
 | `<canvas>` drawing | ✅ | `SetCanvasDraw`, or `SetCanvasPaint` / `h.Canvas` with the computed style (`ctx.Color`, `ctx.Font`, `ctx.Style.Var`) |
 | `app-region: drag / no-drag` | ✅ | inheritable (Electron `-webkit-app-region` alias); `drag` on a title-bar strip lets the whole subtree drag the window, `no-drag` children opt back out. Backed by `Window.BeginWindowDrag()` (native window-manager drag). Only meaningful with `Window.SetTitlebarStyle(qui.TitlebarOverlay)`; unsupported platforms degrade to a normal press |
-| Keyboard focus / Tab cycling | ✅ | framework-level; control editing uses the backing widget. Selectable text is click-focusable (for copy) but not a Tab stop. `El.RequestFocus()` focuses programmatically |
+| Keyboard focus / Tab cycling | ✅ | framework-level; control editing uses the backing widget. Selectable text is click-focusable (for copy) but not a Tab stop. `El.RequestFocus()` focuses programmatically; `tabindex` adjusts the order |
+| `scrollIntoView` | ✅ | `El.ScrollIntoView(block)` — `ScrollBlockNearest` / `Center` / `Start` / `End`, plus `CenterIfNeeded` (WebKit's `scrollIntoViewIfNeeded`); scrolls every enclosing `overflow:auto` element, innermost first, clamped to the content |
 | HTML `disabled` attribute | ✅ | disables the backing control; `El.SetDisabled(bool)` toggles at runtime and relinks `:disabled` |
 | HTML `title` attribute → hover tooltip | ✅ | pushed to the widget's tooltip on restyle; folded inline elements have no widget of their own |
 | HTML `hidden` attribute | ✅ | implemented per UA rules (a tier-0 `display:none`), so author CSS can override it. Static `Render` prunes resolved-none subtrees at compile time |
 | `autofocus` | ✅ | focuses the element (its editing control for form elements) once, when it first mounts — including inside a portal |
-| `tabindex` / `accesskey` / `minlength` / `pattern` / `rows` / `cols` / `inputmode` / `spellcheck` | ❌ | not read |
+| `tabindex` | ✅ | any integer makes an element focusable (click, `RequestFocus`, keys); Tab order follows HTML — positive values first ascending (ties in document order), then `0` and natively focusable elements in document order; negative = click/script focus only, skipped by Tab. A click on text inside a tabindex element focuses the element (checked at click time, so rows added later count). On a form control it orders / removes the backing control's Tab stop. A tabindex `overflow:auto` element is one focus target: its internal ScrollView steps aside and the element scrolls with the arrow keys. Non-integer values are ignored. DSL: `h.Div().TabIndex(0)` |
+| `accesskey` / `minlength` / `pattern` / `rows` / `cols` / `inputmode` / `spellcheck` | ❌ | not read |
 | `label[for]` click focus | ✅ | toggle / select / focus |
 | AX roles (button/link/textbox/img/list/heading…) | ✅ | `El.Role()` + `AccessibleName()`, addressable by the agent |
 
@@ -229,7 +231,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 
 Grouped by how likely a desktop application is to need them.
 
-**High value (native + everyday):** `aspect-ratio`; `position: sticky`; `::placeholder` and `:placeholder-shown`/`:valid`/`:invalid`/`:indeterminate`/`:default` (all need a "value changed → scoped restyle" hook); `::selection`/`::marker`; `:is()`/`:where()`/CSS nesting; `transition`; the `scroll` and `change` events; the `tabindex`/`minlength`/`pattern`/`rows`/`cols`/`inputmode`/`spellcheck` attributes.
+**High value (native + everyday):** `aspect-ratio`; `position: sticky`; `::placeholder` and `:placeholder-shown`/`:valid`/`:invalid`/`:indeterminate`/`:default` (all need a "value changed → scoped restyle" hook); `::selection`/`::marker`; `:is()`/`:where()`/CSS nesting; `transition`; the `scroll` and `change` events; the `minlength`/`pattern`/`rows`/`cols`/`inputmode`/`spellcheck` attributes.
 
 **Medium value:** Grid `justify-items`/`justify-self`/`place-*`/`grid-auto-*`/implicit tracks; `min-content`/`max-content`/`fit-content` sizing keywords; responsive `@media` re-evaluation and `prefers-color-scheme`/`(hover)`/`(pointer)`/`prefers-reduced-motion`; `@container`; `color-scheme`; `oklch()`/`color-mix()`/`light-dark()`/`hwb()`/`lab()`; `text-shadow`; text polish (`text-wrap`, `hyphens`, `tab-size`, `font-variant*`, `font-feature-settings`, `text-underline-offset`); `background-position`/`-repeat`/explicit `background-size`/repeating gradients; remote image URLs / `srcset`; scroll and resize polish (`resize`, `appearance`, `caret-color`, `scrollbar-width`/`scrollbar-gutter`, `overscroll-behavior`, `scroll-behavior`, scroll-snap); `<select multiple>`/`size`; native date/color pickers; `<a target>`/`download`.
 

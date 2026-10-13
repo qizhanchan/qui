@@ -51,8 +51,8 @@ package html
 
 import (
 	"errors"
-	"strings"
 	"strconv"
+	"strings"
 
 	"github.com/qizhanchan/qui"
 	"github.com/qizhanchan/qui/htmlcss"
@@ -316,6 +316,12 @@ func fmtNum(v float64) string { return strconv.FormatFloat(v, 'g', -1, 64) }
 
 // Title sets the HTML title attribute — shown as a hover tooltip.
 func (b *Builder) Title(t string) *Builder { return b.Attr("title", t) }
+
+// TabIndex sets the tabindex attribute: the element becomes focusable (a
+// click or el.RequestFocus focuses it, and it receives keys), and its
+// place in the Tab order follows HTML — 0 document order, positive first
+// in ascending order, negative left out of the Tab cycle.
+func (b *Builder) TabIndex(i int) *Builder { return b.Attr("tabindex", strconv.Itoa(i)) }
 
 // Autofocus sets the `autofocus` attribute: the element takes keyboard
 // focus once, when it first mounts — the field a dialog opens on. For a
@@ -954,8 +960,8 @@ func ContextMenu(window *qui.Window, x, y float32, items []MenuItem) {
 // MenuItem is one row of a context menu: a label with optional shortcut
 // hint, check state, and submenu — or a separator.
 type MenuItem struct {
-	Label     string
-	Shortcut  string
+	Label    string
+	Shortcut string
 	// Badge is a small pill on the row's right, e.g. "New" (see
 	// widgets.MenuItem.Badge).
 	Badge     string

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -185,7 +186,7 @@ type El struct {
 	iconSrc qui.VectorSource
 	// iconUntinted keeps iconSrc's own colours (SetIconUntinted).
 	iconUntinted bool
-	iconImg *svgImage
+	iconImg      *svgImage
 
 	// Drag & drop reorder: an El marked draggable becomes the drag source
 	// (identified by dragKey); an El with an onDrop handler becomes a drop
@@ -661,7 +662,49 @@ func (e *El) Focusable() bool {
 	if e.onKeyDown != nil || e.onKeyUp != nil || e.isPushButton() {
 		return e.Enabled()
 	}
+	// tabindex makes any element focusable (any value: -1 is click /
+	// script focus only). A form control's focus lives on its backing
+	// control instead, which the index orders via TabIndexFor.
+	if e.tabFocusable() {
+		return e.Enabled()
+	}
 	return e.Box.Focusable()
+}
+
+// TabIndex implements qui.TabIndexer: the element's `tabindex` attribute.
+// A value that isn't an integer is ignored, as in HTML.
+func (e *El) TabIndex() (int, bool) {
+	v, ok := e.readAttr("tabindex")
+	if !ok {
+		return 0, false
+	}
+	i, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil {
+		return 0, false
+	}
+	return i, true
+}
+
+// ClaimsTextFocus implements qui.TextFocusClaimer: a click on text inside
+// a tabindex element focuses the element (as in a browser), not the
+// selectable label — checked at click time, so rows added later count too.
+func (e *El) ClaimsTextFocus() bool { return e.tabFocusable() }
+
+// tabFocusable reports a non-control element made focusable by tabindex —
+// the element itself is the focus target (a form control's focus stays on
+// its backing control).
+func (e *El) tabFocusable() bool {
+	_, ok := e.TabIndex()
+	return ok && !e.isControl()
+}
+
+// TabIndexFor implements qui.TabIndexHost: a form element's tabindex
+// orders its backing control, where the focus actually lands.
+func (e *El) TabIndexFor(child qui.Widget) (int, bool) {
+	if child == nil || child != e.backing {
+		return 0, false
+	}
+	return e.TabIndex()
 }
 
 // FocusOnClick implements qui.ClickFocusPolicy. A push button without an
@@ -692,6 +735,19 @@ func (e *El) RequestFocus() bool {
 	}
 	win.SetFocus(target)
 	return win.Focused() == target
+}
+
+// SelectText is the DOM's select() for a text control (input, textarea):
+// it selects the control's whole value, so the next keystroke replaces it —
+// what a dialog pre-filled with the last search wants. It reports whether
+// the element has a text backing to select in.
+func (e *El) SelectText() bool {
+	s, ok := e.backing.(interface{ SelectRange(start, end int) })
+	if !ok {
+		return false
+	}
+	s.SelectRange(0, math.MaxInt32) // SelectRange clamps to the value
+	return true
 }
 
 // SetFocused fires the focus / blur callbacks around Box's bookkeeping.
@@ -2494,6 +2550,9 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 			}
 		})
 		e.scrollInner.LayoutEngine = contentLayout
+		// With a tabindex the element itself is the focus target; its
+		// ScrollView steps aside and gets the scrolling keys forwarded.
+		e.scrollView.FocusDelegated = e.tabFocusable()
 		if cs.OverflowScrollX {
 			e.scrollView.Orientation = widgets.ScrollHorizontal
 		} else {
@@ -3915,6 +3974,12 @@ func (e *El) Handle(event qui.Event) bool {
 		switch ke.Type() {
 		case qui.EventKeyDown:
 			if e.onKeyDown != nil && e.onKeyDown(ke) {
+				return true
+			}
+			// A focused tabindex scroll container scrolls with the arrow
+			// keys (its default action, after the author's handler).
+			if sv := e.scrollView; sv != nil && sv.FocusDelegated && e.overflowScroll &&
+				ke.Target() == qui.Widget(e) && sv.ScrollKey(ke) {
 				return true
 			}
 			// A focused push button presses on Enter / Space, after the

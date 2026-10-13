@@ -2303,11 +2303,33 @@ func (w *Window) updateFocusFromMouse(me MouseEvent) {
 	}
 	for cur := target; cur != nil; cur = cur.Parent() {
 		if f, ok := cur.(registerFocusable); ok && f.Focusable() {
+			// Selectable text (focusable, not a Tab stop) inside a
+			// container that claims text clicks focuses the container.
+			if t, ok := cur.(TabStopper); ok && !t.TabStop() {
+				if c := textFocusClaimer(cur.Parent()); c != nil {
+					cur = c
+				}
+			}
 			w.focusVisible = false
 			w.SetFocus(cur)
 			return
 		}
 	}
+}
+
+// textFocusClaimer returns the nearest focusable ancestor-or-self of w that
+// claims clicks on text inside it, or nil.
+func textFocusClaimer(w Widget) Widget {
+	for cur := w; cur != nil; cur = cur.Parent() {
+		c, ok := cur.(TextFocusClaimer)
+		if !ok || !c.ClaimsTextFocus() {
+			continue
+		}
+		if f, ok := cur.(registerFocusable); ok && f.Focusable() && cur.Enabled() {
+			return cur
+		}
+	}
+	return nil
 }
 
 // pathToRoot returns [root, ..., widget] — the ancestor chain from the
