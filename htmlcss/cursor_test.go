@@ -33,6 +33,10 @@ func TestParseCursorKeywords(t *testing.T) {
 		{"cell", qui.CursorCrosshair, true, false},
 		{"col-resize", qui.CursorResizeEW, true, false},
 		{"ns-resize", qui.CursorResizeNS, true, false},
+		{"nwse-resize", qui.CursorResizeNWSE, true, false},
+		{"se-resize", qui.CursorResizeNWSE, true, false},
+		{"nesw-resize", qui.CursorResizeNESW, true, false},
+		{"sw-resize", qui.CursorResizeNESW, true, false},
 		// Recognized but with no native shape: declared (so it suppresses a
 		// nested I-beam) yet degraded to the plain arrow.
 		{"not-allowed", qui.CursorDefault, true, false},

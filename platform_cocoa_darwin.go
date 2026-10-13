@@ -388,6 +388,10 @@ func cocoaCursorShape(shape CursorShape) int {
 		return 4
 	case CursorResizeNS:
 		return 5
+	case CursorResizeNWSE:
+		return 6
+	case CursorResizeNESW:
+		return 7
 	default:
 		return 0
 	}

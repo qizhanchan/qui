@@ -133,10 +133,33 @@ func themedStyle(s *Style) *Style {
 		return s
 	}
 	out := *s
-	out.Background = themed(s.Background)
-	out.Foreground = themed(s.Foreground)
+	out.Background = themedBg(s.Background)
+	out.Foreground = themedFg(s.Foreground)
 	out.Border = themed(s.Border)
 	return &out
+}
+
+// themedFg is themed for a text color. The baseline constants are matched
+// by value, so a surface sentinel must not apply here: an authored
+// `color: #ffffff` equals htmlControlBg and would otherwise be remapped to
+// the theme's (dark) surface — white text painted dark on a dark field.
+func themedFg(c Color) Color {
+	switch c {
+	case htmlControlBg, htmlButtonBg, baselineHoverBg, baselinePressedBg,
+		baselineDisabledBg, baselineTrack, baselineBarBg:
+		return c
+	}
+	return themed(c)
+}
+
+// themedBg is themed for a fill: the mirror of themedFg, so an authored
+// `background: #000` isn't remapped to the theme's text color.
+func themedBg(c Color) Color {
+	switch c {
+	case htmlControlText, htmlDisabledText, baselineTextGray, baselineBarText:
+		return c
+	}
+	return themed(c)
 }
 
 // nativeBoxPadding reports a raw-HTML control's authored padding (CSS

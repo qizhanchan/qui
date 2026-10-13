@@ -336,6 +336,29 @@ func TestNativeControlsFollowTheme(t *testing.T) {
 	}
 }
 
+// Baseline colors are matched by value, so the mapping must respect the
+// slot: white *text* (authored `color: #fff`) is not the white UA field fill
+// and must not turn into the dark surface color, nor black fill into text.
+func TestThemedStyleKeepsRoles(t *testing.T) {
+	saved := *CurrentTheme()
+	defer SetTheme(saved)
+	dark := saved
+	dark.SurfaceOverlay = Color{R: 0.2, G: 0.2, B: 0.2, A: 1}
+	dark.Text = Color{R: 0.9, G: 0.9, B: 0.9, A: 1}
+	SetTheme(dark)
+	st := themedStyle(&Style{Foreground: htmlControlBg, Background: htmlControlText})
+	if st.Foreground != htmlControlBg {
+		t.Fatalf("white text remapped to %v", st.Foreground)
+	}
+	if st.Background != htmlControlText {
+		t.Fatalf("black fill remapped to %v", st.Background)
+	}
+	st = themedStyle(&Style{Foreground: htmlControlText, Background: htmlControlBg})
+	if st.Foreground != dark.Text || st.Background != dark.SurfaceOverlay {
+		t.Fatalf("UA colors should still follow the theme: %+v", st)
+	}
+}
+
 func TestI18nKeysAndNameOverride(t *testing.T) {
 	r := NewRadioButton(NewRadioGroup(), "Fallback")
 	r.SetLabelKey("missing.key")

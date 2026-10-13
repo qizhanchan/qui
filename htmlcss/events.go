@@ -41,7 +41,7 @@ func (e *El) pointerEvent(me qui.MouseEvent, prevented *bool) PointerEvent {
 		X: win.X, Y: win.Y,
 		LocalX: me.X - b.X, LocalY: me.Y - b.Y,
 		Button: me.Button, Mods: me.Mods, Clicks: me.Clicks,
-		Pressed:   e.Pressed(),
+		Pressed:   e.Pressed() || (me.Type() == qui.EventMouseMove && e.Window().PointerCaptured()),
 		prevented: prevented,
 	}
 }

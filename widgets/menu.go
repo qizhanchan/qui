@@ -2098,8 +2098,8 @@ func (mb *MenuBar) styleTrigger(b *Button, open bool) {
 	base.Radius = p.MenuRadius
 	base.Padding = Insets{Top: 2, Right: 7, Bottom: 2, Left: 7}
 	base.Font.Size = CurrentTheme().FontBase
-	base.Background = themed(mb.Style().Background)
-	base.Foreground = themed(mb.Style().Foreground)
+	base.Background = themedBg(mb.Style().Background)
+	base.Foreground = themedFg(mb.Style().Foreground)
 	hover := base
 	hover.Background = p.MenuBarHover
 	if open {

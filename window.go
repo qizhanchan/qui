@@ -37,6 +37,13 @@ const (
 	// shape, or outside the window. See cursor_image.go, which also has
 	// image cursors (NewImageCursor).
 	CursorHidden
+	// CursorResizeNWSE is a diagonal resize cursor for the top-left /
+	// bottom-right corner of a frame (CSS nwse-resize). Backends without a
+	// diagonal shape fall back to the arrow.
+	CursorResizeNWSE
+	// CursorResizeNESW is the top-right / bottom-left counterpart (CSS
+	// nesw-resize).
+	CursorResizeNESW
 )
 
 // Window is one OS window plus the widget tree it renders. The OS half
@@ -704,6 +711,12 @@ func (w *Window) UnregisterAnimator(a Animator) {
 // (see zoom.go), which is what content-space callers want. It equals the
 // OS window's logical size at 100% zoom; use WindowSize when you
 // specifically mean the window rather than its content.
+// PointerCaptured reports whether a mouse press is in progress: some
+// widget received a MouseDown and its release hasn't arrived yet. Unlike a
+// widget's own pressed flag it survives the pointer leaving that widget,
+// which is what a drag handler asking "is the button still held?" needs.
+func (w *Window) PointerCaptured() bool { return w != nil && w.mouseCaptured != nil }
+
 func (w *Window) Size() Size {
 	if w == nil {
 		return Size{}
@@ -772,7 +785,8 @@ func (w *Window) Cursor() CursorShape {
 
 func isSupportedCursorShape(shape CursorShape) bool {
 	switch shape {
-	case CursorDefault, CursorText, CursorCrosshair, CursorHand, CursorResizeEW, CursorResizeNS, CursorHidden:
+	case CursorDefault, CursorText, CursorCrosshair, CursorHand, CursorResizeEW, CursorResizeNS, CursorHidden,
+		CursorResizeNWSE, CursorResizeNESW:
 		return true
 	default:
 		return IsImageCursor(shape)
@@ -2147,13 +2161,16 @@ func (w *Window) dispatch(event Event) {
 	}
 	state.target = target
 
-	// A blank-press selection drag is provisional: if any widget consumes
-	// this MouseDown (scrollbar thumb, slider knob, …), that widget's own
-	// gesture owns the mouse — disarm so drag-to-select doesn't fight it.
-	if me, ok := event.(MouseEvent); ok && me.eventType == EventMouseDown &&
-		w.textSel.active && w.textSel.fromBlank {
+	// A selection drag armed by this MouseDown is provisional. If another
+	// widget consumes the press — a scrollbar thumb or slider knob under a
+	// blank press, or an ancestor's pointer handler (a dialog title bar
+	// dragging the box, a splitter) under a press on its text — that
+	// widget's own gesture owns the mouse: disarm, or drag-to-select would
+	// swallow the captured moves. A text target consuming its own press
+	// keeps the selection; that is how it selects.
+	if me, ok := event.(MouseEvent); ok && me.eventType == EventMouseDown && w.textSel.active {
 		defer func() {
-			if state.stopped {
+			if state.stopped && (w.textSel.fromBlank || state.currentTarget != target) {
 				w.disarmTextSelection()
 			}
 		}()

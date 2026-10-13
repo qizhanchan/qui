@@ -1519,7 +1519,7 @@ func parseBox(m map[string]string, prop string, fs float32) qui.Insets {
 //   - reset:    `auto` / CSS-wide `initial` — drop any inherited declaration
 //     and hand the decision back to the widget's built-in shape.
 //   - declared: a recognized keyword. Keywords qui has no native shape for
-//     (move / grab / not-allowed / wait / help / zoom-* / diagonal resizes /
+//     (move / grab / not-allowed / wait / help / zoom-* /
 //     none) still count as declared and degrade to CursorDefault: the author
 //     said "not text here", and suppressing a nested I-beam is the part of
 //     that intent qui can honor. GLFW 3.3 only offers six standard shapes,
@@ -1549,11 +1549,13 @@ func parseCursor(v string) (shape qui.CursorShape, declared, reset bool) {
 			return qui.CursorResizeEW, true, false
 		case "ns-resize", "row-resize", "n-resize", "s-resize":
 			return qui.CursorResizeNS, true, false
+		case "nwse-resize", "nw-resize", "se-resize":
+			return qui.CursorResizeNWSE, true, false
+		case "nesw-resize", "ne-resize", "sw-resize":
+			return qui.CursorResizeNESW, true, false
 		case "default", "none", "context-menu", "help", "progress", "wait",
 			"move", "grab", "grabbing", "not-allowed", "no-drop", "alias",
-			"copy", "all-scroll", "zoom-in", "zoom-out",
-			"ne-resize", "nw-resize", "se-resize", "sw-resize",
-			"nesw-resize", "nwse-resize":
+			"copy", "all-scroll", "zoom-in", "zoom-out":
 			// Recognized, but no native shape → declared + degraded.
 			return qui.CursorDefault, true, false
 		}

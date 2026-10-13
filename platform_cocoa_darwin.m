@@ -83,6 +83,20 @@ static NSCursor* quiCocoaCursorFor(int shape) {
         case 3:  return [NSCursor pointingHandCursor];
         case 4:  return [NSCursor resizeLeftRightCursor];
         case 5:  return [NSCursor resizeUpDownCursor];
+        // Diagonal frame-resize cursors: public API from macOS 15; older
+        // systems have no public diagonal shape and keep the arrow.
+        case 6:
+            if (@available(macOS 15.0, *)) {
+                return [NSCursor frameResizeCursorFromPosition:NSCursorFrameResizePositionTopLeft
+                                                  inDirections:NSCursorFrameResizeDirectionsAll];
+            }
+            return [NSCursor arrowCursor];
+        case 7:
+            if (@available(macOS 15.0, *)) {
+                return [NSCursor frameResizeCursorFromPosition:NSCursorFrameResizePositionTopRight
+                                                  inDirections:NSCursorFrameResizeDirectionsAll];
+            }
+            return [NSCursor arrowCursor];
         default: return [NSCursor arrowCursor];
     }
 }

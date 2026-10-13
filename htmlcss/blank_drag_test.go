@@ -115,3 +115,70 @@ func TestBlankPressInsideButtonDoesNotSelect(t *testing.T) {
 		t.Errorf("drag from inside a button selected %q, want no selection", got)
 	}
 }
+
+// A press on the text of an element whose OnPointerDown consumes it (a
+// dialog title bar, a splitter) belongs to that handler's gesture: the
+// captured moves must reach OnPointerMove instead of being swallowed by a
+// text-selection drag armed on the label under the press, and they must
+// report the button as held even once the pointer has left the element.
+func TestConsumedPressOnTextKeepsPointerMoves(t *testing.T) {
+	body := Render(
+		`<body><div id="bar"><p>Find in Files</p></div><p>other text</p></body>`,
+		`#bar{padding:4px;} p{margin:0;}`,
+		Options{},
+	)
+	viewportW := float32(500)
+	h := body.Measure(qui.Size{W: viewportW, H: 0})
+	win := qui.NewTestWindow(qui.Size{W: viewportW, H: 400})
+	win.SetRoot(body)
+	body.Layout(qui.Rect{X: 0, Y: 0, W: viewportW, H: h.H})
+
+	bar := body.(*El).findByID("bar")
+	if bar == nil {
+		t.Fatal("no #bar")
+	}
+	var moves, held int
+	bar.SetOnPointerDown(func(PointerEvent) bool { return true })
+	bar.SetOnPointerMove(func(ev PointerEvent) bool {
+		moves++
+		if ev.Pressed {
+			held++
+		}
+		return true
+	})
+
+	var title *widgets.Label
+	var walk func(w qui.Widget)
+	walk = func(w qui.Widget) {
+		if l, ok := w.(*widgets.Label); ok && title == nil && l.SelectableLength() > 0 {
+			title = l
+		}
+		if c, ok := w.(interface{ ChildList() []qui.Widget }); ok {
+			for _, ch := range c.ChildList() {
+				walk(ch)
+			}
+		}
+	}
+	walk(body)
+	if title == nil {
+		t.Fatal("no title label")
+	}
+	b := title.Bounds()
+	x, y := b.X+b.W/2, b.Y+b.H/2
+	win.DispatchTestEvent(qui.NewMouseEvent(qui.EventMouseDown, x, y, qui.MouseButtonLeft, 0))
+	win.DispatchTestEvent(qui.NewMouseEvent(qui.EventMouseMove, x+40, y+60, qui.MouseButtonLeft, 0))
+	win.DispatchTestEvent(qui.NewMouseEvent(qui.EventMouseMove, x+80, y+90, qui.MouseButtonLeft, 0))
+	win.DispatchTestEvent(qui.NewMouseEvent(qui.EventMouseUp, x+80, y+90, qui.MouseButtonLeft, 0))
+
+	if moves != 2 {
+		t.Errorf("pointer moves delivered = %d, want 2", moves)
+	}
+	// The moves leave #bar (it is one line tall), yet the button is still
+	// held: Pressed follows the capture, not the hover.
+	if held != moves {
+		t.Errorf("moves reporting Pressed = %d of %d", held, moves)
+	}
+	if got := title.SelectedText(); got != "" {
+		t.Errorf("title selection = %q, want none", got)
+	}
+}
