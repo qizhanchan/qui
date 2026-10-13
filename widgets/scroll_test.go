@@ -313,3 +313,23 @@ func TestScrollViewTransparentViewportPaintsNothing(t *testing.T) {
 		t.Error("explicit opaque viewport should paint a fill")
 	}
 }
+
+func TestScrollViewHideBarKeepsScrolling(t *testing.T) {
+	sv := NewScrollView()
+	sv.Orientation = ScrollHorizontal
+	sv.HideBar = true
+	content := newPhaseSpy("c", Rect{}, nil)
+	sv.SetContent(content, Size{W: 1000, H: 36})
+	sv.Layout(Rect{X: 0, Y: 0, W: 200, H: 36})
+
+	if sv.hasBar() {
+		t.Error("HideBar must drop the scrollbar")
+	}
+	if vp := sv.viewportRect(); vp.H != 36 {
+		t.Errorf("a hidden bar must not reserve its slot: viewport %+v", vp)
+	}
+	sv.Handle(newScrollEvent(-1, 100, 18))
+	if sv.ScrollY() == 0 {
+		t.Error("the wheel must still scroll with the bar hidden")
+	}
+}

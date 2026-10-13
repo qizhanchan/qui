@@ -156,6 +156,7 @@
 | `user-select` | ✅ | 继承（含 `-webkit-` 别名）。`none` 把元素文字移出拖选与剪贴板；`text`/`auto`/`all`/`contain` 复原。控件面即使没声明也不可选。双向：撤掉规则会交还可选性 |
 | `pointer-events: none / auto` | ✅ | 继承；在选目标处过滤，所以 hover/focus/tooltip/cursor/drag 看到同一目标。透明元素自己不当目标，但先下钻子元素，于是 `auto` 后代能重新开洞（浏览器行为）。SVG 专用值按「可命中」处理 |
 | `scrollbar-color` | ✅ | 继承；`<thumb> <track>` 或 `auto`，作用于 `overflow: auto/scroll` 的滚动条 |
+| `scrollbar-width` | 🟡 | `none` 隐藏滚动条（不占位，滚轮 / 键盘 / `scrollIntoView` 照常滚动）；`thin` / `auto` 仍是唯一的滚动条尺寸 |
 | 原生弹出层配色 | ✅ | `<select>` 下拉、datalist 列表与调色板取色顺序：可继承的自定义属性 `--popup-background` / `--popup-color` / `--popup-border` / `--popup-accent` → 打开它的元素自身的 `background-color` / `color` / `accent-color` → 主题。`title` 提示从根元素读 `--tooltip-background` / `--tooltip-color` / `--tooltip-border`（缺省回落到 `--popup-*`） |
 
 ### 选择器 / 变量 / at-rules
@@ -233,7 +234,7 @@
 
 **高价值（原生 + 日常）：** `aspect-ratio`；`position: sticky`；`::placeholder` 与 `:placeholder-shown`/`:valid`/`:invalid`/`:indeterminate`/`:default`（共用「值变化 → 作用域 restyle」实时钩子）；`::selection`/`::marker`；`:is()`/`:where()`/CSS 嵌套；`transition`；`scroll` 与 `change` 事件；`minlength`/`pattern`/`rows`/`cols`/`inputmode`/`spellcheck` 属性。
 
-**中价值：** Grid `justify-items`/`justify-self`/`place-*`/`grid-auto-*`/隐式轨道；`min-content`/`max-content`/`fit-content` 尺寸关键字；`@media` 响应式重算与 `prefers-color-scheme`/`(hover)`/`(pointer)`/`prefers-reduced-motion`；`@container`；`color-scheme`；`oklch()`/`color-mix()`/`light-dark()`/`hwb()`/`lab()`；`text-shadow`；文本抛光（`text-wrap`、`hyphens`、`tab-size`、`font-variant*`、`font-feature-settings`、`text-underline-offset`）；`background-position`/`-repeat`/显式 `background-size`/repeating 渐变；远程图片 URL / `srcset`；滚动与 resize 抛光（`resize`、`appearance`、`caret-color`、`scrollbar-width`/`scrollbar-gutter`、`overscroll-behavior`、`scroll-behavior`、scroll-snap）；`<select multiple>`/`size`；原生日期 / 颜色选择器；`<a target>`/`download`。
+**中价值：** Grid `justify-items`/`justify-self`/`place-*`/`grid-auto-*`/隐式轨道；`min-content`/`max-content`/`fit-content` 尺寸关键字；`@media` 响应式重算与 `prefers-color-scheme`/`(hover)`/`(pointer)`/`prefers-reduced-motion`；`@container`；`color-scheme`；`oklch()`/`color-mix()`/`light-dark()`/`hwb()`/`lab()`；`text-shadow`；文本抛光（`text-wrap`、`hyphens`、`tab-size`、`font-variant*`、`font-feature-settings`、`text-underline-offset`）；`background-position`/`-repeat`/显式 `background-size`/repeating 渐变；远程图片 URL / `srcset`；滚动与 resize 抛光（`resize`、`appearance`、`caret-color`、`scrollbar-gutter`、`overscroll-behavior`、`scroll-behavior`、scroll-snap）；`<select multiple>`/`size`；原生日期 / 颜色选择器；`<a target>`/`download`。
 
 **明确不做：** `float`/`clear`；多列；`@keyframes` + `animation`；`writing-mode`；`clip-path`/`mask`；`mix-blend-mode`/`isolation`；完整 stacking context；`backdrop-filter`；3D `transform`；`contenteditable`；`<iframe>`（走 `webview`）；Shadow DOM / `<template>` / `<slot>`；`content-visibility`/`will-change`；`@import`；`@supports`。
 

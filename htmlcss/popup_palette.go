@@ -106,6 +106,7 @@ func (e *El) applyScrollbarColors(cs *ComputedStyle) {
 		return
 	}
 	e.scrollView.BarColors = qui.ScrollbarColors{}
+	e.scrollView.HideBar = cs.ScrollbarNone
 	if cs.HasScrollbarColor {
 		e.scrollView.BarColors = qui.ScrollbarColors{
 			Thumb: cs.ScrollbarThumb, ThumbActive: cs.ScrollbarThumb, Track: cs.ScrollbarTrack,

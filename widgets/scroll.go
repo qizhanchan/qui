@@ -96,6 +96,10 @@ type ScrollView struct {
 
 	// BarColors overrides the scrollbar palette (zero fields = theme).
 	BarColors ScrollbarColors
+	// HideBar drops the scrollbar entirely — no slot, no paint, no hit
+	// area — while wheel, keys and ScrollTo keep scrolling (CSS
+	// `scrollbar-width: none`; e.g. an editor's tab strip).
+	HideBar bool
 
 	// OnScroll, when set, is invoked whenever the scroll offset changes
 	// value (wheel, drag, track click, keys, or ScrollTo). Hosts use it
@@ -582,7 +586,7 @@ func (s *ScrollView) maxScroll() float32 {
 
 // hasBar reports whether the scrollbar should render.
 func (s *ScrollView) hasBar() bool {
-	return s.maxScroll() > 0
+	return !s.HideBar && s.maxScroll() > 0
 }
 
 // hasVerticalBar kept for back-compat with the original API and tests.

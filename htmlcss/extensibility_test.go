@@ -193,3 +193,25 @@ func TestPopupColorAloneLeavesTooltipText(t *testing.T) {
 		t.Fatalf("--tooltip-color ignored: %+v", st)
 	}
 }
+
+func TestScrollbarWidthNoneHidesBar(t *testing.T) {
+	var hidden, shown *El
+	mountLive(t, `
+		.h { overflow-x: auto; width: 50px; scrollbar-width: none; }
+		.v { overflow-y: auto; height: 50px; scrollbar-width: thin; }
+	`, func(eng *StyleEngine) *El {
+		root := eng.NewEl("div")
+		hidden = eng.NewEl("div")
+		hidden.SetClass("h")
+		shown = eng.NewEl("div")
+		shown.SetClass("v")
+		root.SetElementChildren([]qui.Widget{hidden, shown})
+		return root
+	})
+	if hidden.scrollView == nil || !hidden.scrollView.HideBar {
+		t.Fatal("scrollbar-width: none did not hide the bar")
+	}
+	if shown.scrollView == nil || shown.scrollView.HideBar {
+		t.Fatal("scrollbar-width: thin must keep the bar")
+	}
+}

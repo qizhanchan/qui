@@ -33,6 +33,10 @@ type ComputedStyle struct {
 	// ScrollbarThumb / ScrollbarTrack are CSS `scrollbar-color` (inherited).
 	ScrollbarThumb, ScrollbarTrack qui.Color
 	HasScrollbarColor              bool
+	// ScrollbarNone is `scrollbar-width: none` (not inherited): the element
+	// still scrolls, without a visible scrollbar.
+	ScrollbarNone bool
+
 	FontSize                       float32
 	FontWeight                     qui.FontWeight
 	Italic                         bool
@@ -686,6 +690,11 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		} else if c, ok := parseColor(v); ok {
 			cs.AccentColor, cs.HasAccentColor = c, true
 		}
+	}
+	// --- scrollbar-width (not inherited): only `none` changes anything;
+	// `thin` / `auto` keep the one bar size qui has ---
+	if v, ok := m["scrollbar-width"]; ok {
+		cs.ScrollbarNone = strings.EqualFold(strings.TrimSpace(v), "none")
 	}
 	// --- scrollbar-color (inherited): "<thumb> <track>" or auto ---
 	if v, ok := m["scrollbar-color"]; ok {
