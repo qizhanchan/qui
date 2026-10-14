@@ -1,18 +1,18 @@
 /* Theme tokens live on .app and are re-scoped by .app.dark — toggling the
    root class flips every var() that descendants resolve against. */
 .app {
-  --bg: #f2f2f8;
+  --bg: #f2f4f8;
   --surface: #ffffff;
-  --surface-2: #f4f2fb;
-  --fg: #1a1a2e;
+  --surface-2: #f2f5fb;
+  --fg: #1a1d2e;
   --muted: #6b7280;
-  --primary: #6750a4;
+  --primary: #0b57d0;
   --primary-ink: #ffffff;
-  --border: #e3e1ef;
-  --card-a: #efeafc;
+  --border: #e1e5ef;
+  --card-a: #eaf1fc;
   --card-b: #e4f0ff;
-  --chip: #ece9f6;
-  --chip-ink: #4a3f77;
+  --chip: #e8eef8;
+  --chip-ink: #2f4a7a;
 
   /* Native popups (the <select> list, tooltips) and scrollbars follow the
      tokens, so .dark re-themes them too. */
@@ -32,18 +32,18 @@
 }
 
 .app.dark {
-  --bg: #14141f;
-  --surface: #1e1e2d;
-  --surface-2: #262636;
-  --fg: #ecebf4;
+  --bg: #14171f;
+  --surface: #1e222d;
+  --surface-2: #262b36;
+  --fg: #ebeef4;
   --muted: #9aa0b4;
-  --primary: #b8a6f0;
-  --primary-ink: #1a1330;
-  --border: #34324a;
-  --card-a: #2a2540;
+  --primary: #a8c7fa;
+  --primary-ink: #062e6f;
+  --border: #323a4a;
+  --card-a: #24304a;
   --card-b: #223047;
-  --chip: #2c2a40;
-  --chip-ink: #cfc7ee;
+  --chip: #2a3040;
+  --chip-ink: #c7d6ee;
 }
 
 .topbar {
@@ -325,7 +325,7 @@
 .drop-bar-on {
   height: 3px;
   margin: 2px 0;
-  background: #7c4dff;
+  background: #0b57d0;
   border-radius: 2px;
 }
 
@@ -344,8 +344,8 @@
    dark palette is opted in with a second class rather than inheriting the
    root's scoped vars. */
 .todo-dark {
-  background: #2b2940;
-  color: #ecebf4;
+  background: #262b36;
+  color: #ebeef4;
 }
 
 .grip {
