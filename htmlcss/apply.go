@@ -542,6 +542,16 @@ func applyControlColors(w qui.Widget, cs *ComputedStyle, native **qui.StateStyle
 		if cs.HasAccentColor {
 			c.CheckedFillColor = cs.AccentColor
 		}
+		// An authored `color` on the checkbox itself tints the check mark,
+		// and an authored `border-color` its outline in both states — so
+		// a dark stylesheet can draw a dark box with a light mark.
+		if cs.ColorOwn {
+			c.CheckMarkColor = cs.Color
+		}
+		if cs.HasBorder && cs.BorderColor.A > 0 {
+			c.OutlineColor = cs.BorderColor
+			c.CheckedOutlineColor = cs.BorderColor
+		}
 	case *widgets.RadioButton:
 		if cs.HasAccentColor {
 			c.SelectedColor = cs.AccentColor

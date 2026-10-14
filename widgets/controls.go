@@ -38,6 +38,10 @@ type CheckBox struct {
 	OutlineColor     Color // unchecked outline
 	CheckedFillColor Color // fill when Checked
 	CheckMarkColor   Color // checkmark stroke
+	// CheckedOutlineColor strokes an outline around the checked fill —
+	// for a fill close to the background (a dark box on a dark surface).
+	// Zero A (the default) draws no outline when checked.
+	CheckedOutlineColor Color
 	LabelColor       Color // label text
 	StateLayerColor  Color // hover/focus overlay; A=0 disables
 
@@ -188,6 +192,9 @@ func (c *CheckBox) Draw(canvas Canvas) {
 			{X: box.X + 14.5*ssx, Y: box.Y + 6.0*ssy},
 		}
 		canvas.DrawPolyline(pts, themed(c.CheckMarkColor), 2)
+		if c.CheckedOutlineColor.A > 0 {
+			canvas.StrokeRoundedRect(box, radius, themed(c.CheckedOutlineColor), borderW)
+		}
 	} else {
 		canvas.StrokeRoundedRect(box, radius, themed(c.OutlineColor), borderW)
 	}
