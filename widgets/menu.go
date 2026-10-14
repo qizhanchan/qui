@@ -139,6 +139,20 @@ type MenuColors struct {
 	SelectedBg      Color
 	SelectedFg      Color
 	StateLayer      Color // hover/pressed overlay tint
+
+	// Hover, when set, is a solid fill for the hovered / keyboard-
+	// highlighted row (instead of the faint StateLayer overlay), with
+	// HoverFg as that row's text colour — the JetBrains / macOS menu
+	// highlight. HoverInset insets the fill from the panel's left and
+	// right edges and HoverRadius rounds it, so it reads as a pill
+	// rather than a full-bleed band.
+	Hover       Color
+	HoverFg     Color
+	HoverInset  float32
+	HoverRadius float32
+	// SeparatorHeight overrides a separator row's height (the rule sits
+	// in its middle); zero keeps the style's default.
+	SeparatorHeight float32
 }
 
 // Default menu typography + row height. Every menu popup (context menus,
@@ -217,6 +231,11 @@ type menuStyle struct {
 	// hoverColor, when it has alpha, is the hovered / highlighted row fill,
 	// painted as-is (instead of stateColor at Theme.HoverOpacity).
 	hoverColor Color
+	// hoverFg (when it has alpha) is the hovered row's text colour;
+	// hoverInset / hoverRadius shape the hover fill (see MenuColors).
+	hoverFg     Color
+	hoverInset  float32
+	hoverRadius float32
 	// sepHeight is a separator row's height (the line sits in its middle);
 	// zero = 9.
 	sepHeight float32
@@ -275,6 +294,21 @@ func (st *menuStyle) ApplyColors(c MenuColors) {
 	}
 	if c.StateLayer.A > 0 {
 		st.stateColor = c.StateLayer
+	}
+	if c.Hover.A > 0 {
+		st.hoverColor = c.Hover
+	}
+	if c.HoverFg.A > 0 {
+		st.hoverFg = c.HoverFg
+	}
+	if c.HoverInset > 0 {
+		st.hoverInset = c.HoverInset
+	}
+	if c.HoverRadius > 0 {
+		st.hoverRadius = c.HoverRadius
+	}
+	if c.SeparatorHeight > 0 {
+		st.sepHeight = c.SeparatorHeight
 	}
 	st.colorsPinned = true
 }
@@ -376,6 +410,17 @@ func topLevelMenuStyle() menuStyle {
 	st := themedMenuStyle()
 	st.minWidth = CurrentTheme().ResolvedPopup().MenuMinWidth
 	return st
+}
+
+// paintHover fills a hovered row with the solid hover colour, inset and
+// rounded per the style.
+func (st *menuStyle) paintHover(canvas Canvas, b Rect) {
+	r := Rect{X: b.X + st.hoverInset, Y: b.Y, W: b.W - 2*st.hoverInset, H: b.H}
+	if st.hoverRadius > 0 {
+		canvas.FillRoundedRect(r, st.hoverRadius, st.hoverColor)
+		return
+	}
+	canvas.FillRect(r, st.hoverColor)
 }
 
 // flattenOver returns c composited over an opaque bg as an opaque color.
@@ -1221,10 +1266,11 @@ func (v *menuItemView) Draw(canvas Canvas) {
 	// State-layer (hover/pressed). Enabled rows only; pressed beats hover.
 	// Disabled rows skip the layer entirely — menus don't focus disabled
 	// items, so there is nothing to give feedback for.
+	hot := v.Enabled() && st.hoverColor.A > 0 && (v.pressed || v.hovering || v.highlighted || v.subOpen)
 	if v.Enabled() {
 		switch {
-		case st.hoverColor.A > 0 && (v.pressed || v.hovering || v.highlighted || v.subOpen):
-			canvas.FillRect(b, st.hoverColor)
+		case hot:
+			st.paintHover(canvas, b)
 		case v.pressed:
 			DrawStateLayer(canvas, b, 0, st.stateColor, CurrentTheme().PressedOpacity)
 		case v.hovering || v.highlighted || v.subOpen:
@@ -1250,6 +1296,12 @@ func (v *menuItemView) Draw(canvas Canvas) {
 		bg := st.bg
 		if selected {
 			bg = st.selectedBg
+		}
+		if hot && st.hoverColor.A >= 1 {
+			bg = st.hoverColor
+		}
+		if hot && st.hoverFg.A > 0 && v.item.Foreground.A == 0 {
+			labelColor = st.hoverFg
 		}
 		labelColor = flattenOver(labelColor, bg)
 		shortcutColor = flattenOver(shortcutColor, bg)
@@ -1536,7 +1588,7 @@ func (r *menuContentRow) Draw(canvas Canvas) {
 	}
 	if r.Enabled() && (r.hovering || r.highlighted) {
 		if r.style.hoverColor.A > 0 {
-			canvas.FillRect(r.Bounds(), r.style.hoverColor)
+			r.style.paintHover(canvas, r.Bounds())
 		} else {
 			DrawStateLayer(canvas, r.Bounds(), 0, r.style.stateColor, CurrentTheme().HoverOpacity)
 		}
