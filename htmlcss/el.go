@@ -3412,12 +3412,23 @@ func (e *El) contentWidth() float32 {
 // Called on content changes (syncChildren) and from every Layout pass.
 // Before the first layout, width is 0; a zero content size wires the
 // content and Layout fills in the real size on the same frame.
-func (e *El) updateScrollContent() { e.updateScrollContentAt(e.contentWidth()) }
+func (e *El) updateScrollContent() {
+	e.updateScrollContentAt(e.contentWidth(), e.Bounds().H-e.Style().ContentInsets().Vertical())
+}
 
 // updateScrollContentAt is updateScrollContent against an explicit content
-// width — Layout passes the width it is being GIVEN, so a resize refreshes
-// the scroll range in the same pass rather than one frame later.
-func (e *El) updateScrollContentAt(cw float32) {
+// width and viewport height — Layout passes the rect it is being GIVEN, so
+// a resize refreshes the scroll range in the same pass rather than one
+// frame later.
+//
+// The content is measured against an effectively unbounded height so it
+// reports its natural size. Content whose height depends on the space it
+// is offered — a flex-grow child, which would grow into all of it — is
+// measured against the viewport instead: in CSS a scroll container's
+// content box is the viewport, so such a child fills the visible area
+// (and only overflows when it cannot fit), rather than growing to the
+// measuring sentinel and making the scroll range thousands of px tall.
+func (e *El) updateScrollContentAt(cw, viewH float32) {
 	if cw <= 0 {
 		if e.scrollView.Content != e.scrollInner {
 			e.scrollView.SetContent(e.scrollInner, qui.Size{})
@@ -3426,9 +3437,66 @@ func (e *El) updateScrollContentAt(cw float32) {
 	}
 	e.lastScrollW = cw
 	nat := qui.MeasureChild(e.scrollInner, qui.Size{W: cw, H: 1 << 14})
+	if viewH > 0 && nat.H > viewH {
+		if alt := qui.MeasureChild(e.scrollInner, qui.Size{W: cw, H: 1 << 13}); alt.H != nat.H {
+			nat.H = e.scrollOverflowAt(cw, viewH)
+		}
+	}
 	if nat != e.scrollView.ContentSize || e.scrollView.Content != e.scrollInner {
 		e.scrollView.SetContent(e.scrollInner, nat)
 	}
+}
+
+// scrollOverflowAt lays the inner box out in the viewport (cw × viewH) and
+// returns how tall the result really is: the viewport, or more when laid-out
+// content reaches past it — CSS's scrollable overflow. Measuring cannot
+// tell: a flex-grow child is sized from the space it is offered, so its
+// content may spill out of it without the measure reporting it.
+func (e *El) scrollOverflowAt(cw, viewH float32) float32 {
+	inner := e.scrollInner
+	inner.Layout(qui.Rect{X: 0, Y: 0, W: cw, H: viewH})
+	top := inner.Bounds().Y
+	bottom := top + viewH
+	var walk func(w qui.Widget)
+	walk = func(w qui.Widget) {
+		c, ok := w.(interface{ Children() []qui.Widget })
+		if !ok {
+			return
+		}
+		for _, ch := range c.Children() {
+			if el, ok := ch.(*El); ok && el.displayNone {
+				continue
+			}
+			b := ch.Bounds()
+			if y := b.Y + b.H + ch.Style().Margin.Bottom; y > bottom {
+				bottom = y
+			}
+			if !clipsContent(ch) {
+				walk(ch)
+			}
+		}
+	}
+	walk(inner)
+	if bottom > top+viewH {
+		// Overflowing content keeps the box's bottom padding below it, as
+		// a browser's scroll range does.
+		bottom += inner.Style().Padding.Bottom
+	}
+	return bottom - top
+}
+
+// clipsContent reports whether w hides content outside its box, so what is
+// inside it cannot extend the scroll range.
+func clipsContent(w qui.Widget) bool {
+	switch v := w.(type) {
+	case *El:
+		return v.Box.ClipChildren || v.scrollView != nil && v.overflowScroll
+	case *widgets.Box:
+		return v.ClipChildren
+	case *widgets.ScrollView:
+		return true
+	}
+	return false
 }
 
 // Measure reports zero size for a display:none element so it neither
@@ -3758,7 +3826,8 @@ func (e *El) applyStateText(av *ancestorVariant) {
 // differs, so the resulting InvalidateLayout can't loop.
 func (e *El) Layout(rect qui.Rect) {
 	if e.overflowScroll && e.scrollView != nil {
-		e.updateScrollContentAt(rect.W - e.Style().ContentInsets().Horizontal())
+		ins := e.Style().ContentInsets()
+		e.updateScrollContentAt(rect.W-ins.Horizontal(), rect.H-ins.Vertical())
 	}
 	e.Box.Layout(rect)
 	if e.onLayout != nil {
