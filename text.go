@@ -783,7 +783,7 @@ func measureRunes(runes []rune, fontSpec Font, faces []font.Face) float32 {
 		// joins) and credit its joined-glyph width to one step. Non-base
 		// continuations at start (stray modifier) fall through to the
 		// per-rune branch which returns 0.
-		if isEmojiRune(r) && !isEmojiContinuation(r) {
+		if isEmojiAt(runes, i) && !isEmojiContinuation(r) {
 			end := EmojiClusterEnd(runes, i)
 			if end > i+1 {
 				if img := lookupEmojiSequence(string(runes[i:end]), fontSpec.Size); img != nil {

@@ -863,6 +863,8 @@ var (
 	autoFallbacksInit   bool
 	// test hook for symbol-font probing in lazy init.
 	probeSymbolFontUnlocked = tryLoadSymbolFontUnlocked
+	// test hook for Dingbats (✓ ✗ ➜) probing in lazy init.
+	probeDingbatFontUnlocked = tryLoadDingbatFontUnlocked
 	// test hook for complex-script (Arabic / Hebrew / Thai / Indic)
 	// probing in lazy init.
 	probeComplexScriptFontUnlocked = tryLoadComplexScriptFontUnlocked
@@ -1061,6 +1063,10 @@ func populateAutoFallbacksUnlocked() {
 		uiSymbolFallback.Store(f)
 	}
 	if f, src := probeSymbolFontUnlocked(); f != nil {
+		autoFallbacks = append(autoFallbacks, f)
+		autoFallbackSources = append(autoFallbackSources, src)
+	}
+	if f, src := probeDingbatFontUnlocked(); f != nil {
 		autoFallbacks = append(autoFallbacks, f)
 		autoFallbackSources = append(autoFallbackSources, src)
 	}
@@ -2228,7 +2234,7 @@ func drawTextLineRaw(emojiDst *image.RGBA, line string, drawer *font.Drawer, fon
 	segStart := 0
 	segEmoji := false
 	if len(runes) > 0 {
-		segEmoji = isEmojiRune(runes[0])
+		segEmoji = isEmojiAt(runes, 0)
 	}
 
 	flush := func(end int) {
@@ -2295,7 +2301,7 @@ func drawTextLineRaw(emojiDst *image.RGBA, line string, drawer *font.Drawer, fon
 	}
 
 	for i := 1; i < len(runes); i++ {
-		kind := isEmojiRune(runes[i])
+		kind := isEmojiAt(runes, i)
 		if kind != segEmoji {
 			flush(i)
 			segStart = i

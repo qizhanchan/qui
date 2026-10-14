@@ -77,8 +77,15 @@ func isEmojiRune(r rune) bool {
 	switch {
 	case r >= 0x1F000 && r <= 0x1FAFF: // broad emoji plane coverage
 		return true
-	case r >= 0x2600 && r <= 0x27BF: // misc symbols + dingbats (☀★✓♠ etc.)
-		return true
+	case r >= 0x2600 && r <= 0x27BF: // misc symbols + dingbats
+		// Only the Emoji_Presentation=Yes members (✅ ⚡ ❌ …) default to
+		// colour emoji. The rest (✓ ✗ ➜ ★ ♠ ☀ ❤ …) are text-presentation
+		// symbols: they belong to the text font so they take the
+		// foreground colour — prompts and UI use them as monochrome
+		// glyphs. They still go to the emoji provider when no text face
+		// has a glyph (nothing better to draw) or when followed by VS16
+		// (see isEmojiAt).
+		return emojiPresentationSymbol(r) || !textFacesHaveGlyph(r)
 	// BMP code points with default emoji presentation (Unicode
 	// Emoji_Presentation=Yes) that fall OUTSIDE 0x2600–0x27BF. These
 	// render as color emoji even without a VS16 selector — e.g. ⏳ lives
@@ -105,6 +112,60 @@ func isEmojiRune(r rune) bool {
 		return true
 	}
 	return false
+}
+
+// emojiPresentationSymbol reports Unicode Emoji_Presentation=Yes for the
+// U+2600–27BF block (emoji-data.txt).
+func emojiPresentationSymbol(r rune) bool {
+	switch {
+	case r == 0x2614 || r == 0x2615,
+		r >= 0x2648 && r <= 0x2653,
+		r == 0x267F, r == 0x2693, r == 0x26A1,
+		r == 0x26AA || r == 0x26AB,
+		r == 0x26BD || r == 0x26BE,
+		r == 0x26C4 || r == 0x26C5,
+		r == 0x26CE, r == 0x26D4, r == 0x26EA,
+		r == 0x26F2 || r == 0x26F3,
+		r == 0x26F5, r == 0x26FA, r == 0x26FD,
+		r == 0x2705, r == 0x270A || r == 0x270B,
+		r == 0x2728, r == 0x274C, r == 0x274E,
+		r >= 0x2753 && r <= 0x2755, r == 0x2757,
+		r >= 0x2795 && r <= 0x2797,
+		r == 0x27B0, r == 0x27BF:
+		return true
+	}
+	return false
+}
+
+// textGlyphCache memoises textFacesHaveGlyph per rune; cleared whenever
+// the font set changes (invalidateShapingFontCache).
+var textGlyphCache sync.Map // rune → bool
+
+// textFacesHaveGlyph reports whether the default text face chain
+// (primary + fallbacks, including the symbol fallback) has an outline
+// glyph for r.
+func textFacesHaveGlyph(r rune) bool {
+	if v, ok := textGlyphCache.Load(r); ok {
+		return v.(bool)
+	}
+	has := false
+	for _, face := range GetFontFacesFor(Font{Size: 14}) {
+		if _, ok := face.GlyphAdvance(r); ok {
+			has = true
+			break
+		}
+	}
+	textGlyphCache.Store(r, has)
+	return has
+}
+
+// isEmojiAt is isEmojiRune with one rune of look-ahead: a text-default
+// symbol followed by VS16 (U+FE0F, "emoji presentation") is an emoji.
+func isEmojiAt(runes []rune, i int) bool {
+	if isEmojiRune(runes[i]) {
+		return true
+	}
+	return i+1 < len(runes) && runes[i+1] == 0xFE0F && runes[i] >= 0x2000
 }
 
 // isEmojiContinuation reports whether the rune extends an emoji cluster

@@ -106,6 +106,7 @@ func init() {
 }
 
 func invalidateShapingFontCache() {
+	textGlyphCache.Clear()
 	textShapingState.Lock()
 	textShapingState.fonts = make(map[*opentype.Font]*gtfont.Font)
 	textShapingState.sources = make(map[*gtfont.Font]*opentype.Font)
@@ -434,8 +435,8 @@ func shapeInputLocked(input shaping.Input) shaping.Output {
 }
 
 func isEmojiCluster(cluster []rune) bool {
-	for _, r := range cluster {
-		if isEmojiRune(r) && !isEmojiContinuation(r) {
+	for i, r := range cluster {
+		if isEmojiAt(cluster, i) && !isEmojiContinuation(r) {
 			return true
 		}
 	}

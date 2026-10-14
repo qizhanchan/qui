@@ -13,8 +13,9 @@ func TestIsEmojiRuneCoversCommonRanges(t *testing.T) {
 		0x1F600, // 😀 grinning face
 		0x1F44D, // 👍 thumbs up
 		0x1F680, // 🚀 rocket
-		0x2764,  // ❤ heart
-		0x2600,  // ☀ sun
+		0x2705,  // ✅ check mark button (Emoji_Presentation)
+		0x26A1,  // ⚡ high voltage
+		0x274C,  // ❌ cross mark
 		0x27BF,  // ➿ double curly loop
 		0xFE0F,  // variation selector-16
 		0x200D,  // zero-width joiner
@@ -54,6 +55,28 @@ func TestIsEmojiRuneRejectsPlainText(t *testing.T) {
 		if isEmojiRune(r) {
 			t.Errorf("isEmojiRune(U+%04X) = true, want false", r)
 		}
+	}
+}
+
+// Text-presentation dingbats (shell prompts: ➜ ✗ ✓) stay on the text
+// path when a text face can draw them, so they take the foreground colour;
+// VS16 still promotes them to emoji.
+func TestTextPresentationSymbolsUseTextFont(t *testing.T) {
+	for _, r := range []rune{0x279C, 0x2717, 0x2713, 0x2605} {
+		if !textFacesHaveGlyph(r) {
+			t.Logf("U+%04X: no text glyph on this machine; emoji fallback expected", r)
+			if !isEmojiRune(r) {
+				t.Errorf("U+%04X without a text glyph must fall back to emoji", r)
+			}
+			continue
+		}
+		if isEmojiRune(r) {
+			t.Errorf("isEmojiRune(U+%04X) = true, want text presentation", r)
+		}
+	}
+	heart := []rune{0x2764, 0xFE0F}
+	if !isEmojiAt(heart, 0) || !isEmojiCluster(heart) {
+		t.Errorf("❤ + VS16 must be an emoji")
 	}
 }
 

@@ -519,6 +519,39 @@ func tryLoadSymbolFontUnlocked() (*opentype.Font, io.Closer) {
 	return nil, nil
 }
 
+// dingbatFontCandidates returns per-OS fonts covering the Dingbats block
+// (U+2700–27BF: ✓ ✗ ➜ ✔ …), which the general symbol font may lack —
+// Apple Symbols has none of ✓ ✗ ➜. These are text-presentation symbols
+// (shell prompts, status marks) that must render in the foreground colour
+// through the text path rather than as colour emoji.
+func dingbatFontCandidates() []string {
+	switch runtime.GOOS {
+	case "darwin":
+		return []string{
+			"/System/Library/Fonts/ZapfDingbats.ttf",
+			"/System/Library/Fonts/Supplemental/ZapfDingbats.ttf",
+		}
+	case "linux":
+		return []string{
+			"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+			"/usr/share/fonts/dejavu/DejaVuSans.ttf",
+		}
+	}
+	return nil
+}
+
+// tryLoadDingbatFontUnlocked scans dingbatFontCandidates. Caller must hold
+// fontCacheMu.
+func tryLoadDingbatFontUnlocked() (*opentype.Font, io.Closer) {
+	for _, path := range dingbatFontCandidates() {
+		f, src, err := parseFirstFontFromFile(path)
+		if err == nil {
+			return f, src
+		}
+	}
+	return nil, nil
+}
+
 // complexScriptFontCandidates returns per-OS fonts covering the scripts
 // that neither the bundled Latin face nor a CJK face provides: Arabic,
 // Hebrew, Thai and the Indic family.
