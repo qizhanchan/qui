@@ -356,6 +356,10 @@ func parseKeyToken(tok string) (Key, error) {
 		return KeyHome, nil
 	case "end":
 		return KeyEnd, nil
+	case "pageup", "pgup":
+		return KeyPageUp, nil
+	case "pagedown", "pgdn":
+		return KeyPageDown, nil
 	case "minus":
 		return KeyMinus, nil
 	case "equal", "plus":
