@@ -153,6 +153,12 @@ type MenuColors struct {
 	// SeparatorHeight overrides a separator row's height (the rule sits
 	// in its middle); zero keeps the style's default.
 	SeparatorHeight float32
+	// Radius overrides the panel's corner radius; Border (with
+	// BorderWidth, default 1) strokes the panel's edge — the JetBrains
+	// popup outline. Zero keeps the theme's radius and no outline.
+	Radius      float32
+	Border      Color
+	BorderWidth float32
 }
 
 // Default menu typography + row height. Every menu popup (context menus,
@@ -236,6 +242,8 @@ type menuStyle struct {
 	hoverFg     Color
 	hoverInset  float32
 	hoverRadius float32
+	// borderW is the outline width when border has alpha.
+	borderW float32
 	// sepHeight is a separator row's height (the line sits in its middle);
 	// zero = 9.
 	sepHeight float32
@@ -309,6 +317,16 @@ func (st *menuStyle) ApplyColors(c MenuColors) {
 	}
 	if c.SeparatorHeight > 0 {
 		st.sepHeight = c.SeparatorHeight
+	}
+	if c.Radius > 0 {
+		st.radius = c.Radius
+	}
+	if c.Border.A > 0 {
+		st.border = c.Border
+		st.borderW = c.BorderWidth
+		if st.borderW <= 0 {
+			st.borderW = 1
+		}
 	}
 	st.colorsPinned = true
 }
@@ -1877,10 +1895,32 @@ func (lv *menuListView) Draw(canvas Canvas) {
 		// The ScrollView clips + scrolls the content; give its viewport the
 		// same surface color so the menu reads as one panel.
 		lv.scroll.Style().Background = lv.content.Style().Background
+		lv.scroll.Style().Radius = lv.style.radius
 		lv.scroll.Draw(canvas)
+		lv.drawOutline(canvas)
 		return
 	}
 	lv.content.Draw(canvas)
+	lv.drawOutline(canvas)
+}
+
+// drawOutline strokes the panel edge when the style has a border, last so
+// row highlights never cover it. The stroke sits half a width inside the
+// bounds so it isn't clipped.
+func (lv *menuListView) drawOutline(canvas Canvas) {
+	st := lv.style
+	if st.border.A <= 0 || st.borderW <= 0 {
+		return
+	}
+	h := st.borderW / 2
+	b := lv.Bounds()
+	r := Rect{X: b.X + h, Y: b.Y + h, W: b.W - st.borderW, H: b.H - st.borderW}
+	if c := st.corners; !c.IsZero() {
+		p := NewPath().AddRRectCorners(r, c.TL, c.TR, c.BR, c.BL)
+		canvas.DrawShape(ShapePath{Path: p}, Paint{Color: st.border, Style: PaintStroke, StrokeWidth: st.borderW, AntiAlias: true})
+		return
+	}
+	canvas.StrokeRoundedRect(r, max(0, st.radius-h), st.border, st.borderW)
 }
 
 // OverlayHaloRect tells Popup the dirty region it must invalidate on
