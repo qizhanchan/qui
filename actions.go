@@ -222,6 +222,17 @@ func (w *Window) ClickAt(x, y float32) error {
 // selection — for the exact class of surface the point escape hatch exists to
 // reach. ScrollIntoView is ignored: a raw point is already where it is.
 func (w *Window) ClickAtWith(x, y float32, opts ClickOptions) error {
+	return w.clickAt(x, y, MouseButtonLeft, opts)
+}
+
+// RightClickAt is ClickAtWith with the secondary button — a context menu
+// on a custom-drawn surface (a code editor's gutter, a canvas) that has no
+// addressable widget at the point.
+func (w *Window) RightClickAt(x, y float32, opts ClickOptions) error {
+	return w.clickAt(x, y, MouseButtonRight, opts)
+}
+
+func (w *Window) clickAt(x, y float32, button MouseButton, opts ClickOptions) error {
 	return w.synchronously(func() error {
 		now := time.Now()
 		w.dispatch(MouseEvent{
@@ -230,7 +241,7 @@ func (w *Window) ClickAtWith(x, y float32, opts ClickOptions) error {
 			When:      now,
 			X:         x,
 			Y:         y,
-			Button:    MouseButtonLeft,
+			Button:    button,
 			Mods:      opts.Modifiers,
 		})
 		w.dispatch(MouseEvent{
@@ -239,7 +250,7 @@ func (w *Window) ClickAtWith(x, y float32, opts ClickOptions) error {
 			When:      now,
 			X:         x,
 			Y:         y,
-			Button:    MouseButtonLeft,
+			Button:    button,
 			Mods:      opts.Modifiers,
 		})
 		return nil
