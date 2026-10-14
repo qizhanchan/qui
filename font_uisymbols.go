@@ -52,7 +52,7 @@ func uiSymbolFontCandidates() []string {
 
 func tryLoadUISymbolFontUnlocked() (*opentype.Font, io.Closer) {
 	for _, path := range uiSymbolFontCandidates() {
-		f, src, err := parseFirstFontFromFile(path)
+		f, src, err := parseFirstFontFromFile(path, true)
 		if err == nil {
 			return f, src
 		}

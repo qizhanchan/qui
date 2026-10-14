@@ -74,7 +74,7 @@ func AutoLoadSystemCJKEnabled() bool {
 // (.ttc / .otc — the first face of the collection is used, which for
 // most system collections like PingFang.ttc is the primary/SC face).
 func LoadFontFromFile(path string) error {
-	f, src, err := parseFirstFontFromFile(path)
+	f, src, err := parseFirstFontFromFile(path, false)
 	if err != nil {
 		return fmt.Errorf("qui: load font %q: %w", path, err)
 	}
@@ -144,7 +144,9 @@ func parseFirstFontReaderAt(src io.ReaderAt) (*opentype.Font, error) {
 	return f, nil
 }
 
-func parseFirstFontFromFile(path string) (*opentype.Font, io.Closer, error) {
+// system marks a path from the OS font directories (the automatic probes),
+// which may be memory-mapped; user-supplied paths are always read.
+func parseFirstFontFromFile(path string, system bool) (*opentype.Font, io.Closer, error) {
 	// Probe through the file HANDLE first. A ReaderAt-backed parse pulls in
 	// the table directory and the tables initialize() validates, and nothing
 	// else — so a candidate sfnt cannot parse costs a few KB of reads
@@ -162,8 +164,22 @@ func parseFirstFontFromFile(path string) (*opentype.Font, io.Closer, error) {
 		return nil, nil, err
 	}
 
-	// It parses, so the file is worth reading in full. Keep the font backed
-	// by MEMORY rather than by the handle: a ReaderAt-backed sfnt.Font does
+	// It parses, so the file is worth loading in full. System fonts are
+	// mapped rather than read: the probes run for every app, and their
+	// bytes would otherwise sit in the heap whether or not a glyph is ever
+	// drawn from them. A mapped collection stays whole — untouched faces
+	// cost nothing resident — so it skips the face-0 rewrite below.
+	if system {
+		if data, ok := mapFontFile(path); ok {
+			if f, err := parseFirstFont(data); err == nil {
+				return f, nil, nil
+			}
+			unmapFontFile(data)
+		}
+	}
+
+	// Otherwise read the file. Keep the font backed by MEMORY rather than
+	// by the handle: a ReaderAt-backed sfnt.Font does
 	// a ReadAt per glyph load, and faceForRune / GlyphAdvance sit on the
 	// text-measurement path. The bytes double as the raw program the shaper
 	// and the PDF embedder ask for later (see rememberRawFontBytes) — sfnt
@@ -477,7 +493,7 @@ func ClearFontVariants() {
 // LoadFallbackFontFromFile appends a fallback font to the face chain.
 // Fallbacks are consulted only when the primary font has no glyph.
 func LoadFallbackFontFromFile(path string) error {
-	f, src, err := parseFirstFontFromFile(path)
+	f, src, err := parseFirstFontFromFile(path, false)
 	if err != nil {
 		return fmt.Errorf("qui: load fallback font %q: %w", path, err)
 	}
@@ -496,7 +512,7 @@ func LoadFallbackFontFromFile(path string) error {
 // via installFont.
 func tryLoadCJKUnlocked() (*opentype.Font, io.Closer) {
 	for _, path := range cjkFontCandidates() {
-		f, src, err := parseFirstFontFromFile(path)
+		f, src, err := parseFirstFontFromFile(path, true)
 		if err == nil {
 			return f, src
 		}
@@ -511,7 +527,7 @@ func tryLoadCJKUnlocked() (*opentype.Font, io.Closer) {
 // to ship its own fallback font. Caller must hold fontCacheMu.
 func tryLoadSymbolFontUnlocked() (*opentype.Font, io.Closer) {
 	for _, path := range symbolFontCandidates() {
-		f, src, err := parseFirstFontFromFile(path)
+		f, src, err := parseFirstFontFromFile(path, true)
 		if err == nil {
 			return f, src
 		}
@@ -544,7 +560,7 @@ func dingbatFontCandidates() []string {
 // fontCacheMu.
 func tryLoadDingbatFontUnlocked() (*opentype.Font, io.Closer) {
 	for _, path := range dingbatFontCandidates() {
-		f, src, err := parseFirstFontFromFile(path)
+		f, src, err := parseFirstFontFromFile(path, true)
 		if err == nil {
 			return f, src
 		}
@@ -602,7 +618,7 @@ func complexScriptFontCandidates() []string {
 // returns the first font that parses. Caller must hold fontCacheMu.
 func tryLoadComplexScriptFontUnlocked() (*opentype.Font, io.Closer) {
 	for _, path := range complexScriptFontCandidates() {
-		f, src, err := parseFirstFontFromFile(path)
+		f, src, err := parseFirstFontFromFile(path, true)
 		if err == nil {
 			return f, src
 		}

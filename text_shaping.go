@@ -15,6 +15,7 @@ import (
 	"github.com/go-text/typesetting/segmenter"
 	"github.com/go-text/typesetting/shaping"
 	"golang.org/x/image/font/opentype"
+	"golang.org/x/image/font/sfnt"
 	"golang.org/x/image/math/fixed"
 	"golang.org/x/text/unicode/bidi"
 )
@@ -75,18 +76,77 @@ type shapingFaceKey struct {
 	ppem       uint16
 }
 
-type shapingFontmap []*gtfont.Face
+// shapingFontmap is the shaper's view of a font chain. Only the first entry
+// is parsed up front; a fallback is parsed into a go-text face the first
+// time a rune actually needs it. go-text expands a font's tables (gvar,
+// CFF, glyf) on parse, which for the automatic fallbacks — the UI-symbol
+// face, the symbol font, a system CJK face — is tens of MB that text never
+// touching those scripts would otherwise pay for. The coverage pre-check
+// reads the cmap of the already-loaded sfnt font, so skipping is cheap.
+//
+// Used only under textShapingState's lock (ResolveFace runs inside Split).
+type shapingFontmap []shapingFontEntry
+
+type shapingFontEntry struct {
+	source *opentype.Font
+	spec   Font
+	face   *gtfont.Face
+	failed bool
+}
+
+func newShapingFontEntry(source *opentype.Font, spec Font) shapingFontEntry {
+	return shapingFontEntry{source: source, spec: spec}
+}
+
+// loadLocked parses the entry's face on first use.
+func (e *shapingFontEntry) loadLocked() *gtfont.Face {
+	if e.face == nil && !e.failed {
+		face, ok := shapingFaceLocked(e.source, e.spec)
+		if ok {
+			e.face = face
+		} else {
+			e.failed = true
+		}
+	}
+	return e.face
+}
+
+// first returns the chain's first loadable face, or nil when none parses.
+func (m shapingFontmap) first() *gtfont.Face {
+	for i := range m {
+		if face := m[i].loadLocked(); face != nil {
+			return face
+		}
+	}
+	return nil
+}
 
 func (m shapingFontmap) ResolveFace(r rune) *gtfont.Face {
-	for _, face := range m {
-		if shapingFallbackSkipsRune(face.Font, r) {
+	primary := m.first()
+	for i := range m {
+		e := &m[i]
+		if e.failed || fallbackSkipsRune(e.source, r) {
+			continue
+		}
+		if e.face == nil && !sourceHasGlyph(e.source, r) {
+			continue
+		}
+		face := e.loadLocked()
+		if face == nil {
 			continue
 		}
 		if _, ok := face.NominalGlyph(r); ok {
 			return face
 		}
 	}
-	return m[0]
+	return primary
+}
+
+// sourceHasGlyph reports whether source's cmap maps r, without parsing the
+// font into go-text.
+func sourceHasGlyph(source *opentype.Font, r rune) bool {
+	gid, err := source.GlyphIndex(&textShapingState.sfntBuf, r)
+	return err == nil && gid != 0
 }
 
 var textShapingState struct {
@@ -96,6 +156,7 @@ var textShapingState struct {
 	fonts   map[*opentype.Font]*gtfont.Font
 	sources map[*gtfont.Font]*opentype.Font
 	faces   map[shapingFaceKey]*gtfont.Face
+	sfntBuf sfnt.Buffer
 }
 
 func init() {
@@ -323,9 +384,10 @@ func shapeParagraph(text []rune, fontSpec Font, requested TextDirection) (shaped
 func facesForSpecLocked(fontChain []*opentype.Font, spec Font) shapingFontmap {
 	faces := make(shapingFontmap, 0, len(fontChain))
 	for _, source := range fontChain {
-		if face, ok := shapingFaceLocked(source, spec); ok {
-			faces = append(faces, face)
-		}
+		faces = append(faces, newShapingFontEntry(source, spec))
+	}
+	if faces.first() == nil {
+		return nil
 	}
 	return faces
 }
@@ -588,11 +650,16 @@ func shapingFaceLocked(source *opentype.Font, spec Font) (*gtfont.Face, bool) {
 		if len(raw) == 0 {
 			return nil, false
 		}
-		faces, err := gtfont.ParseTTC(bytes.NewReader(raw))
-		if err != nil || len(faces) == 0 {
+		// Face 0 only: qui never uses the others, and ParseTTC would
+		// parse every face of a (possibly memory-mapped) collection.
+		loaders, err := gtot.NewLoaders(bytes.NewReader(raw))
+		if err != nil || len(loaders) == 0 {
 			return nil, false
 		}
-		parsed = faces[0].Font
+		parsed, err = gtfont.NewFont(loaders[0])
+		if err != nil {
+			return nil, false
+		}
 		textShapingState.fonts[source] = parsed
 		textShapingState.sources[parsed] = source
 	}

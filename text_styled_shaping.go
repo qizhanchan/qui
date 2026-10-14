@@ -100,16 +100,11 @@ func shapeStyledParagraph(stream []styledRune, requested TextDirection) (styledS
 	faceMaps := make([]shapingFontmap, len(shapingRanges))
 	allFaces := make(shapingFontmap, 0, len(shapingRanges))
 	for i := range shapingRanges {
-		for _, source := range chains[i] {
-			face, ok := shapingFaceLocked(source, shapingRanges[i].style.font)
-			if ok {
-				faceMaps[i] = append(faceMaps[i], face)
-				allFaces = append(allFaces, face)
-			}
-		}
+		faceMaps[i] = facesForSpecLocked(chains[i], shapingRanges[i].style.font)
 		if len(faceMaps[i]) == 0 {
 			return styledShapedParagraph{}, false
 		}
+		allFaces = append(allFaces, faceMaps[i]...)
 	}
 
 	direction := resolveTextDirection(text, requested)
@@ -144,7 +139,7 @@ func shapeStyledParagraph(stream []styledRune, requested TextDirection) (styledS
 			part.RunEnd = end
 			part.FontFeatures = shapingFeatures(fontSpec.Features)
 			part.Size = pxToFixed(fontSpec.Size)
-			faceParts := shaping.SplitByFontGlyphs(part, faceMaps[shapingIndex])
+			faceParts := shaping.SplitByFace(part, faceMaps[shapingIndex])
 			for _, facePart := range faceParts {
 				for _, output := range shapeSegmentWithEmojiLocked(facePart, graphemes, fontSpec) {
 					applyStyledSpacing(&output, shapeText, fontSpec)

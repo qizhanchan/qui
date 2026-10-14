@@ -393,7 +393,7 @@ func TestParseFontFromFileSkipsUnparseableBytes(t *testing.T) {
 
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	if _, _, err := parseFirstFontFromFile(path); err == nil {
+	if _, _, err := parseFirstFontFromFile(path, false); err == nil {
 		t.Fatal("expected a junk file to fail parsing")
 	}
 	runtime.ReadMemStats(&after)

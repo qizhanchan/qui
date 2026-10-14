@@ -79,8 +79,14 @@ func (n *Node) Classes() []string {
 func (n *Node) ID() string { return n.AttrOr("id", "") }
 
 // hasClass reports whether the node carries the given class.
+// Iterates the attribute in place: selector matching calls this per
+// element per rule, so a []string per call adds up.
 func (n *Node) hasClass(name string) bool {
-	for _, c := range n.Classes() {
+	c, ok := n.Attr("class")
+	if !ok {
+		return false
+	}
+	for c := range strings.FieldsSeq(c) {
 		if c == name {
 			return true
 		}

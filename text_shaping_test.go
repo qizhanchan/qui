@@ -400,3 +400,47 @@ func TestShapeParagraphSmallCapsKeepsRuneMapping(t *testing.T) {
 		t.Fatalf("ß was case-mapped to %q", caps.shapeText[4])
 	}
 }
+
+func TestShapingFallbacksParseLazily(t *testing.T) {
+	spec := Font{Size: 14}
+	chain := fontChainForSpec(spec)
+	if len(chain) < 2 {
+		t.Skip("no fallback fonts on this system")
+	}
+	textShapingState.Lock()
+	defer textShapingState.Unlock()
+
+	m := facesForSpecLocked(chain, spec)
+	if len(m) == 0 || m[0].face == nil {
+		t.Fatal("primary face not loaded up front")
+	}
+	if got := m.ResolveFace('a'); got != m[0].face {
+		t.Fatal("'a' did not resolve to the primary face")
+	}
+	for i, e := range m[1:] {
+		if e.face != nil {
+			t.Fatalf("fallback %d parsed for a rune the primary covers", i+1)
+		}
+	}
+
+	// A rune the primary lacks still reaches a fallback that has it.
+	for _, r := range []rune{'中', '→', '✓', 'ا', 'ก'} {
+		if sourceHasGlyph(chain[0], r) {
+			continue
+		}
+		for i := 1; i < len(chain); i++ {
+			if fallbackSkipsRune(chain[i], r) || !sourceHasGlyph(chain[i], r) {
+				continue
+			}
+			face := m.ResolveFace(r)
+			if face == m[0].face {
+				t.Fatalf("%q fell back to the primary face", r)
+			}
+			if _, ok := face.NominalGlyph(r); !ok {
+				t.Fatalf("%q resolved to a face without the glyph", r)
+			}
+			return
+		}
+	}
+	t.Skip("no rune outside the primary with fallback coverage")
+}
