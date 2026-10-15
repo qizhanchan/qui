@@ -15,9 +15,6 @@ var drawPurityAllowed = map[string]string{
 	// Restyles its own private content / scroll children from the menu
 	// palette; an app never holds those widgets.
 	"menuListView.Draw": "private children",
-	// TODO: remove once the theme-provenance work stops FieldSet.Draw
-	// overwriting the legend's Font / Foreground every frame.
-	"FieldSet.Draw": "pending fix",
 }
 
 // Draw, Measure and Layout must not assign a widget's Style() fields or
