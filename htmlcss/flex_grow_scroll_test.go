@@ -97,3 +97,27 @@ func TestScrollContainerGrowingColumnOverflows(t *testing.T) {
 		t.Fatalf("scroll content height = %v, want the rows' 300 (not the viewport, not the sentinel)", got)
 	}
 }
+
+// Content taller than the old 8192 px probe height (a file tree with a big
+// folder open) keeps its real scroll range, and changing its children
+// keeps the scroll position. The probe used to cap the measure, so the
+// tree read as "grows with the offer", collapsed to the viewport, and the
+// scroll offset was clamped to 0 — the tree jumped back to the top.
+func TestScrollContainerTallContentKeepsOffset(t *testing.T) {
+	var eng *StyleEngine
+	page := scrollFixture(t, `
+.page { display:flex; flex-direction:column; width:300px; height:200px; overflow-y:auto }
+.row  { height:30px }`, func(e *StyleEngine) []qui.Widget { eng = e; return rows(e, 300) })
+	if got := page.scrollView.ContentSize.H; got != 9000 {
+		t.Fatalf("scroll content height = %v, want 9000", got)
+	}
+	page.scrollView.ScrollTo(4000)
+	page.SetElementChildren(rows(eng, 360))
+	page.Layout(qui.Rect{W: 300, H: 200})
+	if got := page.scrollView.ScrollY(); got != 4000 {
+		t.Errorf("scroll offset after the children changed = %v, want 4000", got)
+	}
+	if got := page.scrollView.ContentSize.H; got != 10800 {
+		t.Errorf("scroll content height = %v, want 10800", got)
+	}
+}

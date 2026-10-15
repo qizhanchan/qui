@@ -3428,6 +3428,10 @@ func (e *El) updateScrollContent() {
 // content box is the viewport, so such a child fills the visible area
 // (and only overflows when it cannot fit), rather than growing to the
 // measuring sentinel and making the scroll range thousands of px tall.
+// scrollMeasureH is the "unbounded" height a scroll container's content
+// is measured against: ~1M px, far past any real content (40k list rows).
+const scrollMeasureH = 1 << 20
+
 func (e *El) updateScrollContentAt(cw, viewH float32) {
 	if cw <= 0 {
 		if e.scrollView.Content != e.scrollInner {
@@ -3436,9 +3440,15 @@ func (e *El) updateScrollContentAt(cw, viewH float32) {
 		return
 	}
 	e.lastScrollW = cw
-	nat := qui.MeasureChild(e.scrollInner, qui.Size{W: cw, H: 1 << 14})
+	// Two offered heights far beyond any real content: content that does
+	// not depend on the offer measures the same at both, while a grow
+	// child fills each. (Both must exceed the content — a measure is
+	// capped at what it is offered, so with 16384 vs 8192 a plain 9000 px
+	// file tree read as "grows" and collapsed to the viewport, resetting
+	// the scroll position to the top.)
+	nat := qui.MeasureChild(e.scrollInner, qui.Size{W: cw, H: scrollMeasureH})
 	if viewH > 0 && nat.H > viewH {
-		if alt := qui.MeasureChild(e.scrollInner, qui.Size{W: cw, H: 1 << 13}); alt.H != nat.H {
+		if alt := qui.MeasureChild(e.scrollInner, qui.Size{W: cw, H: 2 * scrollMeasureH}); alt.H != nat.H {
 			nat.H = e.scrollOverflowAt(cw, viewH)
 		}
 	}
