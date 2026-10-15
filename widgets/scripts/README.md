@@ -1,6 +1,6 @@
 # widgets/scripts — Chrome reference harnesses
 
-Both harnesses compare qui against real Chrome, driven via `puppeteer-core`
+These harnesses compare qui against real Chrome, driven via `puppeteer-core`
 from `/opt/js_work/material-web/node_modules` and the system Chrome at
 `/Applications/Google Chrome.app`. Use node >= 18 (set `NODE_BIN` if the
 default `node` is older).
@@ -41,3 +41,35 @@ Known differences live in `domEventAllowlist` in
 `htmlcss/dom_event_order_test.go`, one line each with the reason. An entry
 that no longer matches a difference fails the test, so delete it when the
 fix lands.
+
+## web/dom-layout.mjs — layout-geometry goldens
+
+Records the border box (`getBoundingClientRect`, page coordinates) of every
+element with an id for each fixture in `htmlcss/testdata/layout/` at a
+640×480 viewport and writes `<name>.golden.json` next to it.
+`go test ./htmlcss -run DOMLayout` renders the same page through htmlcss and
+compares each El's window-space bounds field by field (x, y, w, h) within
+1 px, or the element's `data-tol` attribute.
+
+Fixtures use `font-family: GoRegular`, which the page `@font-face`-loads
+from `web/go-regular.ttf` and the test registers from the same Go Regular
+TTF, so text-driven sizes come from identical metrics. Each case sits in its
+own fixed-height `<section class="case">` so one difference doesn't shift
+every box after it.
+
+Regenerate after adding or changing a fixture (`<name>.html`):
+
+```bash
+REFRESH_REF=1 go test ./htmlcss -run DOMLayout
+```
+
+or only the Chrome side, optionally for named fixtures:
+
+```bash
+node widgets/scripts/web/dom-layout.mjs flex grid
+```
+
+Known differences live in `domLayoutAllowlist` in
+`htmlcss/dom_layout_test.go`, split into documented limits (COVERAGE.md) and
+undocumented differences that are fix candidates. As with the event goldens,
+an entry that no longer matches a difference fails the test.

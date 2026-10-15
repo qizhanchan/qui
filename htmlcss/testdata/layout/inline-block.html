@@ -1,0 +1,28 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+/* qui's UA pads body by 16px where Chrome margins it by 8px: zero both. */
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+/* One case per fixed-height section, so a difference in one case does not
+   shift every box after it. The border keeps child margins inside. */
+.case { height: 100px; border-top: 1px solid #ccc; }
+.line { width: 500px; }
+.ib { display: inline-block; width: 100px; height: 30px; background: #ddd; vertical-align: top; }
+#ib2 { width: 30%; }
+#ib3 { margin-left: 10px; padding: 5px; border: 1px solid #333; }
+#tb1, #tb2 { display: inline-block; width: 100px; height: 30px; vertical-align: top; }
+#para { width: 300px; }
+#nowrap { width: 120px; white-space: nowrap; overflow: hidden; }
+#pre { white-space: pre; }
+#lh { line-height: 32px; width: 200px; }
+#rel { position: relative; left: 20px; top: 10px; width: 100px; height: 20px; background: #ccc; }
+</style></head><body>
+<section class="case"><div class="line" id="empty"><div class="ib" id="ib1"></div><div class="ib" id="ib2"></div><div class="ib" id="ib3"></div></div></section>
+<section class="case"><div class="line" id="withtext"><div id="tb1">one</div><div id="tb2">two</div></div></section>
+<section class="case"><p id="para" data-tol="2" style="margin:0">The quick brown fox jumps over the lazy dog, then keeps running across the field until it wraps twice.</p></section>
+<section class="case"><div id="nowrap">this line does not wrap at all</div></section>
+<section class="case"><div id="pre">two
+lines</div></section>
+<section class="case"><div id="lh" data-tol="2">tall line height text that wraps onto a second line</div></section>
+<section class="case"><div id="rel"></div></section>
+</body></html>

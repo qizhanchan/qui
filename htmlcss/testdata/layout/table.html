@@ -1,0 +1,36 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+/* qui's UA pads body by 16px where Chrome margins it by 8px: zero both. */
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+/* One case per fixed-height section, so a difference in one case does not
+   shift every box after it. The border keeps child margins inside. */
+.case { height: 100px; border-top: 1px solid #ccc; }
+th { font-weight: normal; }
+td, th { padding: 4px; }
+#fixed { table-layout: fixed; width: 400px; border-spacing: 0; }
+#spacing { width: 300px; border-spacing: 6px; }
+#autotbl { border-spacing: 0; }
+#span { width: 300px; border-spacing: 0; }
+#collapse { border-collapse: collapse; width: 300px; }
+#collapse td { border: 1px solid #333; }
+</style></head><body>
+<section class="case"><table id="fixed">
+ <tr><th id="fh1" style="width:100px">A</th><th id="fh2">B</th></tr>
+ <tr><td id="fd1">1</td><td id="fd2">2</td></tr>
+</table></section>
+<section class="case"><table id="spacing">
+ <tr><td id="sc1">a</td><td id="sc2">b</td></tr>
+</table></section>
+<section class="case"><table id="autotbl">
+ <tr><td id="at1" data-tol="2">short</td><td id="at2" data-tol="2">a longer cell</td></tr>
+ <tr><td id="at3" data-tol="2">x</td><td id="at4" data-tol="2">y</td></tr>
+</table></section>
+<section class="case"><table id="span">
+ <tr><td id="cs" colspan="2">spans two</td><td id="s3">c</td></tr>
+ <tr><td id="s4">d</td><td id="s5">e</td><td id="s6">f</td></tr>
+</table></section>
+<section class="case"><table id="collapse">
+ <tr><td id="k1">a</td><td id="k2">b</td></tr>
+</table></section>
+</body></html>

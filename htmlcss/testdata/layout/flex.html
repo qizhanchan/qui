@@ -1,0 +1,38 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+/* qui's UA pads body by 16px where Chrome margins it by 8px: zero both. */
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+/* One case per fixed-height section, so a difference in one case does not
+   shift every box after it. The border keeps child margins inside. */
+.case { height: 100px; border-top: 1px solid #ccc; }
+.row { display: flex; width: 600px; height: 40px; }
+.row > div { background: #ddd; }
+#g1 { flex-grow: 1; } #g2 { flex-grow: 2; } #g3 { width: 100px; }
+#s1 { width: 400px; } #s2 { width: 400px; flex-shrink: 3; }
+#b1 { flex: 1 1 100px; } #b2 { flex: 2 1 100px; }
+#gap { gap: 10px; } #gap > div { width: 50px; }
+#sb { justify-content: space-between; } #sb > div { width: 80px; }
+#ctr { justify-content: center; align-items: center; height: 60px; } #ctr > div { width: 80px; height: 20px; }
+#end { align-items: flex-end; height: 60px; } #end > div { width: 80px; height: 20px; }
+#str > div { width: 80px; }
+#wrap { flex-wrap: wrap; width: 250px; height: auto; gap: 6px; } #wrap > div { width: 100px; height: 30px; }
+#col { flex-direction: column; width: 200px; height: 90px; gap: 4px; } #col > div { height: 20px; }
+#colgrow { flex-grow: 1; }
+#pad { padding: 10px; border: 2px solid #333; }
+#pad > div { flex: 1; }
+#txt > div { flex: none; padding: 0 4px; }
+</style></head><body>
+<section class="case"><div class="row" id="grow"><div id="g1"></div><div id="g2"></div><div id="g3"></div></div></section>
+<section class="case"><div class="row" id="shrink"><div id="s1"></div><div id="s2"></div></div></section>
+<section class="case"><div class="row" id="basis"><div id="b1"></div><div id="b2"></div></div></section>
+<section class="case"><div class="row" id="gap"><div id="gap1"></div><div id="gap2"></div><div id="gap3"></div></div></section>
+<section class="case"><div class="row" id="sb"><div id="sb1"></div><div id="sb2"></div><div id="sb3"></div></div></section>
+<section class="case"><div class="row" id="ctr"><div id="ctr1"></div><div id="ctr2"></div></div></section>
+<section class="case"><div class="row" id="end"><div id="end1"></div><div id="end2"></div></div></section>
+<section class="case"><div class="row" id="str"><div id="str1"></div><div id="str2"></div></div></section>
+<section class="case"><div class="row" id="wrap"><div id="w1"></div><div id="w2"></div><div id="w3"></div><div id="w4"></div></div></section>
+<section class="case"><div class="row" id="col"><div id="c1"></div><div id="colgrow"></div><div id="c3"></div></div></section>
+<section class="case"><div class="row" id="pad"><div id="p1"></div><div id="p2"></div></div></section>
+<section class="case"><div class="row" id="txt"><div id="t1" data-tol="2">Short</div><div id="t2" data-tol="2">A longer label</div></div></section>
+</body></html>

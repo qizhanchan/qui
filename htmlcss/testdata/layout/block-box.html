@@ -1,0 +1,33 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+/* qui's UA pads body by 16px where Chrome margins it by 8px: zero both. */
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+/* One case per fixed-height section, so a difference in one case does not
+   shift every box after it. The border keeps child margins inside. */
+.case { height: 100px; border-top: 1px solid #ccc; }
+#a { width: 200px; height: 40px; padding: 10px; border: 2px solid #333; margin: 8px; }
+#b { width: 200px; height: 40px; padding: 10px; border: 2px solid #333; margin: 8px; box-sizing: border-box; }
+#pct { width: 50%; height: 30px; margin: 8px; background: #eee; }
+#pctpad { width: 50%; height: 30px; padding: 0 20px; background: #eee; }
+#maxw { max-width: 300px; height: 30px; margin: 8px; background: #ddd; }
+#center { width: 200px; height: 30px; margin: 8px auto; background: #ccc; }
+#minw { min-width: 400px; width: 100px; height: 20px; margin: 8px; background: #bbb; }
+#sib1 { height: 20px; margin-bottom: 10px; background: #aaa; }
+#sib2 { height: 20px; margin-top: 20px; background: #aaa; }
+#parent { padding: 12px; border: 1px solid #999; width: 400px; }
+#child1 { height: 20px; background: #aaa; }
+#child2 { height: 20px; margin-top: 6px; background: #aaa; }
+#auto { margin: 8px; padding: 6px; border: 1px solid #666; }
+</style></head><body>
+<section class="case"><div id="a"></div></section>
+<section class="case"><div id="b"></div></section>
+<section class="case"><div id="pct"></div></section>
+<section class="case"><div id="pctpad"></div></section>
+<section class="case"><div id="maxw"></div></section>
+<section class="case"><div id="center"></div></section>
+<section class="case"><div id="minw"></div></section>
+<section class="case"><div id="sib1"></div><div id="sib2"></div></section>
+<section class="case"><div id="parent"><div id="child1"></div><div id="child2"></div></div></section>
+<section class="case"><div id="auto">auto height from one line of text</div></section>
+</body></html>

@@ -1,0 +1,32 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+/* qui's UA pads body by 16px where Chrome margins it by 8px: zero both. */
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+/* One case per fixed-height section, so a difference in one case does not
+   shift every box after it. The border keeps child margins inside. */
+.case { height: 100px; border-top: 1px solid #ccc; }
+.grid { display: grid; width: 600px; }
+.grid > div { background: #ddd; }
+#fr { grid-template-columns: 1fr 2fr 1fr; grid-template-rows: 30px 30px; }
+#autorows { grid-template-columns: 1fr 1fr; grid-auto-rows: 30px; }
+#mix { grid-template-columns: 100px 1fr 150px; grid-template-rows: 40px 20px; gap: 10px 20px; }
+#span { grid-template-columns: repeat(3, 1fr); grid-template-rows: 30px 30px; gap: 8px; }
+#sp1 { grid-column: span 2; }
+#sp2 { grid-row: span 2; }
+#place { grid-template-columns: repeat(4, 100px); grid-template-rows: 25px 25px; }
+#pl1 { grid-column: 2 / 4; grid-row: 1; }
+#pl2 { grid-column: 4; grid-row: 2; }
+#implicit { grid-template-columns: repeat(2, 100px); grid-template-rows: 25px; }
+#im1 { grid-column: 2; grid-row: 2; height: 25px; }
+#content { grid-template-columns: 1fr 1fr; gap: 4px; }
+#tall { height: 50px; }
+</style></head><body>
+<section class="case"><div class="grid" id="fr"><div id="fr1"></div><div id="fr2"></div><div id="fr3"></div><div id="fr4"></div></div></section>
+<section class="case"><div class="grid" id="autorows"><div id="ar1"></div><div id="ar2"></div><div id="ar3"></div></div></section>
+<section class="case"><div class="grid" id="mix"><div id="m1"></div><div id="m2"></div><div id="m3"></div><div id="m4"></div><div id="m5"></div></div></section>
+<section class="case"><div class="grid" id="span"><div id="sp1"></div><div id="sp2"></div><div id="sp3"></div><div id="sp4"></div></div></section>
+<section class="case"><div class="grid" id="place"><div id="pl1"></div><div id="pl2"></div></div></section>
+<section class="case"><div class="grid" id="implicit"><div id="im1"></div></div></section>
+<section class="case"><div class="grid" id="content"><div id="tall"></div><div id="short"></div></div></section>
+</body></html>
