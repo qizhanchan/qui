@@ -125,3 +125,26 @@ func TestUIThreadChecksAllowDetachedConstruction(t *testing.T) {
 		t.Fatal("detached widget construction did not retain state")
 	}
 }
+
+func TestOnUIThreadIgnoresDiagnosticsSwitch(t *testing.T) {
+	lockUIThreadForTest(t)
+	w := NewTestWindow(Size{W: 100, H: 80})
+	// Checks off: IsUIThread answers true everywhere, OnUIThread does not.
+	other := make(chan [2]bool, 1)
+	go func() { other <- [2]bool{w.IsUIThread(), w.OnUIThread()} }()
+	if got := <-other; !got[0] || got[1] {
+		t.Fatalf("background goroutine: IsUIThread=%v OnUIThread=%v, want true,false", got[0], got[1])
+	}
+	w.EnableUIThreadChecks()
+	if !w.OnUIThread() {
+		t.Fatal("owner goroutine not on the UI thread after binding")
+	}
+	go func() { other <- [2]bool{w.IsUIThread(), w.OnUIThread()} }()
+	if got := <-other; got[0] || got[1] {
+		t.Fatalf("background goroutine with checks on: %v", got)
+	}
+	var nilWin *Window
+	if nilWin.OnUIThread() {
+		t.Fatal("nil window on UI thread")
+	}
+}

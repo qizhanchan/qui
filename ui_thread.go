@@ -83,6 +83,24 @@ func (w *Window) IsUIThread() bool {
 	return w.uiThread.owner == currentUIThreadID()
 }
 
+// OnUIThread reports whether the caller is running on w's UI thread, whether
+// or not ownership diagnostics are enabled — unlike IsUIThread, which answers
+// true whenever checks are off. Use it for decisions such as "run inline, or
+// PostJob and wait": waiting for a job from the UI thread itself deadlocks.
+//
+// A window without enabled checks is owned by the process main thread (qui
+// locks it in init and runs every event loop there).
+func (w *Window) OnUIThread() bool {
+	if w == nil {
+		return false
+	}
+	owner := w.uiThread.owner
+	if owner == 0 {
+		owner = processUIThreadID
+	}
+	return owner == currentUIThreadID()
+}
+
 // AssertUIThread verifies that the caller owns w. Custom widgets and
 // application-level retained models can call this at the beginning of their
 // own mutation methods to participate in the same diagnostic boundary.
