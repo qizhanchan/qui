@@ -25,7 +25,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | `blockquote` | ✅ | UA left border + indent |
 | `hr` | ✅ | rendered as `widgets.Rule`; `border-*` applies to the line itself |
 | `ul` `ol` `li` | ✅ | hanging `[marker\|content]` row; disc/circle/square/decimal; `ol` auto-numbering; the clipboard rebuilds list structure |
-| `img` | 🟡 | local raster + `.svg` (with tint) + `data:` URI + `object-fit: cover/contain`; **no** remote URL / `srcset` |
+| `img` | 🟡 | local raster (PNG / JPEG / GIF first frame / BMP / TIFF / WebP / ICO·CUR) + `.svg` (with tint) + `data:` URI + an in-memory `image.Image` (`h.Img().Image(img)` / `El.SetImage`) + `object-fit: cover/contain/scale-down`; **no** remote URL / `srcset` / animated GIF |
 | `label` | 🟡 | folds to inline text; `for=` click linkage is implemented on the `label[for]` row below |
 | `table` `thead` `tbody` `tfoot` `tr` `td` `th` `caption` `colgroup` `col` | ✅ | flattened into one `GridLayout`: columns align across rows, content-based auto widths (equal `1fr` when the table has a width), `colspan`, `th` bold + centered, `tr:nth-child` striping, `border-spacing`, auto-width shrink-to-fit. Also: `<caption>` as a full-width spanning row (`caption-side: top/bottom`), `<colgroup>`/`<col>` widths (`width` attr or inline style → `GridFixedTrack`, with `span`, `%` of table width), `table-layout: fixed`, `border-collapse: collapse` (single-line merging), `rowspan` row-height contribution. Limits: `<col>` does not take class selectors; proportional column distribution is not implemented |
 | `dl` `dt` `dd` `figure` `figcaption` | ✅ | UA defaults: `dd`/`figure` indented, `dt` bold, `figcaption` muted |
@@ -60,7 +60,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 
 | Tag | Status | Notes |
 |---|---|---|
-| `canvas` | ✅ | a "widget draws itself" mount point (no JS 2D context — use qui's drawing). `El.SetCanvasDraw(func(cv qui.Canvas, bounds qui.Rect))` installs a per-frame draw callback; `El.SetCanvas(qui.Widget)` inserts an arbitrary custom widget (`scene3d.Viewport`, a `graphs` chart, …). CSS `width`/`height` size it (default 300×150); unwired renders a dashed placeholder. Default `display:inline-block`, `Role()=image` |
+| `canvas` | ✅ | a "widget draws itself" mount point (no JS 2D context — use qui's drawing). `El.SetCanvasDraw(func(cv qui.Canvas, bounds qui.Rect))` installs a per-frame draw callback; `El.SetCanvas(qui.Widget)` inserts an arbitrary custom widget (`scene3d.Viewport`, a `graphs` chart, …). CSS `width`/`height` size it (default 300×150), and a drawn canvas paints over its whole box when layout stretches it (flex-grow, align stretch); unwired renders a dashed placeholder. Default `display:inline-block`, `Role()=image` |
 
 ### Deliberately not supported (use native widgets / other packages)
 

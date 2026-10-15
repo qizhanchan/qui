@@ -51,6 +51,7 @@ package html
 
 import (
 	"errors"
+	"image"
 	"strconv"
 	"strings"
 
@@ -136,6 +137,7 @@ type Builder struct {
 	// icon + drag/drop
 	icon       qui.VectorSource
 	iconColors bool // keep the icon's own colours (no tint)
+	image      image.Image
 	draggable  bool
 	dragKey    string
 	dragHandle bool
@@ -275,6 +277,11 @@ func (b *Builder) Href(url string) *Builder { return b.Attr("href", url) }
 
 // Src sets an <img>'s source path.
 func (b *Builder) Src(path string) *Builder { return b.Attr("src", path) }
+
+// Image gives an <img> an already-decoded bitmap instead of a src path
+// (see htmlcss.El.SetImage): decode where convenient — off the UI thread,
+// again after the file changed — and pass the result. It wins over Src.
+func (b *Builder) Image(img image.Image) *Builder { b.image = img; return b }
 
 // Type sets an <input>'s type (text, number, password, color, …).
 func (b *Builder) Type(t string) *Builder { return b.Attr("type", t) }
@@ -598,6 +605,9 @@ func (b *Builder) Build() reactive.Element {
 				} else {
 					el.SetIcon(bb.icon)
 				}
+			}
+			if bb.tag == "img" {
+				el.SetImage(bb.image)
 			}
 			if bb.id != "" {
 				el.SetElementID(bb.id)

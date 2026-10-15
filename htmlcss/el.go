@@ -120,10 +120,12 @@ type El struct {
 	markerShape *listMarkerWidget
 	liContent   *widgets.Box
 
-	// img leaf: raster/svg loaded from the src attribute (static path).
+	// img leaf: raster/svg loaded from the src attribute (static path), or
+	// the in-memory bitmap given to SetImage (imgData, which wins over src).
 	// h.Icon's VectorSource path uses iconSrc below instead.
 	imgWidget qui.Widget
 	imgSrc    string
+	imgData   image.Image
 
 	// <canvas> leaf: a replaced element whose pixels come from user code.
 	// canvasDraw is a paint callback (wrapped in a canvasLeaf); canvasUser
@@ -800,6 +802,19 @@ func (e *El) SetIconUntinted(src qui.VectorSource) {
 	}
 	e.iconSrc = src
 	e.iconUntinted = true
+	e.markDirty()
+}
+
+// SetImage gives an <img> its picture as an already-decoded bitmap instead
+// of a src path: the host decodes (off the UI thread, from bytes it already
+// has, or again after the file changed) and the element just shows it. It
+// takes precedence over src; nil goes back to src. A no-op when the image
+// is unchanged, and on a non-<img> element.
+func (e *El) SetImage(img image.Image) {
+	if e.tag != "img" || e.imgData == img {
+		return
+	}
+	e.imgData = img
 	e.markDirty()
 }
 
@@ -2347,6 +2362,12 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		if e.hostsWidget {
 			e.LayoutEngine = hostFillLayout{}
 			e.adoptHostedFlex(cs)
+		} else if _, drawn := e.canvasWidget.(*canvasLeaf); drawn {
+			// The paint region is the element's box, as in a browser: a
+			// canvas stretched by flex-grow / align stretch / a % size
+			// draws over all of it, while 300×150 (or CSS width / height)
+			// stays its intrinsic size.
+			e.LayoutEngine = hostFillLayout{}
 		}
 		e.syncChildren()
 		return
@@ -3232,7 +3253,21 @@ func (e *El) ensureCanvas(cs *ComputedStyle) {
 // source can't be loaded. Relative paths resolve against the engine's
 // BaseDir option.
 func (e *El) ensureImg(cs *ComputedStyle) {
+	if e.imgData != nil {
+		iw, ok := e.imgWidget.(*widgets.Image)
+		if !ok || iw.Image != e.imgData {
+			iw = widgets.NewImage(e.imgData)
+			e.imgWidget = iw
+		}
+		e.imgSrc = "\x00data" // never equal to a src: dropping the image reloads
+		iw.Fit = objectFit(cs)
+		return
+	}
 	src := e.attrs["src"]
+	if iw, ok := e.imgWidget.(*widgets.Image); ok && e.imgSrc == src && iw.Image != nil && src != "" {
+		iw.Fit = objectFit(cs)
+		return
+	}
 	if e.imgWidget != nil && e.imgSrc == src {
 		if si, ok := e.imgWidget.(*svgImage); ok {
 			// Keep the tint tracking the computed color.
@@ -3271,18 +3306,25 @@ func (e *El) ensureImg(cs *ComputedStyle) {
 	}
 	if img := loadRasterImage(src, baseDir); img != nil {
 		iw := widgets.NewImage(img)
-		switch strings.ToLower(strings.TrimSpace(cs.raw["object-fit"])) {
-		case "cover":
-			iw.Fit = qui.ImageCover
-		case "contain":
-			iw.Fit = qui.ImageContain
-		}
+		iw.Fit = objectFit(cs)
 		e.imgWidget = iw
 		return
 	}
 	ph := widgets.NewBox(qui.FlowLayout{})
 	ph.Style().Background = qui.Color{R: 0.9, G: 0.9, B: 0.9, A: 1}
 	e.imgWidget = ph
+}
+
+// objectFit maps CSS object-fit onto the raster Image's fit (fill — the
+// CSS default — stretches).
+func objectFit(cs *ComputedStyle) qui.ImageFit {
+	switch strings.ToLower(strings.TrimSpace(cs.raw["object-fit"])) {
+	case "cover":
+		return qui.ImageCover
+	case "contain", "scale-down":
+		return qui.ImageContain
+	}
+	return qui.ImageStretch
 }
 
 // markerWidget returns the widget that renders this li's marker — the
