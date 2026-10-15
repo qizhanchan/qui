@@ -96,4 +96,69 @@ void quiAddSeparator(void* parent) {
 void quiInstallMainMenu(void) {
     if (g_mainMenu == nil) return;
     [NSApp setMainMenu:g_mainMenu];
+    // GLFW installs its default menu bar when the app finishes launching,
+    // which can be after an app sets its own (a menu built at startup).
+    // Put ours back once launching is over; later calls replace it as
+    // usual.
+    if (![[NSRunningApplication currentApplication] isFinishedLaunching]) {
+        static id observer = nil;
+        if (observer != nil) return;
+        observer = [[NSNotificationCenter defaultCenter]
+            addObserverForName:NSApplicationDidFinishLaunchingNotification
+                        object:nil
+                         queue:[NSOperationQueue mainQueue]
+                    usingBlock:^(NSNotification* note) {
+                        if (g_mainMenu != nil) [NSApp setMainMenu:g_mainMenu];
+                        [[NSNotificationCenter defaultCenter] removeObserver:observer];
+                        observer = nil;
+                    }];
+    }
+}
+
+// quiAddRoleItem adds a standard item AppKit performs itself (no Go
+// action). Roles match qui.MenuRole.
+void quiAddRoleItem(void* parent, const char* title, int role, const char* keyEq, int mods) {
+    NSMenu* p = (__bridge NSMenu*)parent;
+    if (p == nil) return;
+    NSString* t = title ? [NSString stringWithUTF8String:title] : @"";
+    NSString* k = keyEq ? [NSString stringWithUTF8String:keyEq] : @"";
+    if (k.length == 1) k = [k lowercaseString];
+    if (role == 4) { // Services
+        NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:t action:nil keyEquivalent:@""];
+        NSMenu* services = [[NSMenu alloc] initWithTitle:t];
+        item.submenu = services;
+        [NSApp setServicesMenu:services];
+        [p addItem:item];
+        return;
+    }
+    SEL sel = nil;
+    id target = nil; // nil: first responder (the key window)
+    switch (role) {
+    case 1: sel = @selector(hide:); target = NSApp; break;
+    case 2: sel = @selector(hideOtherApplications:); target = NSApp; break;
+    case 3: sel = @selector(unhideAllApplications:); target = NSApp; break;
+    case 5: sel = @selector(performMiniaturize:); break;
+    case 6: sel = @selector(performZoom:); break;
+    case 7: sel = @selector(arrangeInFront:); target = NSApp; break;
+    default: return;
+    }
+    NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:t action:sel keyEquivalent:k];
+    NSEventModifierFlags flags = 0;
+    if (mods & 1) flags |= NSEventModifierFlagShift;
+    if (mods & 2) flags |= NSEventModifierFlagControl;
+    if (mods & 4) flags |= NSEventModifierFlagOption;
+    if (mods & 8) flags |= NSEventModifierFlagCommand;
+    item.keyEquivalentModifierMask = flags;
+    item.target = target;
+    [p addItem:item];
+}
+
+// quiSetWindowsMenu makes menu the Window menu (AppKit lists windows in it).
+void quiSetWindowsMenu(void* menu) {
+    [NSApp setWindowsMenu:(__bridge NSMenu*)menu];
+}
+
+// quiSetHelpMenu makes menu the Help menu (AppKit adds its search field).
+void quiSetHelpMenu(void* menu) {
+    [NSApp setHelpMenu:(__bridge NSMenu*)menu];
 }

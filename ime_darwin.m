@@ -237,7 +237,7 @@ static void quiInstallRawKeyMonitor(void) {
             // the view before the menu bar's key-equivalent pass: GLFW's
             // stock Window menu would otherwise turn the app's Cmd+M into
             // Minimize. Unbound chords (Cmd+Q, Cmd+H) still reach the menu.
-            if ([event type] == NSEventTypeKeyDown && (mods & 8) &&
+            if ([event type] == NSEventTypeKeyDown &&
                 quiAcceleratorClaims(handle, (int)[event keyCode], mods)) {
                 [view keyDown:event];
                 return nil;

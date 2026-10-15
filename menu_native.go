@@ -27,7 +27,29 @@ type NativeMenuBar struct {
 type NativeMenu struct {
 	Title string
 	Items []*NativeMenuItem
+	// Role MenuRoleWindow makes this the app's Window menu: macOS then
+	// appends the list of open windows to it. MenuRoleHelp makes it the
+	// Help menu, which macOS heads with a search field over every menu.
+	Role MenuRole
 }
+
+// MenuRole names a standard item (or menu) the OS implements itself —
+// macOS's Hide / Services / Minimize / … have no Go action: AppKit
+// performs them. Roles are ignored where the OS has no counterpart.
+type MenuRole int
+
+const (
+	MenuRoleNone MenuRole = iota
+	MenuRoleHide           // Hide <App>          ⌘H
+	MenuRoleHideOthers     // Hide Others         ⌥⌘H
+	MenuRoleShowAll        // Show All
+	MenuRoleServices       // the Services submenu
+	MenuRoleMinimize       // Minimize            ⌘M
+	MenuRoleZoom           // Zoom
+	MenuRoleBringAllToFront
+	MenuRoleWindow // on a NativeMenu: the Window menu
+	MenuRoleHelp   // on a NativeMenu: the Help menu
+)
 
 // NativeMenuItem is either an action item, a separator, or a
 // submenu. Separator is true for a divider line (Label/Shortcut/
@@ -41,6 +63,16 @@ type NativeMenuItem struct {
 	Checked   bool
 	Separator bool
 	Submenu   *NativeMenu
+	// Role, when set, makes this a standard OS item (Action is ignored;
+	// Label and Shortcut still apply).
+	Role MenuRole
+	// KeyToWindow shows Shortcut but leaves the key to the window: the app
+	// binds that chord itself (an accelerator, or a widget's own key such
+	// as an editor's Cmd+Z), so typing it reaches the focused widget as
+	// usual and the menu item only acts when clicked. Without it AppKit's
+	// key-equivalent pass would run the item instead of delivering the key.
+	// macOS only.
+	KeyToWindow bool
 
 	// Populated by the backend after SetMenuBar so action dispatch
 	// can find the Go-side callback. Opaque to callers.

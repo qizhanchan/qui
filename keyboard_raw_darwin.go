@@ -46,8 +46,14 @@ func quiRawKeyboardChars(id C.uintptr_t, text *C.char, mods C.int) {
 //export quiAcceleratorClaims
 func quiAcceleratorClaims(id C.uintptr_t, keyCode C.int, mods C.int) C.int {
 	w := lookupIMEWindow(uintptr(id))
-	if w == nil || !w.acceleratorClaims(mapCocoaKey(int(keyCode)), mapNSMods(mods)) {
+	if w == nil || w.rawKeyboardTarget() != nil {
 		return 0
 	}
-	return 1
+	key, m := mapCocoaKey(int(keyCode)), mapNSMods(mods)
+	// A menu shortcut the app keeps for itself (KeyToWindow), any
+	// modifiers; otherwise a Command chord bound as an accelerator.
+	if menuLeavesKey(key, m) || m&ModSuper != 0 && w.acceleratorClaims(key, m) {
+		return 1
+	}
+	return 0
 }

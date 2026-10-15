@@ -14,10 +14,17 @@ void quiEndSubmenu(void* parent, void* submenu);
 void quiAddItem(void* parent, const char* title, const char* keyEq, int mods, int actionID, int enabled, int checked);
 void quiAddSeparator(void* parent);
 void quiInstallMainMenu(void);
+void quiAddRoleItem(void* parent, const char* title, int role, const char* keyEq, int mods);
+void quiSetWindowsMenu(void* menu);
+void quiSetHelpMenu(void* menu);
 */
 import "C"
 
-import "unsafe"
+import (
+	"strconv"
+	"strings"
+	"unsafe"
+)
 
 //export quiMenuActionCallback
 func quiMenuActionCallback(id C.int) {
@@ -32,11 +39,29 @@ func (a *App) SetMenuBar(bar *NativeMenuBar) {
 		return
 	}
 	resetActionsForScope(scopeMainMenu)
+	menuWindowKeys = map[menuChord]bool{}
 	C.quiResetMenuBar()
 	for _, m := range bar.Menus {
 		installMenu(m)
 	}
 	C.quiInstallMainMenu()
+}
+
+// menuWindowKeys are the main menu's KeyToWindow shortcuts: the key
+// monitor hands these chords to the window instead of the menu bar.
+// Touched only on the main thread (SetMenuBar, the key monitor).
+var menuWindowKeys = map[menuChord]bool{}
+
+type menuChord struct {
+	key  Key
+	mods Modifiers
+}
+
+const menuChordMods = ModShift | ModControl | ModAlt | ModSuper
+
+// menuLeavesKey reports whether key+mods is a KeyToWindow menu shortcut.
+func menuLeavesKey(key Key, mods Modifiers) bool {
+	return menuWindowKeys[menuChord{key, mods & menuChordMods}]
 }
 
 // installMenu builds a top-level NSMenu for the main menu bar and
@@ -56,6 +81,12 @@ func buildSubmenu(m *NativeMenu, scope actionScope) unsafe.Pointer {
 	defer freeTitle()
 	submenu := C.quiBeginSubmenu(cTitle)
 	buildMenuItems(unsafe.Pointer(submenu), m.Items, scope)
+	if m.Role == MenuRoleWindow {
+		C.quiSetWindowsMenu(submenu)
+	}
+	if m.Role == MenuRoleHelp {
+		C.quiSetHelpMenu(submenu)
+	}
 	return unsafe.Pointer(submenu)
 }
 
@@ -74,6 +105,19 @@ func buildMenuItems(parent unsafe.Pointer, items []*NativeMenuItem, scope action
 			continue
 		}
 		keyEq, mods := parseShortcut(it.Shortcut)
+		if it.KeyToWindow && scope == scopeMainMenu && it.Shortcut != "" {
+			if k, m, err := ParseShortcut(it.Shortcut); err == nil {
+				menuWindowKeys[menuChord{k, m & menuChordMods}] = true
+			}
+		}
+		if it.Role != MenuRoleNone {
+			cLabel, freeLabel := cStr(it.Label)
+			cKey, freeKey := cStr(keyEq)
+			C.quiAddRoleItem(parent, cLabel, C.int(it.Role), cKey, C.int(mods))
+			freeLabel()
+			freeKey()
+			continue
+		}
 		cLabel, freeLabel := cStr(it.Label)
 		cKey, freeKey := cStr(keyEq)
 		enabled := C.int(0)
@@ -119,12 +163,57 @@ func parseShortcut(s string) (string, int) {
 			default:
 				// key token; preserve case — NSMenu uses lowercase for most
 				// letter keys, uppercase triggers the shift glyph; callers
-				// pick the form they want.
+				// pick the form they want. Named keys (F12, Left, Enter, …)
+				// become the characters AppKit uses for them.
 				if len(tok) > 0 {
-					key = tok
+					key = menuKeyEquivalent(tok)
 				}
 			}
 		}
 	}
 	return key, mods
+}
+
+// menuKeyEquivalent maps a named key to its NSMenu key equivalent: the
+// function-key code points of NSEvent.h (NSF1FunctionKey = 0xF704, …) or
+// the control character AppKit expects. Other tokens pass through.
+func menuKeyEquivalent(tok string) string {
+	switch strings.ToLower(tok) {
+	case "enter", "return":
+		return "\r"
+	case "tab":
+		return "\t"
+	case "space":
+		return " "
+	case "escape", "esc":
+		return "\x1b"
+	case "backspace":
+		return "\b"
+	case "delete", "del":
+		return string(rune(0xF728)) // NSDeleteFunctionKey (forward delete)
+	case "up":
+		return string(rune(0xF700))
+	case "down":
+		return string(rune(0xF701))
+	case "left":
+		return string(rune(0xF702))
+	case "right":
+		return string(rune(0xF703))
+	case "home":
+		return string(rune(0xF729))
+	case "end":
+		return string(rune(0xF72B))
+	case "pageup":
+		return string(rune(0xF72C))
+	case "pagedown":
+		return string(rune(0xF72D))
+	case "insert":
+		return string(rune(0xF727))
+	}
+	if len(tok) >= 2 && (tok[0] == 'F' || tok[0] == 'f') {
+		if n, err := strconv.Atoi(tok[1:]); err == nil && n >= 1 && n <= 35 {
+			return string(rune(0xF704 + n - 1))
+		}
+	}
+	return tok
 }
