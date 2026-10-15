@@ -297,3 +297,20 @@ func TestDialogConstructorWiresContentParentAndSelf(t *testing.T) {
 		t.Fatalf("dialog.Self = %v, want dialog", d.Self())
 	}
 }
+
+func TestDialogKeepsRestyledButtons(t *testing.T) {
+	w := NewTestWindow(Size{W: 400, H: 300})
+	d := NewDialog("T", nil)
+	plain := d.AddButton("Cancel", nil)
+	mine := d.AddButton("Delete", nil)
+	red := Color{R: 1, A: 1}
+	mine.States = StateStyle{Base: Style{Background: red}}
+	d.DefaultAction = plain
+	d.Show(w)
+	if mine.States.Base.Background != red {
+		t.Errorf("Show restyled an app-styled button: %+v", mine.States.Base)
+	}
+	if plain.States.Base.Background.A == 0 {
+		t.Errorf("the default action should be filled: %+v", plain.States.Base)
+	}
+}

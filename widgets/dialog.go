@@ -108,8 +108,11 @@ type Dialog struct {
 	window        *Window
 	contentBounds Rect
 	// addedButtons are the AddButton buttons, which the dialog styles
-	// itself (text buttons; the DefaultAction one filled).
+	// itself (text buttons; the DefaultAction one filled). addedStyles
+	// holds the Hover style it last gave each one, to tell whether the app
+	// has since restyled it.
 	addedButtons []*Button
+	addedStyles  []*Style
 }
 
 // DialogCloseReason says why a dialog closed — passed to CanClose and
@@ -270,6 +273,7 @@ func (d *Dialog) AddButton(text string, onClick func()) *Button {
 	}
 	btn.States = DialogButtonStates(false)
 	d.addedButtons = append(d.addedButtons, btn)
+	d.addedStyles = append(d.addedStyles, btn.States.Hover)
 	d.AddAction(btn)
 	return btn
 }
@@ -310,10 +314,15 @@ func DialogButtonStates(filled bool) StateStyle {
 }
 
 // styleAddedButtons re-derives the AddButton buttons' look, filling the
-// one that is the DefaultAction.
+// one that is the DefaultAction. A button the app restyled (assigned its
+// own States after AddButton) keeps that look.
 func (d *Dialog) styleAddedButtons() {
-	for _, b := range d.addedButtons {
+	for i, b := range d.addedButtons {
+		if b.States.Hover != d.addedStyles[i] {
+			continue
+		}
 		b.States = DialogButtonStates(Widget(b) == d.DefaultAction)
+		d.addedStyles[i] = b.States.Hover
 	}
 }
 
