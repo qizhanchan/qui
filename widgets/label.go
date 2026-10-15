@@ -129,13 +129,14 @@ func (l *Label) SetFocused(focused bool) {
 }
 
 // resolveForeground returns the effective text color: when the style
-// still carries the DefaultStyle ColorBlack (i.e. no caller override),
+// still carries DefaultStyle's seeded black (i.e. no caller override),
 // fall back to the theme's body text token so a retinted theme carries
 // through to plain labels. Callers who set Foreground explicitly — even
-// to ColorBlack — get exactly what they asked for.
+// to ColorBlack — get exactly what they asked for: the seeded default is
+// recognized by its ThemeDefault mark, not by its value.
 func (l *Label) resolveForeground() Color {
 	fg := l.Style().Foreground
-	if fg == ColorBlack {
+	if fg == ThemeDefault(ColorBlack) {
 		return CurrentTheme().Text
 	}
 	return fg

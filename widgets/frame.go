@@ -1,6 +1,10 @@
 package widgets
 
-import . "github.com/qizhanchan/qui"
+import (
+	"reflect"
+
+	. "github.com/qizhanchan/qui"
+)
 
 // FieldSet — a simple container variant that is basically a Container
 // with opinionated styling + a little extra chrome.
@@ -21,6 +25,10 @@ type FieldSet struct {
 	Container
 	title  *Label
 	titleH float32
+	// titleFont is the font FieldSet last copied onto the title. The title
+	// follows Style().Font only while it still holds that font, so a legend
+	// font the app set itself is never overwritten.
+	titleFont Font
 }
 
 const groupBoxTitleH = 22
@@ -43,7 +51,7 @@ func NewFieldSet(title string, layout Layout, children ...Widget) *FieldSet {
 	// testing, dispatch, and cross-widget selection all reach it — but it
 	// is not in Children, so the content LayoutEngine never moves it.
 	g.title = NewLabel(title)
-	g.title.Style().Font = g.Style().Font
+	g.syncTitleFont()
 	g.title.Paragraph.Wrap = false
 	g.title.SetParent(g)
 
@@ -114,6 +122,20 @@ func (g *FieldSet) Layout(rect Rect) {
 	g.layoutTitle()
 }
 
+// syncTitleFont copies Style().Font onto the title unless the app has
+// replaced the title's font with its own.
+func (g *FieldSet) syncTitleFont() {
+	st := g.title.Style()
+	if !reflect.DeepEqual(st.Font, g.titleFont) && !reflect.DeepEqual(g.titleFont, Font{}) {
+		return // the app set the legend's font
+	}
+	if f := g.Style().Font; !reflect.DeepEqual(st.Font, f) {
+		st.Font = f
+		g.title.InvalidateLayout()
+	}
+	g.titleFont = st.Font
+}
+
 func (g *FieldSet) layoutTitle() {
 	b := g.Bounds()
 	g.title.Layout(Rect{X: b.X + 10, Y: b.Y + 4, W: b.W - 20, H: g.titleStripH()})
@@ -135,10 +157,10 @@ func (g *FieldSet) Draw(canvas Canvas) {
 			canvas.StrokeRect(b, theme.Border, g.Style().BorderSize)
 		}
 		if g.title.Text() != "" || g.title.TextKey() != "" {
-			// Keep the title's style in sync with the theme, then let the
-			// Label paint (including any selection highlight).
-			g.title.Style().Font = g.Style().Font
-			g.title.Style().Foreground = theme.Text
+			// The title's default text color already follows the theme
+			// (Label.resolveForeground); only its font tracks ours. A style
+			// the app set on the title is left as it is.
+			g.syncTitleFont()
 			g.layoutTitle()
 			g.title.Draw(canvas)
 		}

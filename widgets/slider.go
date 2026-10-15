@@ -72,9 +72,9 @@ func NewSlider(min, max, initial float32, onChange func(float32)) *Slider {
 		Max:                max,
 		Value:              initial,
 		OnChange:           onChange,
-		ActiveTrackColor:   Color{R: 0.30, G: 0.55, B: 0.85, A: 1},
-		InactiveTrackColor: Color{R: 0.88, G: 0.88, B: 0.88, A: 1},
-		HandleColor:        Color{R: 0.30, G: 0.55, B: 0.85, A: 1},
+		ActiveTrackColor:   baselineBlue,
+		InactiveTrackColor: baselineTrack,
+		HandleColor:        baselineBlue,
 	}
 	s.hoverTrans.Duration = toDuration(CurrentTheme().TransitionShort)
 	// Block-size stays fixed at 40 px so flex overflow doesn't collapse

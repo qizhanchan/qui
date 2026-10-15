@@ -42,8 +42,8 @@ type CheckBox struct {
 	// for a fill close to the background (a dark box on a dark surface).
 	// Zero A (the default) draws no outline when checked.
 	CheckedOutlineColor Color
-	LabelColor       Color // label text
-	StateLayerColor  Color // hover/focus overlay; A=0 disables
+	LabelColor          Color // label text
+	StateLayerColor     Color // hover/focus overlay; A=0 disables
 
 	// Geometry knobs — native <input type=checkbox> defaults. A designed
 	// checkbox typically enlarges the touch target: an 18 px box inside
@@ -71,7 +71,7 @@ func NewCheckBox(label string, onChange func(bool)) *CheckBox {
 		OnChange:         onChange,
 		OutlineColor:     htmlControlBorder,
 		CheckedFillColor: htmlAccent,
-		CheckMarkColor:   Color{R: 1, G: 1, B: 1, A: 1},
+		CheckMarkColor:   htmlControlBg,
 		LabelColor:       htmlControlText,
 		BoxSize:          htmlCheckSize,
 		BorderWidth:      1,
@@ -283,8 +283,8 @@ func NewProgress(min, max float32) *Progress {
 		BaseWidget: NewBaseWidget(),
 		Min:        min,
 		Max:        max,
-		TrackColor: Color{R: 0.88, G: 0.88, B: 0.88, A: 1},
-		FillColor:  Color{R: 0.30, G: 0.55, B: 0.85, A: 1},
+		TrackColor: baselineTrack,
+		FillColor:  baselineBlue,
 		Radius:     4,
 	}
 }

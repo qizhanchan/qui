@@ -17,19 +17,19 @@ import . "github.com/qizhanchan/qui"
 // layer. Nothing here bakes in a design system.
 var (
 	// htmlControlBorder is the UA form-control border color, #767676.
-	htmlControlBorder = Color{R: 0x76 / 255.0, G: 0x76 / 255.0, B: 0x76 / 255.0, A: 1}
+	htmlControlBorder = ThemeDefault(Color{R: 0x76 / 255.0, G: 0x76 / 255.0, B: 0x76 / 255.0, A: 1})
 	// htmlControlText is the default control text color (black).
-	htmlControlText = Color{R: 0, G: 0, B: 0, A: 1}
+	htmlControlText = ThemeDefault(Color{R: 0, G: 0, B: 0, A: 1})
 	// htmlControlBg is the default control background (white).
-	htmlControlBg = Color{R: 1, G: 1, B: 1, A: 1}
+	htmlControlBg = ThemeDefault(Color{R: 1, G: 1, B: 1, A: 1})
 	// htmlButtonBg is the UA <button> face color, #efefef.
-	htmlButtonBg = Color{R: 0xef / 255.0, G: 0xef / 255.0, B: 0xef / 255.0, A: 1}
+	htmlButtonBg = ThemeDefault(Color{R: 0xef / 255.0, G: 0xef / 255.0, B: 0xef / 255.0, A: 1})
 	// htmlAccent is the checked/focus accent, #4d8cd8 (a neutral blue,
 	// matching the reference's styled checkbox/radio fill).
-	htmlAccent = Color{R: 0x4d / 255.0, G: 0x8c / 255.0, B: 0xd8 / 255.0, A: 1}
+	htmlAccent = ThemeDefault(Color{R: 0x4d / 255.0, G: 0x8c / 255.0, B: 0xd8 / 255.0, A: 1})
 	// htmlDisabledText / htmlDisabledBorder for the :disabled look.
-	htmlDisabledText   = Color{R: 0.55, G: 0.55, B: 0.55, A: 1}
-	htmlDisabledBorder = Color{R: 0.80, G: 0.80, B: 0.80, A: 1}
+	htmlDisabledText   = ThemeDefault(Color{R: 0.55, G: 0.55, B: 0.55, A: 1})
+	htmlDisabledBorder = ThemeDefault(Color{R: 0.80, G: 0.80, B: 0.80, A: 1})
 )
 
 const (
@@ -52,13 +52,18 @@ const (
 
 // Theme tracking for the native baseline.
 //
-// The zero-config constructors copy the HTML baseline colors above into
-// their state styles and color fields. Under the default light theme those
-// ARE the intended pixels (the compare-html.sh baseline), but after
-// SetTheme a control built with them would keep its light look. themed
-// maps each baseline constant to the theme token it stands for, at draw
-// time, whenever the active theme is not the default one. Colors an app set
-// itself don't match a baseline constant and pass through untouched.
+// The zero-config constructors seed their state styles and color fields
+// with the baseline colors above. Under the default light theme those ARE
+// the intended pixels (the compare-html.sh baseline), but after SetTheme a
+// control built with them would keep its light look, so themed maps each
+// one to the theme token it stands for at draw time.
+//
+// Which slots follow the theme is decided by provenance, never by value:
+// every baseline color is marked with ThemeDefault, the mark travels with
+// the value through Style copies, and anything an app or a stylesheet
+// writes is unmarked. An authored `color: #000` therefore stays black on a
+// dark theme even though it equals htmlControlText. Matching by RGBA alone
+// would remap it to the theme's light text.
 
 var (
 	baselineGen   = ^uint64(0)
@@ -66,7 +71,8 @@ var (
 )
 
 // themeIsBaseline reports whether the active theme is the default light
-// theme (cached per ThemeGeneration).
+// theme (cached per ThemeGeneration): the fast path where every baseline
+// color paints as itself.
 func themeIsBaseline() bool {
 	if g := ThemeGeneration(); g != baselineGen {
 		baselineGen = g
@@ -77,51 +83,59 @@ func themeIsBaseline() bool {
 
 // Literal baseline grays some constructors use besides the named ones.
 var (
-	baselineHoverBg    = Color{R: 0.90, G: 0.90, B: 0.90, A: 1}
-	baselinePressedBg  = Color{R: 0.82, G: 0.82, B: 0.82, A: 1}
-	baselineDisabledBg = Color{R: 0.94, G: 0.94, B: 0.94, A: 1}
-	baselineBlue       = Color{R: 0.30, G: 0.55, B: 0.85, A: 1}
-	baselineTrack      = Color{R: 0.88, G: 0.88, B: 0.88, A: 1}
-	baselineOffBorder  = Color{R: 0.60, G: 0.60, B: 0.60, A: 1}
-	baselineTextGray   = Color{R: 0.35, G: 0.35, B: 0.35, A: 1}
+	baselineHoverBg    = ThemeDefault(Color{R: 0.90, G: 0.90, B: 0.90, A: 1})
+	baselinePressedBg  = ThemeDefault(Color{R: 0.82, G: 0.82, B: 0.82, A: 1})
+	baselineDisabledBg = ThemeDefault(Color{R: 0.94, G: 0.94, B: 0.94, A: 1})
+	baselineBlue       = ThemeDefault(Color{R: 0.30, G: 0.55, B: 0.85, A: 1})
+	baselineTrack      = ThemeDefault(Color{R: 0.88, G: 0.88, B: 0.88, A: 1})
+	baselineOffBorder  = ThemeDefault(Color{R: 0.60, G: 0.60, B: 0.60, A: 1})
+	baselineTextGray   = ThemeDefault(Color{R: 0.35, G: 0.35, B: 0.35, A: 1})
 	// MenuBar's bar surface and caption color.
-	baselineBarBg   = Color{R: 0.95, G: 0.95, B: 0.95, A: 1}
-	baselineBarText = Color{R: 0.10, G: 0.10, B: 0.10, A: 1}
+	baselineBarBg   = ThemeDefault(Color{R: 0.95, G: 0.95, B: 0.95, A: 1})
+	baselineBarText = ThemeDefault(Color{R: 0.10, G: 0.10, B: 0.10, A: 1})
 )
 
-// themed maps a baseline color to its theme token (see above).
+// themed maps a constructor-seeded baseline color to its theme token (see
+// above). Unmarked colors pass through untouched, as does a marked color
+// whose RGBA was edited after seeding (it no longer equals a baseline).
+//
+// Each slot follows its own token. A token the active theme leaves at
+// LightTheme's value keeps the baseline pixel, so a light theme that only
+// changes Accent recolors only the accent slots.
 func themed(c Color) Color {
-	if c.A == 0 || themeIsBaseline() {
+	if !c.IsThemeDefault() || themeIsBaseline() {
 		return c
 	}
-	th := CurrentTheme()
+	th, lt := CurrentTheme(), &LightTheme
+	tok := func(f func(*Theme) Color) Color {
+		if v := f(th); v != f(lt) {
+			return v
+		}
+		return c
+	}
 	switch c {
 	case htmlControlBorder:
-		return th.BorderStrong
-	case htmlControlText:
-		return th.Text
+		return tok(func(t *Theme) Color { return t.BorderStrong })
+	case htmlControlText, baselineBarText:
+		return tok(func(t *Theme) Color { return t.Text })
 	case htmlControlBg:
-		return th.SurfaceOverlay
+		return tok(func(t *Theme) Color { return t.SurfaceOverlay })
 	case htmlButtonBg:
-		return th.SurfaceStrong
+		return tok(func(t *Theme) Color { return t.SurfaceStrong })
 	case htmlAccent, baselineBlue:
-		return th.Accent
+		return tok(func(t *Theme) Color { return t.Accent })
 	case htmlDisabledText:
-		return LerpColor(th.Surface, th.Text, 0.45)
+		return tok(func(t *Theme) Color { return LerpColor(t.Surface, t.Text, 0.45) })
 	case htmlDisabledBorder:
-		return th.Border
+		return tok(func(t *Theme) Color { return t.Border })
 	case baselineHoverBg:
-		return LerpColor(th.SurfaceStrong, th.Text, th.HoverOpacity)
+		return tok(func(t *Theme) Color { return LerpColor(t.SurfaceStrong, t.Text, t.HoverOpacity) })
 	case baselinePressedBg:
-		return LerpColor(th.SurfaceStrong, th.Text, th.PressedOpacity)
-	case baselineDisabledBg, baselineTrack:
-		return th.SurfaceRaised
+		return tok(func(t *Theme) Color { return LerpColor(t.SurfaceStrong, t.Text, t.PressedOpacity) })
+	case baselineDisabledBg, baselineTrack, baselineBarBg:
+		return tok(func(t *Theme) Color { return t.SurfaceRaised })
 	case baselineOffBorder, baselineTextGray:
-		return th.TextMuted
-	case baselineBarBg:
-		return th.SurfaceRaised
-	case baselineBarText:
-		return th.Text
+		return tok(func(t *Theme) Color { return t.TextMuted })
 	}
 	return c
 }
@@ -133,37 +147,10 @@ func themedStyle(s *Style) *Style {
 		return s
 	}
 	out := *s
-	out.Background = themedBg(s.Background)
-	out.Foreground = themedFg(s.Foreground)
+	out.Background = themed(s.Background)
+	out.Foreground = themed(s.Foreground)
 	out.Border = themed(s.Border)
 	return &out
-}
-
-// themedFg is themed for a text color. The baseline constants are matched
-// by value, so a surface or border sentinel must not apply here: an
-// authored `color: #ffffff` equals htmlControlBg and would otherwise be
-// remapped to the theme's (dark) surface, and `color: #cccccc` equals
-// htmlDisabledBorder and would become the theme's (dark) border — light
-// text painted dark on a dark field. Natively these sentinels are only
-// ever fills / borders, never a widget's text color.
-func themedFg(c Color) Color {
-	switch c {
-	case htmlControlBg, htmlButtonBg, baselineHoverBg, baselinePressedBg,
-		baselineDisabledBg, baselineTrack, baselineBarBg,
-		htmlControlBorder, htmlDisabledBorder:
-		return c
-	}
-	return themed(c)
-}
-
-// themedBg is themed for a fill: the mirror of themedFg, so an authored
-// `background: #000` isn't remapped to the theme's text color.
-func themedBg(c Color) Color {
-	switch c {
-	case htmlControlText, htmlDisabledText, baselineTextGray, baselineBarText:
-		return c
-	}
-	return themed(c)
 }
 
 // nativeBoxPadding reports a raw-HTML control's authored padding (CSS

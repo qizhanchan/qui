@@ -343,7 +343,7 @@ func TestNativeChromeFollowsSetTheme(t *testing.T) {
 	if l := luminanceAt(mb, qui.Rect{W: 300, H: 28}, 280, 14); l > 0.5 {
 		t.Errorf("MenuBar background luminance %.2f under a dark theme", l)
 	}
-	if bg := mb.Style().Background; bg != (qui.Color{R: 0.95, G: 0.95, B: 0.95, A: 1}) {
+	if bg := mb.Style().Background; bg != qui.ThemeDefault(qui.Color{R: 0.95, G: 0.95, B: 0.95, A: 1}) {
 		t.Errorf("MenuBar.Style().Background read back as %+v; drawing must not rewrite it", bg)
 	}
 }

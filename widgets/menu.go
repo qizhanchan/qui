@@ -2105,8 +2105,8 @@ func NewMenuBar(window *Window) *MenuBar {
 	mb.BaseWidget = NewBaseWidget()
 	mb.LayoutEngine = FlexLayout{Direction: Horizontal, Gap: 2}
 	mb.SetSelf(mb)
-	mb.Style().Background = Color{R: 0.95, G: 0.95, B: 0.95, A: 1}
-	mb.Style().Foreground = Color{R: 0.10, G: 0.10, B: 0.10, A: 1}
+	mb.Style().Background = baselineBarBg
+	mb.Style().Foreground = baselineBarText
 	mb.Style().Padding = Insets{Top: 4, Right: 4, Bottom: 4, Left: 4}
 	return mb
 }
@@ -2190,8 +2190,8 @@ func (mb *MenuBar) styleTrigger(b *Button, open bool) {
 	base.Radius = p.MenuRadius
 	base.Padding = Insets{Top: 2, Right: 7, Bottom: 2, Left: 7}
 	base.Font.Size = CurrentTheme().FontBase
-	base.Background = themedBg(mb.Style().Background)
-	base.Foreground = themedFg(mb.Style().Foreground)
+	base.Background = themed(mb.Style().Background)
+	base.Foreground = themed(mb.Style().Foreground)
 	hover := base
 	hover.Background = p.MenuBarHover
 	if open {
