@@ -1,0 +1,14 @@
+[
+  {"do": "click", "on": "check"},
+  {"do": "key", "key": "Space"},
+  {"do": "key", "key": "Tab"},
+  {"do": "key", "key": "Enter"},
+  {"do": "key", "key": "Tab"},
+  {"do": "key", "key": "Enter"},
+  {"do": "key", "key": "Space"},
+  {"do": "click", "on": "sel"},
+  {"do": "key", "key": "Escape"},
+  {"do": "wheel", "on": "sel", "dy": 40},
+  {"do": "rightclick", "on": "checktext"},
+  {"do": "click", "on": "checktext"}
+]

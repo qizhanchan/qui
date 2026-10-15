@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head><style>
+body { margin: 8px; font: 14px sans-serif; }
+#row { display: flex; gap: 8px; align-items: center; padding: 6px; width: 300px; border: 1px solid #ccc; }
+#label { padding: 4px; }
+#btn { width: 60px; height: 24px; }
+#tabdiv { margin-top: 8px; padding: 8px; width: 200px; border: 1px solid #888; }
+#plain { margin-top: 8px; padding: 8px; width: 200px; }
+</style></head><body>
+<div id="root">
+  <div id="row"><span id="label">Row label</span><button id="btn" type="button">Go</button></div>
+  <div id="tabdiv" tabindex="0"><span id="tabinner">Focusable</span></div>
+  <div id="plain">Plain text</div>
+</div>
+</body></html>
