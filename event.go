@@ -116,6 +116,13 @@ func (b baseEvent) CurrentTarget() Widget {
 	return b.shared.currentTarget
 }
 
+// SameDispatch reports whether b and o are copies of one event value in
+// one dispatch — the identity a handler needs when it acts on an event
+// ahead of its normal phase and must not act on it again.
+func (b baseEvent) SameDispatch(o Event) bool {
+	return b.shared != nil && o != nil && b.shared == o.state()
+}
+
 func (b baseEvent) state() *eventState { return b.shared }
 
 // Event is the base interface for all events. The unexported state()

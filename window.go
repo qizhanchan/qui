@@ -91,6 +91,9 @@ type Window struct {
 	// focusVisibleAware get told via SetFocusVisible(bool) and use this to
 	// decide whether to paint a focus ring / state-layer halo.
 	focusVisible  bool
+	// pressFocus is the focus move a MouseDown owes, applied when its
+	// dispatch ends (or earlier, through FlushPressFocus).
+	pressFocus pendingPressFocus
 	dragCandidate Widget
 	dragging      bool
 	// dragCancelled marks a drag Escape cancelled while the button was
@@ -1998,15 +2001,21 @@ func (w *Window) dispatch(event Event) {
 		}
 	}
 
-	// Focus change happens on MouseDown, before the event is dispatched
-	// into widgets — so a just-focused widget can see the MouseDown too.
+	// Focus moves as the press's default action, after its dispatch — the
+	// DOM order: pointerdown listeners see the focus from before the press,
+	// then blur / focus fire. The target is picked from what lies under the
+	// pointer now, before a handler opens a popup there. A handler that
+	// moved focus itself during the dispatch keeps that focus.
 	if me, ok := event.(MouseEvent); ok && me.eventType == EventMouseDown {
 		// Any press switches the modality to pointer, even one that moves
 		// no focus, so a focus move a click handler makes programmatically
 		// doesn't light up a keyboard ring. The widget focused now keeps
 		// its own visible state until focus moves.
 		w.focusVisible = false
-		w.updateFocusFromMouse(me)
+		if next, ok := w.focusTargetFromMouse(me); ok {
+			w.pressFocus = pendingPressFocus{pending: true, next: next, before: w.focused}
+			defer w.FlushPressFocus()
+		}
 	}
 
 	// Tab / Shift-Tab navigate focus. Consumed before reaching widgets,
@@ -2285,10 +2294,42 @@ func (w *Window) eventTarget(event Event) Widget {
 	return nil
 }
 
-// updateFocusFromMouse transfers focus to the clicked widget if it is
-// focusable. Called on MouseDown, before the event reaches the tree,
-// so the newly-focused widget sees the same event.
-func (w *Window) updateFocusFromMouse(me MouseEvent) {
+// pendingPressFocus is a press's deferred focus move: next, unless focus
+// has left before (a handler moved it) by the time it is applied.
+type pendingPressFocus struct {
+	pending      bool
+	next, before Widget
+}
+
+// FlushPressFocus applies the focus move owed by the MouseDown being
+// dispatched now, ahead of the end of its dispatch. A widget whose press
+// does more than its listeners — a <select> opening its popup, a context
+// menu opening — calls it first, so focus lands where the DOM puts it:
+// after pointerdown listeners, before the rest of the default action.
+// Outside a MouseDown dispatch, or once applied, it does nothing.
+func (w *Window) FlushPressFocus() {
+	if w == nil || !w.pressFocus.pending {
+		return
+	}
+	pf := w.pressFocus
+	w.pressFocus = pendingPressFocus{}
+	if w.focused != pf.before {
+		return // a handler moved focus itself; that wins
+	}
+	// Skip a widget the dispatch detached (a row the press removed):
+	// focus never lands outside the tree.
+	if hw, ok := pf.next.(interface{ Window() *Window }); ok && hw.Window() != w {
+		return
+	}
+	w.focusVisible = false
+	w.SetFocus(pf.next)
+}
+
+// focusTargetFromMouse picks the widget a press at me should focus: the
+// nearest focusable widget at or above the hit target. ok is false when
+// the press moves no focus (nothing focusable there, or a widget that
+// opts out of click focus).
+func (w *Window) focusTargetFromMouse(me MouseEvent) (Widget, bool) {
 	target := w.hitTestAll(Point{X: me.X, Y: me.Y})
 	// Walk up from the hit target to the nearest focusable widget, so a
 	// click on non-focusable content (e.g. plain text inside an interactive
@@ -2298,7 +2339,7 @@ func (w *Window) updateFocusFromMouse(me MouseEvent) {
 	// button — its caption label included) leaves focus where it was.
 	for cur := target; cur != nil; cur = cur.Parent() {
 		if p, ok := cur.(ClickFocusPolicy); ok && !p.FocusOnClick() {
-			return
+			return nil, false
 		}
 	}
 	for cur := target; cur != nil; cur = cur.Parent() {
@@ -2310,11 +2351,10 @@ func (w *Window) updateFocusFromMouse(me MouseEvent) {
 					cur = c
 				}
 			}
-			w.focusVisible = false
-			w.SetFocus(cur)
-			return
+			return cur, true
 		}
 	}
+	return nil, false
 }
 
 // textFocusClaimer returns the nearest focusable ancestor-or-self of w that

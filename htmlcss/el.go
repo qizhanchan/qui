@@ -55,6 +55,10 @@ type El struct {
 	managedAttrs []string
 	text         string
 	engine       *StyleEngine
+	// earlyPress is a press this element's pointerdown listener already
+	// heard ahead of its bubble phase (bubblePressFromControl), so the real
+	// bubble, if the control lets it through, doesn't fire it twice.
+	earlyPress qui.MouseEvent
 	node         *Node // mirror used for selector matching / cascade
 
 	// elParent is the adopting parent element (set by the parent's
@@ -4191,7 +4195,9 @@ func (e *El) Handle(event qui.Event) bool {
 	}
 	switch me.Type() {
 	case qui.EventMouseDown:
-		if e.onPointerDown != nil && e.onPointerDown(e.pointerEvent(me, nil)) {
+		if e.earlyPress.SameDispatch(me) {
+			e.earlyPress = qui.MouseEvent{}
+		} else if e.onPointerDown != nil && e.onPointerDown(e.pointerEvent(me, nil)) {
 			return true
 		}
 	case qui.EventMouseMove:
@@ -4204,6 +4210,10 @@ func (e *El) Handle(event qui.Event) bool {
 		}
 	}
 	if e.onContextMenu != nil && me.Type() == qui.EventMouseDown && me.Button == qui.MouseButtonRight {
+		// contextmenu follows the press's focus move, as in the DOM.
+		if win := e.Window(); win != nil {
+			win.FlushPressFocus()
+		}
 		// Event coordinates arrive in this element's own space; the handler
 		// anchors a window-level overlay, so map back out (a no-op outside
 		// scroll containers / transformed subtrees).
@@ -4346,7 +4356,14 @@ func (e *El) handleControlPointer(me qui.MouseEvent, handled bool) bool {
 		if e.onPointerDown != nil && e.onPointerDown(e.pointerEvent(me, nil)) {
 			return true
 		}
+		if e.bubblePressFromControl(me) {
+			return true
+		}
 		if e.onContextMenu != nil && me.Button == qui.MouseButtonRight {
+			// contextmenu follows the press's focus move, as in the DOM.
+			if win := e.Window(); win != nil {
+				win.FlushPressFocus()
+			}
 			p := qui.LocalPointToWindow(e, qui.Point{X: me.X, Y: me.Y})
 			e.onContextMenu(p.X, p.Y)
 			return true
@@ -4369,6 +4386,30 @@ func (e *El) handleControlPointer(me qui.MouseEvent, handled bool) bool {
 		}
 	}
 	return handled
+}
+
+// bubblePressFromControl runs the ancestors' pointerdown listeners for a
+// press on this element's backing control, innermost first, before the
+// control acts: the control consumes the press, so its real bubble would
+// never reach them, and in the DOM they hear pointerdown before the press's
+// default action. Each ancestor remembers the press so a bubble the control
+// does let through doesn't fire it again. A consuming listener stops the
+// press there, control included.
+func (e *El) bubblePressFromControl(me qui.MouseEvent) bool {
+	win := qui.LocalPointToWindow(e, qui.Point{X: me.X, Y: me.Y})
+	for a := e.elParent; a != nil; a = a.elParent {
+		if a.onPointerDown == nil || !a.Enabled() {
+			continue
+		}
+		local := me
+		p := qui.WindowPointToLocal(a, win)
+		local.X, local.Y = p.X, p.Y
+		a.earlyPress = me
+		if a.onPointerDown(a.pointerEvent(local, nil)) {
+			return true
+		}
+	}
+	return false
 }
 
 // doubleClickWindow / doubleClickSlop are the gesture thresholds: the

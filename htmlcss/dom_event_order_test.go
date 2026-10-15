@@ -61,26 +61,17 @@ var domEventAllowlist = []domEventAllow{
 
 	// Form controls: the backing widget eats the pointer events before the
 	// element's listeners see them (session form-control-pointer-eve).
-	{"text-fields", "click text", "pointerdown *", "<input> swallows pointerdown"},
-	{"text-fields", "click area", "pointerdown *", "<textarea> swallows pointerdown"},
 	{"text-fields", "wheel area", "wheel *", "<textarea> swallows wheel"},
-	{"choice-controls", "click check", "pointerdown *", "checkbox swallows pointerdown"},
 	{"choice-controls", "click sel", "* *", "<select> opens its popup on press: focus leaves for the popup and pointer/click listeners don't run"},
 	{"choice-controls", "key Escape", "* sel", "the open <select> popup eats Escape's keydown and refocuses the select"},
 
-	// Focus moves on the press BEFORE the target's pointerdown listeners
-	// run; the DOM runs pointerdown first, then moves focus.
-	{"nested-click", "click tabinner", "focus *", "focus fires before pointerdown"},
-	{"nested-click", "click tabinner", "blur *", "blur fires before pointerdown"},
-	{"nested-click", "click plain", "blur *", "blur fires before pointerdown"},
-	{"choice-controls", "rightclick checktext", "blur *", "blur fires before pointerdown"},
-	{"text-fields", "rightclick text", "pointerdown text", "<input>'s pointerdown runs after the focus change, not before it"},
 
 	// A push button doesn't take focus on click (the macOS convention, see
 	// El.FocusOnClick); Chrome focuses it.
 	{"nested-click", "*click btn", "focus btn", "a clicked button doesn't take focus (macOS convention)"},
 	{"nested-click", "*click btn", "@focus *", "a clicked button doesn't take focus"},
 	{"nested-click", "wheel plain", "@focus *", "the right-clicked button never took focus"},
+	{"nested-click", "click tabinner", "blur btn", "the earlier-clicked button never took focus, so there is nothing to blur"},
 	{"text-fields", "click submit", "focus submit", "a clicked button doesn't take focus (macOS convention)"},
 	{"text-fields", "click submit", "blur text", "a clicked button doesn't take focus, so the field keeps it"},
 	{"text-fields", "click submit", "@focus *", "a clicked button doesn't take focus"},

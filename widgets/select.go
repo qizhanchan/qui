@@ -975,6 +975,11 @@ func (cb *Select) Handle(event Event) bool {
 			cb.Invalidate()
 		case EventMouseDown:
 			if e.Button == MouseButtonLeft && cb.Bounds().Contains(Point{X: e.X, Y: e.Y}) {
+				// Take the press's focus before the popup opens, so the
+				// popup restores focus to this select when it closes.
+				if win := cb.Window(); win != nil {
+					win.FlushPressFocus()
+				}
 				cb.toggleDropdown()
 				return true
 			}
