@@ -20,8 +20,12 @@ var frameworkCSS struct {
 	rules []Rule
 	// stateSels are the framework selectors gated on a subject state;
 	// hover / focus / focusVisible / active summarize them.
-	stateSels                         []Selector
+	stateSels                          []Selector
 	hover, focus, focusVisible, active bool
+	// has / siblingComb / structural mirror Stylesheet.HasHas,
+	// HasSiblingCombinator and HasStructural for the framework rules.
+	has, siblingComb, structural bool
+	structKeys                   structKeys
 }
 
 // RegisterFrameworkCSS appends css to the framework stylesheet. Call it
@@ -31,6 +35,10 @@ func RegisterFrameworkCSS(css string) {
 	sheet := ParseCSS(css)
 	frameworkCSS.mu.Lock()
 	frameworkCSS.rules = append(frameworkCSS.rules, sheet.Rules...)
+	frameworkCSS.has = frameworkCSS.has || sheet.HasHas
+	frameworkCSS.siblingComb = frameworkCSS.siblingComb || sheet.HasSiblingCombinator
+	frameworkCSS.structural = frameworkCSS.structural || sheet.HasStructural
+	frameworkCSS.structKeys.merge(sheet.structKeys)
 	for _, rule := range sheet.Rules {
 		for _, sel := range rule.Selectors {
 			h, f, a := sel.stateGates()

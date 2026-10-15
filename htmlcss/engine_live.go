@@ -16,15 +16,25 @@ import (
 // Threading: qui runs on a single UI goroutine, so restyle scheduling uses
 // the window's main-thread job queue (like reactive's signal binding).
 //
-// Restyle is SUBTREE-SCOPED: each mutation records its element, and the
-// coalesced flush recomputes only from each dirty element's parent down.
-// Without :has(), the parent is the complete impact scope of any
-// single-element change: a node's match depends only on itself, its
-// ancestors, and its PRECEDING siblings — so a change to X can affect X,
-// X's descendants (descendant/child combinators + inheritance), and X's
-// following siblings' subtrees ("X ~ Y", "X + Y"), all of which live under
-// X's parent. A stylesheet containing :has() promotes a dirty element to its
-// top-level root because a descendant mutation can change any ancestor.
+// Restyle is SUBTREE-SCOPED: each mutation records its element and how
+// far it can reach, and the coalesced flush recomputes only those scopes.
+// A node's match depends only on itself, its ancestors and its PRECEDING
+// siblings, so a change to X can affect X, X's descendants (descendant /
+// child combinators + inheritance) and — only through "X + Y" / "X ~ Y" —
+// its following siblings. Hence:
+//
+//   - an attribute / text / state change restyles X's own subtree, or X's
+//     parent's when a structural rule (sibling combinator, :first-child,
+//     :nth-*, :empty …) concerns X or its parent — "concerns" is keyed by
+//     the classes / ids / tags those rules name, so one :first-child rule
+//     for a tab strip does not widen every list's restyle;
+//   - a children-list change styles only the children never styled under
+//     that parent (removals and reorders change nothing), or the parent's
+//     subtree when a structural rule concerns the parent or a child. Either
+//     way the parent's inline-flow arrangement is rebuilt (reflow) without
+//     recomputing its style;
+//   - a stylesheet containing :has() promotes a dirty element to its
+//     top-level root, because a descendant mutation can change any ancestor.
 type StyleEngine struct {
 	// linkHandler, when set, decides what a link click does (events.go).
 	linkHandler LinkHandler
@@ -34,12 +44,16 @@ type StyleEngine struct {
 	sheet *Stylesheet
 	// scoped is set while flush restyles dirty scopes (vs. a full Restyle).
 	scoped    bool
-	viewportW float32      // @media evaluation width (0 = default), kept for SetCSS
-	opts      Options      // BaseDir (img resolution) + Window (select backing)
-	root      *El          // main-tree root (holds the window for invalidation)
-	roots     map[*El]bool // every top-level element: main root + portal/dialog roots
-	dirty     map[*El]bool // elements mutated since the last flush
-	pending   bool
+	viewportW float32           // @media evaluation width (0 = default), kept for SetCSS
+	opts      Options           // BaseDir (img resolution) + Window (select backing)
+	root      *El               // main-tree root (holds the window for invalidation)
+	roots     map[*El]bool      // every top-level element: main root + portal/dialog roots
+	dirty     map[*El]dirtyKind // elements mutated since the last flush
+	// reflow holds elements whose own style stands but whose arranged
+	// children (inline flow runs) must be rebuilt: their children list
+	// changed, or an inline child folded into their runs did.
+	reflow  map[*El]bool
+	pending bool
 
 	// styled counts applyComputed calls across the engine's lifetime.
 	// Test-only observability for asserting restyle scope; no runtime use.
@@ -272,17 +286,137 @@ func (eng *StyleEngine) Close() {
 // Root returns the current root element (nil before mount).
 func (eng *StyleEngine) Root() *El { return eng.root }
 
-// markDirty records a mutated element and coalesces a scoped restyle onto
+// dirtyKind is how far a mutation can reach.
+type dirtyKind uint8
+
+const (
+	// dirtySelf: the element's own subtree (its attributes or text changed
+	// and nothing in the sheet lets that affect a sibling or an ancestor).
+	dirtySelf dirtyKind = iota
+	// dirtyParent: the parent's subtree — the element and every sibling.
+	dirtyParent
+)
+
+// sheetFlags reports which reach-widening features the author and
+// framework sheets use (see Stylesheet).
+func (eng *StyleEngine) sheetFlags() (has, siblingComb, structural bool) {
+	if eng.sheet != nil {
+		has, siblingComb, structural = eng.sheet.HasHas, eng.sheet.HasSiblingCombinator, eng.sheet.HasStructural
+	}
+	frameworkCSS.mu.RLock()
+	has = has || frameworkCSS.has
+	siblingComb = siblingComb || frameworkCSS.siblingComb
+	structural = structural || frameworkCSS.structural
+	frameworkCSS.mu.RUnlock()
+	return
+}
+
+// structRelevant reports whether a structural or sibling-combinator rule
+// (author or framework) can concern n.
+func (eng *StyleEngine) structRelevant(n *Node) bool {
+	if eng.sheet.StructuralRelevant(n) {
+		return true
+	}
+	frameworkCSS.mu.RLock()
+	defer frameworkCSS.mu.RUnlock()
+	return frameworkCSS.structural && frameworkCSS.structKeys.relevant(n)
+}
+
+// markDirty records an element whose attributes, state or text changed.
+// Its own subtree is restyled — or its parent's, when a structural rule
+// concerns it (now or at its last style: a sibling combinator lets its
+// attributes reach the following siblings) or its parent (:empty).
+func (eng *StyleEngine) markDirty(e *El) {
+	if _, _, structural := eng.sheetFlags(); structural &&
+		(e.structRel || eng.structRelevant(e.node) || e.elParent != nil && eng.structRelevant(e.elParent.node)) {
+		eng.markDirtyKind(e, dirtyParent)
+		return
+	}
+	// A child folded into its parent's inline runs shows in the parent:
+	// rebuild those after restyling the child (record the child first —
+	// without a window either call flushes at once).
+	p := e.elParent
+	folded := p != nil && p.flowKids != nil
+	if folded {
+		eng.addReflow(p)
+	}
+	eng.markDirtyKind(e, dirtySelf)
+}
+
+// markReflow records e for an arrangement rebuild (see reflow) and
+// schedules a flush.
+func (eng *StyleEngine) markReflow(e *El) {
+	if eng.root == nil {
+		return
+	}
+	eng.addReflow(e)
+	eng.schedule()
+}
+
+// addReflow records e for an arrangement rebuild without scheduling.
+func (eng *StyleEngine) addReflow(e *El) {
+	if eng.reflow == nil {
+		eng.reflow = map[*El]bool{}
+	}
+	eng.reflow[e] = true
+}
+
+// childrenChanged records that e's children list was replaced. Without
+// structural selectors only the children that were never styled under e
+// need a style (removals and reorders change nothing); with them, e's
+// subtree is restyled (positions changed for every child).
+func (eng *StyleEngine) childrenChanged(e *El) {
+	has, _, structural := eng.sheetFlags()
+	if structural {
+		// Only matters when a structural rule concerns e or a child.
+		structural = eng.structRelevant(e.node)
+		for _, k := range e.elementKids {
+			if structural {
+				break
+			}
+			if ke, ok := k.(*El); ok {
+				structural = ke.structRel || eng.structRelevant(ke.node)
+			}
+		}
+	}
+	switch {
+	case has:
+		eng.markDirtyKind(e, dirtyParent)
+	case structural:
+		eng.markDirtyKind(e, dirtySelf)
+	default:
+		// e's own style stands; its arrangement of the new list doesn't
+		// (recorded first: without a window each mark flushes at once).
+		eng.addReflow(e)
+		for _, k := range e.elementKids {
+			if ke, ok := k.(*El); ok && (ke.lastCS == nil || ke.styledIn != e) {
+				eng.markDirtyKind(ke, dirtySelf)
+			}
+		}
+		eng.markReflow(e)
+	}
+}
+
+// markDirtyKind records e with reach k and coalesces a scoped restyle onto
 // the next frame via the window's job queue, or runs it inline when there
 // is no live window (initial mount before attach, or test mode).
-func (eng *StyleEngine) markDirty(e *El) {
+func (eng *StyleEngine) markDirtyKind(e *El, k dirtyKind) {
 	if eng.root == nil {
 		return // pre-mount: h.Mount does an explicit Restyle after attach
 	}
 	if eng.dirty == nil {
-		eng.dirty = map[*El]bool{}
+		eng.dirty = map[*El]dirtyKind{}
 	}
-	eng.dirty[e] = true
+	if old, ok := eng.dirty[e]; !ok || k > old {
+		eng.dirty[e] = k
+	}
+	eng.schedule()
+}
+
+// schedule coalesces a flush onto the next frame via the window's job
+// queue, or runs it inline when there is no live window (initial mount
+// before attach, or test mode).
+func (eng *StyleEngine) schedule() {
 	win := eng.root.Window()
 	if win == nil || win.IsHeadless() {
 		eng.flush()
@@ -310,7 +444,7 @@ func (eng *StyleEngine) markDirty(e *El) {
 // elements are styled in the same job they were created. No-op when nothing
 // is dirty.
 func (eng *StyleEngine) FlushPendingStyles() {
-	if eng == nil || len(eng.dirty) == 0 {
+	if eng == nil || len(eng.dirty) == 0 && len(eng.reflow) == 0 {
 		return
 	}
 	// A pending PostJob may still be queued; drop the flag so it becomes a
@@ -329,12 +463,30 @@ func (eng *StyleEngine) FlushPendingStyles() {
 func (eng *StyleEngine) flush() {
 	dirty := eng.dirty
 	eng.dirty = nil
+	reflow := eng.reflow
+	eng.reflow = nil
+	startPass := eng.pass
+	// After the walks: rebuild the arrangement of elements whose style
+	// stands (their new or changed children are styled by now). An element
+	// a walk of this flush restyled has been rebuilt already.
+	defer func() {
+		for e := range reflow {
+			if e.lastCS != nil && e.styledPass <= startPass && e.engine == eng {
+				e.applyComputed(e.lastCS)
+				e.invalidateStyledLayout()
+			}
+		}
+	}()
 	if len(dirty) == 0 {
 		return
 	}
 	scopes := map[*El]bool{}
-	for e := range dirty {
-		if s := e.restyleScope(); s != nil {
+	for e, k := range dirty {
+		s := e.restyleScope()
+		if k == dirtySelf {
+			s = e.selfScope()
+		}
+		if s != nil {
 			scopes[s] = true
 		}
 		// nil scope: detached element — styled when (re)adopted.
@@ -383,6 +535,8 @@ func (eng *StyleEngine) restyleWalk(e *El, parent *ComputedStyle) {
 	}
 	eng.styled++
 	e.styledPass = eng.pass
+	e.styledIn = e.elParent
+	e.structRel = !e.isTextSeg() && eng.structRelevant(e.node)
 	prev := e.lastCS
 	e.applyComputed(cs)
 	// applyComputed rebuilds widget state straight from cs, partly through
@@ -416,6 +570,7 @@ func (eng *StyleEngine) restyleWalk(e *El, parent *ComputedStyle) {
 // the scoped flush instead.
 func (eng *StyleEngine) Restyle() {
 	eng.dirty = nil // a full pass satisfies any pending scoped work
+	eng.reflow = nil
 	eng.pass++
 	for r := range eng.roots {
 		if r.styleParent == nil {

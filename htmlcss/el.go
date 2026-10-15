@@ -72,6 +72,12 @@ type El struct {
 	// styledPass is the StyleEngine pass that last styled this element
 	// (Restyle uses it to find style-linked roots no walk reached).
 	styledPass int
+	// styledIn is the parent element at that styling: a child adopted by
+	// a different parent needs restyling even though it has a style.
+	styledIn *El
+	// structRel: a structural rule concerned this element at that styling
+	// (see StyleEngine.markDirty).
+	structRel bool
 
 	elementKids []qui.Widget // element children set by the reactive layer
 	textLabel   *widgets.Label
@@ -393,7 +399,9 @@ func (e *El) SetElementChildren(kids []qui.Widget) {
 		}
 	}
 	e.syncChildren()
-	e.markDirty()
+	if e.engine != nil {
+		e.engine.childrenChanged(e)
+	}
 }
 
 // SetClass sets the class attribute (drives .class selectors).
@@ -993,6 +1001,29 @@ func (e *El) inheritParent() *El {
 		return e.elParent
 	}
 	return e.styleParent
+}
+
+// selfScope resolves the subtree root for a change confined to this
+// element's own subtree: the element itself — or, while the ancestors it
+// would inherit from have no style yet (a subtree still being assembled),
+// the topmost of those, so it is styled from a known parent. :has() widens
+// it like restyleScope. Detached elements return nil.
+func (e *El) selfScope() *El {
+	if e.engine != nil && e.engine.sheet != nil && e.engine.sheet.HasHas {
+		return e.restyleScope()
+	}
+	s := e
+	for {
+		p := s.inheritParent()
+		if p == nil || p.lastCS != nil {
+			break
+		}
+		s = p
+	}
+	if s.inheritParent() == nil && (e.engine == nil || !e.engine.roots[s]) {
+		return nil
+	}
+	return s
 }
 
 // restyleScope resolves the subtree root a change to this element can

@@ -78,7 +78,7 @@ func TestScopedRestylePrunesNestedScopes(t *testing.T) {
 
 	// Simulate a coalesced burst: p1 dirty (scope s1) AND s1 dirty
 	// (scope body). s1's scope is inside body's ⇒ one walk of 7.
-	eng.dirty = map[*El]bool{p1: true, s1: true}
+	eng.dirty = map[*El]dirtyKind{p1: dirtyParent, s1: dirtyParent}
 	before := eng.styled
 	eng.flush()
 	if walked := eng.styled - before; walked != 7 {
@@ -91,7 +91,7 @@ func TestScopedRestylePrunesNestedScopes(t *testing.T) {
 func TestScopedRestyleIndependentScopes(t *testing.T) {
 	eng, _, _, _, p1, _, p3, _ := scopedFixture(t, ``)
 
-	eng.dirty = map[*El]bool{p1: true, p3: true}
+	eng.dirty = map[*El]dirtyKind{p1: dirtyParent, p3: dirtyParent}
 	before := eng.styled
 	eng.flush()
 	if walked := eng.styled - before; walked != 6 {

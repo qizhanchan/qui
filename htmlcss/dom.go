@@ -38,6 +38,12 @@ type Node struct {
 	// (`.app.dark .q-dialog`) through it, while having no siblings — it
 	// is the only child for :first-child / `+` / `~` purposes.
 	StyleOnlyParent bool
+
+	// classSrc / classList cache the split class attribute for selector
+	// matching (hasClass runs for every class selector against every
+	// element on a restyle); re-split when the attribute changes.
+	classSrc  string
+	classList []string
 }
 
 // siblingParent is the parent whose Children hold n's siblings — nil for
@@ -83,11 +89,14 @@ func (n *Node) ID() string { return n.AttrOr("id", "") }
 // element per rule, so a []string per call adds up.
 func (n *Node) hasClass(name string) bool {
 	c, ok := n.Attr("class")
-	if !ok {
+	if !ok || c == "" {
 		return false
 	}
-	for c := range strings.FieldsSeq(c) {
-		if c == name {
+	if c != n.classSrc || n.classList == nil {
+		n.classSrc, n.classList = c, strings.Fields(c)
+	}
+	for _, x := range n.classList {
+		if x == name {
 			return true
 		}
 	}

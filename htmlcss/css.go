@@ -170,6 +170,18 @@ type Stylesheet struct {
 	// selectors, :has makes an element's match depend on descendants, so a
 	// mutation may invalidate every ancestor up to its top-level style root.
 	HasHas bool
+	// HasSiblingCombinator is true when any selector uses "+" or "~": an
+	// element's attributes then decide how its following siblings match.
+	HasSiblingCombinator bool
+	// HasStructural is true when any selector depends on an element's
+	// position among its siblings or on its children existing
+	// (:first-child, :last-child, :only-child, :nth-*, :empty) or uses a
+	// sibling combinator: changing a children list may then restyle the
+	// siblings that stay.
+	HasStructural bool
+	// structKeys keys the elements those selectors can concern (see
+	// StructuralRelevant).
+	structKeys structKeys
 	// HasHover / HasFocus / HasActive are true when any rule is gated on the
 	// matching interactive pseudo, so style resolution knows to compute the
 	// corresponding per-element state variant.
@@ -269,6 +281,9 @@ func ParseCSSViewport(src string, viewportW float32) *Stylesheet {
 				sheet.HasAncestorFocus = sheet.HasAncestorFocus || inner.HasAncestorFocus
 				sheet.HasAncestorActive = sheet.HasAncestorActive || inner.HasAncestorActive
 				sheet.HasHas = sheet.HasHas || inner.HasHas
+				sheet.HasSiblingCombinator = sheet.HasSiblingCombinator || inner.HasSiblingCombinator
+				sheet.HasStructural = sheet.HasStructural || inner.HasStructural
+				sheet.structKeys.merge(inner.structKeys)
 				sheet.stateSels = append(sheet.stateSels, inner.stateSels...)
 				sheet.hasSiblingStateSel = sheet.hasSiblingStateSel || inner.hasSiblingStateSel
 			}
@@ -289,6 +304,12 @@ func ParseCSSViewport(src string, viewportW float32) *Stylesheet {
 			sheet.Rules = append(sheet.Rules, rule)
 			for _, sel := range rule.Selectors {
 				sheet.HasHas = sheet.HasHas || sel.hasPseudo(pseudoHas)
+				sib := sel.hasSiblingCombinator()
+				sheet.HasSiblingCombinator = sheet.HasSiblingCombinator || sib
+				if sib || sel.hasStructuralPseudo() {
+					sheet.HasStructural = true
+					sel.addStructKeys(&sheet.structKeys)
+				}
 				h, f, a := sel.stateGates()
 				sheet.HasHover = sheet.HasHover || h
 				sheet.HasFocus = sheet.HasFocus || f
@@ -311,6 +332,130 @@ func ParseCSSViewport(src string, viewportW float32) *Stylesheet {
 // hasPseudo reports whether any compound (including the argument of :not)
 // carries kind. Keeping this on the parsed selector avoids error-prone text
 // scanning and makes nested supported simple selectors safe too.
+// structKeys is a conservative key set for the elements structural
+// selectors concern: an element carrying none of these classes, ids or
+// tags can neither be matched nor un-matched by a change of its siblings'
+// positions or attributes. any = some such compound has no key at all
+// (":first-child", "* + *"): every element counts.
+type structKeys struct {
+	any                bool
+	classes, ids, tags map[string]bool
+}
+
+func (k *structKeys) add(ss simpleSelector) {
+	if len(ss.classes) == 0 && ss.id == "" && (ss.tag == "" || ss.tag == "*") {
+		k.any = true
+		return
+	}
+	put := func(m *map[string]bool, v string) {
+		if *m == nil {
+			*m = map[string]bool{}
+		}
+		(*m)[v] = true
+	}
+	for _, c := range ss.classes {
+		put(&k.classes, c)
+	}
+	if ss.id != "" {
+		put(&k.ids, ss.id)
+	}
+	if len(ss.classes) == 0 && ss.id == "" {
+		put(&k.tags, ss.tag)
+	}
+}
+
+func (k *structKeys) merge(o structKeys) {
+	k.any = k.any || o.any
+	for _, m := range []struct {
+		dst *map[string]bool
+		src map[string]bool
+	}{{&k.classes, o.classes}, {&k.ids, o.ids}, {&k.tags, o.tags}} {
+		for v := range m.src {
+			if *m.dst == nil {
+				*m.dst = map[string]bool{}
+			}
+			(*m.dst)[v] = true
+		}
+	}
+}
+
+// relevant reports whether n carries one of the keys.
+func (k *structKeys) relevant(n *Node) bool {
+	if k.any {
+		return true
+	}
+	if n == nil || n.Type != ElementNode {
+		return false
+	}
+	if k.tags[n.Tag] {
+		return true
+	}
+	if id, ok := n.Attr("id"); ok && k.ids[id] {
+		return true
+	}
+	if len(k.classes) > 0 {
+		for _, c := range n.Classes() {
+			if k.classes[c] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// StructuralRelevant reports whether a structural or sibling-combinator
+// selector of the sheet can concern n.
+func (s *Stylesheet) StructuralRelevant(n *Node) bool {
+	return s != nil && s.HasStructural && s.structKeys.relevant(n)
+}
+
+// addStructKeys records the compounds of s a structural change can reach:
+// those with a structural pseudo, and both sides of each "+" / "~".
+func (s Selector) addStructKeys(k *structKeys) {
+	for i, part := range s.parts {
+		structural := false
+		for _, ps := range part.sel.pseudos {
+			switch ps.kind {
+			case pseudoFirstChild, pseudoLastChild, pseudoOnlyChild, pseudoNthChild,
+				pseudoNthOfType, pseudoNthLastChild, pseudoEmpty:
+				structural = true
+			}
+			if ps.inner != nil && (Selector{parts: []compound{{sel: *ps.inner}}}).hasStructuralPseudo() {
+				structural = true
+			}
+		}
+		if structural {
+			k.add(part.sel)
+		}
+		if i > 0 && (part.comb == combAdjacent || part.comb == combSibling) {
+			k.add(part.sel)
+			k.add(s.parts[i-1].sel)
+		}
+	}
+}
+
+// hasSiblingCombinator reports whether s joins compounds with "+" or "~".
+func (s Selector) hasSiblingCombinator() bool {
+	for i, part := range s.parts {
+		if i > 0 && (part.comb == combAdjacent || part.comb == combSibling) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasStructuralPseudo reports whether s uses a pseudo-class that depends on
+// the element's siblings or children.
+func (s Selector) hasStructuralPseudo() bool {
+	for _, k := range []pseudoKind{pseudoFirstChild, pseudoLastChild, pseudoOnlyChild,
+		pseudoNthChild, pseudoNthOfType, pseudoNthLastChild, pseudoEmpty} {
+		if s.hasPseudo(k) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s Selector) hasPseudo(kind pseudoKind) bool {
 	var hasInSimple func(simpleSelector) bool
 	hasInSimple = func(simple simpleSelector) bool {
