@@ -823,7 +823,7 @@ func mountPortal(elem Element, pass *reconcilePass) (*instance, Flags) {
 	// Grab focus so Escape / Enter reach the host even when the content
 	// has no focusable child. An `autofocus` element inside the content
 	// moves focus on from here (its focus job runs after this).
-	if elem.portal.OnEscape != nil || elem.portal.OnEnter != nil {
+	if (elem.portal.OnEscape != nil || elem.portal.OnEnter != nil) && !elem.portal.KeepFocus {
 		window.SetFocus(host)
 	}
 	return node, FlagNone

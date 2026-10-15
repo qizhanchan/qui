@@ -539,10 +539,21 @@ func (w *Window) runType(target, text string, opts TypeOptions) error {
 	if err != nil {
 		return err
 	}
-	if err := w.assertReachable(widget, target, point); err != nil {
-		return err
+	// Typing into the widget that already has focus needs no pointer
+	// path: a non-modal overlay drawn over it (an editor's completion
+	// list) doesn't stop the keyboard, so it must not stop the agent.
+	if !w.focusedWithin(widget) {
+		if err := w.assertReachable(widget, target, point); err != nil {
+			return err
+		}
 	}
 	return w.typeInto(widget, target, text, opts)
+}
+
+// focusedWithin reports whether the focused widget is target or inside it.
+func (w *Window) focusedWithin(target Widget) bool {
+	f := w.focused
+	return f != nil && widgetIsDescendant(f, target) && !w.keyTargetBehindModal(f)
 }
 
 // typeInto is the shared Type body for the selector path (runType) and

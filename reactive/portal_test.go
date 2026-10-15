@@ -92,6 +92,32 @@ func TestPortalUnmountRestoresPreviousFocus(t *testing.T) {
 	}
 }
 
+// KeepFocus leaves the focus where it was: an editor's completion list.
+func TestPortalKeepFocus(t *testing.T) {
+	window := qui.NewTestWindow(qui.Size{W: 400, H: 300})
+	open := false
+	rt := reactive.NewRuntime(window, func() reactive.Element {
+		return uiVBox().Children(
+			uiButton("main"),
+			uiWhen(open, func() uiNode {
+				return portalNode{
+					opts:  reactive.PortalOptions{OnEscape: func() {}, KeepFocus: true},
+					child: uiVBox().Children(uiLabel("list")),
+				}
+			}),
+		).Build()
+	})
+	rt.Render()
+	main := rt.Root().(*qui.Container).ChildAt(0)
+	window.SetFocus(main)
+
+	open = true
+	rt.Render()
+	if window.Focused() != main {
+		t.Fatalf("KeepFocus portal took focus: %v", window.Focused())
+	}
+}
+
 // A modal portal blocks clicks to the UI underneath, and a backdrop
 // click fires the dismiss callback.
 func TestModalPortalBlocksAndDismisses(t *testing.T) {

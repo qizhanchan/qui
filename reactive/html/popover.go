@@ -25,6 +25,10 @@ type PopoverOptions struct {
 	OnDismiss func()
 	// Modal blocks input to everything else while it is open.
 	Modal bool
+	// KeepFocus leaves keyboard focus where it was when the popover opens
+	// (an editor's completion list, a hover card): the popover's
+	// Escape-to-dismiss then only fires when focus is inside it.
+	KeepFocus bool
 	// Label names it for the accessibility tree.
 	Label string
 }
@@ -68,6 +72,7 @@ func PopoverAt(anchor func() qui.Rect, opts PopoverOptions, child Node) Node {
 		Modal:            opts.Modal,
 		OnBackdropClick:  opts.OnDismiss,
 		OnEscape:         opts.OnDismiss,
+		KeepFocus:        opts.KeepFocus,
 		Role:             "dialog",
 		Label:            opts.Label,
 	}

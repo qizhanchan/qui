@@ -92,6 +92,13 @@ type PortalOptions struct {
 	// button pressing itself, an autocomplete list picking a row).
 	OnEnter func()
 
+	// KeepFocus leaves keyboard focus where it is on mount (the host
+	// does not grab it): a completion list or a hover card shown while
+	// the user keeps typing in an editor. Escape then reaches OnEscape
+	// only if the focused widget lets it bubble here — usually the app
+	// closes such a popup from its own key handling.
+	KeepFocus bool
+
 	// Role / Label describe the overlay to the accessibility tree and
 	// the agent. Role defaults to "dialog" for a modal portal and
 	// "portal" otherwise; Label is its accessible name (a dialog title).
