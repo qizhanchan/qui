@@ -4079,7 +4079,7 @@ func (e *El) Handle(event qui.Event) bool {
 		// <input>'s keydown sees Esc before the field spends it dropping a
 		// selection. Run the element's own handlers here, ahead of the
 		// backing control, and not again while bubbling.
-		ownControl := e.backing != nil && ke.Target() == e.backing
+		ownControl := e.ownsControlTarget(ke.Target())
 		if ownControl && ke.Phase() == qui.PhaseCapture {
 			switch ke.Type() {
 			case qui.EventKeyDown:
@@ -4141,6 +4141,20 @@ func (e *El) Handle(event qui.Event) bool {
 	// author handler, no built-in control behavior. Hover/press bookkeeping
 	// above still ran, so :hover styling is unaffected.
 	if !e.Enabled() {
+		return handled
+	}
+	// A form control's pointer events target its backing widget, as its
+	// keys do (see the key path above), and the control consumes most of
+	// them: the press that places the caret / toggles / opens, the release
+	// that ends a text drag, the wheel that scrolls a <textarea>. Run the
+	// element's own handlers ahead of it, in the capture phase, so they fire
+	// at all, see the control's state from before its default action, and
+	// can suppress that action by consuming the event — and not again while
+	// bubbling.
+	if e.ownsControlTarget(me.Target()) {
+		if me.Phase() == qui.PhaseCapture {
+			return e.handleControlPointer(me, handled)
+		}
 		return handled
 	}
 	// Pointer transitions are synthesized per widget with no bubbling, so
@@ -4222,31 +4236,7 @@ func (e *El) Handle(event qui.Event) bool {
 		return handled
 	}
 	if me.Type() == qui.EventMouseUp && me.Button == qui.MouseButtonLeft {
-		acted := false
-		// Double click: two releases close together in time and space. Timed
-		// off the event's own timestamp (not the wall clock) so tests and
-		// replayed recordings behave like live input. Detected BEFORE the
-		// click handlers run (the release has to be recorded either way) but
-		// dispatched AFTER them, because the DOM order is click, click,
-		// dblclick — a handler pair that logs both must see it that way.
-		isDouble := e.isDoubleClick(me)
-		prevented := false
-		if e.onClickEvent != nil {
-			e.onClickEvent(e.pointerEvent(me, &prevented))
-			acted = true
-		}
-		if e.onClick != nil {
-			e.onClick()
-			acted = true
-		}
-		if isDouble && e.onDoubleClick != nil {
-			e.onDoubleClick()
-			acted = true
-		}
-		if e.onClickMods != nil {
-			e.onClickMods(me.Mods)
-			acted = true
-		}
+		acted, prevented := e.fireClick(me)
 		// Built-in control behavior (color palette / file dialog / form
 		// submit) runs alongside any author handler — unless one called
 		// PreventDefault — and, crucially, independently of e.onClick,
@@ -4285,6 +4275,97 @@ func (e *El) Handle(event qui.Event) bool {
 				e.followLink(href, from)
 				return true
 			}
+		}
+	}
+	return handled
+}
+
+// fireClick runs the element's click handlers for a left release that
+// completes a click, reporting whether any ran and whether one called
+// PreventDefault.
+//
+// Double click: two releases close together in time and space. Timed off
+// the event's own timestamp (not the wall clock) so tests and replayed
+// recordings behave like live input. Detected BEFORE the click handlers run
+// (the release has to be recorded either way) but dispatched AFTER them,
+// because the DOM order is click, click, dblclick — a handler pair that
+// logs both must see it that way.
+func (e *El) fireClick(me qui.MouseEvent) (acted, prevented bool) {
+	isDouble := e.isDoubleClick(me)
+	if e.onClickEvent != nil {
+		e.onClickEvent(e.pointerEvent(me, &prevented))
+		acted = true
+	}
+	if e.onClick != nil {
+		e.onClick()
+		acted = true
+	}
+	if isDouble && e.onDoubleClick != nil {
+		e.onDoubleClick()
+		acted = true
+	}
+	if e.onClickMods != nil {
+		e.onClickMods(me.Mods)
+		acted = true
+	}
+	return acted, prevented
+}
+
+// ownsControlTarget reports whether t is this element's backing control or
+// inside it — an event the DOM would target at the element itself.
+func (e *El) ownsControlTarget(t qui.Widget) bool {
+	if e.backing == nil {
+		return false
+	}
+	for w := t; w != nil && w != qui.Widget(e); w = w.Parent() {
+		if w == e.backing {
+			return true
+		}
+	}
+	return false
+}
+
+// handleControlPointer runs the element's own pointer handlers for an event
+// targeting its backing control, during the capture phase — ahead of the
+// control's default action. Returning true (a consuming handler) stops the
+// event before the control sees it.
+//
+// The click fires on the release here too, before the control's own
+// release: the controls consume it (Input / TextArea end a drag-selection
+// there), so a click waiting for the bubble would never come. No control
+// acts on a click — checkbox, radio, select and range activate on the
+// press — so the release still reaches the control after a PreventDefault,
+// which keeps its gesture from being left half-finished.
+func (e *El) handleControlPointer(me qui.MouseEvent, handled bool) bool {
+	switch me.Type() {
+	case qui.EventScroll:
+		if e.onWheel != nil && e.onWheel(me.DeltaX, me.DeltaY) {
+			return true
+		}
+	case qui.EventMouseDown:
+		if e.onPointerDown != nil && e.onPointerDown(e.pointerEvent(me, nil)) {
+			return true
+		}
+		if e.onContextMenu != nil && me.Button == qui.MouseButtonRight {
+			p := qui.LocalPointToWindow(e, qui.Point{X: me.X, Y: me.Y})
+			e.onContextMenu(p.X, p.Y)
+			return true
+		}
+	case qui.EventMouseMove:
+		if e.onPointerMove != nil && e.onPointerMove(e.pointerEvent(me, nil)) {
+			return true
+		}
+	case qui.EventMouseUp:
+		if e.onPointerUp != nil && e.onPointerUp(e.pointerEvent(me, nil)) {
+			return true
+		}
+		// Released over the element ends the click. A <select> press opens
+		// its dropdown, whose popup layer then lies under the release, so
+		// the element's own box counts too — the press began on it (the
+		// release is captured here), and sliding off it still cancels.
+		over := me.ReleasedOver(e) || e.Bounds().Contains(qui.Point{X: me.X, Y: me.Y})
+		if me.Button == qui.MouseButtonLeft && !me.AfterDrag && over {
+			e.fireClick(me)
 		}
 	}
 	return handled
