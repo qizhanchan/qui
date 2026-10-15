@@ -12,19 +12,18 @@
 // face under that name, so text-driven sizes come from identical metrics.
 // An element's data-tol attribute widens the Go side's tolerance for it.
 //
-// Regenerate (needs Chrome + puppeteer-core from /opt/js_work/material-web,
-// same setup as dom-events.mjs):
+// Regenerate (needs Chrome and `npm ci` in widgets/scripts/web, see
+// chrome.mjs):
 //   REFRESH_REF=1 go test ./htmlcss -run DOMLayout
 // which runs: node widgets/scripts/web/dom-layout.mjs [fixture-name ...]
 
-import puppeteer from '/opt/js_work/material-web/node_modules/puppeteer-core/lib/esm/puppeteer/puppeteer-core.js';
+import {launchChrome} from './chrome.mjs';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixtureDir = path.resolve(__dirname, '../../../htmlcss/testdata/layout');
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 // Must match domLayoutViewport in htmlcss/dom_layout_test.go.
 const VIEWPORT = {width: 640, height: 480, deviceScaleFactor: 1};
 
@@ -46,11 +45,7 @@ async function main() {
       .filter((f) => f.endsWith('.html'))
       .map((f) => f.slice(0, -'.html'.length));
   }
-  const browser = await puppeteer.launch({
-    executablePath: CHROME,
-    headless: 'new',
-    args: ['--font-render-hinting=none'],
-  });
+  const browser = await launchChrome(['--font-render-hinting=none']);
   try {
     for (const name of names.sort()) {
       const page = await browser.newPage();

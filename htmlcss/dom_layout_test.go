@@ -93,7 +93,7 @@ func TestDOMLayout(t *testing.T) {
 		cmd := exec.Command(node, filepath.Join("..", "widgets", "scripts", "web", "dom-layout.mjs"))
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {
-			t.Fatalf("regenerating goldens: %v", err)
+			t.Fatalf("regenerating goldens: %v (first run: npm ci --prefix widgets/scripts/web)", err)
 		}
 	}
 	if err := qui.LoadFontVariantFromBytes("GoRegular", qui.FontWeightNormal, false, goregular.TTF); err != nil {

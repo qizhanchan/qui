@@ -20,3 +20,6 @@ go.work
 
 # Local build output
 build/
+
+# Chrome reference harness dependencies (npm ci --prefix widgets/scripts/web)
+widgets/scripts/web/node_modules/

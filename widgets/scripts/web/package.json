@@ -1,0 +1,12 @@
+{
+  "name": "qui-chrome-reference",
+  "private": true,
+  "description": "Chrome reference harnesses for qui's differential tests (see ../README.md).",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "puppeteer-core": "22.15.0"
+  }
+}

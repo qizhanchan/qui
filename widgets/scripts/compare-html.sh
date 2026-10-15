@@ -14,9 +14,9 @@
 #      bounds so a width/height mismatch is visible rather than an error.
 #   4. Print an AE (absolute-pixel-error) table.
 #
-# Requires: ImageMagick (`compare`, `magick`); puppeteer-core via
-# /opt/js_work/material-web for ref capture; Go Regular font file at
-# widgets/scripts/web/go-regular.ttf (committed).
+# Requires: ImageMagick (`compare`, `magick`); for ref capture, Chrome and
+# `npm ci` in widgets/scripts/web (see web/chrome.mjs); Go Regular font file
+# at widgets/scripts/web/go-regular.ttf (committed).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"

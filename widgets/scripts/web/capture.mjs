@@ -6,9 +6,9 @@
 //
 // Usage:
 //   node widgets/scripts/web/capture.mjs
-// Requires: puppeteer-core, Google Chrome at the macOS default path.
+// Requires: Chrome and `npm ci` in this directory (see chrome.mjs).
 
-import puppeteer from '/opt/js_work/material-web/node_modules/puppeteer-core/lib/esm/puppeteer/puppeteer-core.js';
+import {launchChrome} from './chrome.mjs';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -18,7 +18,6 @@ const indexUrl = pathToFileURL(path.join(__dirname, 'native.html')).toString();
 const outDir = '/tmp/html-native-ref';
 await fs.mkdir(outDir, {recursive: true});
 
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const PAD = 16; // matches widgets/html_golden_test.go's `pad` constant
 
 // (widget, variant, fileBase) tuples. fileBase must match the `cases`
@@ -35,11 +34,7 @@ const cases = [
   {widget: 'radio',    variant: 'checked',   base: 'radio-checked'},
 ];
 
-const browser = await puppeteer.launch({
-  executablePath: CHROME,
-  headless: 'new',
-  args: ['--disable-features=PartialRasterInvalidation', '--font-render-hinting=none'],
-});
+const browser = await launchChrome(['--disable-features=PartialRasterInvalidation', '--font-render-hinting=none']);
 try {
   for (const c of cases) {
     const params = new URLSearchParams({widget: c.widget, v: c.variant});

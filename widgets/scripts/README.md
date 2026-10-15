@@ -1,9 +1,18 @@
 # widgets/scripts — Chrome reference harnesses
 
-These harnesses compare qui against real Chrome, driven via `puppeteer-core`
-from `/opt/js_work/material-web/node_modules` and the system Chrome at
-`/Applications/Google Chrome.app`. Use node >= 18 (set `NODE_BIN` if the
-default `node` is older).
+These harnesses compare qui against real Chrome, driven via `puppeteer-core`.
+It is this directory's own dependency, pinned in `web/package.json` +
+`web/package-lock.json`; install it once (node >= 18, set `NODE_BIN` if the
+default `node` is older):
+
+```bash
+npm ci --prefix widgets/scripts/web
+```
+
+puppeteer-core drives an installed Chrome rather than downloading one:
+`CHROME_BIN` names the executable, defaulting to
+`/Applications/Google Chrome.app` (see `web/chrome.mjs`). The Go tests never
+need either — only regenerating goldens does.
 
 ## compare-html.sh — visual diff of default form controls
 

@@ -119,7 +119,7 @@ func TestDOMEventOrder(t *testing.T) {
 		cmd := exec.Command(node, filepath.Join("..", "widgets", "scripts", "web", "dom-events.mjs"))
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {
-			t.Fatalf("regenerating goldens: %v", err)
+			t.Fatalf("regenerating goldens: %v (first run: npm ci --prefix widgets/scripts/web)", err)
 		}
 	}
 	stepFiles, err := filepath.Glob(filepath.Join(dir, "*.steps.json"))

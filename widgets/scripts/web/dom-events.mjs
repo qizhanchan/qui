@@ -20,19 +20,18 @@
 // A <form> submit is logged as "submit <form-id> target" (and prevented,
 // so the page stays put).
 //
-// Regenerate (needs Chrome + puppeteer-core from /opt/js_work/material-web,
-// same setup as compare-html.sh / capture.mjs):
+// Regenerate (needs Chrome and `npm ci` in widgets/scripts/web, see
+// chrome.mjs):
 //   REFRESH_REF=1 go test ./htmlcss -run DOMEventOrder
 // which runs: node widgets/scripts/web/dom-events.mjs [fixture-name ...]
 
-import puppeteer from '/opt/js_work/material-web/node_modules/puppeteer-core/lib/esm/puppeteer/puppeteer-core.js';
+import {launchChrome} from './chrome.mjs';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixtureDir = path.resolve(__dirname, '../../../htmlcss/testdata/events');
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const VIEWPORT = {width: 480, height: 360, deviceScaleFactor: 1};
 
 const LOGGED = ['keydown', 'keyup', 'pointerdown', 'pointerup', 'click',
@@ -116,7 +115,7 @@ async function main() {
       .filter((f) => f.endsWith('.steps.json'))
       .map((f) => f.slice(0, -'.steps.json'.length));
   }
-  const browser = await puppeteer.launch({executablePath: CHROME, headless: 'new'});
+  const browser = await launchChrome();
   try {
     for (const name of names.sort()) {
       const steps = JSON.parse(await fs.readFile(path.join(fixtureDir, `${name}.steps.json`), 'utf8'));
