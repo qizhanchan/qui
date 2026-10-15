@@ -8,6 +8,7 @@ import (
 
 	xdraw "golang.org/x/image/draw"
 	"golang.org/x/image/font"
+	"golang.org/x/image/math/f64"
 )
 
 // cpuBackend is the reference RasterBackend implementation. It writes
@@ -454,27 +455,27 @@ func (b *cpuBackend) DrawText(text string, rect Rect, clip Rect, color Color, fo
 // DrawImage blits `img` into `dst` with bilinear resample.
 func (b *cpuBackend) DrawImage(img image.Image, dst Rect, clip Rect) {
 	target := b.activeImg()
-	if target == nil || img == nil {
+	if target == nil || img == nil || dst.W <= 0 || dst.H <= 0 {
 		return
 	}
-	dstPix := rectToPixelRect(dst).Intersect(target.Bounds())
-	if dstPix.Empty() {
-		return
-	}
-	clipped := dstPix.Intersect(rectToPixelRect(clip).Intersect(target.Bounds()))
+	// Clip to the target and the clip rect, but scale by the FULL dst: a
+	// picture that runs off the canvas (zoomed in, scrolled) is cropped,
+	// not squeezed into its visible part.
+	clipped := rectToPixelRect(dst).Intersect(rectToPixelRect(clip)).Intersect(target.Bounds())
 	if clipped.Empty() {
 		return
 	}
-	srcBounds := img.Bounds()
-	scaleX := float32(srcBounds.Dx()) / float32(dstPix.Dx())
-	scaleY := float32(srcBounds.Dy()) / float32(dstPix.Dy())
-	srcRect := image.Rect(
-		srcBounds.Min.X+int(float32(clipped.Min.X-dstPix.Min.X)*scaleX),
-		srcBounds.Min.Y+int(float32(clipped.Min.Y-dstPix.Min.Y)*scaleY),
-		srcBounds.Min.X+int(float32(clipped.Max.X-dstPix.Min.X)*scaleX),
-		srcBounds.Min.Y+int(float32(clipped.Max.Y-dstPix.Min.Y)*scaleY),
-	).Intersect(srcBounds)
-	xdraw.ApproxBiLinear.Scale(target, clipped, img, srcRect, xdraw.Over, nil)
+	src := img.Bounds()
+	if src.Empty() {
+		return
+	}
+	sx := float64(dst.W) / float64(src.Dx())
+	sy := float64(dst.H) / float64(src.Dy())
+	s2d := f64.Aff3{
+		sx, 0, float64(dst.X) - float64(src.Min.X)*sx,
+		0, sy, float64(dst.Y) - float64(src.Min.Y)*sy,
+	}
+	xdraw.ApproxBiLinear.Transform(target.SubImage(clipped).(*image.RGBA), s2d, img, src, xdraw.Over, nil)
 }
 
 // DrawImageTransformed draws `img` through the affine `m` (image pixel
