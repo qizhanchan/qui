@@ -216,9 +216,9 @@ func TestApplyStylePatchUsesWidgetInvalidation(t *testing.T) {
 // specified ones.
 func TestStyleMergeZeroIsIdentity(t *testing.T) {
 	base := Style{
-		Background: Color{1, 0, 0, 1},
-		Foreground: Color{0, 1, 0, 1},
-		Border:     Color{0, 0, 1, 1},
+		Background: Color{R: 1, G: 0, B: 0, A: 1},
+		Foreground: Color{R: 0, G: 1, B: 0, A: 1},
+		Border:     Color{R: 0, G: 0, B: 1, A: 1},
 		BorderSize: 2,
 		Radius:     8,
 		Padding:    Insets{Top: 4, Right: 6, Bottom: 4, Left: 6},
@@ -230,7 +230,7 @@ func TestStyleMergeZeroIsIdentity(t *testing.T) {
 		Grow:       1,
 		AlignSelf:  AlignCenter,
 		Opacity:    0.9,
-		Shadow:     ShadowStyle{Y: 2, Blur: 4, Color: Color{0, 0, 0, 0.2}},
+		Shadow:     ShadowStyle{Y: 2, Blur: 4, Color: Color{R: 0, G: 0, B: 0, A: 0.2}},
 	}
 	got := base.MergedWith(Style{})
 	if !reflect.DeepEqual(got, base) {
@@ -241,7 +241,7 @@ func TestStyleMergeZeroIsIdentity(t *testing.T) {
 // Override should win on every scalar/color/insets/font/shadow field.
 func TestStyleMergeOverrideWins(t *testing.T) {
 	base := Style{
-		Background: Color{1, 0, 0, 1},
+		Background: Color{R: 1, G: 0, B: 0, A: 1},
 		BorderSize: 1,
 		Radius:     4,
 		Padding:    Insets{Top: 1},
@@ -252,7 +252,7 @@ func TestStyleMergeOverrideWins(t *testing.T) {
 		Opacity:    0.5,
 	}
 	over := Style{
-		Background: Color{0, 0, 1, 1},
+		Background: Color{R: 0, G: 0, B: 1, A: 1},
 		BorderSize: 3,
 		Radius:     8,
 		Padding:    Insets{Right: 5},
@@ -308,8 +308,8 @@ func TestMergeFunctionMatchesMethod(t *testing.T) {
 // Transparent (A==0) colors on override must NOT clobber a specified
 // base color. This is how partial styles opt out of tinting.
 func TestStyleMergeTransparentColorPreservesBase(t *testing.T) {
-	base := Style{Background: Color{1, 0, 0, 1}}
-	over := Style{Background: Color{0, 0, 1, 0}} // A=0 → unspecified
+	base := Style{Background: Color{R: 1, G: 0, B: 0, A: 1}}
+	over := Style{Background: Color{R: 0, G: 0, B: 1, A: 0}} // A=0 → unspecified
 	got := base.MergedWith(over)
 	if got.Background != base.Background {
 		t.Fatalf("transparent override clobbered base: got %+v want %+v",

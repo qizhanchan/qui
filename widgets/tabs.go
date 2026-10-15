@@ -107,10 +107,10 @@ func NewTabView(tabs ...Tab) *TabView {
 		SelectedIdx:    0,
 		hoverIdx:       -1,
 		hoverClose:     -1,
-		StripColor:     Color{R: 1, G: 1, B: 1, A: 1},
-		IndicatorColor: Color{R: 0.30, G: 0.55, B: 0.85, A: 1},
-		SelectedColor:  Color{R: 0.30, G: 0.55, B: 0.85, A: 1},
-		InactiveColor:  Color{R: 0.35, G: 0.35, B: 0.35, A: 1},
+		StripColor:     htmlControlBg,
+		IndicatorColor: baselineBlue,
+		SelectedColor:  baselineBlue,
+		InactiveColor:  baselineTextGray,
 	}
 	t.SetSelf(t)
 	t.Style().Font = Font{Size: 14}

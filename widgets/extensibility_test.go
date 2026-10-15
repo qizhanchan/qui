@@ -336,32 +336,51 @@ func TestNativeControlsFollowTheme(t *testing.T) {
 	}
 }
 
-// Baseline colors are matched by value, so the mapping must respect the
-// slot: white *text* (authored `color: #fff`) is not the white UA field fill
-// and must not turn into the dark surface color, nor black fill into text.
-func TestThemedStyleKeepsRoles(t *testing.T) {
+// Only constructor-seeded colors follow the theme. An authored color equal
+// to a baseline (white text, black fill, `color: #cccccc` = the disabled
+// border grey) is not the framework's and must paint as written, in any
+// slot.
+func TestThemedStyleKeepsAuthoredColors(t *testing.T) {
 	saved := *CurrentTheme()
 	defer SetTheme(saved)
 	dark := saved
 	dark.SurfaceOverlay = Color{R: 0.2, G: 0.2, B: 0.2, A: 1}
 	dark.Text = Color{R: 0.9, G: 0.9, B: 0.9, A: 1}
+	dark.Border = Color{R: 0.3, G: 0.3, B: 0.3, A: 1}
 	SetTheme(dark)
-	st := themedStyle(&Style{Foreground: htmlControlBg, Background: htmlControlText})
-	if st.Foreground != htmlControlBg {
-		t.Fatalf("white text remapped to %v", st.Foreground)
+	plain := func(c Color) Color { return Color{R: c.R, G: c.G, B: c.B, A: c.A} }
+	for _, c := range []Color{htmlControlBg, htmlControlText, htmlDisabledBorder, htmlControlBorder} {
+		in := &Style{Foreground: plain(c), Background: plain(c), Border: plain(c)}
+		if st := themedStyle(in); st.Foreground != in.Foreground || st.Background != in.Background || st.Border != in.Border {
+			t.Fatalf("authored %v remapped: %+v", plain(c), st)
+		}
 	}
-	if st.Background != htmlControlText {
-		t.Fatalf("black fill remapped to %v", st.Background)
-	}
-	st = themedStyle(&Style{Foreground: htmlControlText, Background: htmlControlBg})
+	st := themedStyle(&Style{Foreground: htmlControlText, Background: htmlControlBg})
 	if st.Foreground != dark.Text || st.Background != dark.SurfaceOverlay {
-		t.Fatalf("UA colors should still follow the theme: %+v", st)
+		t.Fatalf("seeded colors should follow the theme: %+v", st)
 	}
-	// `color: #cccccc` / `#767676` equal the UA border greys: as text they
-	// must not become the (dark) theme border color.
-	for _, fg := range []Color{htmlDisabledBorder, htmlControlBorder} {
-		if st := themedStyle(&Style{Foreground: fg}); st.Foreground != fg {
-			t.Fatalf("grey text %v remapped to %v", fg, st.Foreground)
+	// A seeded color whose RGBA was edited is no longer the baseline.
+	faded := htmlControlText
+	faded.A = 0.5
+	if themed(faded) != faded {
+		t.Fatal("an edited seeded color must pass through")
+	}
+}
+
+// A theme that changes only one token recolors only the slots seeded for
+// that token; the rest keep their exact baseline pixels.
+func TestThemedFollowsChangedTokensOnly(t *testing.T) {
+	saved := *CurrentTheme()
+	defer SetTheme(saved)
+	th := LightTheme
+	th.Accent = Color{R: 0.8, G: 0.1, B: 0.3, A: 1}
+	SetTheme(th)
+	if got := themed(htmlAccent); got != th.Accent {
+		t.Fatalf("accent slot = %v, want the theme accent", got)
+	}
+	for _, c := range []Color{htmlControlText, htmlControlBg, htmlControlBorder, htmlButtonBg, baselineHoverBg} {
+		if got := themed(c); got != c {
+			t.Fatalf("untouched token remapped %v to %v", c, got)
 		}
 	}
 }

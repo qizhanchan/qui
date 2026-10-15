@@ -188,15 +188,15 @@ func defaultButtonStates() StateStyle {
 		Font:       Font{Size: htmlControlFontSize},
 	}
 	hover := base
-	hover.Background = Color{R: 0.90, G: 0.90, B: 0.90, A: 1}
+	hover.Background = baselineHoverBg
 	pressed := base
-	pressed.Background = Color{R: 0.82, G: 0.82, B: 0.82, A: 1}
+	pressed.Background = baselinePressedBg
 	focused := base
 	focused.Border = htmlAccent
 	focused.BorderSize = 2
 	disabled := base
 	disabled.Foreground = htmlDisabledText
-	disabled.Background = Color{R: 0.94, G: 0.94, B: 0.94, A: 1}
+	disabled.Background = baselineDisabledBg
 	return StateStyle{
 		Base:     base,
 		Hover:    &hover,

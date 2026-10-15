@@ -8,14 +8,36 @@ import (
 // Color is a simple RGBA color definition.
 type Color struct {
 	R, G, B, A float32
+
+	// themeDefault is provenance, not paint: the color is a framework
+	// default standing in for a theme token (see ThemeDefault). Renderers
+	// ignore it. It travels with the value through Style copies, and a
+	// color an app or stylesheet writes, whether a literal, a parsed CSS
+	// color or a theme token, never carries it.
+	themeDefault bool
 }
 
+// ThemeDefault returns c marked as a framework-seeded default: the light
+// baseline value of a slot that should follow the active theme. A widget
+// constructor seeds its color slots with marked colors and maps them to
+// theme tokens at draw time. Anything later written into the slot is
+// unmarked and paints exactly as written, even when its RGBA happens to
+// equal the default. The theme mapping never decides by value which colors
+// are its own.
+func ThemeDefault(c Color) Color {
+	c.themeDefault = true
+	return c
+}
+
+// IsThemeDefault reports whether c was marked by ThemeDefault.
+func (c Color) IsThemeDefault() bool { return c.themeDefault }
+
 var (
-	ColorTransparent = Color{0, 0, 0, 0}
-	ColorWhite       = Color{1, 1, 1, 1}
-	ColorBlack       = Color{0, 0, 0, 1}
-	ColorGray        = Color{0.5, 0.5, 0.5, 1}
-	ColorBlue        = Color{0.2, 0.4, 0.9, 1}
+	ColorTransparent = Color{R: 0, G: 0, B: 0, A: 0}
+	ColorWhite       = Color{R: 1, G: 1, B: 1, A: 1}
+	ColorBlack       = Color{R: 0, G: 0, B: 0, A: 1}
+	ColorGray        = Color{R: 0.5, G: 0.5, B: 0.5, A: 1}
+	ColorBlue        = Color{R: 0.2, G: 0.4, B: 0.9, A: 1}
 )
 
 // FontWeight tracks CSS-like numeric weight.
@@ -483,7 +505,9 @@ func (s ShadowStyle) IsZero() bool {
 func DefaultStyle() Style {
 	return Style{
 		Background: ColorTransparent,
-		Foreground: ColorBlack,
+		// Marked: widgets (Label) map the unset default to the theme's text
+		// color, while an explicit ColorBlack paints black.
+		Foreground: ThemeDefault(ColorBlack),
 		Border:     ColorTransparent,
 		BorderSize: 0,
 		Radius:     0,

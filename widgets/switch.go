@@ -81,12 +81,12 @@ func NewSwitch(label string, onChange func(bool)) *Switch {
 		BaseWidget:          NewBaseWidget(),
 		Label:               label,
 		OnChange:            onChange,
-		OnTrackColor:        Color{R: 0.30, G: 0.55, B: 0.85, A: 1},
-		OffTrackColor:       Color{R: 0.90, G: 0.90, B: 0.90, A: 1},
-		OffTrackBorderColor: Color{R: 0.60, G: 0.60, B: 0.60, A: 1},
-		OnHandleColor:       Color{R: 1, G: 1, B: 1, A: 1},
-		OffHandleColor:      Color{R: 0.60, G: 0.60, B: 0.60, A: 1},
-		LabelColor:          Color{R: 0.10, G: 0.10, B: 0.10, A: 1},
+		OnTrackColor:        baselineBlue,
+		OffTrackColor:       baselineHoverBg,
+		OffTrackBorderColor: baselineOffBorder,
+		OnHandleColor:       htmlControlBg,
+		OffHandleColor:      baselineOffBorder,
+		LabelColor:          baselineBarText,
 	}
 	s.hoverTrans.Duration = toDuration(CurrentTheme().TransitionShort)
 	// Switch is fixed at its pill size — flex shrink would deform it.
