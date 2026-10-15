@@ -62,11 +62,7 @@ var domEventAllowlist = []domEventAllow{
 	// Form controls: the backing widget eats the pointer events before the
 	// element's listeners see them (session form-control-pointer-eve).
 	{"text-fields", "click text", "pointerdown *", "<input> swallows pointerdown"},
-	{"text-fields", "click text", "pointerup *", "<input> swallows pointerup"},
-	{"text-fields", "click text", "click *", "<input> swallows click"},
 	{"text-fields", "click area", "pointerdown *", "<textarea> swallows pointerdown"},
-	{"text-fields", "click area", "pointerup *", "<textarea> swallows pointerup"},
-	{"text-fields", "click area", "click *", "<textarea> swallows click"},
 	{"text-fields", "wheel area", "wheel *", "<textarea> swallows wheel"},
 	{"choice-controls", "click check", "pointerdown *", "checkbox swallows pointerdown"},
 	{"choice-controls", "click sel", "* *", "<select> opens its popup on press: focus leaves for the popup and pointer/click listeners don't run"},
