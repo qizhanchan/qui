@@ -1,0 +1,16 @@
+<!doctype html>
+<html><head><style>
+body { margin: 8px; font: 14px sans-serif; }
+#box { display: flex; flex-direction: column; gap: 8px; padding: 6px; width: 260px; }
+#sel { width: 160px; height: 24px; }
+#checkrow { display: flex; gap: 8px; align-items: center; }
+#tabdiv { padding: 8px; border: 1px solid #888; }
+#ok { width: 60px; height: 24px; }
+</style></head><body>
+<div id="box">
+  <select id="sel"><option value="one">One</option><option value="two">Two</option></select>
+  <div id="checkrow"><input id="check" type="checkbox"><span id="checktext">Agree</span></div>
+  <div id="tabdiv" tabindex="0">Focusable</div>
+  <button id="ok" type="button">OK</button>
+</div>
+</body></html>

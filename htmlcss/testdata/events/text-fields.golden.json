@@ -1,0 +1,211 @@
+{
+ "fixture": "text-fields",
+ "chrome": "Chrome/155.0.8059.41",
+ "log": [
+  {
+   "step": {
+    "do": "click",
+    "on": "text"
+   },
+   "entries": [
+    "pointerdown text target",
+    "pointerdown fields bubble",
+    "pointerdown form bubble",
+    "focus text target",
+    "pointerup text target",
+    "pointerup fields bubble",
+    "pointerup form bubble",
+    "click text target",
+    "click fields bubble",
+    "click form bubble",
+    "@focus text",
+    "@value text \"ab\"",
+    "@value area \"x\""
+   ]
+  },
+  {
+   "step": {
+    "do": "key",
+    "key": "c"
+   },
+   "entries": [
+    "keydown text target",
+    "keydown fields bubble",
+    "keydown form bubble",
+    "keyup text target",
+    "keyup fields bubble",
+    "keyup form bubble",
+    "@focus text",
+    "@value text \"abc\"",
+    "@value area \"x\""
+   ]
+  },
+  {
+   "step": {
+    "do": "key",
+    "key": "Enter"
+   },
+   "entries": [
+    "keydown text target",
+    "keydown fields bubble",
+    "keydown form bubble",
+    "click submit target",
+    "click form bubble",
+    "submit form target",
+    "keyup text target",
+    "keyup fields bubble",
+    "keyup form bubble",
+    "@focus text",
+    "@value text \"abc\"",
+    "@value area \"x\""
+   ]
+  },
+  {
+   "step": {
+    "do": "key",
+    "key": "Tab"
+   },
+   "entries": [
+    "keydown text target",
+    "keydown fields bubble",
+    "keydown form bubble",
+    "blur text target",
+    "focus area target",
+    "keyup area target",
+    "keyup fields bubble",
+    "keyup form bubble",
+    "@focus area",
+    "@value text \"abc\"",
+    "@value area \"x\""
+   ]
+  },
+  {
+   "step": {
+    "do": "key",
+    "key": "d"
+   },
+   "entries": [
+    "keydown area target",
+    "keydown fields bubble",
+    "keydown form bubble",
+    "keyup area target",
+    "keyup fields bubble",
+    "keyup form bubble",
+    "@focus area",
+    "@value text \"abc\"",
+    "@value area \"dx\""
+   ]
+  },
+  {
+   "step": {
+    "do": "key",
+    "key": "Enter"
+   },
+   "entries": [
+    "keydown area target",
+    "keydown fields bubble",
+    "keydown form bubble",
+    "keyup area target",
+    "keyup fields bubble",
+    "keyup form bubble",
+    "@focus area",
+    "@value text \"abc\"",
+    "@value area \"d\\nx\""
+   ]
+  },
+  {
+   "step": {
+    "do": "key",
+    "key": "Escape"
+   },
+   "entries": [
+    "keydown area target",
+    "keydown fields bubble",
+    "keydown form bubble",
+    "keyup area target",
+    "keyup fields bubble",
+    "keyup form bubble",
+    "@focus area",
+    "@value text \"abc\"",
+    "@value area \"d\\nx\""
+   ]
+  },
+  {
+   "step": {
+    "do": "click",
+    "on": "area"
+   },
+   "entries": [
+    "pointerdown area target",
+    "pointerdown fields bubble",
+    "pointerdown form bubble",
+    "pointerup area target",
+    "pointerup fields bubble",
+    "pointerup form bubble",
+    "click area target",
+    "click fields bubble",
+    "click form bubble",
+    "@focus area",
+    "@value text \"abc\"",
+    "@value area \"d\\nx\""
+   ]
+  },
+  {
+   "step": {
+    "do": "wheel",
+    "on": "area",
+    "dy": 40
+   },
+   "entries": [
+    "wheel area target",
+    "wheel fields bubble",
+    "wheel form bubble",
+    "@focus area",
+    "@value text \"abc\"",
+    "@value area \"d\\nx\""
+   ]
+  },
+  {
+   "step": {
+    "do": "rightclick",
+    "on": "text"
+   },
+   "entries": [
+    "pointerdown text target",
+    "pointerdown fields bubble",
+    "pointerdown form bubble",
+    "blur area target",
+    "focus text target",
+    "contextmenu text target",
+    "contextmenu fields bubble",
+    "contextmenu form bubble",
+    "pointerup text target",
+    "pointerup fields bubble",
+    "pointerup form bubble",
+    "@focus text",
+    "@value text \"abc\"",
+    "@value area \"d\\nx\""
+   ]
+  },
+  {
+   "step": {
+    "do": "click",
+    "on": "submit"
+   },
+   "entries": [
+    "pointerdown submit target",
+    "pointerdown form bubble",
+    "blur text target",
+    "focus submit target",
+    "pointerup submit target",
+    "pointerup form bubble",
+    "click submit target",
+    "click form bubble",
+    "submit form target",
+    "@focus submit",
+    "@value text \"abc\"",
+    "@value area \"d\\nx\""
+   ]
+  }
+ ]
+}

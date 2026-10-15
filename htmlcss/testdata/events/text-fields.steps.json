@@ -1,0 +1,13 @@
+[
+  {"do": "click", "on": "text"},
+  {"do": "key", "key": "c"},
+  {"do": "key", "key": "Enter"},
+  {"do": "key", "key": "Tab"},
+  {"do": "key", "key": "d"},
+  {"do": "key", "key": "Enter"},
+  {"do": "key", "key": "Escape"},
+  {"do": "click", "on": "area"},
+  {"do": "wheel", "on": "area", "dy": 40},
+  {"do": "rightclick", "on": "text"},
+  {"do": "click", "on": "submit"}
+]

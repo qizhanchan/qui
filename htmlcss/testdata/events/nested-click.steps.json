@@ -1,0 +1,10 @@
+[
+  {"do": "click", "on": "label"},
+  {"do": "click", "on": "btn"},
+  {"do": "click", "on": "tabinner"},
+  {"do": "key", "key": "a"},
+  {"do": "click", "on": "plain"},
+  {"do": "dblclick", "on": "label"},
+  {"do": "rightclick", "on": "btn"},
+  {"do": "wheel", "on": "plain", "dy": 40}
+]

@@ -1,0 +1,17 @@
+<!doctype html>
+<html><head><style>
+body { margin: 8px; font: 14px sans-serif; }
+#form { width: 320px; }
+#fields { display: flex; flex-direction: column; gap: 8px; padding: 6px; }
+#text { width: 200px; height: 24px; }
+#area { width: 200px; height: 60px; }
+#submit { margin-top: 8px; width: 80px; height: 24px; }
+</style></head><body>
+<form id="form">
+  <div id="fields" tabindex="-1">
+    <input id="text" name="text" value="ab">
+    <textarea id="area" name="area">x</textarea>
+  </div>
+  <button id="submit" type="submit">Send</button>
+</form>
+</body></html>

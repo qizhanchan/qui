@@ -1,0 +1,222 @@
+{
+ "fixture": "choice-controls",
+ "chrome": "Chrome/155.0.8059.41",
+ "log": [
+  {
+   "step": {
+    "do": "click",
+    "on": "check"
+   },
+   "entries": [
+    "pointerdown check target",
+    "pointerdown checkrow bubble",
+    "pointerdown box bubble",
+    "focus check target",
+    "pointerup check target",
+    "pointerup checkrow bubble",
+    "pointerup box bubble",
+    "click check target",
+    "click checkrow bubble",
+    "click box bubble",
+    "@focus check",
+    "@value sel \"one\"",
+    "@value check \"true\""
+   ]
+  },
+  {
+   "step": {
+    "do": "key",
+    "key": "Space"
+   },
+   "entries": [
+    "keydown check target",
+    "keydown checkrow bubble",
+    "keydown box bubble",
+    "keyup check target",
+    "keyup checkrow bubble",
+    "keyup box bubble",
+    "click check target",
+    "click checkrow bubble",
+    "click box bubble",
+    "@focus check",
+    "@value sel \"one\"",
+    "@value check \"false\""
+   ]
+  },
+  {
+   "step": {
+    "do": "key",
+    "key": "Tab"
+   },
+   "entries": [
+    "keydown check target",
+    "keydown checkrow bubble",
+    "keydown box bubble",
+    "blur check target",
+    "focus tabdiv target",
+    "keyup tabdiv target",
+    "keyup box bubble",
+    "@focus tabdiv",
+    "@value sel \"one\"",
+    "@value check \"false\""
+   ]
+  },
+  {
+   "step": {
+    "do": "key",
+    "key": "Enter"
+   },
+   "entries": [
+    "keydown tabdiv target",
+    "keydown box bubble",
+    "keyup tabdiv target",
+    "keyup box bubble",
+    "@focus tabdiv",
+    "@value sel \"one\"",
+    "@value check \"false\""
+   ]
+  },
+  {
+   "step": {
+    "do": "key",
+    "key": "Tab"
+   },
+   "entries": [
+    "keydown tabdiv target",
+    "keydown box bubble",
+    "blur tabdiv target",
+    "focus ok target",
+    "keyup ok target",
+    "keyup box bubble",
+    "@focus ok",
+    "@value sel \"one\"",
+    "@value check \"false\""
+   ]
+  },
+  {
+   "step": {
+    "do": "key",
+    "key": "Enter"
+   },
+   "entries": [
+    "keydown ok target",
+    "keydown box bubble",
+    "click ok target",
+    "click box bubble",
+    "keyup ok target",
+    "keyup box bubble",
+    "@focus ok",
+    "@value sel \"one\"",
+    "@value check \"false\""
+   ]
+  },
+  {
+   "step": {
+    "do": "key",
+    "key": "Space"
+   },
+   "entries": [
+    "keydown ok target",
+    "keydown box bubble",
+    "keyup ok target",
+    "keyup box bubble",
+    "click ok target",
+    "click box bubble",
+    "@focus ok",
+    "@value sel \"one\"",
+    "@value check \"false\""
+   ]
+  },
+  {
+   "step": {
+    "do": "click",
+    "on": "sel"
+   },
+   "entries": [
+    "pointerdown sel target",
+    "pointerdown box bubble",
+    "blur ok target",
+    "focus sel target",
+    "pointerup sel target",
+    "pointerup box bubble",
+    "click sel target",
+    "click box bubble",
+    "pointerup sel target",
+    "pointerup box bubble",
+    "@focus sel",
+    "@value sel \"one\"",
+    "@value check \"false\""
+   ]
+  },
+  {
+   "step": {
+    "do": "key",
+    "key": "Escape"
+   },
+   "entries": [
+    "keydown sel target",
+    "keydown box bubble",
+    "keyup sel target",
+    "keyup box bubble",
+    "@focus sel",
+    "@value sel \"one\"",
+    "@value check \"false\""
+   ]
+  },
+  {
+   "step": {
+    "do": "wheel",
+    "on": "sel",
+    "dy": 40
+   },
+   "entries": [
+    "wheel sel target",
+    "wheel box bubble",
+    "@focus sel",
+    "@value sel \"one\"",
+    "@value check \"false\""
+   ]
+  },
+  {
+   "step": {
+    "do": "rightclick",
+    "on": "checktext"
+   },
+   "entries": [
+    "pointerdown checktext target",
+    "pointerdown checkrow bubble",
+    "pointerdown box bubble",
+    "blur sel target",
+    "contextmenu checktext target",
+    "contextmenu checkrow bubble",
+    "contextmenu box bubble",
+    "pointerup checktext target",
+    "pointerup checkrow bubble",
+    "pointerup box bubble",
+    "@focus -",
+    "@value sel \"one\"",
+    "@value check \"false\""
+   ]
+  },
+  {
+   "step": {
+    "do": "click",
+    "on": "checktext"
+   },
+   "entries": [
+    "pointerdown checktext target",
+    "pointerdown checkrow bubble",
+    "pointerdown box bubble",
+    "pointerup checktext target",
+    "pointerup checkrow bubble",
+    "pointerup box bubble",
+    "click checktext target",
+    "click checkrow bubble",
+    "click box bubble",
+    "@focus -",
+    "@value sel \"one\"",
+    "@value check \"false\""
+   ]
+  }
+ ]
+}

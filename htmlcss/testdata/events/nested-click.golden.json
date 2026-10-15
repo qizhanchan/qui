@@ -1,0 +1,153 @@
+{
+ "fixture": "nested-click",
+ "chrome": "Chrome/155.0.8059.41",
+ "log": [
+  {
+   "step": {
+    "do": "click",
+    "on": "label"
+   },
+   "entries": [
+    "pointerdown label target",
+    "pointerdown row bubble",
+    "pointerdown root bubble",
+    "pointerup label target",
+    "pointerup row bubble",
+    "pointerup root bubble",
+    "click label target",
+    "click row bubble",
+    "click root bubble",
+    "@focus -"
+   ]
+  },
+  {
+   "step": {
+    "do": "click",
+    "on": "btn"
+   },
+   "entries": [
+    "pointerdown btn target",
+    "pointerdown row bubble",
+    "pointerdown root bubble",
+    "focus btn target",
+    "pointerup btn target",
+    "pointerup row bubble",
+    "pointerup root bubble",
+    "click btn target",
+    "click row bubble",
+    "click root bubble",
+    "@focus btn"
+   ]
+  },
+  {
+   "step": {
+    "do": "click",
+    "on": "tabinner"
+   },
+   "entries": [
+    "pointerdown tabinner target",
+    "pointerdown tabdiv bubble",
+    "pointerdown root bubble",
+    "blur btn target",
+    "focus tabdiv target",
+    "pointerup tabinner target",
+    "pointerup tabdiv bubble",
+    "pointerup root bubble",
+    "click tabinner target",
+    "click tabdiv bubble",
+    "click root bubble",
+    "@focus tabdiv"
+   ]
+  },
+  {
+   "step": {
+    "do": "key",
+    "key": "a"
+   },
+   "entries": [
+    "keydown tabdiv target",
+    "keydown root bubble",
+    "keyup tabdiv target",
+    "keyup root bubble",
+    "@focus tabdiv"
+   ]
+  },
+  {
+   "step": {
+    "do": "click",
+    "on": "plain"
+   },
+   "entries": [
+    "pointerdown plain target",
+    "pointerdown root bubble",
+    "blur tabdiv target",
+    "pointerup plain target",
+    "pointerup root bubble",
+    "click plain target",
+    "click root bubble",
+    "@focus -"
+   ]
+  },
+  {
+   "step": {
+    "do": "dblclick",
+    "on": "label"
+   },
+   "entries": [
+    "pointerdown label target",
+    "pointerdown row bubble",
+    "pointerdown root bubble",
+    "pointerup label target",
+    "pointerup row bubble",
+    "pointerup root bubble",
+    "click label target",
+    "click row bubble",
+    "click root bubble",
+    "pointerdown label target",
+    "pointerdown row bubble",
+    "pointerdown root bubble",
+    "pointerup label target",
+    "pointerup row bubble",
+    "pointerup root bubble",
+    "click label target",
+    "click row bubble",
+    "click root bubble",
+    "dblclick label target",
+    "dblclick row bubble",
+    "dblclick root bubble",
+    "@focus -"
+   ]
+  },
+  {
+   "step": {
+    "do": "rightclick",
+    "on": "btn"
+   },
+   "entries": [
+    "pointerdown btn target",
+    "pointerdown row bubble",
+    "pointerdown root bubble",
+    "focus btn target",
+    "contextmenu btn target",
+    "contextmenu row bubble",
+    "contextmenu root bubble",
+    "pointerup btn target",
+    "pointerup row bubble",
+    "pointerup root bubble",
+    "@focus btn"
+   ]
+  },
+  {
+   "step": {
+    "do": "wheel",
+    "on": "plain",
+    "dy": 40
+   },
+   "entries": [
+    "wheel plain target",
+    "wheel root bubble",
+    "@focus btn"
+   ]
+  }
+ ]
+}
