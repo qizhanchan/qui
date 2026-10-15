@@ -2809,6 +2809,7 @@ func (e *El) hoistControlLayout(cs *ComputedStyle) {
 		est.Width = cs.Width + extraH
 	}
 	est.WidthPct = cs.WidthPct
+	est.PctExtra = qui.Size{W: extraH}
 	est.MinWidth, est.MaxWidth = 0, 0
 	if cs.MinWidth > 0 {
 		est.MinWidth = cs.MinWidth + extraH
@@ -2818,6 +2819,7 @@ func (e *El) hoistControlLayout(cs *ComputedStyle) {
 	}
 	est.MinWidthPct, est.MaxWidthPct = cs.MinWidthPct, cs.MaxWidthPct
 	bst.Width, bst.WidthPct = 0, 0
+	bst.PctExtra = qui.Size{}
 	bst.MinWidth, bst.MaxWidth = 0, 0
 	bst.MinWidthPct, bst.MaxWidthPct = 0, 0
 

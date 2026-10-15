@@ -65,31 +65,70 @@ func shrinkToFitWidth(w Widget) bool {
 	return ok && s.ShrinkToFitWidth()
 }
 
-// resolveFlowBlockSize resolves a block child's laid-out size inside a
-// content area availW wide. CSS normal flow: a block with an explicit
-// `width` (surfaced as PreferredSize / Style.Width) is that wide; otherwise
-// it fills the available content width. Height is the explicit `height` when
-// set, else the natural measured height at the resolved width. Both axes are
+// flowPreferredSize is a child's explicit size in a flow whose containing
+// block (the FlowLayout's content box) is cb: PreferredSize / Style
+// Width-Height, else a percentage of cb (CSS `width: 50%` resolves against
+// the containing block, not the space left after the child's own margins).
+// A zero axis means auto.
+func flowPreferredSize(child Widget, cb Size) Size {
+	pref := widgetPreferredSize(child)
+	if s := child.Style(); s != nil {
+		if pref.W == 0 && s.WidthPct > 0 {
+			pref.W = s.pctWidth(s.WidthPct, cb.W)
+		}
+		if pref.H == 0 && s.HeightPct > 0 && cb.H > 0 {
+			pref.H = s.pctHeight(s.HeightPct, cb.H)
+		}
+	}
+	return pref
+}
+
+// clampAxis applies a min / max pair (0 = none) to one axis.
+func clampAxis(v, lo, hi float32) float32 {
+	if hi > 0 && v > hi {
+		v = hi
+	}
+	if lo > 0 && v < lo {
+		v = lo
+	}
+	return v
+}
+
+// resolveFlowInlineSize resolves an atomic inline box's (inline-block's)
+// size on a line in a containing block cb: an explicit width / height wins
+// over the shrink-to-fit content size, and both are min/max-clamped — CSS
+// sizes an inline-block like a block, it just doesn't fill the line.
+func resolveFlowInlineSize(child Widget, cb Size, availW float32) Size {
+	min := resolvedMinSize(child, cb)
+	max := resolvedMaxSize(child, cb)
+	pref := flowPreferredSize(child, cb)
+	w := pref.W
+	if w == 0 {
+		w = MeasureChild(child, Size{W: availW, H: cb.H}).W
+	}
+	w = clampAxis(w, min.W, max.W)
+	h := pref.H
+	if h == 0 {
+		h = MeasureChild(child, Size{W: w, H: cb.H}).H
+	}
+	return Size{W: w, H: clampAxis(h, min.H, max.H)}
+}
+
+// resolveFlowBlockSize resolves a block child's laid-out size in a band
+// availW wide (the containing block cb minus the child's horizontal
+// margins). CSS normal flow: a block with an explicit `width` (surfaced as
+// PreferredSize / Style.Width, or a percentage of cb) is that wide;
+// otherwise it fills the band. Height is the explicit `height` when set,
+// else the natural measured height at the resolved width. Both axes are
 // clamped by min/max. Returns the border-box width to lay the block out at,
 // its height, and its intrinsic (max-content) band width for Measure — which
 // is the explicit width when set, else the natural content width (so a
 // full-width block still reports its shrink-to-fit width, not availW).
-func resolveFlowBlockSize(child Widget, availW, availH float32) (layoutW, height, intrinsicW float32) {
-	cb := Size{W: availW, H: availH}
+func resolveFlowBlockSize(child Widget, cb Size, availW float32) (layoutW, height, intrinsicW float32) {
+	availH := cb.H
 	min := resolvedMinSize(child, cb)
 	max := resolvedMaxSize(child, cb)
-	pref := widgetPreferredSize(child)
-
-	// Percentage sizes resolve here, against the band's available content
-	// area — the flow-layout containing block (CSS `width: 50%`).
-	if s := child.Style(); s != nil {
-		if pref.W == 0 && s.WidthPct > 0 {
-			pref.W = availW * s.WidthPct
-		}
-		if pref.H == 0 && s.HeightPct > 0 && availH > 0 {
-			pref.H = availH * s.HeightPct
-		}
-	}
+	pref := flowPreferredSize(child, cb)
 
 	layoutW = availW
 	explicitW := pref.W > 0
@@ -155,7 +194,7 @@ func (f FlowLayout) Measure(children []Widget, avail Size) Size {
 		m := child.Style().Margin
 		switch flowLevelOf(child) {
 		case FlowInline:
-			sz := MeasureChild(child, Size{W: avail.W - m.Left - m.Right, H: avail.H})
+			sz := resolveFlowInlineSize(child, avail, avail.W-m.Left-m.Right)
 			boxW := m.Left + sz.W + m.Right
 			if lineOpen && lineW+boxW > avail.W {
 				if lineW > maxW {
@@ -175,7 +214,7 @@ func (f FlowLayout) Measure(children []Widget, avail Size) Size {
 			if w < 0 {
 				w = 0
 			}
-			_, h, intrinsicW := resolveFlowBlockSize(child, w, avail.H)
+			_, h, intrinsicW := resolveFlowBlockSize(child, avail, w)
 			if bw := m.Left + intrinsicW + m.Right; bw > maxW {
 				maxW = bw
 			}
@@ -221,8 +260,7 @@ func (f FlowLayout) Apply(children []Widget, bounds Rect) {
 
 		switch flowLevelOf(child) {
 		case FlowInline:
-			avail := Size{W: bounds.W - m.Left - m.Right, H: bounds.H}
-			sz := MeasureChild(child, avail)
+			sz := resolveFlowInlineSize(child, Size{W: bounds.W, H: bounds.H}, bounds.W-m.Left-m.Right)
 			// Wrap when this box would overflow the content width and
 			// the line already has something on it.
 			if lineOpen && x+m.Left+sz.W > bounds.X+bounds.W {
@@ -246,7 +284,7 @@ func (f FlowLayout) Apply(children []Widget, bounds Rect) {
 			// A block fills the content width unless it declares an explicit
 			// width (then it's that wide, left-aligned); height is explicit or
 			// natural. Both clamped by min/max. See resolveFlowBlockSize.
-			bw, h, _ := resolveFlowBlockSize(child, w, bounds.H)
+			bw, h, _ := resolveFlowBlockSize(child, Size{W: bounds.W, H: bounds.H}, w)
 			// CSS auto margins absorb the leftover band space: both auto
 			// centers the block (`margin: 0 auto`), left-only pushes it to
 			// the right edge. Auto sides carry no numeric margin.

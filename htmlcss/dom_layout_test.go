@@ -55,7 +55,6 @@ type domLayoutAllow struct {
 
 var domLayoutAllowlist = []domLayoutAllow{
 	// Documented limits (COVERAGE.md).
-	{"block-box", "pctpad", "w", "% width is interpreted as border-box: padding sits inside 50%, not added to it"},
 	{"grid", "ar*", "*", "grid-auto-rows is not implemented: auto rows size to (empty) content"},
 	{"grid", "autorows", "h", "grid-auto-rows is not implemented"},
 	{"grid", "im1", "*", "implicit tracks are not implemented: an item placed past the template is not laid out"},
@@ -64,12 +63,7 @@ var domLayoutAllowlist = []domLayoutAllow{
 	{"table", "s[3-6]", "*", "columns are equal 1fr when the table has a width: no content-proportional distribution"},
 
 	// Undocumented differences — each a fix candidate.
-	{"block-box", "pct", "w", "% width resolves against the containing block minus the element's own margins (624, not 640)"},
 	{"block-box", "sib2", "y", "adjacent sibling vertical margins add instead of collapsing to the larger"},
-	{"inline-block", "ib*", "*", "an empty inline-block ignores width / height: it is sized to its padding + border"},
-	{"inline-block", "empty", "h", "an empty inline-block ignores width / height, so the line is only as tall as the padded one"},
-	{"inline-block", "tb*", "*", "an inline-block with text ignores width / height: it shrinks to the text"},
-	{"inline-block", "withtext", "h", "an inline-block with text ignores height, so the line is the text's height"},
 	{"table", "f[hd][12]", "*", "table-layout: fixed ignores a first-row cell's width: columns are equal"},
 	{"table", "sc*", "*", "border-spacing is only applied between cells, not around the table's outer edge"},
 	{"table", "spacing", "h", "border-spacing is not applied above the first or below the last row"},

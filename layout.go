@@ -359,14 +359,19 @@ func applyConstraints(size, min, max Size) Size {
 // The absolute Min*/Max* fields still win when set; percentages only
 // fill an axis the absolute size left at zero. Only positive cb axes
 // resolve (a zero-height containing block leaves height-% unresolved).
+// pctWidth / pctHeight resolve a percentage size against the containing
+// block on that axis, adding the content-box extra (Style.PctExtra).
+func (s *Style) pctWidth(frac, cbW float32) float32  { return cbW*frac + s.PctExtra.W }
+func (s *Style) pctHeight(frac, cbH float32) float32 { return cbH*frac + s.PctExtra.H }
+
 func resolvedMinSize(w Widget, cb Size) Size {
 	min := widgetMinSize(w)
 	if s := w.Style(); s != nil {
 		if min.W == 0 && s.MinWidthPct > 0 && cb.W > 0 {
-			min.W = cb.W * s.MinWidthPct
+			min.W = s.pctWidth(s.MinWidthPct, cb.W)
 		}
 		if min.H == 0 && s.MinHeightPct > 0 && cb.H > 0 {
-			min.H = cb.H * s.MinHeightPct
+			min.H = s.pctHeight(s.MinHeightPct, cb.H)
 		}
 	}
 	return min
@@ -376,10 +381,10 @@ func resolvedMaxSize(w Widget, cb Size) Size {
 	max := widgetMaxSize(w)
 	if s := w.Style(); s != nil {
 		if max.W == 0 && s.MaxWidthPct > 0 && cb.W > 0 {
-			max.W = cb.W * s.MaxWidthPct
+			max.W = s.pctWidth(s.MaxWidthPct, cb.W)
 		}
 		if max.H == 0 && s.MaxHeightPct > 0 && cb.H > 0 {
-			max.H = cb.H * s.MaxHeightPct
+			max.H = s.pctHeight(s.MaxHeightPct, cb.H)
 		}
 	}
 	return max
@@ -414,10 +419,10 @@ func MeasureConstrained(w Widget, avail Size) Size {
 	p := widgetPreferredSize(w)
 	if s := w.Style(); s != nil {
 		if p.W == 0 && s.WidthPct > 0 && avail.W > 0 {
-			p.W = avail.W * s.WidthPct
+			p.W = s.pctWidth(s.WidthPct, avail.W)
 		}
 		if p.H == 0 && s.HeightPct > 0 && avail.H > 0 {
-			p.H = avail.H * s.HeightPct
+			p.H = s.pctHeight(s.HeightPct, avail.H)
 		}
 	}
 	if p.W > 0 {
@@ -486,13 +491,13 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 		// cross-axis pct replaces the natural size resolveCross aligns with.
 		if s := ch.Style(); s != nil {
 			if s.Width == 0 && s.WidthPct > 0 {
-				nat.W = bounds.W * s.WidthPct
+				nat.W = s.pctWidth(s.WidthPct, bounds.W)
 				if l.Direction == Horizontal && basis <= 0 {
 					basis = nat.W
 				}
 			}
 			if s.Height == 0 && s.HeightPct > 0 {
-				nat.H = bounds.H * s.HeightPct
+				nat.H = s.pctHeight(s.HeightPct, bounds.H)
 				if l.Direction == Vertical && basis <= 0 {
 					basis = nat.H
 				}
@@ -512,9 +517,9 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 		if explicitCross == 0 {
 			if s := ch.Style(); s != nil {
 				if l.Direction == Vertical && s.WidthPct > 0 {
-					explicitCross = bounds.W * s.WidthPct
+					explicitCross = s.pctWidth(s.WidthPct, bounds.W)
 				} else if l.Direction == Horizontal && s.HeightPct > 0 {
-					explicitCross = bounds.H * s.HeightPct
+					explicitCross = s.pctHeight(s.HeightPct, bounds.H)
 				}
 			}
 		}

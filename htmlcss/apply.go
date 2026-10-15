@@ -437,10 +437,11 @@ func applyCommonStyle(st *qui.Style, cs *ComputedStyle) {
 		st.Height = cs.Height + extraV
 	}
 	// Percentage sizes: the layout engines resolve them against the
-	// containing block; the resolved value is the outer frame (box-sizing
-	// padding/border compensation can't apply — the base is unknown here).
+	// containing block, then add PctExtra — the same content-box padding +
+	// border compensation the absolute sizes get above.
 	st.WidthPct = cs.WidthPct
 	st.HeightPct = cs.HeightPct
+	st.PctExtra = qui.Size{W: extraH, H: extraV}
 	st.MarginLeftAuto = cs.MarginLeftAuto
 	st.MarginRightAuto = cs.MarginRightAuto
 	st.MarginTopAuto = cs.MarginTopAuto
@@ -458,7 +459,7 @@ func applyCommonStyle(st *qui.Style, cs *ComputedStyle) {
 		st.MaxHeight = cs.MaxHeight + extraV
 	}
 	// Percentage min/max resolve at layout time against the containing
-	// block (like Width/HeightPct); box-sizing compensation can't apply.
+	// block (like Width/HeightPct), plus PctExtra.
 	st.MinWidthPct = cs.MinWidthPct
 	st.MinHeightPct = cs.MinHeightPct
 	st.MaxWidthPct = cs.MaxWidthPct

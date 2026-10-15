@@ -157,10 +157,15 @@ type Style struct {
 	// of the parent's content box on that axis (CSS `width: 50%`). The
 	// engines resolve them at layout time — FlowLayout block bands,
 	// FlexLayout basis/cross — because only they know the containing
-	// size. Width/Height win when both are set. The resolved size is the
-	// widget's outer frame (border-box), then min/max-clamped as usual.
+	// size. Width/Height win when both are set. The resolved size plus
+	// PctExtra is the widget's outer frame, then min/max-clamped as usual.
 	WidthPct  float32
 	HeightPct float32
+	// PctExtra is added to every resolved percentage size (Width/HeightPct
+	// and the Min/Max*Pct fields) on its axis: CSS box-sizing: content-box,
+	// where `width: 50%` sizes the content box and padding + border sit
+	// outside it. Zero for border-box.
+	PctExtra Size
 
 	// MarginLeftAuto/MarginRightAuto mark a horizontal margin as CSS
 	// `auto`. FlowLayout places an explicit-width block centered in its
@@ -418,7 +423,7 @@ func styleLayoutEqual(a, b Style) bool {
 		a.Width == b.Width && a.Height == b.Height &&
 		a.MinWidth == b.MinWidth && a.MinHeight == b.MinHeight &&
 		a.MaxWidth == b.MaxWidth && a.MaxHeight == b.MaxHeight &&
-		a.WidthPct == b.WidthPct && a.HeightPct == b.HeightPct &&
+		a.WidthPct == b.WidthPct && a.HeightPct == b.HeightPct && a.PctExtra == b.PctExtra &&
 		a.MarginLeftAuto == b.MarginLeftAuto &&
 		a.MarginRightAuto == b.MarginRightAuto &&
 		a.MarginTopAuto == b.MarginTopAuto &&
