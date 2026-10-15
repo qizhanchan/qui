@@ -927,12 +927,9 @@ func (e *El) SetOnDragOver(fn func(sourceKey string, after bool)) { e.onDragOver
 func (e *El) SetOnDragEnd(fn func()) { e.onDragEnd = fn }
 
 // SetOnSubmit installs the Enter handler for an <input>.
-func (e *El) SetOnSubmit(fn func(string)) {
-	e.onSubmit = fn
-	if in, ok := e.backing.(*widgets.Input); ok {
-		in.OnSubmit = fn
-	}
-}
+// The backing input's own OnSubmit wrapper calls it (then submits the
+// enclosing <form>), so it is only stored here.
+func (e *El) SetOnSubmit(fn func(string)) { e.onSubmit = fn }
 
 // SetOnCommit installs the "value finished" handler for an <input>: Enter, or
 // focus leaving the field after an edit (widgets.Input.OnCommit). Use it
@@ -1682,6 +1679,11 @@ func (e *El) ensureBacking() {
 					e.onSubmit(s)
 				}
 				e.maybeSubmitForm()
+			}
+			// With neither an onSubmit nor a <form>, the Enter is not
+			// this field's: it bubbles to a dialog's default action.
+			in.SubmitBubbles = func() bool {
+				return e.onSubmit == nil && e.enclosingForm() == nil
 			}
 			in.OnCommit = func(s string) {
 				if e.onCommit != nil {

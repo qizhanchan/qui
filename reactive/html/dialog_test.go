@@ -102,6 +102,48 @@ func TestDialogEnterConfirmsButTextareaKeepsEnter(t *testing.T) {
 	}
 }
 
+// Enter in a text <input> with no OnSubmit and no <form> is not the
+// field's: it presses the dialog's default action (HTML implicit
+// submission). An input that does handle Enter keeps it.
+func TestDialogEnterInTextInputConfirms(t *testing.T) {
+	win := qui.NewTestWindow(qui.Size{W: 800, H: 600})
+	confirmed, submitted := 0, 0
+	var setHandle func(bool)
+	rt := h.Mount(win, ``, func() h.Node {
+		handle, set := reactive.UseState(false)
+		setHandle = set
+		in := h.Input("1:1").Class("field").Autofocus()
+		if handle {
+			in = in.OnSubmit(func(string) { submitted++ })
+		}
+		return h.Div(h.Dialog(h.DialogProps{
+			Title:     "Go to Line",
+			Body:      in,
+			OnDismiss: func() {},
+			OnConfirm: func() { confirmed++ },
+		}))
+	})
+	layoutAll(win, rt.Root())
+	win.DrainJobsForTest()
+
+	field := findClass(win.Overlays()[0], "field")
+	if field == nil || win.Focused() != field.TextTarget() {
+		t.Fatalf("autofocus: focused=%v, want the input", win.Focused())
+	}
+	win.DispatchTestEvent(qui.NewKeyEvent(qui.EventKeyDown, qui.KeyEnter, 0))
+	if confirmed != 1 {
+		t.Fatalf("Enter in a plain text input confirmed %d times, want 1", confirmed)
+	}
+
+	setHandle(true)
+	rt.Flush()
+	win.SetFocus(field.TextTarget())
+	win.DispatchTestEvent(qui.NewKeyEvent(qui.EventKeyDown, qui.KeyEnter, 0))
+	if submitted != 1 || confirmed != 1 {
+		t.Errorf("input with OnSubmit: submitted=%d confirmed=%d, want 1 and 1", submitted, confirmed)
+	}
+}
+
 func TestDialogEscapeReachesFocusedChildFirst(t *testing.T) {
 	win := qui.NewTestWindow(qui.Size{W: 800, H: 600})
 	dismissed, childEsc := 0, 0

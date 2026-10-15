@@ -99,6 +99,11 @@ type Input struct {
 	BeforeInput func(BeforeInputEvent) bool
 	OnChange    func(text string)
 	OnSubmit    func(text string)
+	// SubmitBubbles, when set, is asked after OnSubmit ran whether Enter
+	// should keep bubbling anyway. A host that always installs OnSubmit
+	// (htmlcss wraps every <input>) uses it to keep the HTML "implicit
+	// submission" when nothing actually handled the Enter.
+	SubmitBubbles func() bool
 	// OnCommit fires when the user is FINISHED with a value: on Enter, and on
 	// losing focus if the text changed while focused. It is the hook a field
 	// whose value is expensive or disruptive to apply per keystroke needs — a
@@ -1159,6 +1164,9 @@ func (t *Input) handleKey(e KeyEvent) bool {
 		// Without a submit handler Enter keeps bubbling — the HTML
 		// "implicit submission": a dialog's default action presses on
 		// Enter while its text field has focus.
+		if t.SubmitBubbles != nil && t.SubmitBubbles() {
+			return false
+		}
 		return t.OnSubmit != nil
 	case KeyEscape:
 		// Esc first drops a selection. With none, it is not the field's
