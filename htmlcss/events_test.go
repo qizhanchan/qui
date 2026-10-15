@@ -217,3 +217,40 @@ func TestDisabledElementSwallowsKeys(t *testing.T) {
 		t.Error("key handler ran on a disabled element")
 	}
 }
+
+// ⌘ + wheel over an element with a pinch handler zooms it (the window's
+// pinch synthesis) and does not reach its wheel handler as a scroll.
+func TestPinchHandlerFromCmdWheel(t *testing.T) {
+	res := RenderDoc(
+		`<body><div id="d">zoom</div></body>`,
+		`#d { width: 100px; height: 40px; }`,
+		Options{},
+	)
+	win := qui.NewTestWindow(qui.Size{W: 400, H: 300})
+	win.SetRoot(res.Root)
+	res.Root.Layout(qui.Rect{W: 400, H: 300})
+
+	d := res.ByID["d"].(*El)
+	var steps []float32
+	var ax, ay float32
+	scrolled := false
+	d.SetOnPinch(func(ds, x, y float32) bool { steps = append(steps, ds); ax, ay = x, y; return true })
+	d.SetOnWheel(func(dx, dy float32) bool { scrolled = true; return true })
+
+	b := d.Bounds()
+	win.IngestScrollForTest(b.X+5, b.Y+6, 0, 1, qui.ModSuper, qui.GesturePhaseNone)
+	if len(steps) != 1 || steps[0] <= 0 {
+		t.Fatalf("pinch steps = %v, want one zoom-in step", steps)
+	}
+	if ax != b.X+5 || ay != b.Y+6 {
+		t.Errorf("anchor = (%v,%v), want the cursor (%v,%v)", ax, ay, b.X+5, b.Y+6)
+	}
+	if scrolled {
+		t.Error("a consumed ⌘+wheel pinch must not also scroll")
+	}
+	// A plain wheel is still a scroll.
+	win.IngestScrollForTest(b.X+5, b.Y+6, 0, 1, 0, qui.GesturePhaseNone)
+	if !scrolled || len(steps) != 1 {
+		t.Errorf("plain wheel: scrolled=%v pinch steps=%v, want a scroll only", scrolled, steps)
+	}
+}

@@ -257,6 +257,9 @@ type El struct {
 	// so an enclosing ScrollView does NOT also scroll (the effect of calling
 	// preventDefault on a DOM wheel handler).
 	onWheel func(dx, dy float32) bool
+	// onPinch receives a pinch-zoom step (trackpad pinch, or ⌘/Ctrl+wheel
+	// which the window turns into one): zoom *= 1+dScale around (x, y).
+	onPinch func(dScale, x, y float32) bool
 	// onKeyDown / onKeyUp receive the raw key event; returning true consumes
 	// it. Keys reach an element two ways: it holds focus itself (declaring a
 	// handler makes it focusable — see El.Focusable), or the event bubbles up
@@ -645,6 +648,14 @@ func (e *El) SetOnDoubleClick(fn func()) { e.onDoubleClick = fn }
 // (a wheel notch is qui.WheelLinePixels; trackpads report the finger travel). Return
 // true to consume the event so an enclosing ScrollView does not also scroll.
 func (e *El) SetOnWheel(fn func(dx, dy float32) bool) { e.onWheel = fn }
+
+// SetOnPinch installs a pinch-zoom handler: a trackpad pinch, or a
+// ⌘ / Ctrl + wheel notch (the window synthesizes a pinch for it). It gets
+// the step as a fraction — apply zoom *= 1 + dScale — and the anchor in
+// window coordinates, the point that should stay put. Return true to
+// consume it; otherwise the window's own zoom (if enabled) handles it and
+// a ⌘+wheel falls back to an ordinary scroll.
+func (e *El) SetOnPinch(fn func(dScale, x, y float32) bool) { e.onPinch = fn }
 
 // SetOnKeyDown installs a key-press handler; return true to consume the key.
 // Declaring one makes the element focusable, so it can receive keys directly
@@ -3090,6 +3101,9 @@ func foldableInline(c *El, cs *ComputedStyle) bool {
 		c.onFocus != nil || c.onBlur != nil {
 		return false
 	}
+	if c.onPinch != nil {
+		return false
+	}
 	if c.attrs["id"] != "" {
 		return false
 	}
@@ -4061,6 +4075,12 @@ func (e *El) appRegionFor(t qui.Widget) string {
 
 // Handle adds click + drop dispatch on top of Box's hover/press tracking.
 func (e *El) Handle(event qui.Event) bool {
+	if ge, ok := event.(qui.GestureEvent); ok {
+		if ge.Type() == qui.EventGesturePinch && e.onPinch != nil && ge.Phase() != qui.PhaseCapture && ge.DScale != 0 {
+			return e.onPinch(ge.DScale, ge.X, ge.Y)
+		}
+		return false
+	}
 	if de, ok := event.(qui.DragEvent); ok {
 		switch de.Type() {
 		case qui.EventDragStart:

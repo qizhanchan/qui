@@ -72,3 +72,27 @@ func TestCanvasFillsStretchedBox(t *testing.T) {
 		t.Errorf("canvas box %v, paint leaf %v: want the leaf to fill a ~300px-high box", eb, kb)
 	}
 }
+
+// Re-rendering a canvas with a new paint callback (new state captured in
+// the closure — a pan, a zoom) must schedule a repaint of it, even when
+// nothing else on screen changed.
+func TestCanvasNewPaintRepaints(t *testing.T) {
+	var el *htmlcss.El
+	var set func(int)
+	win := qui.NewTestWindow(qui.Size{W: 400, H: 300})
+	rt := h.Mount(win, `.cv { width: 100px; height: 50px; }`, func() h.Node {
+		n, setN := reactive.UseState(0)
+		set = setN
+		_ = n
+		return h.Div(h.Canvas(func(qui.Canvas, htmlcss.CanvasContext) { _ = n }).Class("cv").Ref(func(e *htmlcss.El) { el = e }))
+	})
+	win.SetRoot(rt.Root())
+	win.LayoutForTest()
+	win.ClearDirtyRegion()
+	set(1)
+	win.LayoutForTest()
+	d, b := win.DirtyRegion(), el.Bounds()
+	if d.W <= 0 || d.H <= 0 || d.X > b.X || d.Y > b.Y || d.X+d.W < b.X+b.W || d.Y+d.H < b.Y+b.H {
+		t.Fatalf("dirty region %v does not cover the canvas %v after a new paint callback", d, b)
+	}
+}

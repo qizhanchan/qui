@@ -89,6 +89,7 @@ type Builder struct {
 	onMouseLeave  func()
 	onDoubleClick func()
 	onWheel       func(dx, dy float32) bool
+	onPinch       func(dScale, x, y float32) bool
 	onKeyDown     func(qui.KeyEvent) bool
 	onKeyUp       func(qui.KeyEvent) bool
 	onFocus       func()
@@ -213,6 +214,11 @@ func (b *Builder) OnDoubleClick(fn func()) *Builder { b.onDoubleClick = fn; retu
 // wheel notch is qui.WheelLinePixels, a trackpad its finger travel); return true
 // to consume the event so an enclosing scroll container does not also scroll.
 func (b *Builder) OnWheel(fn func(dx, dy float32) bool) *Builder { b.onWheel = fn; return b }
+
+// OnPinch installs a pinch-zoom handler (trackpad pinch, or ⌘ / Ctrl +
+// wheel): apply zoom *= 1 + dScale around the window point (x, y); return
+// true to consume it. See htmlcss.El.SetOnPinch.
+func (b *Builder) OnPinch(fn func(dScale, x, y float32) bool) *Builder { b.onPinch = fn; return b }
 
 // OnKeyDown installs a key handler; return true to consume the key. The
 // element becomes focusable so it can receive keys once clicked or tabbed to,
@@ -589,6 +595,7 @@ func (b *Builder) Build() reactive.Element {
 			el.SetOnMouseLeave(bb.onMouseLeave)
 			el.SetOnDoubleClick(bb.onDoubleClick)
 			el.SetOnWheel(bb.onWheel)
+			el.SetOnPinch(bb.onPinch)
 			el.SetOnKeyDown(bb.onKeyDown)
 			el.SetOnKeyUp(bb.onKeyUp)
 			el.SetOnFocus(bb.onFocus)
