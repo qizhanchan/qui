@@ -103,7 +103,8 @@ func TestDoubleClick(t *testing.T) {
 	}
 }
 
-// Wheel handlers see the deltas, and consume the event only when they say so.
+// Wheel handlers see the deltas in pixels (a line notch is
+// qui.WheelLinePixels), and consume the event only when they say so.
 func TestWheelHandler(t *testing.T) {
 	res := RenderDoc(
 		`<body><div id="d">scroll</div></body>`,
@@ -124,8 +125,8 @@ func TestWheelHandler(t *testing.T) {
 	if handled := d.Handle(ev); handled {
 		t.Error("wheel handler returning false must not consume the event")
 	}
-	if gotDX != 3 || gotDY != -7 {
-		t.Errorf("deltas = (%v,%v), want (3,-7)", gotDX, gotDY)
+	if gotDX != 3*qui.WheelLinePixels || gotDY != -7*qui.WheelLinePixels {
+		t.Errorf("deltas = (%v,%v), want (3,-7) lines in pixels", gotDX, gotDY)
 	}
 	consume = true
 	if handled := d.Handle(qui.NewScrollEvent(b.X+5, b.Y+5, 1, 1, 0)); !handled {

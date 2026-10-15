@@ -253,7 +253,7 @@ type El struct {
 	onMouseEnter  func()
 	onMouseLeave  func()
 	onDoubleClick func()
-	// onWheel receives the scroll deltas; returning true consumes the event
+	// onWheel receives the scroll deltas in pixels (MouseEvent.WheelPixels); returning true consumes the event
 	// so an enclosing ScrollView does NOT also scroll (the effect of calling
 	// preventDefault on a DOM wheel handler).
 	onWheel func(dx, dy float32) bool
@@ -641,7 +641,8 @@ func (e *El) SetOnMouseLeave(fn func()) { e.onMouseLeave = fn }
 // release also fires this one.
 func (e *El) SetOnDoubleClick(fn func()) { e.onDoubleClick = fn }
 
-// SetOnWheel installs a scroll-wheel handler receiving the deltas. Return
+// SetOnWheel installs a scroll-wheel handler receiving the deltas in pixels
+// (a wheel notch is qui.WheelLinePixels; trackpads report the finger travel). Return
 // true to consume the event so an enclosing ScrollView does not also scroll.
 func (e *El) SetOnWheel(fn func(dx, dy float32) bool) { e.onWheel = fn }
 
@@ -4219,7 +4220,7 @@ func (e *El) Handle(event qui.Event) bool {
 		// the event when they say so — otherwise the enclosing ScrollView
 		// keeps scrolling, matching a DOM handler that skips preventDefault.
 		if e.onWheel != nil && me.Phase() != qui.PhaseCapture {
-			if e.onWheel(me.DeltaX, me.DeltaY) {
+			if e.onWheel(me.WheelPixels()) {
 				return true
 			}
 		}
@@ -4391,7 +4392,7 @@ func (e *El) ownsControlTarget(t qui.Widget) bool {
 func (e *El) handleControlPointer(me qui.MouseEvent, handled bool) bool {
 	switch me.Type() {
 	case qui.EventScroll:
-		if e.onWheel != nil && e.onWheel(me.DeltaX, me.DeltaY) {
+		if e.onWheel != nil && e.onWheel(me.WheelPixels()) {
 			return true
 		}
 	case qui.EventMouseDown:

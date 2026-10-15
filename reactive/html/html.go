@@ -209,7 +209,8 @@ func (b *Builder) OnMouseLeave(fn func()) *Builder { b.onMouseLeave = fn; return
 // fires for each of the two clicks, as in the DOM.
 func (b *Builder) OnDoubleClick(fn func()) *Builder { b.onDoubleClick = fn; return b }
 
-// OnWheel installs a scroll-wheel handler receiving the deltas; return true
+// OnWheel installs a scroll-wheel handler receiving the deltas in pixels (a
+// wheel notch is qui.WheelLinePixels, a trackpad its finger travel); return true
 // to consume the event so an enclosing scroll container does not also scroll.
 func (b *Builder) OnWheel(fn func(dx, dy float32) bool) *Builder { b.onWheel = fn; return b }
 

@@ -219,6 +219,21 @@ type MouseEvent struct {
 
 func (e MouseEvent) Type() EventType { return e.eventType }
 
+// WheelLinePixels is how far one notch of a line-based scroll wheel moves
+// (the ScrollView default step).
+const WheelLinePixels = 40
+
+// WheelPixels is an EventScroll's deltas in pixels, like a DOM WheelEvent
+// in pixel mode: a notched wheel's ±1 lines become WheelLinePixels each,
+// and pixel-precise (trackpad) deltas undo the platform's 0.1 scale so
+// content tracks the fingers 1:1.
+func (e MouseEvent) WheelPixels() (dx, dy float32) {
+	if e.PreciseScroll || e.ScrollPhase != GesturePhaseNone {
+		return e.DeltaX * 10, e.DeltaY * 10
+	}
+	return e.DeltaX * WheelLinePixels, e.DeltaY * WheelLinePixels
+}
+
 // ReleasedOver reports whether a MouseUp was released over w or one of its
 // descendants. Mouse capture delivers the release to the widget that took
 // the press even when the pointer has wandered off it, so click semantics
