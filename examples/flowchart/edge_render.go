@@ -384,10 +384,8 @@ func midpointDetour(from, to qui.Point, fromBBox, toBBox qui.Rect, fromDir, toDi
 	var midPoint qui.Point
 	if gapX >= gapY {
 		// Use the x-axis gap. midpoint.X between the two bboxes.
-		midX := (max32(fromBBox.X+fromBBox.W, toBBox.X+toBBox.W)*0 + // unused
-			((maxF(fromBBox.X, toBBox.X) + minF(fromBBox.X+fromBBox.W, toBBox.X+toBBox.W)) / 2))
-		// Simpler: midpoint between near edges.
-		midX = (minF(fromBBox.X+fromBBox.W, toBBox.X+toBBox.W) +
+		// Midpoint between the near edges.
+		midX := (minF(fromBBox.X+fromBBox.W, toBBox.X+toBBox.W) +
 			maxF(fromBBox.X, toBBox.X)) / 2
 		midPoint = qui.Point{X: midX, Y: (from.Y + to.Y) / 2}
 	} else {

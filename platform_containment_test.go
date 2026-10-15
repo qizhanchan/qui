@@ -115,6 +115,7 @@ func isAllowedPlatformFile(base string, allowed []string) bool {
 // that deletes the bare `var _ platformHandler` line as "unused".
 func TestHandlerContractIsFullyImplemented(t *testing.T) {
 	var h platformHandler = NewTestWindow(Size{W: 1, H: 1})
+	//lint:ignore SA4023 the assignment above is the assertion
 	if h == nil {
 		t.Fatal("Window must implement platformHandler")
 	}

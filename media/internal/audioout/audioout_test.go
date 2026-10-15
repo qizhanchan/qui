@@ -36,6 +36,7 @@ func TestOpenOrUnsupported(t *testing.T) {
 
 func TestAvailableConsistent(t *testing.T) {
 	// Available must be stable across calls.
+	//lint:ignore SA4000 two calls compared on purpose
 	if Available() != Available() {
 		t.Fatal("Available() is not stable")
 	}

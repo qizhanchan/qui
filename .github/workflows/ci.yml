@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # macOS is qui's fully supported platform (native dialogs, IME, the
+    # cocoa backend); GLFW comes from Homebrew.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: brew install glfw
+      - run: go build ./...
+      - run: go vet ./...
+      # Correctness checks only. SA1019 (deprecated APIs) is a migration
+      # list, not a gate, and SA9003 (empty branch) isn't on by default.
+      - run: go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 -checks 'SA*,-SA1019,-SA9003' ./...
+      - run: go test ./...
+      - name: Race detector (UI-thread code paths)
+        run: go test -race . ./widgets ./htmlcss ./reactive/... ./agent
+      - name: Fuzz smoke (htmlcss parsers)
+        run: |
+          go test ./htmlcss -run '^$' -fuzz '^FuzzParseCSS$' -fuzztime 20s
+          go test ./htmlcss -run '^$' -fuzz '^FuzzParseHTML$' -fuzztime 20s
+          go test ./htmlcss -run '^$' -fuzz '^FuzzRender$' -fuzztime 20s
+      - name: Restyle benchmarks (restyled/op guards the restyle scope)
+        run: go test ./htmlcss -run '^$' -bench Restyle -benchtime 50x

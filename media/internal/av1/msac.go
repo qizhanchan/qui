@@ -48,7 +48,8 @@ func (m *msac) normalize(rng uint32) {
 func (m *msac) decode(cdf []uint16, n int) int {
 	c := uint32(m.dif >> 48)
 	r := m.rng >> 8
-	u, v := m.rng, m.rng
+	var u uint32
+	v := m.rng
 	ret := 0
 	for ; ; ret++ {
 		u = v

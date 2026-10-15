@@ -137,7 +137,6 @@ func TestContainerChildrenReturnsImmutableSnapshot(t *testing.T) {
 
 	snapshot := c.Children()
 	snapshot[0] = b
-	snapshot = snapshot[:1]
 
 	if c.ChildCount() != 2 || c.ChildAt(0) != a || c.ChildAt(1) != b {
 		t.Fatalf("mutating snapshot changed container children: %v", c.Children())
