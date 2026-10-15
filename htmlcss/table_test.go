@@ -54,7 +54,7 @@ func TestTableColspan(t *testing.T) {
 	if wide.X != x.X {
 		t.Errorf("colspan cell X=%v, want %v (column 0)", wide.X, x.X)
 	}
-	want := x.W + y.W // no gap in this table
+	want := x.W + y.W + 2 // the UA's 2px border-spacing sits between them
 	if diff := wide.W - want; diff < -0.5 || diff > 0.5 {
 		t.Errorf("colspan cell W=%v, want ~%v (col0+col1)", wide.W, want)
 	}
@@ -96,9 +96,9 @@ func TestTableFlattensRowsToCells(t *testing.T) {
 			t.Errorf("child %d = %T (%v), want a <td> El", i, k, tagOf(k))
 		}
 	}
-	// The layout engine is a grid.
-	if _, ok := tbl.LayoutEngine.(qui.GridLayout); !ok {
-		t.Errorf("table LayoutEngine = %T, want qui.GridLayout", tbl.LayoutEngine)
+	// The layout engine is the table algorithm over a grid.
+	if _, ok := tbl.LayoutEngine.(*tableLayout); !ok {
+		t.Errorf("table LayoutEngine = %T, want *tableLayout", tbl.LayoutEngine)
 	}
 }
 

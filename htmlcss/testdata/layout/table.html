@@ -7,7 +7,7 @@ body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
    shift every box after it. The border keeps child margins inside. */
 .case { height: 100px; border-top: 1px solid #ccc; }
 th { font-weight: normal; }
-td, th { padding: 4px; }
+#fixed td, #fixed th, #spacing td, #autotbl td, #span td, #collapse td { padding: 4px; }
 #fixed { table-layout: fixed; width: 400px; border-spacing: 0; }
 #spacing { width: 300px; border-spacing: 6px; }
 #autotbl { border-spacing: 0; }
@@ -29,6 +29,12 @@ td, th { padding: 4px; }
 <section class="case"><table id="span">
  <tr><td id="cs" colspan="2">spans two</td><td id="s3">c</td></tr>
  <tr><td id="s4">d</td><td id="s5">e</td><td id="s6">f</td></tr>
+</table></section>
+<section class="case"><table id="dflt" style="padding:0">
+ <tr><td id="df1" data-tol="2">ua defaults</td><td id="df2" data-tol="2">two</td></tr>
+</table></section>
+<section class="case" style="height:200px"><table id="narrow" style="width:200px">
+ <tr><td id="nw1" data-tol="3">several words that must wrap here</td><td id="nw2" data-tol="3">short</td></tr>
 </table></section>
 <section class="case"><table id="collapse">
  <tr><td id="k1">a</td><td id="k2">b</td></tr>

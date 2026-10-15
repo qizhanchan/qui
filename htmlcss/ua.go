@@ -174,9 +174,13 @@ func uaDeclarations(tag string) []Declaration {
 		return decls("margin", "1em 0")
 	case "strong", "b":
 		return decls("font-weight", "bold")
+	case "table":
+		return decls("border-spacing", "2px")
+	case "td":
+		return decls("padding", "1px")
 	case "th":
 		// Header cells: bold + centered by default (browser UA).
-		return decls("font-weight", "bold", "text-align", "center")
+		return decls("font-weight", "bold", "text-align", "center", "padding", "1px")
 	case "caption":
 		// Table caption: centered with a little breathing room (browser UA).
 		return decls("text-align", "center", "padding", "6px 0")

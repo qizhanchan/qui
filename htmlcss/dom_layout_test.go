@@ -59,13 +59,8 @@ var domLayoutAllowlist = []domLayoutAllow{
 	{"grid", "autorows", "h", "grid-auto-rows is not implemented"},
 	{"grid", "im1", "*", "implicit tracks are not implemented: an item placed past the template is not laid out"},
 	{"grid", "implicit", "h", "implicit tracks are not implemented: the row past the template adds no height"},
-	{"table", "cs", "w", "columns are equal 1fr when the table has a width: no content-proportional distribution"},
-	{"table", "s[3-6]", "*", "columns are equal 1fr when the table has a width: no content-proportional distribution"},
 
 	// Undocumented differences — each a fix candidate.
-	{"table", "f[hd][12]", "*", "table-layout: fixed ignores a first-row cell's width: columns are equal"},
-	{"table", "sc*", "*", "border-spacing is only applied between cells, not around the table's outer edge"},
-	{"table", "spacing", "h", "border-spacing is not applied above the first or below the last row"},
 }
 
 type domLayoutGolden struct {

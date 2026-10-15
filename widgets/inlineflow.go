@@ -254,6 +254,17 @@ func (b *InlineBox) buildLayout(maxW float32) {
 	b.haveLay = true
 }
 
+// MinContentWidth implements qui.MinContentWidther: the run laid out with
+// a break at every opportunity and no word broken — its widest line.
+func (b *InlineBox) MinContentWidth() float32 {
+	if !b.Wrap {
+		return BuildInlineLayout(b.buildItems(0), b.options(0)).Width
+	}
+	opts := b.options(0.01)
+	opts.BreakLongWords = false
+	return BuildInlineLayout(b.buildItems(0.01), opts).Width
+}
+
 func (b *InlineBox) Measure(available Size) Size {
 	b.buildLayout(available.W)
 	return Size{W: b.layout.Width, H: b.layout.Height}

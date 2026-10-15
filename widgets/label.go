@@ -237,6 +237,24 @@ func (l *Label) Measure(available Size) Size {
 	return Size{W: width, H: height}
 }
 
+// MinContentWidth implements qui.MinContentWidther: the label's widest
+// unbreakable segment (its whole text when it doesn't wrap), plus padding.
+func (l *Label) MinContentWidth() float32 {
+	padding := l.scaledPadding()
+	opts := l.Paragraph.LayoutOptions(0)
+	if opts.Wrap {
+		opts.MaxWidth = 0.01 // break at every opportunity
+		opts.BreakLongWords = false
+	}
+	var width float32
+	if len(l.spans) > 0 {
+		width = l.richTextLayout(opts, l.resolveForeground()).Width
+	} else {
+		width = BuildTextLayout(l.Text(), l.Style().Font, opts).Width
+	}
+	return width + padding.Horizontal()
+}
+
 func (l *Label) Draw(canvas Canvas) {
 	rect := l.Bounds()
 	if l.Style().Background.A > 0 {

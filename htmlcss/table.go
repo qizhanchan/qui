@@ -20,12 +20,18 @@ import (
 // rowspan) rather than relying on grid auto-placement, so a rowspan above
 // correctly pushes later cells past the occupied columns.
 //
-// Scope: auto column widths (or equal 1fr when the table has a width);
-// colspan and rowspan placement; <caption> as a full-width spanning grid
-// row (caption-side top/bottom); <colgroup>/<col> widths (from the `width`
-// attr or inline style → GridFixedTrack); table-layout:fixed (equal columns
-// ignoring content); border-collapse single-line merging; rowspan
-// row-height contribution; per-cell padding/border (separate model); th
+// Column widths come from tableLayout (below), which runs the CSS 2.1
+// table width algorithms at layout time over the cells' measured content:
+// automatic layout (content-sized columns, a cell's width as its column's
+// width, colspan excess spread over the spanned columns, a wider table's
+// extra width shared in proportion to content) and table-layout: fixed
+// (widths from <col> and the first row, the rest shared equally).
+//
+// Also: colspan and rowspan placement; <caption> as a full-width spanning
+// grid row (caption-side top/bottom); <colgroup>/<col> widths (from the
+// `width` attr or inline style); border-spacing between the cells and
+// around them; border-collapse single-line merging; rowspan row-height
+// contribution; per-cell padding/border (separate model); th
 // bold+centered; row striping (a cell adopts its <tr>'s background when it
 // has none).
 
@@ -80,23 +86,14 @@ func (e *El) buildTable(cs *ComputedStyle) {
 		nCols = 1
 	}
 
-	// Column tracks: explicit <col> widths win (fixed px); otherwise equal
-	// fractions when the table has a width or table-layout:fixed forces equal
-	// columns; else content-auto. Rows are always auto (tallest cell).
-	fill := cs.HasWidth
-	tableFixed := strings.EqualFold(strings.TrimSpace(cs.raw["table-layout"]), "fixed")
-	colW := gatherColWidths(e, cs)
-	cols := make([]qui.GridTrack, nCols)
-	for i := range cols {
-		switch {
-		case i < len(colW) && colW[i].has:
-			cols[i] = qui.GridFixedTrack(colW[i].px)
-		case fill || tableFixed:
-			cols[i] = qui.GridFractionTrack(1)
-		default:
-			cols[i] = qui.GridAutoTrack()
-		}
+	// Column widths are resolved per layout pass by tableLayout; here we only
+	// record the <col> widths. Rows are always auto (tallest cell).
+	tl := &tableLayout{
+		cols:  make([]colWidth, nCols),
+		fill:  cs.HasWidth,
+		fixed: strings.EqualFold(strings.TrimSpace(cs.raw["table-layout"]), "fixed"),
 	}
+	copy(tl.cols, gatherColWidths(e, cs))
 
 	nDataRows := len(rows)
 	if nDataRows < 1 {
@@ -121,7 +118,9 @@ func (e *El) buildTable(cs *ComputedStyle) {
 	if e.borderCollapse {
 		gap = 0
 	}
-	e.LayoutEngine = qui.GridLayout{Columns: cols, Rows: rowTracks, ColGap: gap, RowGap: gap}
+	tl.collapse = e.borderCollapse
+	tl.grid = qui.GridLayout{Columns: make([]qui.GridTrack, nCols), Rows: rowTracks, ColGap: gap, RowGap: gap}
+	e.LayoutEngine = tl
 
 	// Assign explicit grid placement to each cell and collect them as this
 	// element's (grid) children. The cells' DOM/elParent stays the <tr>.
@@ -135,6 +134,7 @@ func (e *El) buildTable(cs *ComputedStyle) {
 			Col: 0, Row: captionRow, ColSpan: nCols, RowSpan: 1, Explicit: true,
 		})
 		cells = append(cells, caption)
+		tl.caption = caption
 	}
 	for _, p := range places {
 		p.cell.SetGridItem(qui.GridItem{
@@ -145,7 +145,246 @@ func (e *El) buildTable(cs *ComputedStyle) {
 
 	e.flowKids = nil
 	applyBox(&e.Box, cs, e.isStyleRoot()) // the table's own background / border / etc.
+	if gap > 0 {
+		// border-spacing also separates the outer cells from the table's
+		// edge (the separated borders model): inset the grid by it.
+		qui.UpdateStyle(&e.Box, func(st *qui.Style) {
+			st.Padding.Top += gap
+			st.Padding.Right += gap
+			st.Padding.Bottom += gap
+			st.Padding.Left += gap
+		})
+	}
 	e.setContainerChildren(cells)
+}
+
+// tableLayout lays a table's cells out on its grid after resolving the
+// column widths from the cells themselves (CSS 2.1 §17.5.2):
+//
+//   - Automatic layout: each column is as wide as its widest single-span
+//     cell's max-content width, or the cell's explicit width; a spanning
+//     cell wider than its columns spreads the excess over them in
+//     proportion to their widths. A table with a width (fill) that is wider
+//     than that shares the extra in proportion to the auto columns' widths;
+//     a table narrower than its content shrinks the columns toward their
+//     min-content widths.
+//   - table-layout: fixed: columns take <col> widths, else the first row's
+//     explicit cell widths; the remaining width is shared equally by the
+//     rest, whatever their content.
+type tableLayout struct {
+	grid    qui.GridLayout
+	cols    []colWidth // <col> widths; len = column count
+	fill    bool       // the table has a width: columns fill it
+	fixed   bool       // table-layout: fixed
+	// collapse: border-collapse: collapse. applyTableCollapse gives a
+	// last-column cell its right edge on top of its left one, so its
+	// measured width is one border wider than its column's share.
+	collapse bool
+	caption qui.Widget // spans all columns; plays no part in column widths
+}
+
+// MinContentWidth implements qui.MinContentLayout: the columns at their
+// min-content widths, plus the gaps.
+func (t *tableLayout) MinContentWidth(children []qui.Widget) float32 {
+	g := t.resolved(children, 0)
+	var sum float32
+	for _, c := range g.Columns {
+		sum += c.Size
+	}
+	return sum + g.ColGap*float32(max(len(g.Columns)-1, 0))
+}
+
+func (t *tableLayout) Measure(children []qui.Widget, avail qui.Size) qui.Size {
+	return t.resolved(children, avail.W).Measure(children, avail)
+}
+
+func (t *tableLayout) Apply(children []qui.Widget, bounds qui.Rect) {
+	t.resolved(children, bounds.W).Apply(children, bounds)
+}
+
+// tableMaxContent is the measuring width for a cell's max-content size.
+const tableMaxContent = 1 << 20
+
+// resolved returns the grid with fixed column tracks for a table whose
+// content box is availW wide.
+func (t *tableLayout) resolved(children []qui.Widget, availW float32) qui.GridLayout {
+	n := len(t.cols)
+	g := t.grid
+	g.Columns = make([]qui.GridTrack, n)
+	gaps := g.ColGap * float32(n-1)
+	space := availW - gaps
+	if space < 0 {
+		space = 0
+	}
+	maxc := make([]float32, n)
+	minc := make([]float32, n)
+	explicit := make([]bool, n)
+	for i, c := range t.cols {
+		if c.has {
+			maxc[i], minc[i], explicit[i] = c.px, c.px, true
+		}
+	}
+	type span struct {
+		col, n   int
+		max, min float32
+	}
+	var spans []span
+	first := t.firstRow(children)
+	for _, ch := range children {
+		if ch == t.caption {
+			continue
+		}
+		gi := qui.GridItemOf(ch)
+		cs := max(gi.ColSpan, 1)
+		if gi.Col < 0 || gi.Col+cs > n {
+			continue
+		}
+		if t.fixed && gi.Row != first {
+			continue // fixed layout reads the first row only
+		}
+		w := ch.Style().Width // explicit cell width, border-box
+		if t.fixed {
+			if w > 0 && cs == 1 && !explicit[gi.Col] {
+				maxc[gi.Col], explicit[gi.Col] = w, true
+			}
+			continue
+		}
+		mx, mn := w, w
+		if w == 0 {
+			mx = qui.MeasureChild(ch, qui.Size{W: tableMaxContent}).W
+			mn = qui.MinContentWidth(ch)
+			if t.collapse {
+				r := ch.Style().BorderWidths.Right
+				mx, mn = mx-r, mn-r
+			}
+		}
+		if cs > 1 {
+			spans = append(spans, span{gi.Col, cs, mx, mn})
+			continue
+		}
+		if explicit[gi.Col] && w == 0 {
+			continue // a <col> or cell width already fixed this column
+		}
+		if w > 0 && !explicit[gi.Col] {
+			maxc[gi.Col], minc[gi.Col], explicit[gi.Col] = w, w, true
+			continue
+		}
+		maxc[gi.Col] = max(maxc[gi.Col], mx)
+		minc[gi.Col] = max(minc[gi.Col], mn)
+	}
+
+	if t.fixed {
+		var used float32
+		rest := 0
+		for i := range maxc {
+			if explicit[i] {
+				used += maxc[i]
+			} else {
+				rest++
+			}
+		}
+		share := float32(0)
+		if rest > 0 && space > used {
+			share = (space - used) / float32(rest)
+		}
+		for i := range g.Columns {
+			w := share
+			if explicit[i] {
+				w = maxc[i]
+			}
+			g.Columns[i] = qui.GridFixedTrack(w)
+		}
+		return g
+	}
+
+	// A spanning cell wider than its columns (plus the gaps between them)
+	// spreads the excess over them, in proportion to their widths.
+	for _, s := range spans {
+		inner := g.ColGap * float32(s.n-1)
+		spread := func(widths []float32, need float32) {
+			var sum float32
+			for i := s.col; i < s.col+s.n; i++ {
+				sum += widths[i]
+			}
+			if excess := need - inner - sum; excess > 0 {
+				for i := s.col; i < s.col+s.n; i++ {
+					if sum > 0 {
+						widths[i] += excess * widths[i] / sum
+					} else {
+						widths[i] += excess / float32(s.n)
+					}
+				}
+			}
+		}
+		spread(maxc, s.max)
+		spread(minc, s.min)
+	}
+
+	widths := append([]float32(nil), maxc...)
+	var total float32
+	for _, w := range maxc {
+		total += w
+	}
+	switch {
+	case total > space:
+		// Too narrow for max-content: start from min-content and share what
+		// is left in proportion to how much more each column wants.
+		var minTotal, wantTotal float32
+		for i := range minc {
+			minTotal += minc[i]
+			wantTotal += maxc[i] - minc[i]
+		}
+		left := max(space-minTotal, 0)
+		for i := range widths {
+			widths[i] = minc[i]
+			if wantTotal > 0 {
+				widths[i] += left * (maxc[i] - minc[i]) / wantTotal
+			}
+		}
+	case t.fill && total < space:
+		// A table with a width wider than its content: the extra goes to the
+		// auto columns in proportion to their widths (all columns when every
+		// one has an explicit width).
+		var autoSum float32
+		autoN := 0
+		for i := range maxc {
+			if !explicit[i] {
+				autoSum += maxc[i]
+				autoN++
+			}
+		}
+		extra := space - total
+		for i := range widths {
+			switch {
+			case autoN == 0:
+				widths[i] += extra * maxc[i] / total
+			case explicit[i]:
+			case autoSum > 0:
+				widths[i] += extra * maxc[i] / autoSum
+			default:
+				widths[i] += extra / float32(autoN)
+			}
+		}
+	}
+	for i, w := range widths {
+		g.Columns[i] = qui.GridFixedTrack(w)
+	}
+	return g
+}
+
+// firstRow is the grid row of the table's first data row (below a top
+// caption).
+func (t *tableLayout) firstRow(children []qui.Widget) int {
+	first := -1
+	for _, ch := range children {
+		if ch == t.caption {
+			continue
+		}
+		if r := qui.GridItemOf(ch).Row; first < 0 || r < first {
+			first = r
+		}
+	}
+	return first
 }
 
 // applyTableCollapse rewrites a cell's borders for border-collapse:collapse.
