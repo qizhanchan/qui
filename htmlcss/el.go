@@ -4858,3 +4858,12 @@ func (e *El) applyHostedControlStyle(cs *ComputedStyle) {
 		st.Corners = qui.CornerRadii{}
 	})
 }
+
+// ConsumesTab lets an element keep Tab / Shift+Tab for its own key handlers
+// instead of the window moving focus (qui.TabConsumer): set the
+// data-keep-tab attribute on it or an ancestor of the focused control (a
+// switcher list that walks with Ctrl+Tab, a cell editor).
+func (e *El) ConsumesTab(shift bool) bool {
+	_, ok := e.readAttr("data-keep-tab")
+	return ok
+}

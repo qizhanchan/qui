@@ -342,6 +342,8 @@ func parseKeyToken(tok string) (Key, error) {
 		return KeyBackspace, nil
 	case "delete", "del":
 		return KeyDelete, nil
+	case "insert", "ins":
+		return KeyInsert, nil
 	case "space":
 		return KeySpace, nil
 	case "left":
