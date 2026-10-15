@@ -140,13 +140,17 @@ func themedStyle(s *Style) *Style {
 }
 
 // themedFg is themed for a text color. The baseline constants are matched
-// by value, so a surface sentinel must not apply here: an authored
-// `color: #ffffff` equals htmlControlBg and would otherwise be remapped to
-// the theme's (dark) surface — white text painted dark on a dark field.
+// by value, so a surface or border sentinel must not apply here: an
+// authored `color: #ffffff` equals htmlControlBg and would otherwise be
+// remapped to the theme's (dark) surface, and `color: #cccccc` equals
+// htmlDisabledBorder and would become the theme's (dark) border — light
+// text painted dark on a dark field. Natively these sentinels are only
+// ever fills / borders, never a widget's text color.
 func themedFg(c Color) Color {
 	switch c {
 	case htmlControlBg, htmlButtonBg, baselineHoverBg, baselinePressedBg,
-		baselineDisabledBg, baselineTrack, baselineBarBg:
+		baselineDisabledBg, baselineTrack, baselineBarBg,
+		htmlControlBorder, htmlDisabledBorder:
 		return c
 	}
 	return themed(c)

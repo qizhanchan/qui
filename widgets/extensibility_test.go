@@ -357,6 +357,13 @@ func TestThemedStyleKeepsRoles(t *testing.T) {
 	if st.Foreground != dark.Text || st.Background != dark.SurfaceOverlay {
 		t.Fatalf("UA colors should still follow the theme: %+v", st)
 	}
+	// `color: #cccccc` / `#767676` equal the UA border greys: as text they
+	// must not become the (dark) theme border color.
+	for _, fg := range []Color{htmlDisabledBorder, htmlControlBorder} {
+		if st := themedStyle(&Style{Foreground: fg}); st.Foreground != fg {
+			t.Fatalf("grey text %v remapped to %v", fg, st.Foreground)
+		}
+	}
 }
 
 func TestI18nKeysAndNameOverride(t *testing.T) {
