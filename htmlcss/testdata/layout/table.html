@@ -1,7 +1,7 @@
 <!doctype html>
 <html><head><style>
 @font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
-/* qui's UA pads body by 16px where Chrome margins it by 8px: zero both. */
+/* Zero the body box so page coordinates start at the origin. */
 body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
 /* One case per fixed-height section, so a difference in one case does not
    shift every box after it. The border keeps child margins inside. */

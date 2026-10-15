@@ -168,108 +168,159 @@ func resolveFlowBlockSize(child Widget, cb Size, availW float32) (layoutW, heigh
 	return layoutW, height, intrinsicW
 }
 
-// Measure returns the natural content size of a flow of children given
-// the available space. Width fills the available width (block boxes are
-// full-width in CSS normal flow); height is the total stacked height of
-// block bands and wrapped inline lines. Container.Measure calls this so
-// a FlowLayout container reports its true content height to its parent.
-func (f FlowLayout) Measure(children []Widget, avail Size) Size {
-	var y float32
-	var lineW, lineH float32
-	var maxW float32 // widest block band / inline line = intrinsic width
-	lineOpen := false
+// MarginCollapser is implemented by flow containers whose own vertical
+// margins may collapse with their first / last in-flow block child's (CSS
+// margin collapsing through a parent). It answers for the container's
+// formatting context only — false for a block formatting context root
+// (overflow other than visible, flow-root, a table cell, a control); the
+// layout additionally requires no padding / border on that edge, an auto
+// height for the bottom edge, and FlowLayout on both the container and its
+// parent. Widgets that don't implement it never collapse through.
+type MarginCollapser interface {
+	MarginsCollapseWithChildren() bool
+}
 
+// flowHost is a container laid out by a FlowLayout (Container satisfies it,
+// and so does anything embedding one).
+type flowHost interface {
+	inFlowChildren() []Widget
+	flowLayout() (FlowLayout, bool)
+}
+
+// collapseEdges reports whether w's top / bottom margin collapses with its
+// first / last in-flow child's.
+func collapseEdges(w Widget) (top, bottom bool) {
+	mc, ok := w.(MarginCollapser)
+	if !ok || !mc.MarginsCollapseWithChildren() || flowLevelOf(w) != FlowBlock {
+		return false, false
+	}
+	if h, ok := w.(flowHost); !ok {
+		return false, false
+	} else if _, ok := h.flowLayout(); !ok {
+		return false, false
+	}
+	if p, ok := w.Parent().(flowHost); !ok {
+		return false, false
+	} else if _, ok := p.flowLayout(); !ok {
+		return false, false
+	}
+	s := w.Style()
+	in := s.ContentInsets()
+	top = in.Top == 0
+	bottom = in.Bottom == 0 && s.Height == 0 && s.HeightPct == 0 &&
+		s.MinHeight == 0 && s.MinHeightPct == 0 && widgetPreferredSize(w).H == 0
+	return top, bottom
+}
+
+// marginRun accumulates adjoining vertical margins: CSS collapses them to
+// the largest positive plus the most negative.
+type marginRun struct{ pos, neg float32 }
+
+func (r *marginRun) add(m float32) {
+	if m > r.pos {
+		r.pos = m
+	}
+	if m < r.neg {
+		r.neg = m
+	}
+}
+
+func (r *marginRun) merge(o marginRun) { r.add(o.pos); r.add(o.neg) }
+
+func (r marginRun) value() float32 { return r.pos + r.neg }
+
+// edgeMargin is the margin w presents on its top (or bottom) edge: its own,
+// collapsed with its first (last) in-flow block child's when the margins
+// collapse through w.
+func edgeMargin(w Widget, bottom bool) marginRun {
+	var r marginRun
+	m := w.Style().Margin
+	if bottom {
+		r.add(m.Bottom)
+	} else {
+		r.add(m.Top)
+	}
+	ct, cb := collapseEdges(w)
+	if (bottom && !cb) || (!bottom && !ct) {
+		return r
+	}
+	kids := w.(flowHost).inFlowChildren()
+	if len(kids) == 0 {
+		return r
+	}
+	k := kids[0]
+	if bottom {
+		k = kids[len(kids)-1]
+	}
+	if flowLevelOf(k) == FlowBlock {
+		r.merge(edgeMargin(k, bottom))
+	}
+	return r
+}
+
+// run is the one normal-flow pass behind Measure and Apply: it positions
+// (when apply) each child in bounds and returns the content height and the
+// intrinsic width (widest band / line).
+//
+// Vertical margins collapse as in CSS: adjoining block margins (a block's
+// bottom and the next block's top, and both margins of an empty block)
+// combine into one gap, and when the container collapses through
+// (collapseEdges), its first / last block child's margin is not inside it —
+// the parent flow applies it as part of the container's own margin.
+func (f FlowLayout) run(children []Widget, bounds Rect, apply bool) (contentH, maxW float32) {
+	var top, bottom bool
+	if len(children) > 0 {
+		if p := children[0].Parent(); p != nil {
+			top, bottom = collapseEdges(p)
+		}
+	}
+	cb := Size{W: bounds.W, H: bounds.H}
+	x, y := bounds.X, bounds.Y
+	var lineW, lineH float32
+	lineOpen := false
+	var pending marginRun // margins waiting below the last block band
+	placedAny := false    // a band or line exists (LineGap goes between them)
+
+	gap := func() {
+		if placedAny {
+			y += f.LineGap
+		}
+		placedAny = true
+	}
 	flushLine := func() {
 		if lineOpen {
 			if lineW > maxW {
 				maxW = lineW
 			}
-			y += lineH + f.LineGap
-			lineW, lineH = 0, 0
+			y += lineH
+			x, lineW, lineH = bounds.X, 0, 0
 			lineOpen = false
 		}
 	}
 
-	for _, child := range children {
+	for i, child := range children {
 		m := child.Style().Margin
 		switch flowLevelOf(child) {
 		case FlowInline:
-			sz := resolveFlowInlineSize(child, avail, avail.W-m.Left-m.Right)
+			sz := resolveFlowInlineSize(child, cb, bounds.W-m.Left-m.Right)
 			boxW := m.Left + sz.W + m.Right
-			if lineOpen && lineW+boxW > avail.W {
+			if !lineOpen {
+				y += pending.value()
+				pending = marginRun{}
+				gap()
+			} else if lineW+boxW > bounds.W {
+				// Wrap when this box's margin box would overflow the line.
 				if lineW > maxW {
 					maxW = lineW
 				}
 				y += lineH + f.LineGap
-				lineW, lineH = 0, 0
+				x, lineW, lineH = bounds.X, 0, 0
 			}
+			if apply {
+				child.Layout(Rect{X: x + m.Left, Y: y + m.Top, W: sz.W, H: sz.H})
+			}
+			x += boxW + f.InlineGap
 			lineW += boxW + f.InlineGap
-			if h := m.Top + sz.H + m.Bottom; h > lineH {
-				lineH = h
-			}
-			lineOpen = true
-		default:
-			flushLine()
-			w := avail.W - m.Left - m.Right
-			if w < 0 {
-				w = 0
-			}
-			_, h, intrinsicW := resolveFlowBlockSize(child, avail, w)
-			if bw := m.Left + intrinsicW + m.Right; bw > maxW {
-				maxW = bw
-			}
-			y += m.Top + h + m.Bottom + f.LineGap
-		}
-	}
-	flushLine()
-	if y > 0 {
-		// Trim the trailing LineGap added after the last band.
-		y -= f.LineGap
-	}
-	if y < 0 {
-		y = 0
-	}
-	// Width is the intrinsic content width (widest band/line), not the
-	// full available width — a FlowLayout box used as a flex item must
-	// report its content size for flex-basis. Block children still fill
-	// the box's given width at Apply time (that's layout, not measure).
-	if maxW > avail.W {
-		maxW = avail.W
-	}
-	return Size{W: maxW, H: y}
-}
-
-func (f FlowLayout) Apply(children []Widget, bounds Rect) {
-	x := bounds.X       // current inline pen position
-	y := bounds.Y       // top of the current band / line
-	lineH := float32(0) // tallest inline box on the current line
-	lineOpen := false   // whether an inline line is in progress
-
-	// flushLine advances y past the current inline line (if any).
-	flushLine := func() {
-		if lineOpen {
-			y += lineH + f.LineGap
-			x = bounds.X
-			lineH = 0
-			lineOpen = false
-		}
-	}
-
-	for _, child := range children {
-		m := child.Style().Margin
-
-		switch flowLevelOf(child) {
-		case FlowInline:
-			sz := resolveFlowInlineSize(child, Size{W: bounds.W, H: bounds.H}, bounds.W-m.Left-m.Right)
-			// Wrap when this box would overflow the content width and
-			// the line already has something on it.
-			if lineOpen && x+m.Left+sz.W > bounds.X+bounds.W {
-				y += lineH + f.LineGap
-				x = bounds.X
-				lineH = 0
-			}
-			child.Layout(Rect{X: x + m.Left, Y: y + m.Top, W: sz.W, H: sz.H})
-			x += m.Left + sz.W + m.Right + f.InlineGap
 			if h := m.Top + sz.H + m.Bottom; h > lineH {
 				lineH = h
 			}
@@ -284,22 +335,64 @@ func (f FlowLayout) Apply(children []Widget, bounds Rect) {
 			// A block fills the content width unless it declares an explicit
 			// width (then it's that wide, left-aligned); height is explicit or
 			// natural. Both clamped by min/max. See resolveFlowBlockSize.
-			bw, h, _ := resolveFlowBlockSize(child, Size{W: bounds.W, H: bounds.H}, w)
+			bw, h, intrinsicW := resolveFlowBlockSize(child, cb, w)
+			if bwm := m.Left + intrinsicW + m.Right; bwm > maxW {
+				maxW = bwm
+			}
+			if !(top && i == 0) {
+				// The first child's top margin of a collapsing-through
+				// container belongs to the container's own top margin.
+				pending.merge(edgeMargin(child, false))
+			}
+			through := h == 0 // an empty block: its margins adjoin each other
+			if through {
+				pending.merge(edgeMargin(child, true))
+			} else {
+				gap()
+			}
 			// CSS auto margins absorb the leftover band space: both auto
 			// centers the block (`margin: 0 auto`), left-only pushes it to
 			// the right edge. Auto sides carry no numeric margin.
-			x := bounds.X + m.Left
+			cx := bounds.X + m.Left
 			if free := w - bw; free > 0 {
 				s := child.Style()
 				switch {
 				case s.MarginLeftAuto && s.MarginRightAuto:
-					x += free / 2
+					cx += free / 2
 				case s.MarginLeftAuto:
-					x += free
+					cx += free
 				}
 			}
-			child.Layout(Rect{X: x, Y: y + m.Top, W: bw, H: h})
-			y += m.Top + h + m.Bottom + f.LineGap
+			if apply {
+				child.Layout(Rect{X: cx, Y: y + pending.value(), W: bw, H: h})
+			}
+			if !through {
+				y += pending.value() + h
+				pending = edgeMargin(child, true)
+			}
 		}
 	}
+	flushLine()
+	if !bottom {
+		y += pending.value()
+	}
+	return max(y-bounds.Y, 0), maxW
+}
+
+// Measure returns the natural content size of a flow of children given
+// the available space: the stacked height of block bands and wrapped inline
+// lines (see run), and the intrinsic content width (widest band / line), not
+// the full available width — a FlowLayout box used as a flex item must
+// report its content size for flex-basis. Block children still fill the
+// box's given width at Apply time.
+func (f FlowLayout) Measure(children []Widget, avail Size) Size {
+	h, w := f.run(children, Rect{W: avail.W, H: avail.H}, false)
+	if w > avail.W {
+		w = avail.W
+	}
+	return Size{W: w, H: h}
+}
+
+func (f FlowLayout) Apply(children []Widget, bounds Rect) {
+	f.run(children, bounds, true)
 }

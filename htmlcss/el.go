@@ -5117,3 +5117,20 @@ func (e *El) ConsumesTab(shift bool) bool {
 	_, ok := e.readAttr("data-keep-tab")
 	return ok
 }
+
+// MarginsCollapseWithChildren implements qui.MarginCollapser: a plain
+// block box's top / bottom margin collapses with its first / last child's,
+// as in CSS. Anything that establishes a block formatting context does not
+// — overflow other than visible (incl. scroll hosts), display: flow-root /
+// flex / grid / table parts / list items, and elements backed by a control
+// or replaced content.
+func (e *El) MarginsCollapseWithChildren() bool {
+	cs := e.lastCS
+	if cs == nil || cs.Display != "block" || cs.OverflowClip || e.overflowScroll {
+		return false
+	}
+	if e.backing != nil || e.tag == "img" || e.tag == "button" || e.isButtonInput() {
+		return false
+	}
+	return true
+}

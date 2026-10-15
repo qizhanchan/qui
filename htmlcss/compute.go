@@ -42,6 +42,11 @@ type ComputedStyle struct {
 	Italic                         bool
 	FontFamily                     string
 	LineHeight                     float32 // multiplier over font size
+	// LineHeightPx is the computed line height in px when it was declared
+	// with a length or percentage (0 for a unitless number). CSS inherits
+	// such a line-height as that absolute length, not as a factor: a 32px
+	// heading under `line-height: 20px` still gets 20px lines.
+	LineHeightPx float32
 	// LineHeightOwn reports a line-height declared on this element itself
 	// (not inherited). Form controls use only their own: a browser's UA
 	// sheet resets theirs to normal.
@@ -572,6 +577,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		cs.Italic = parent.Italic
 		cs.FontFamily = parent.FontFamily
 		cs.LineHeight = parent.LineHeight
+		cs.LineHeightPx = parent.LineHeightPx
 		cs.TextAlign = parent.TextAlign
 		cs.LetterSpacing = parent.LetterSpacing
 		cs.WordSpacing = parent.WordSpacing
@@ -721,12 +727,18 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		cs.FontFamily = firstFontFamily(v)
 	}
 	cs.LineHeightOwn = false
+	if cs.LineHeightPx > 0 && fs > 0 {
+		// Inherited as a length: re-express it over this element's font.
+		cs.LineHeight = cs.LineHeightPx / fs
+	}
 	if v, ok := m["line-height"]; ok {
 		if lh, ok := parseFloat(strings.TrimSpace(v)); ok && !strings.ContainsAny(v, "px%rem") {
 			cs.LineHeight = lh // unitless multiplier
+			cs.LineHeightPx = 0
 			cs.LineHeightOwn = true
 		} else if px, ok := parseLength(v, fs, fs); ok && fs > 0 {
 			cs.LineHeight = px / fs
+			cs.LineHeightPx = px
 			cs.LineHeightOwn = true
 		}
 	}

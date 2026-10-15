@@ -1,7 +1,7 @@
 <!doctype html>
 <html><head><style>
 @font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
-/* qui's UA pads body by 16px where Chrome margins it by 8px: zero both. */
+/* Zero the body box so page coordinates start at the origin. */
 body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
 /* One case per fixed-height section, so a difference in one case does not
    shift every box after it. The border keeps child margins inside. */
@@ -18,6 +18,13 @@ body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
 #parent { padding: 12px; border: 1px solid #999; width: 400px; }
 #child1 { height: 20px; background: #aaa; }
 #child2 { height: 20px; margin-top: 6px; background: #aaa; }
+#pco { margin-top: 10px; background: #eee; }
+#pci { height: 20px; margin: 20px 0 15px; background: #aaa; }
+#pcn { height: 20px; margin-top: 5px; background: #ccc; }
+#e0, #e2 { height: 20px; background: #aaa; }
+#e1 { margin: 10px 0; }
+#n1 { height: 20px; margin-bottom: -10px; background: #aaa; }
+#n2 { height: 20px; margin-top: 20px; background: #ccc; }
 #auto { margin: 8px; padding: 6px; border: 1px solid #666; }
 </style></head><body>
 <section class="case"><div id="a"></div></section>
@@ -29,5 +36,9 @@ body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
 <section class="case"><div id="minw"></div></section>
 <section class="case"><div id="sib1"></div><div id="sib2"></div></section>
 <section class="case"><div id="parent"><div id="child1"></div><div id="child2"></div></div></section>
+<section class="case"><div id="pco"><div id="pci"></div></div><div id="pcn"></div></section>
+<section class="case"><div id="e0"></div><div id="e1"></div><div id="e2"></div></section>
+<section class="case"><div id="n1"></div><div id="n2"></div></section>
+<section class="case" style="height:200px"><p id="ua-p1">para one</p><p id="ua-p2">para two</p><h1 id="ua-h1">Heading</h1><ul id="ua-ul"><li id="ua-li">item</li></ul></section>
 <section class="case"><div id="auto">auto height from one line of text</div></section>
 </body></html>

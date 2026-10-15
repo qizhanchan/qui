@@ -63,7 +63,6 @@ var domLayoutAllowlist = []domLayoutAllow{
 	{"table", "s[3-6]", "*", "columns are equal 1fr when the table has a width: no content-proportional distribution"},
 
 	// Undocumented differences — each a fix candidate.
-	{"block-box", "sib2", "y", "adjacent sibling vertical margins add instead of collapsing to the larger"},
 	{"table", "f[hd][12]", "*", "table-layout: fixed ignores a first-row cell's width: columns are equal"},
 	{"table", "sc*", "*", "border-spacing is only applied between cells, not around the table's outer edge"},
 	{"table", "spacing", "h", "border-spacing is not applied above the first or below the last row"},

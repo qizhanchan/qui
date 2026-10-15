@@ -155,20 +155,23 @@ func defaultDisplay(tag string) string {
 // uaDeclarations returns the default declarations for a tag.
 func uaDeclarations(tag string) []Declaration {
 	switch tag {
+	// Headings, paragraphs and lists follow Chrome's UA stylesheet
+	// (html.css): font sizes in em of the parent, margins in em of the
+	// element's own size.
 	case "h1":
-		return decls("font-size", "32px", "font-weight", "bold", "margin", "16px 0")
+		return decls("font-size", "2em", "font-weight", "bold", "margin", "0.67em 0")
 	case "h2":
-		return decls("font-size", "26px", "font-weight", "bold", "margin", "14px 0")
+		return decls("font-size", "1.5em", "font-weight", "bold", "margin", "0.83em 0")
 	case "h3":
-		return decls("font-size", "21px", "font-weight", "bold", "margin", "12px 0")
+		return decls("font-size", "1.17em", "font-weight", "bold", "margin", "1em 0")
 	case "h4":
-		return decls("font-size", "17px", "font-weight", "bold", "margin", "10px 0")
+		return decls("font-weight", "bold", "margin", "1.33em 0")
 	case "h5":
-		return decls("font-size", "15px", "font-weight", "bold", "margin", "10px 0")
+		return decls("font-size", "0.83em", "font-weight", "bold", "margin", "1.67em 0")
 	case "h6":
-		return decls("font-size", "13px", "font-weight", "bold", "margin", "10px 0")
+		return decls("font-size", "0.67em", "font-weight", "bold", "margin", "2.33em 0")
 	case "p":
-		return decls("margin", "12px 0")
+		return decls("margin", "1em 0")
 	case "strong", "b":
 		return decls("font-weight", "bold")
 	case "th":
@@ -180,7 +183,7 @@ func uaDeclarations(tag string) []Declaration {
 	case "em", "i":
 		return decls("font-style", "italic")
 	case "small":
-		return decls("font-size", "13px")
+		return decls("font-size", "0.8333em") // Chrome's `smaller`: 1/1.2
 	case "a":
 		// `cursor: pointer` matches the UA sheet. (<button> deliberately does
 		// NOT get it — browsers leave buttons on `cursor: default`.)
@@ -190,32 +193,27 @@ func uaDeclarations(tag string) []Declaration {
 		return decls("text-decoration", "line-through")
 	case "ins", "u":
 		return decls("text-decoration", "underline")
-	case "code", "pre":
+	case "code":
 		return decls("font-family", "monospace")
+	case "pre":
+		return decls("font-family", "monospace", "margin", "1em 0")
 	case "ul", "ol":
-		return decls("margin", "10px 0", "padding-left", "24px")
-	case "li":
-		return decls("margin", "4px 0")
+		return decls("margin", "1em 0", "padding-left", "40px")
 	case "dl":
-		return decls("margin", "12px 0")
+		return decls("margin", "1em 0")
 	case "dd":
-		return decls("margin", "4px 0 4px 40px")
-	case "dt":
-		return decls("font-weight", "bold", "margin", "4px 0 0 0")
+		return decls("margin-left", "40px")
 	case "figure":
-		return decls("margin", "12px 40px")
-	case "figcaption":
-		return decls("font-size", "13px", "color", "#666")
+		return decls("margin", "1em 40px")
 	case "fieldset":
 		return decls("border", "1px solid #c0c0c8", "border-radius", "4px",
 			"padding", "8px 12px", "margin", "8px 0")
 	case "legend":
 		return decls("font-weight", "bold", "padding", "0 4px")
 	case "blockquote":
-		return decls("margin", "12px 0", "padding-left", "16px",
-			"border-left-width", "4px", "border-left-color", "#ddd", "color", "#555")
+		return decls("margin", "1em 40px")
 	case "hr":
-		return decls("margin", "12px 0")
+		return decls("margin", "0.5em 0")
 	case "button":
 		// Minimal, borderless default: a bare <button> is a flat, padded,
 		// rounded hit target with NO box (border/fill) of its own — the box
@@ -226,7 +224,7 @@ func uaDeclarations(tag string) []Declaration {
 		// border-radius keeps that hover/author fill rounded.
 		return decls("padding", "6px 14px", "border-radius", "6px")
 	case "body":
-		return decls("margin", "0", "padding", "16px")
+		return decls("margin", "8px")
 	default:
 		return nil
 	}

@@ -642,3 +642,17 @@ func (c *Container) Tick(now time.Time) Rect {
 	}
 	return dirty
 }
+
+// flowLayout reports the container's layout engine when it is a FlowLayout
+// (see flowHost / margin collapsing in layout_flow.go).
+func (c *Container) flowLayout() (FlowLayout, bool) {
+	switch l := c.LayoutEngine.(type) {
+	case FlowLayout:
+		return l, true
+	case *FlowLayout:
+		if l != nil {
+			return *l, true
+		}
+	}
+	return FlowLayout{}, false
+}
