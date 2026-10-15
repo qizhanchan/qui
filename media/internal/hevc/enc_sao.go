@@ -276,7 +276,7 @@ func (e *Encoder) decideSAO(enabled [2]bool) {
 		}
 		if ry > 0 && fc.ctbSliceAddr[rs-sp.PicWCtb] == fc.ctbSliceAddr[rs] && p.tileID[p.ctbRsToTs[rs-sp.PicWCtb]] == p.tileID[ts] {
 			if c := evalMerge(rs - sp.PicWCtb); c < cost {
-				cost, merge, prm = c, 2, fc.sao[rs-sp.PicWCtb]
+				merge, prm = 2, fc.sao[rs-sp.PicWCtb]
 			}
 		}
 		fc.sao[rs] = prm

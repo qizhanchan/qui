@@ -7,7 +7,7 @@ import (
 )
 
 // listFixture mounts .list > n × (.row > span), fully styled.
-func listFixture(t *testing.T, css string, n int) (eng *StyleEngine, list *El, rows []*El) {
+func listFixture(t testing.TB, css string, n int) (eng *StyleEngine, list *El, rows []*El) {
 	t.Helper()
 	eng = NewStyleEngine(css)
 	list = eng.NewEl("div")

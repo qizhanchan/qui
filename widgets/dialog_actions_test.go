@@ -166,11 +166,11 @@ func TestDialogActionsAlign(t *testing.T) {
 	m := DefaultDialogMetrics()
 	left, right := m.ActionsPadX, 400-m.ActionsPadX
 
-	_, a, b := mk(DialogActionsEnd)
+	_, _, b := mk(DialogActionsEnd)
 	if got := b.Bounds().X + b.Bounds().W; got != right {
 		t.Errorf("End: last action right edge = %v, want %v", got, right)
 	}
-	_, a, _ = mk(DialogActionsStart)
+	_, a, _ := mk(DialogActionsStart)
 	if a.Bounds().X != left {
 		t.Errorf("Start: first action x = %v, want %v", a.Bounds().X, left)
 	}

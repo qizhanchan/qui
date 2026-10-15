@@ -15,7 +15,7 @@ func TestUIKeyboardSymbolsMatchTextSize(t *testing.T) {
 		t.Fatal("primary has no H")
 	}
 	capH := (hb.Max.Y - hb.Min.Y).Ceil()
-	for _, r := range []rune("⌘⇧⌥") {
+	for _, r := range "⌘⇧⌥" {
 		f := faceForRune(r, faces)
 		if _, isUI := f.(uiSymbolFace); !isUI {
 			t.Errorf("%c resolved to %T, want the UI-symbol face", r, f)
@@ -29,7 +29,7 @@ func TestUIKeyboardSymbolsMatchTextSize(t *testing.T) {
 			t.Errorf("%c height %d is visibly smaller than cap height %d", r, h, capH)
 		}
 	}
-	for _, r := range []rune("A‹⟳✓") {
+	for _, r := range "A‹⟳✓" {
 		if _, isUI := faceForRune(r, faces).(uiSymbolFace); isUI {
 			t.Errorf("%c must not resolve to the UI-symbol face", r)
 		}

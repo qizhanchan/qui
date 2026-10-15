@@ -410,7 +410,6 @@ func (t *TextArea) getCursorPosition(content Rect) (x, y float32) {
 		t.cursorPos = 0
 	}
 
-	x = content.X
 	y = content.Y
 
 	lineIdx := 0
