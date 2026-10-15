@@ -8,10 +8,10 @@ import (
 )
 
 // gridLayout builds a qui.GridLayout from the element's grid CSS. Columns
-// come from grid-template-columns (px / fr / auto / repeat()); rows from
-// grid-template-rows, or — when omitted — an implicit set of auto rows
-// sized to hold all items row-major. Per-item placement (grid-column /
-// grid-row spans) is not yet supported: items auto-place in order.
+// come from grid-template-columns (px / fr / auto / repeat()), rows from
+// grid-template-rows (or the row count grid-template-areas implies). Items
+// placed past those tracks — or auto-placed beyond the last row — get
+// implicit tracks sized by grid-auto-columns / grid-auto-rows.
 func gridLayout(cs *ComputedStyle, itemCount int) qui.Layout {
 	// grid-template-areas can imply the track counts when explicit templates
 	// are omitted (each area row is a grid row; area columns are grid columns).
@@ -29,21 +29,19 @@ func gridLayout(cs *ComputedStyle, itemCount int) qui.Layout {
 		}
 	}
 	rows := parseGridTracks(cs.raw["grid-template-rows"], cs.FontSize)
-	if len(rows) == 0 {
-		nRows := areaRows
-		if nRows < 1 {
-			nRows = (itemCount + len(cols) - 1) / len(cols)
-		}
-		if nRows < 1 {
-			nRows = 1
-		}
-		rows = make([]qui.GridTrack, nRows)
+	if len(rows) == 0 && areaRows > 0 {
+		rows = make([]qui.GridTrack, areaRows)
 		for i := range rows {
 			rows[i] = qui.GridAutoTrack()
 		}
 	}
 	rowGap, colGap := gridGaps(cs)
-	return qui.GridLayout{Columns: cols, Rows: rows, ColGap: colGap, RowGap: rowGap}
+	return qui.GridLayout{
+		Columns: cols, Rows: rows,
+		AutoColumns: parseGridTracks(cs.raw["grid-auto-columns"], cs.FontSize),
+		AutoRows:    parseGridTracks(cs.raw["grid-auto-rows"], cs.FontSize),
+		ColGap:      colGap, RowGap: rowGap,
+	}
 }
 
 // gridAreaDims returns the row and column counts implied by a

@@ -1147,11 +1147,68 @@ func (g *GridItem) SetCell(col, row int) {
 }
 
 // GridLayout arranges widgets in a grid with explicitly-sized tracks.
+//
+// Columns / Rows are the explicit grid. As in CSS, items placed beyond it
+// — explicitly, or by auto-placement running out of rows — extend it with
+// implicit tracks sized by AutoColumns / AutoRows (grid-auto-columns /
+// grid-auto-rows), repeated in order; empty means auto-sized.
 type GridLayout struct {
-	Columns []GridTrack
-	Rows    []GridTrack
-	ColGap  float32
-	RowGap  float32
+	Columns     []GridTrack
+	Rows        []GridTrack
+	AutoColumns []GridTrack
+	AutoRows    []GridTrack
+	ColGap      float32
+	RowGap      float32
+}
+
+// implicitTrack is the i-th implicit track after the explicit ones.
+func implicitTrack(pattern []GridTrack, i int) GridTrack {
+	if len(pattern) == 0 {
+		return GridAutoTrack()
+	}
+	return pattern[i%len(pattern)]
+}
+
+// withImplicit normalizes the children's placements, auto-places the rest
+// and returns the grid extended by whatever implicit tracks they need.
+func (l GridLayout) withImplicit(children []Widget) (GridLayout, []GridItem) {
+	placements := make([]GridItem, len(children))
+	nCols, rowEnd, autoRows := len(l.Columns), len(l.Rows), 0
+	for i, ch := range children {
+		p := GridItemOf(ch)
+		p.ColSpan, p.RowSpan = max(p.ColSpan, 1), max(p.RowSpan, 1)
+		placements[i] = p
+		if p.Explicit {
+			nCols = max(nCols, p.Col+p.ColSpan)
+			rowEnd = max(rowEnd, p.Row+p.RowSpan)
+		} else {
+			nCols = max(nCols, p.ColSpan)
+			autoRows += p.RowSpan
+		}
+	}
+	g := l
+	extend := func(tracks, pattern []GridTrack, n int) []GridTrack {
+		if n <= len(tracks) {
+			return tracks
+		}
+		out := append(make([]GridTrack, 0, n), tracks...)
+		for i := len(tracks); i < n; i++ {
+			out = append(out, implicitTrack(pattern, i-len(tracks)))
+		}
+		return out
+	}
+	g.Columns = extend(l.Columns, l.AutoColumns, nCols)
+	// Room for every auto item on a row of its own; trimmed below.
+	g.Rows = extend(l.Rows, l.AutoRows, rowEnd+autoRows)
+	g.autoPlace(placements)
+	used := len(l.Rows)
+	for _, p := range placements {
+		if p.Explicit {
+			used = max(used, p.Row+p.RowSpan)
+		}
+	}
+	g.Rows = g.Rows[:min(used, len(g.Rows))]
+	return g, placements
 }
 
 // Apply resolves track sizes, determines each child's cell placement,
@@ -1161,23 +1218,14 @@ type GridLayout struct {
 // columns and [rowStart..rowStart+rowSpan-1] rows, including any
 // col/row gaps internal to that span.
 func (l GridLayout) Apply(children []Widget, bounds Rect) {
-	if len(l.Columns) == 0 || len(l.Rows) == 0 || len(children) == 0 {
+	if len(children) == 0 {
 		return
 	}
-
-	// Gather placements and enumerate auto-placed children.
-	placements := make([]GridItem, len(children))
-	for i, ch := range children {
-		placements[i] = GridItemOf(ch)
-		if placements[i].ColSpan < 1 {
-			placements[i].ColSpan = 1
-		}
-		if placements[i].RowSpan < 1 {
-			placements[i].RowSpan = 1
-		}
+	// Place every child (auto-placing the rest), growing implicit tracks.
+	l, placements := l.withImplicit(children)
+	if len(l.Columns) == 0 || len(l.Rows) == 0 {
+		return
 	}
-	// Auto-place children whose placement isn't marked Explicit.
-	l.autoPlace(placements)
 
 	// Resolve track sizes — Fixed/Auto first, then Fraction. Columns first,
 	// so auto ROW heights can measure each cell at its resolved column width
@@ -1214,22 +1262,13 @@ func (l GridLayout) Apply(children []Widget, bounds Rect) {
 // and every sibling laid out after the grid overflowed the measured content
 // and became unreachable.
 func (l GridLayout) Measure(children []Widget, avail Size) Size {
-	if len(l.Columns) == 0 || len(l.Rows) == 0 || len(children) == 0 {
+	if len(children) == 0 {
 		return Size{}
 	}
-	gl := l
-
-	placements := make([]GridItem, len(children))
-	for i, ch := range children {
-		placements[i] = GridItemOf(ch)
-		if placements[i].ColSpan < 1 {
-			placements[i].ColSpan = 1
-		}
-		if placements[i].RowSpan < 1 {
-			placements[i].RowSpan = 1
-		}
+	gl, placements := l.withImplicit(children)
+	if len(gl.Columns) == 0 || len(gl.Rows) == 0 {
+		return Size{}
 	}
-	gl.autoPlace(placements)
 
 	colWidths := gl.resolveTracks(gl.Columns, avail.W, gl.ColGap, children, placements, true, nil, 0)
 

@@ -55,10 +55,6 @@ type domLayoutAllow struct {
 
 var domLayoutAllowlist = []domLayoutAllow{
 	// Documented limits (COVERAGE.md).
-	{"grid", "ar*", "*", "grid-auto-rows is not implemented: auto rows size to (empty) content"},
-	{"grid", "autorows", "h", "grid-auto-rows is not implemented"},
-	{"grid", "im1", "*", "implicit tracks are not implemented: an item placed past the template is not laid out"},
-	{"grid", "implicit", "h", "implicit tracks are not implemented: the row past the template adds no height"},
 
 	// Undocumented differences — each a fix candidate.
 }

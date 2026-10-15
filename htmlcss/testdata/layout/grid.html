@@ -21,6 +21,8 @@ body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
 #im1 { grid-column: 2; grid-row: 2; height: 25px; }
 #content { grid-template-columns: 1fr 1fr; gap: 4px; }
 #tall { height: 50px; }
+#autocols { grid-template-columns: auto 1fr auto; gap: 6px; }
+#flowgrid { grid-template-columns: repeat(3, 1fr); grid-template-rows: 20px; grid-auto-rows: 15px; gap: 2px; }
 </style></head><body>
 <section class="case"><div class="grid" id="fr"><div id="fr1"></div><div id="fr2"></div><div id="fr3"></div><div id="fr4"></div></div></section>
 <section class="case"><div class="grid" id="autorows"><div id="ar1"></div><div id="ar2"></div><div id="ar3"></div></div></section>
@@ -29,4 +31,6 @@ body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
 <section class="case"><div class="grid" id="place"><div id="pl1"></div><div id="pl2"></div></div></section>
 <section class="case"><div class="grid" id="implicit"><div id="im1"></div></div></section>
 <section class="case"><div class="grid" id="content"><div id="tall"></div><div id="short"></div></div></section>
+<section class="case"><div class="grid" id="autocols"><div id="ac1" data-tol="2">label</div><div id="ac2">fill</div><div id="ac3" data-tol="2">longer tail</div></div></section>
+<section class="case"><div class="grid" id="flowgrid"><div id="fg1"></div><div id="fg2"></div><div id="fg3"></div><div id="fg4"></div><div id="fg5"></div><div id="fg6"></div><div id="fg7"></div></div></section>
 </body></html>

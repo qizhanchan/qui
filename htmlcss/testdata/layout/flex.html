@@ -22,6 +22,9 @@ body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
 #pad { padding: 10px; border: 2px solid #333; }
 #pad > div { flex: 1; }
 #txt > div { flex: none; padding: 0 4px; }
+#tight { width: 200px; height: auto; } #tight > div { background: #ccc; }
+#wrapcol { width: 300px; height: auto; align-items: flex-start; } #wrapcol > div { flex: 1; }
+#nested { flex-direction: column; width: 300px; height: auto; } #nested > div { display: flex; gap: 4px; } #nested span { padding: 2px; }
 </style></head><body>
 <section class="case"><div class="row" id="grow"><div id="g1"></div><div id="g2"></div><div id="g3"></div></div></section>
 <section class="case"><div class="row" id="shrink"><div id="s1"></div><div id="s2"></div></div></section>
@@ -35,4 +38,7 @@ body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
 <section class="case"><div class="row" id="col"><div id="c1"></div><div id="colgrow"></div><div id="c3"></div></div></section>
 <section class="case"><div class="row" id="pad"><div id="p1"></div><div id="p2"></div></div></section>
 <section class="case"><div class="row" id="txt"><div id="t1" data-tol="2">Short</div><div id="t2" data-tol="2">A longer label</div></div></section>
+<section class="case"><div class="row" id="tight"><div id="ti1" data-tol="2">some long text content</div><div id="ti2" data-tol="2">another long one</div></div></section>
+<section class="case"><div class="row" id="wrapcol"><div id="wc1" data-tol="2">text that should wrap inside a flexible item</div><div id="wc2" data-tol="2">x</div></div></section>
+<section class="case"><div class="row" id="nested"><div id="ne1"><span id="ns1">a</span><span id="ns2">bb</span></div><div id="ne2" data-tol="2">plain</div></div></section>
 </body></html>
