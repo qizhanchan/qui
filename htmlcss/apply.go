@@ -552,6 +552,23 @@ func applyControlColors(w qui.Widget, cs *ComputedStyle, native **qui.StateStyle
 			c.OutlineColor = cs.BorderColor
 			c.CheckedOutlineColor = cs.BorderColor
 		}
+		// An authored background fills the box in both states (a checked
+		// box keeps it unless accent-color says otherwise — the mark then
+		// carries the state, as in JetBrains' dark checkboxes); an
+		// authored border-radius rounds it, and an explicit square
+		// width / height sizes it.
+		if cs.HasBackground && cs.Background.A > 0 {
+			c.FillColor = cs.Background
+			if !cs.HasAccentColor {
+				c.CheckedFillColor = cs.Background
+			}
+		}
+		if cs.Radius > 0 {
+			c.BoxRadius = cs.Radius
+		}
+		if cs.HasWidth && cs.HasHeight && cs.Width > 0 && cs.Width == cs.Height {
+			c.BoxSize = cs.Width
+		}
 	case *widgets.RadioButton:
 		if cs.HasAccentColor {
 			c.SelectedColor = cs.AccentColor

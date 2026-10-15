@@ -36,6 +36,7 @@ type CheckBox struct {
 	// default (see NewCheckBox); assign a theme token for a designed
 	// look.
 	OutlineColor     Color // unchecked outline
+	FillColor        Color // unchecked fill; zero A = none (native)
 	CheckedFillColor Color // fill when Checked
 	CheckMarkColor   Color // checkmark stroke
 	// CheckedOutlineColor strokes an outline around the checked fill —
@@ -196,6 +197,9 @@ func (c *CheckBox) Draw(canvas Canvas) {
 			canvas.StrokeRoundedRect(box, radius, themed(c.CheckedOutlineColor), borderW)
 		}
 	} else {
+		if c.FillColor.A > 0 {
+			canvas.FillRoundedRect(box, radius, themed(c.FillColor))
+		}
 		canvas.StrokeRoundedRect(box, radius, themed(c.OutlineColor), borderW)
 	}
 
