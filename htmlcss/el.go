@@ -4073,6 +4073,26 @@ func (e *El) Handle(event qui.Event) bool {
 		if !e.Enabled() {
 			return handled
 		}
+		// A form control's keys target its backing widget, which sits
+		// below the element. In the DOM the element IS the target, and its
+		// listeners run before the control's default action — so an
+		// <input>'s keydown sees Esc before the field spends it dropping a
+		// selection. Run the element's own handlers here, ahead of the
+		// backing control, and not again while bubbling.
+		ownControl := e.backing != nil && ke.Target() == e.backing
+		if ownControl && ke.Phase() == qui.PhaseCapture {
+			switch ke.Type() {
+			case qui.EventKeyDown:
+				if e.onKeyDown != nil && e.onKeyDown(ke) {
+					return true
+				}
+			case qui.EventKeyUp:
+				if e.onKeyUp != nil && e.onKeyUp(ke) {
+					return true
+				}
+			}
+			return handled
+		}
 		// Author key handlers act on target / bubble only — DOM semantics,
 		// as for clicks below. Run during capture, an ancestor's handler
 		// would beat the focused element to its own keys: a dialog's
@@ -4083,7 +4103,7 @@ func (e *El) Handle(event qui.Event) bool {
 		}
 		switch ke.Type() {
 		case qui.EventKeyDown:
-			if e.onKeyDown != nil && e.onKeyDown(ke) {
+			if !ownControl && e.onKeyDown != nil && e.onKeyDown(ke) {
 				return true
 			}
 			// A focused tabindex scroll container scrolls with the arrow
@@ -4099,7 +4119,7 @@ func (e *El) Handle(event qui.Event) bool {
 				return e.pressFromKeyboard(ke.Mods)
 			}
 		case qui.EventKeyUp:
-			if e.onKeyUp != nil && e.onKeyUp(ke) {
+			if !ownControl && e.onKeyUp != nil && e.onKeyUp(ke) {
 				return true
 			}
 		}
