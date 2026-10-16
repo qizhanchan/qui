@@ -740,6 +740,19 @@ func Component[P any](name, key string, props P, render func(P) Node) Node {
 	})}
 }
 
+// MemoComponent is Component with opt-in memoization: when equal reports
+// the previous and next props equal, the component skips its render (its
+// dirty descendants still re-render). See reactive.MemoComponent for why
+// the comparator is explicit.
+func MemoComponent[P any](name, key string, props P, equal func(previous, next P) bool, render func(P) Node) Node {
+	return rawNode{reactive.MemoComponent(name, key, props, equal, func(p P) reactive.Element {
+		if n := render(p); n != nil {
+			return n.Build()
+		}
+		return reactive.Empty()
+	})}
+}
+
 // Leaf hosts a native qui widget as a childless element — the seam for
 // the parts an app draws itself (a grid, a ruler, a chart) inside an
 // otherwise CSS-styled tree. The element's tag is kind, so it is a real
