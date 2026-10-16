@@ -39,13 +39,13 @@ type NativeMenu struct {
 type MenuRole int
 
 const (
-	MenuRoleNone MenuRole = iota
-	MenuRoleHide           // Hide <App>          ⌘H
-	MenuRoleHideOthers     // Hide Others         ⌥⌘H
-	MenuRoleShowAll        // Show All
-	MenuRoleServices       // the Services submenu
-	MenuRoleMinimize       // Minimize            ⌘M
-	MenuRoleZoom           // Zoom
+	MenuRoleNone       MenuRole = iota
+	MenuRoleHide                // Hide <App>          ⌘H
+	MenuRoleHideOthers          // Hide Others         ⌥⌘H
+	MenuRoleShowAll             // Show All
+	MenuRoleServices            // the Services submenu
+	MenuRoleMinimize            // Minimize            ⌘M
+	MenuRoleZoom                // Zoom
 	MenuRoleBringAllToFront
 	MenuRoleWindow // on a NativeMenu: the Window menu
 	MenuRoleHelp   // on a NativeMenu: the Help menu
