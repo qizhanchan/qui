@@ -31,6 +31,10 @@ type CheckBox struct {
 	labelKey messageKey
 	Checked  bool
 	OnChange func(checked bool)
+	// OnKeyActivate, when set, runs after a keyboard activation (Space)
+	// changed the control — a browser's synthetic click. Optional.
+	OnKeyActivate func()
+	spaceArmed    bool // Space went down on this control; its keyup acts
 
 	// Color knobs. Zero A on any field falls back to the raw HTML
 	// default (see NewCheckBox); assign a theme token for a designed
@@ -229,9 +233,15 @@ func (c *CheckBox) Handle(event Event) bool {
 			}
 		}
 	case KeyEvent:
-		if c.focused && e.Type() == EventKeyDown && (e.Key == KeySpace || e.Key == KeyEnter) {
+		if c.focused && keyActivate(e, &c.spaceArmed) {
 			c.toggle()
+			if c.OnKeyActivate != nil {
+				c.OnKeyActivate()
+			}
 			return true
+		}
+		if c.focused && e.Key == KeySpace {
+			return true // the keydown that armed it
 		}
 	}
 	return false
@@ -344,4 +354,25 @@ func (p *Progress) fraction() float32 {
 		return 1
 	}
 	return f
+}
+
+// keyActivate is the browser's keyboard activation of a checkable control:
+// Space arms it on keydown and activates it on the matching keyup (so a
+// Space that started elsewhere and released here does nothing). Enter does
+// not toggle a checkbox / radio / switch — inside a form it falls through
+// to implicit submission, as in a browser.
+func keyActivate(e KeyEvent, armed *bool) bool {
+	if e.Key != KeySpace {
+		return false
+	}
+	switch e.Type() {
+	case EventKeyDown:
+		*armed = true
+	case EventKeyUp:
+		if *armed {
+			*armed = false
+			return true
+		}
+	}
+	return false
 }

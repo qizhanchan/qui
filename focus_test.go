@@ -203,32 +203,43 @@ func TestTabKeyNavigatesFocus(t *testing.T) {
 	}
 }
 
-func TestTabKeyConsumedNotDispatchedToWidget(t *testing.T) {
-	// A focused widget should NOT see Tab in its Handle — the window
-	// intercepts. Otherwise TextArea would try to insert a literal \t.
-	spy := &focusableKeySpy{focusableSpy: *newFocusableSpy("spy")}
-	spy.rect = Rect{X: 0, Y: 0, W: 100, H: 100}
-	root := NewContainer(nil, spy)
-	root.rect = Rect{X: 0, Y: 0, W: 100, H: 100}
+// Tab's keydown dispatches to the focused widget before focus moves (the
+// DOM order); a widget that consumes it keeps focus, like preventDefault.
+func TestTabKeydownReachesWidgetBeforeNavigating(t *testing.T) {
+	for _, consume := range []bool{false, true} {
+		spy := &focusableKeySpy{focusableSpy: *newFocusableSpy("spy"), consume: consume}
+		spy.rect = Rect{X: 0, Y: 0, W: 100, H: 50}
+		next := newFocusableSpy("next")
+		root := NewContainer(nil, spy, next)
+		root.rect = Rect{X: 0, Y: 0, W: 100, H: 100}
 
-	w := &Window{root: root, lastSize: Size{W: 100, H: 100}, focused: spy}
-	spy.SetFocused(true)
+		w := &Window{root: root, lastSize: Size{W: 100, H: 100}, focused: spy}
+		spy.SetFocused(true)
 
-	w.dispatch(newKeyEvent(KeyTab, 0))
+		w.dispatch(newKeyEvent(KeyTab, 0))
 
-	if spy.sawTab {
-		t.Error("focused widget received Tab; window should intercept")
+		if !spy.sawTab {
+			t.Errorf("consume=%v: focused widget never saw Tab's keydown", consume)
+		}
+		if want := Widget(next); consume {
+			if w.focused != Widget(spy) {
+				t.Errorf("consumed Tab still moved focus to %v", w.focused)
+			}
+		} else if w.focused != want {
+			t.Errorf("unconsumed Tab left focus on %v", w.focused)
+		}
 	}
 }
 
 type focusableKeySpy struct {
 	focusableSpy
-	sawTab bool
+	sawTab, consume bool
 }
 
 func (s *focusableKeySpy) Handle(e Event) bool {
 	if ke, ok := e.(KeyEvent); ok && ke.Key == KeyTab {
 		s.sawTab = true
+		return s.consume
 	}
 	return false
 }

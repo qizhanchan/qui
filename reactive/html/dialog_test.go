@@ -192,7 +192,12 @@ func TestButtonKeyboardFocusAndPress(t *testing.T) {
 	if win.Focused() != qui.Widget(btn) {
 		t.Fatalf("Tab from the field focused %v, want the button", win.Focused())
 	}
+	// Space presses on its keyup, Enter on its keydown (browser order).
 	win.DispatchTestEvent(qui.NewKeyEvent(qui.EventKeyDown, qui.KeySpace, 0))
+	if clicks != 0 {
+		t.Errorf("Space keydown clicked the button; it should wait for keyup")
+	}
+	win.DispatchTestEvent(qui.NewKeyEvent(qui.EventKeyUp, qui.KeySpace, 0))
 	win.DispatchTestEvent(qui.NewKeyEvent(qui.EventKeyDown, qui.KeyEnter, 0))
 	if clicks != 2 {
 		t.Errorf("Space + Enter on the focused button clicked %d times, want 2", clicks)

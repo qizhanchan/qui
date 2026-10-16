@@ -32,6 +32,10 @@ type Switch struct {
 	labelKey messageKey
 	On       bool
 	OnChange func(on bool)
+	// OnKeyActivate, when set, runs after a keyboard activation (Space)
+	// changed the control — a browser's synthetic click. Optional.
+	OnKeyActivate func()
+	spaceArmed    bool // Space went down on this control; its keyup acts
 
 	// Color knobs. Zero-configured NewSwitch fills them for a plain
 	// look (gray off / blue on). On the htmlcss layer CSS drives the
@@ -338,9 +342,15 @@ func (s *Switch) Handle(event Event) bool {
 			}
 		}
 	case KeyEvent:
-		if s.focused && e.Type() == EventKeyDown && (e.Key == KeySpace || e.Key == KeyEnter) {
+		if s.focused && keyActivate(e, &s.spaceArmed) {
 			s.SetOn(!s.On)
+			if s.OnKeyActivate != nil {
+				s.OnKeyActivate()
+			}
 			return true
+		}
+		if s.focused && e.Key == KeySpace {
+			return true // the keydown that armed it
 		}
 	}
 	return false

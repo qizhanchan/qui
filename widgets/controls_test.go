@@ -39,9 +39,20 @@ func TestCheckBoxSpaceKeyToggles(t *testing.T) {
 	cb.Layout(Rect{X: 0, Y: 0, W: 100, H: 20})
 	cb.SetFocused(true)
 
+	// Browser order: Space arms on keydown and toggles on keyup; Enter
+	// leaves a checkbox alone (it submits an enclosing form instead).
+	activated := 0
+	cb.OnKeyActivate = func() { activated++ }
 	cb.Handle(NewKeyEvent(EventKeyDown, KeySpace, 0))
-	if !cb.Checked {
-		t.Error("Space did not toggle CheckBox")
+	if cb.Checked {
+		t.Error("Space keydown toggled the CheckBox; it should wait for keyup")
+	}
+	cb.Handle(NewKeyEvent(EventKeyUp, KeySpace, 0))
+	if !cb.Checked || activated != 1 {
+		t.Errorf("after Space keyup: Checked=%v OnKeyActivate=%d, want true/1", cb.Checked, activated)
+	}
+	if cb.Handle(NewKeyEvent(EventKeyDown, KeyEnter, 0)); !cb.Checked {
+		t.Error("Enter toggled the CheckBox")
 	}
 }
 

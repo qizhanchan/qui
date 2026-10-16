@@ -645,7 +645,7 @@ func showContextMenuForAnchor(window *Window, anchorFn func() Rect, items []*Men
 }
 
 func showAnchoredPopup(window *Window, popup *Popup, focus Widget, anchorFn func() Rect, size Size) *Popup {
-	return showAnchoredPopupGap(window, popup, focus, anchorFn, size, 2, false)
+	return showAnchoredPopupGap(window, popup, focus, anchorFn, size, 2, false, true)
 }
 
 // ShowMenuBarDropdown opens items as a menu-bar dropdown under the trigger
@@ -670,13 +670,15 @@ func showMenuBarDropdown(window *Window, anchorFn func() Rect, items []*MenuItem
 		return nil
 	}
 	size := list.Measure(window.Size())
-	return showAnchoredPopupGap(window, popup, list, anchorFn, size, 0, true)
+	return showAnchoredPopupGap(window, popup, list, anchorFn, size, 0, true, true)
 }
 
 // showAnchoredPopupGap is showAnchoredPopup with the anchor gap spelled
 // out. menuBar squares the panel's top-left corner while it hangs below
 // the anchor (see ShowMenuBarDropdown).
-func showAnchoredPopupGap(window *Window, popup *Popup, focus Widget, anchorFn func() Rect, size Size, gap float32, menuBar bool) *Popup {
+// takeFocus false leaves keyboard focus on the trigger (a <select> keeps it
+// while its list is open, and forwards the list's keys — see Select).
+func showAnchoredPopupGap(window *Window, popup *Popup, focus Widget, anchorFn func() Rect, size Size, gap float32, menuBar, takeFocus bool) *Popup {
 	if window == nil || popup == nil || anchorFn == nil {
 		return nil
 	}
@@ -723,7 +725,7 @@ func showAnchoredPopupGap(window *Window, popup *Popup, focus Widget, anchorFn f
 		}
 		if firstShow {
 			popup.showAtSize(window, x, y, s)
-			if focus != nil {
+			if focus != nil && takeFocus {
 				window.SetFocus(focus)
 			}
 			return

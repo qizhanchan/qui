@@ -120,6 +120,7 @@ type Select struct {
 	focused     bool
 	isOpen      bool
 	popup       *Popup
+	list        Widget // the open dropdown's list, which gets forwarded keys
 
 	// Type-ahead state (see typeAhead): the letters typed so far and when
 	// the last one arrived, so a pause starts a fresh search.
@@ -988,6 +989,15 @@ func (cb *Select) Handle(event Event) bool {
 		if !cb.focused || e.Type() != EventKeyDown {
 			return false
 		}
+		if cb.isOpen && cb.list != nil {
+			// The open list navigates (arrows, Home / End), picks (Enter /
+			// Space) and closes (Escape) — focus stays here meanwhile.
+			switch e.Key {
+			case KeyUp, KeyDown, KeyHome, KeyEnd, KeyEnter, KeySpace, KeyEscape:
+				cb.list.Handle(e)
+				return true
+			}
+		}
 		switch e.Key {
 		case KeySpace, KeyEnter:
 			cb.toggleDropdown()
@@ -1105,7 +1115,11 @@ func (cb *Select) openDropdown() {
 	// has scroll-independent (content-space) bounds, while the popup is a
 	// window-level overlay. Re-evaluated on every re-place, so the menu
 	// follows the field as the window resizes.
-	cb.popup = showAnchoredPopup(w, cb.popup, list, func() Rect { return InteractionBoundsOf(cb) }, size)
+	// The select keeps keyboard focus while its list is open (as in a
+	// browser: document.activeElement stays the <select>) and forwards the
+	// list's navigation keys from Handle.
+	cb.popup = showAnchoredPopupGap(w, cb.popup, list, func() Rect { return InteractionBoundsOf(cb) }, size, 2, false, false)
+	cb.list = list
 	if cb.popup == nil {
 		return
 	}
@@ -1116,6 +1130,7 @@ func (cb *Select) openDropdown() {
 		}
 		cb.isOpen = false
 		cb.popup = nil
+		cb.list = nil
 		cb.Invalidate()
 		if cb.OnClose != nil {
 			cb.OnClose()

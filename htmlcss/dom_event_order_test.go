@@ -59,12 +59,9 @@ var domEventAllowlist = []domEventAllow{
 	{"*", "rightclick *", "pointerdown * bubble", "SetOnContextMenu consumes the right press, so ancestors miss its pointerdown"},
 	{"*", "rightclick *", "contextmenu * bubble", "a contextmenu handler consumes the press: contextmenu doesn't bubble"},
 
-	// Form controls: the backing widget eats the pointer events before the
-	// element's listeners see them (session form-control-pointer-eve).
-	{"text-fields", "wheel area", "wheel *", "<textarea> swallows wheel"},
-	{"choice-controls", "click sel", "* *", "<select> opens its popup on press: focus leaves for the popup and pointer/click listeners don't run"},
-	{"choice-controls", "key Escape", "* sel", "the open <select> popup eats Escape's keydown and refocuses the select"},
-
+	// Chrome's native <select> popup is its own window, which hands the
+	// release back to the select: a second pointerup after the click.
+	{"choice-controls", "click sel", "pointerup sel", "Chrome's native <select> popup re-sends the release (a second pointerup)"},
 
 	// A push button doesn't take focus on click (the macOS convention, see
 	// El.FocusOnClick); Chrome focuses it.
@@ -75,16 +72,6 @@ var domEventAllowlist = []domEventAllow{
 	{"text-fields", "click submit", "focus submit", "a clicked button doesn't take focus (macOS convention)"},
 	{"text-fields", "click submit", "blur text", "a clicked button doesn't take focus, so the field keeps it"},
 	{"text-fields", "click submit", "@focus *", "a clicked button doesn't take focus"},
-
-	// Keyboard.
-	{"text-fields", "*", "@value area", "Tab focuses the <textarea> El itself (a key listener makes it Focusable) instead of its TextArea, so typed keys are lost"},
-	{"text-fields", "click area", "blur area", "the Tab-focused <textarea> El hands focus to its TextArea on click: a spurious blur"},
-	{"text-fields", "click area", "focus area", "the Tab-focused <textarea> El hands focus to its TextArea on click: a spurious focus"},
-	{"*", "key Tab", "keydown *", "the window acts on Tab before keydown listeners: they never see it"},
-	{"*", "key Tab", "focus *", "Tab focuses the next element before blurring the current one"},
-	{"choice-controls", "key Space", "click *", "Space toggles a checkbox / presses a button without firing click"},
-	{"text-fields", "#2 key Enter", "click submit", "implicit submission (Enter in a field) doesn't fire the submit button's click"},
-	{"text-fields", "#2 key Enter", "keydown fields", "Enter that submits the form doesn't bubble its keydown past the <input>"},
 }
 
 type domEventStep struct {
@@ -223,6 +210,8 @@ type domEventHarness struct {
 	// target is the element the event being dispatched is aimed at (the
 	// DOM's event.target): listeners on it log "target", ancestors "bubble".
 	target *El
+	// pressTarget is the current press's target, which captures its release.
+	pressTarget *El
 }
 
 func newDOMEventHarness(t *testing.T, html string) *domEventHarness {
@@ -261,11 +250,24 @@ func (h *domEventHarness) logEvent(el *El, typ string) {
 	h.log = append(h.log, typ+" "+h.idOf[el]+" "+phase)
 }
 
+// logClick logs a click like logEvent, except that an element outside the
+// target's ancestry is the target of its own (synthetic) click — implicit
+// submission clicking the form's default button while a field has focus.
+func (h *domEventHarness) logClick(el *El, typ string) {
+	for a := h.target; a != nil; a = a.elParent {
+		if a == el {
+			h.logEvent(el, typ)
+			return
+		}
+	}
+	h.log = append(h.log, typ+" "+h.idOf[el]+" target")
+}
+
 func (h *domEventHarness) wire(el *El, id string) {
 	el.SetOnPointerDown(func(PointerEvent) bool { h.logEvent(el, "pointerdown"); return false })
 	el.SetOnPointerUp(func(PointerEvent) bool { h.logEvent(el, "pointerup"); return false })
-	el.SetOnClick(func() { h.logEvent(el, "click") })
-	el.SetOnDoubleClick(func() { h.logEvent(el, "dblclick") })
+	el.SetOnClick(func() { h.logClick(el, "click") })
+	el.SetOnDoubleClick(func() { h.logClick(el, "dblclick") })
 	el.SetOnContextMenu(func(x, y float32) { h.logEvent(el, "contextmenu") })
 	el.SetOnWheel(func(dx, dy float32) bool { h.logEvent(el, "wheel"); return false })
 	if domFocusable(el) {
@@ -343,6 +345,18 @@ func (h *domEventHarness) center(id string) (float32, float32) {
 
 func (h *domEventHarness) mouse(kind qui.EventType, x, y float32, button qui.MouseButton, clicks int) {
 	h.target = h.owner(h.win.HitTestForTest(qui.Point{X: x, Y: y}))
+	// The press claims mouse capture, so the release goes to the element
+	// that took the press even when a popup it opened now lies under the
+	// pointer (a <select>'s list) — the target Chrome reports too.
+	switch kind {
+	case qui.EventMouseDown:
+		h.pressTarget = h.target
+	case qui.EventMouseUp:
+		if h.pressTarget != nil {
+			h.target = h.pressTarget
+		}
+		defer func() { h.pressTarget = nil }()
+	}
 	me := qui.NewMouseEvent(kind, x, y, button, 0)
 	me.When = h.clock
 	me.Clicks = clicks

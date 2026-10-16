@@ -212,6 +212,9 @@ func (w *Window) SetFocus(target Widget) {
 			prev.SetFocused(false)
 		}
 	}
+	// The old focus blurs completely — widget and hooks — before the new
+	// one hears anything (DOM order: blur, then focus).
+	runFocusHooks(prevFocused, false)
 	w.focused = target
 	if target != nil {
 		if f, ok := target.(registerFocusable); ok {
@@ -221,7 +224,6 @@ func (w *Window) SetFocus(target Widget) {
 			fv.SetFocusVisible(w.focusVisible)
 		}
 	}
-	runFocusHooks(prevFocused, false)
 	runFocusHooks(target, true)
 	if prevFocused != nil {
 		w.InvalidateRect(PaintBoundsInWindow(prevFocused))
@@ -527,4 +529,34 @@ func nextFocusIndex(list []Widget, current Widget, direction int) int {
 		return n - 1
 	}
 	return ((idx+direction)%n + n) % n
+}
+
+// dispatchTabKeydown runs a Tab keydown through the focused widget's
+// capture / target / bubble phases before Tab navigates, so element key
+// listeners see it (DOM order). It reports whether a handler consumed it —
+// then Tab stays where it is, the listener's call, like preventDefault.
+// The focused widget's OnKeyDown hooks already ran (runKeyHook).
+func (w *Window) dispatchTabKeydown(focused Widget, ke KeyEvent) bool {
+	state := ke.state()
+	if state == nil {
+		return false
+	}
+	path := pathToRoot(focused)
+	state.target = focused
+	for i, n := range path {
+		state.phase, state.currentTarget = PhaseCapture, n
+		if i == len(path)-1 {
+			state.phase = PhaseTarget
+		}
+		if n.Handle(eventInWidgetSpace(ke, n)) {
+			return true
+		}
+	}
+	for i := len(path) - 2; i >= 0; i-- {
+		state.phase, state.currentTarget = PhaseBubble, path[i]
+		if path[i].Handle(eventInWidgetSpace(ke, path[i])) {
+			return true
+		}
+	}
+	return false
 }

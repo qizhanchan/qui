@@ -70,6 +70,10 @@ type RadioButton struct {
 	labelKey messageKey
 	Label    string
 	Checked  bool
+	// OnKeyActivate, when set, runs after a keyboard activation (Space)
+	// changed the control — a browser's synthetic click. Optional.
+	OnKeyActivate func()
+	spaceArmed    bool // Space went down on this control; its keyup acts
 
 	// Color knobs — same convention as CheckBox. Zero A on any field
 	// falls back to the raw HTML default (see NewRadioButton).
@@ -236,9 +240,15 @@ func (r *RadioButton) Handle(event Event) bool {
 			}
 		}
 	case KeyEvent:
-		if r.focused && e.Type() == EventKeyDown && (e.Key == KeySpace || e.Key == KeyEnter) {
+		if r.focused && keyActivate(e, &r.spaceArmed) {
 			r.group.Select(r)
+			if r.OnKeyActivate != nil {
+				r.OnKeyActivate()
+			}
 			return true
+		}
+		if r.focused && e.Key == KeySpace {
+			return true // the keydown that armed it
 		}
 	}
 	return false

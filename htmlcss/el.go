@@ -59,7 +59,13 @@ type El struct {
 	// heard ahead of its bubble phase (bubblePressFromControl), so the real
 	// bubble, if the control lets it through, doesn't fire it twice.
 	earlyPress qui.MouseEvent
-	node         *Node // mirror used for selector matching / cascade
+	// earlyEvent is a key or wheel event this element's listener already
+	// heard ahead of its bubble phase (bubbleFromControl), for the same
+	// reason as earlyPress.
+	earlyEvent qui.Event
+	// spaceArmed: Space went down on this push button; its keyup presses.
+	spaceArmed bool
+	node       *Node // mirror used for selector matching / cascade
 
 	// elParent is the adopting parent element (set by the parent's
 	// SetElementChildren, cleared on Unmount). It is the ELEMENT-tree
@@ -685,6 +691,13 @@ func (e *El) SetOnBlur(fn func()) { e.onBlur = fn }
 // focusable, so a keyboard user can Tab to it and press it with Enter or
 // Space — but see FocusOnClick.
 func (e *El) Focusable() bool {
+	// A form control's focus lives on its backing control: the element's
+	// key handlers hear the control's keys as they bubble through it
+	// (ownsControlTarget), so the element itself must not become a second,
+	// dead Tab stop in front of the control.
+	if e.backing != nil {
+		return false
+	}
 	if e.onKeyDown != nil || e.onKeyUp != nil || e.isPushButton() {
 		return e.Enabled()
 	}
@@ -1627,11 +1640,13 @@ func (e *El) ensureBacking() {
 				// (checked / :checked / form serialization), toggle-switch look.
 				sw := widgets.NewSwitch("", onChange)
 				sw.On = e.checked
+				sw.OnKeyActivate = e.keyClick
 				e.backing = sw
 			} else {
 				cb := widgets.NewCheckBox("", nil)
 				cb.OnChange = onChange
 				cb.Checked = e.checked
+				cb.OnKeyActivate = e.keyClick
 				e.backing = cb
 			}
 		case "radio":
@@ -1646,6 +1661,7 @@ func (e *El) ensureBacking() {
 			}
 			rb := widgets.NewRadioButton(e.radioGrp, collapseText(e.attrs["value"]))
 			rb.Checked = e.checked
+			rb.OnKeyActivate = e.keyClick
 			e.backing = rb
 			if e.checked {
 				e.radioGrp.Select(rb)
@@ -1678,7 +1694,7 @@ func (e *El) ensureBacking() {
 				if e.onSubmit != nil {
 					e.onSubmit(s)
 				}
-				e.maybeSubmitForm()
+				e.implicitSubmit()
 			}
 			// With neither an onSubmit nor a <form>, the Enter is not
 			// this field's: it bubbles to a dialog's default action.
@@ -2098,6 +2114,49 @@ func (e *El) enclosingForm() *El {
 		}
 	}
 	return nil
+}
+
+// implicitSubmit is Enter in a text field (HTML implicit submission): it
+// clicks the enclosing form's default button — its first submit button in
+// tree order — so that button's click listeners run and the
+// click submits, as in a browser; a form without one submits directly.
+func (e *El) implicitSubmit() {
+	f := e.enclosingForm()
+	if f == nil {
+		return
+	}
+	if b := f.defaultButton(); b != nil {
+		b.Click()
+		return
+	}
+	f.submitForm()
+}
+
+// defaultButton is a form's first submit button in tree order, or nil. A
+// disabled one is still returned: its Click does nothing, which is how a
+// disabled default button blocks implicit submission in a browser.
+func (e *El) defaultButton() *El {
+	var found *El
+	var walk func(*El) bool
+	walk = func(n *El) bool {
+		for _, k := range n.elementKids {
+			ke, ok := k.(*El)
+			if !ok {
+				continue
+			}
+			t := ke.attrs["type"]
+			if (ke.tag == "button" && (t == "submit" || t == "")) || (ke.tag == "input" && t == "submit") {
+				found = ke
+				return true
+			}
+			if walk(ke) {
+				return true
+			}
+		}
+		return false
+	}
+	walk(e)
+	return found
 }
 
 // maybeSubmitForm submits the enclosing <form>, if any.
@@ -4157,8 +4216,14 @@ func (e *El) Handle(event qui.Event) bool {
 				if e.onKeyDown != nil && e.onKeyDown(ke) {
 					return true
 				}
+				if e.bubbleFromControl(ke, func(a *El) bool { return a.onKeyDown != nil && a.onKeyDown(ke) }) {
+					return true
+				}
 			case qui.EventKeyUp:
 				if e.onKeyUp != nil && e.onKeyUp(ke) {
+					return true
+				}
+				if e.bubbleFromControl(ke, func(a *El) bool { return a.onKeyUp != nil && a.onKeyUp(ke) }) {
 					return true
 				}
 			}
@@ -4172,6 +4237,9 @@ func (e *El) Handle(event qui.Event) bool {
 		if ke.Phase() == qui.PhaseCapture {
 			return handled
 		}
+		if e.heardEarly(ke) {
+			return handled
+		}
 		switch ke.Type() {
 		case qui.EventKeyDown:
 			if !ownControl && e.onKeyDown != nil && e.onKeyDown(ke) {
@@ -4183,14 +4251,25 @@ func (e *El) Handle(event qui.Event) bool {
 				ke.Target() == qui.Widget(e) && sv.ScrollKey(ke) {
 				return true
 			}
-			// A focused push button presses on Enter / Space, after the
-			// author's keydown handler had its chance (DOM order).
-			if (ke.Key == qui.KeyEnter || ke.Key == qui.KeySpace) &&
-				e.isPushButton() && ke.Target() == qui.Widget(e) {
-				return e.pressFromKeyboard(ke.Mods)
+			// A focused push button presses on Enter's keydown, after the
+			// author's keydown handler had its chance (DOM order); Space
+			// only arms it — it presses on the keyup, as in a browser.
+			if e.isPushButton() && ke.Target() == qui.Widget(e) {
+				switch ke.Key {
+				case qui.KeyEnter:
+					return e.pressFromKeyboard(ke.Mods)
+				case qui.KeySpace:
+					e.spaceArmed = true
+					return true
+				}
 			}
 		case qui.EventKeyUp:
 			if !ownControl && e.onKeyUp != nil && e.onKeyUp(ke) {
+				return true
+			}
+			if ke.Key == qui.KeySpace && e.spaceArmed && e.isPushButton() && ke.Target() == qui.Widget(e) {
+				e.spaceArmed = false
+				e.pressFromKeyboard(ke.Mods)
 				return true
 			}
 		}
@@ -4243,7 +4322,7 @@ func (e *El) Handle(event qui.Event) bool {
 		// Wheel handlers run innermost-first (bubble phase) and only consume
 		// the event when they say so — otherwise the enclosing ScrollView
 		// keeps scrolling, matching a DOM handler that skips preventDefault.
-		if e.onWheel != nil && me.Phase() != qui.PhaseCapture {
+		if e.onWheel != nil && me.Phase() != qui.PhaseCapture && !e.heardEarly(me) {
 			if e.onWheel(me.WheelPixels()) {
 				return true
 			}
@@ -4419,6 +4498,9 @@ func (e *El) handleControlPointer(me qui.MouseEvent, handled bool) bool {
 		if e.onWheel != nil && e.onWheel(me.WheelPixels()) {
 			return true
 		}
+		if e.bubbleFromControl(me, func(a *El) bool { return a.onWheel != nil && a.onWheel(me.WheelPixels()) }) {
+			return true
+		}
 	case qui.EventMouseDown:
 		if e.onPointerDown != nil && e.onPointerDown(e.pointerEvent(me, nil)) {
 			return true
@@ -4477,6 +4559,41 @@ func (e *El) bubblePressFromControl(me qui.MouseEvent) bool {
 		}
 	}
 	return false
+}
+
+// bubbleFromControl runs the ancestors' listeners (run) for a key or wheel
+// event on this element's backing control, innermost first, before the
+// control acts — the keydown / wheel counterpart of bubblePressFromControl:
+// the control consumes the event (a <textarea>'s Enter, its scroll), so its
+// real bubble never reaches them, and in the DOM they hear it before its
+// default action. Each ancestor remembers the event (heardEarly) so a
+// bubble the control does let through doesn't fire it again. A consuming
+// listener stops the event there, control included.
+func (e *El) bubbleFromControl(ev qui.Event, run func(a *El) bool) bool {
+	for a := e.elParent; a != nil; a = a.elParent {
+		if !a.Enabled() {
+			continue
+		}
+		a.earlyEvent = ev
+		if run(a) {
+			return true
+		}
+	}
+	return false
+}
+
+// heardEarly reports (and forgets) whether this element's listener already
+// ran for ev ahead of its bubble phase.
+func (e *El) heardEarly(ev qui.Event) bool {
+	if e.earlyEvent == nil {
+		return false
+	}
+	d, ok := ev.(interface{ SameDispatch(qui.Event) bool })
+	if !ok || !d.SameDispatch(e.earlyEvent) {
+		return false
+	}
+	e.earlyEvent = nil
+	return true
 }
 
 // doubleClickWindow / doubleClickSlop are the gesture thresholds: the
@@ -4666,6 +4783,18 @@ func (e *El) pressFromKeyboard(mods qui.Modifiers) bool {
 		acted = true
 	}
 	return acted
+}
+
+// keyClick fires the element's click listeners for a keyboard activation
+// its backing checkable already performed (Space on a checkbox / radio /
+// switch) — the browser's synthetic click after the control changed.
+func (e *El) keyClick() {
+	if e.onClick != nil {
+		e.onClick()
+	}
+	if e.onClickMods != nil {
+		e.onClickMods(0)
+	}
 }
 
 // Click runs the element's click behavior as if it had been clicked —

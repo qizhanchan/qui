@@ -90,10 +90,10 @@ type Window struct {
 	// focus() call from a click handler doesn't. Widgets implementing
 	// focusVisibleAware get told via SetFocusVisible(bool) and use this to
 	// decide whether to paint a focus ring / state-layer halo.
-	focusVisible  bool
+	focusVisible bool
 	// pressFocus is the focus move a MouseDown owes, applied when its
 	// dispatch ends (or earlier, through FlushPressFocus).
-	pressFocus pendingPressFocus
+	pressFocus    pendingPressFocus
 	dragCandidate Widget
 	dragging      bool
 	// dragCancelled marks a drag Escape cancelled while the button was
@@ -2018,10 +2018,10 @@ func (w *Window) dispatch(event Event) {
 		}
 	}
 
-	// Tab / Shift-Tab navigate focus. Consumed before reaching widgets,
-	// so TextArea et al. don't need to opt-out. A future "consumesTab"
-	// interface could let specific widgets (code editors) intercept
-	// Tab for their own use.
+	// Tab / Shift-Tab navigate focus — as the keydown's default action, the
+	// DOM order: the keydown dispatches first (capture → target → bubble),
+	// so element key listeners see Tab and can keep it by consuming it,
+	// then focus moves.
 	tabHookRan := false
 	if ke, ok := event.(KeyEvent); ok && ke.eventType == EventKeyDown && ke.Key == KeyTab && !raw {
 		// The focused widget's OnKeyDown hooks see Tab before it navigates
@@ -2029,6 +2029,9 @@ func (w *Window) dispatch(event Event) {
 		if f := w.focused; f != nil && !w.keyTargetBehindModal(f) {
 			tabHookRan = true
 			if runKeyHook(f, event) {
+				return
+			}
+			if w.dispatchTabKeydown(f, ke) {
 				return
 			}
 		}
