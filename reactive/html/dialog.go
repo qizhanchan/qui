@@ -195,7 +195,7 @@ const dialogCSS = `
 	border: 1px solid var(--q-dialog-border, #c8c8c8);
 	border-radius: var(--q-dialog-radius, 8px);
 	box-shadow: var(--q-dialog-shadow, 0 4px 16px rgba(0,0,0,0.18));
-	accent-color: var(--q-dialog-accent, #4d8cd8);
+	accent-color: var(--q-dialog-accent, #2d75cc);
 }
 .q-dialog-header {
 	display: flex; flex-direction: row; align-items: center; gap: 8px;
@@ -218,7 +218,7 @@ const dialogCSS = `
 	padding: 4px 16px 16px 16px;
 }
 .q-dialog-actions button:last-child {
-	background: var(--q-dialog-accent, #4d8cd8);
+	background: var(--q-dialog-accent, #2d75cc);
 	color: var(--q-dialog-on-accent, #ffffff);
 }
 .q-dialog-actions button.q-dialog-text-button { background: transparent; color: inherit; }

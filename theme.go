@@ -246,15 +246,17 @@ func newLightTheme() Theme {
 		TextMuted: argbColor(0xff474747),
 
 		// Matches widgets/native.go's htmlAccent — the checked/focus
-		// color the zero-config controls already paint with.
-		Accent:        argbColor(0xff4d8cd8),
+		// color the zero-config controls already paint with. Dark enough
+		// that AccentText (white) on it passes WCAG AA for body text
+		// (4.6:1); hover / pressed step darker at the same hue.
+		Accent:        argbColor(0xff2d75cc),
 		AccentText:    argbColor(0xffffffff),
-		AccentHover:   argbColor(0xff3f7bc4),
-		AccentPressed: argbColor(0xff3567a8),
+		AccentHover:   argbColor(0xff2767b3),
+		AccentPressed: argbColor(0xff22589a),
 
 		Border:       argbColor(0xffc8c8c8),
 		BorderStrong: argbColor(0xff767676),
-		BorderFocus:  argbColor(0xff4d8cd8),
+		BorderFocus:  argbColor(0xff2d75cc),
 
 		Error:   argbColor(0xffba1a1a),
 		Warning: argbColor(0xffd07c00),

@@ -342,7 +342,7 @@ func withPlainMenuColors(st menuStyle) menuStyle {
 	st.divider = Color{R: 0.85, G: 0.85, B: 0.85, A: 1}
 	st.stateColor = Color{R: 0.10, G: 0.10, B: 0.10, A: 1}
 	if !st.selectedColorsOverridden {
-		st.selectedBg = Color{R: 0.30, G: 0.55, B: 0.85, A: 1}
+		st.selectedBg = baselineBlue
 		st.selectedFg = Color{R: 1, G: 1, B: 1, A: 1}
 	}
 	return st

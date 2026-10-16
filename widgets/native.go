@@ -24,9 +24,10 @@ var (
 	htmlControlBg = ThemeDefault(Color{R: 1, G: 1, B: 1, A: 1})
 	// htmlButtonBg is the UA <button> face color, #efefef.
 	htmlButtonBg = ThemeDefault(Color{R: 0xef / 255.0, G: 0xef / 255.0, B: 0xef / 255.0, A: 1})
-	// htmlAccent is the checked/focus accent, #4d8cd8 (a neutral blue,
-	// matching the reference's styled checkbox/radio fill).
-	htmlAccent = ThemeDefault(Color{R: 0x4d / 255.0, G: 0x8c / 255.0, B: 0xd8 / 255.0, A: 1})
+	// htmlAccent is the checked/focus accent, #2d75cc (a neutral blue,
+	// matching the reference's styled checkbox/radio fill; white on it
+	// passes WCAG AA).
+	htmlAccent = ThemeDefault(Color{R: 0x2d / 255.0, G: 0x75 / 255.0, B: 0xcc / 255.0, A: 1})
 	// htmlDisabledText / htmlDisabledBorder for the :disabled look.
 	htmlDisabledText   = ThemeDefault(Color{R: 0.55, G: 0.55, B: 0.55, A: 1})
 	htmlDisabledBorder = ThemeDefault(Color{R: 0.80, G: 0.80, B: 0.80, A: 1})
@@ -86,7 +87,7 @@ var (
 	baselineHoverBg    = ThemeDefault(Color{R: 0.90, G: 0.90, B: 0.90, A: 1})
 	baselinePressedBg  = ThemeDefault(Color{R: 0.82, G: 0.82, B: 0.82, A: 1})
 	baselineDisabledBg = ThemeDefault(Color{R: 0.94, G: 0.94, B: 0.94, A: 1})
-	baselineBlue       = ThemeDefault(Color{R: 0.30, G: 0.55, B: 0.85, A: 1})
+	baselineBlue       = ThemeDefault(Color{R: 0x2d / 255.0, G: 0x75 / 255.0, B: 0xcc / 255.0, A: 1}) // = htmlAccent
 	baselineTrack      = ThemeDefault(Color{R: 0.88, G: 0.88, B: 0.88, A: 1})
 	baselineOffBorder  = ThemeDefault(Color{R: 0.60, G: 0.60, B: 0.60, A: 1})
 	baselineTextGray   = ThemeDefault(Color{R: 0.35, G: 0.35, B: 0.35, A: 1})
