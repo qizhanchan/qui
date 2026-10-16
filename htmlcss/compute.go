@@ -569,6 +569,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	customProps := buildCustomProps(parent, m)
 	m = resolveMapVars(m, customProps)
 	inheritRegisteredProps(m, parent)
+	resolveCSSWideKeywords(m, parent)
 	expandShorthands(m)
 	cs := &ComputedStyle{raw: m, customProps: customProps}
 
@@ -614,7 +615,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		cs.Color = qui.Color{R: 0.1, G: 0.1, B: 0.1, A: 1}
 		cs.FontSize = 16
 		cs.FontWeight = qui.FontWeightNormal
-		cs.LineHeight = 1.4
+		cs.LineHeight = 0 // CSS initial `normal`: the face's own line height, as in a browser
 		cs.TextAlign = qui.TextAlignStart
 	}
 

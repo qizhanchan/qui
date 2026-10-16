@@ -191,7 +191,7 @@ func uaDeclarations(tag string) []Declaration {
 	case "a":
 		// `cursor: pointer` matches the UA sheet. (<button> deliberately does
 		// NOT get it — browsers leave buttons on `cursor: default`.)
-		return decls("color", "#1a66e6", "text-decoration", "underline",
+		return decls("color", "#0000ee", "text-decoration", "underline",
 			"cursor", "pointer")
 	case "s", "del", "strike":
 		return decls("text-decoration", "line-through")

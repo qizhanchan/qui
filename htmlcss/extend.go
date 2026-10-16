@@ -285,3 +285,89 @@ func (e *El) adoptHostedFlex(cs *ComputedStyle) {
 		e.Style().Grow = grow
 	}
 }
+
+// cssWideKeyword reports the CSS-wide keyword a value is, or "".
+func cssWideKeyword(v string) string {
+	switch kw := strings.ToLower(strings.TrimSpace(v)); kw {
+	case "inherit", "initial", "unset", "revert":
+		return kw
+	}
+	return ""
+}
+
+// inheritedBuiltins are the built-in properties that inherit by default.
+var inheritedBuiltins = map[string]bool{
+	"color": true, "font-size": true, "font-weight": true, "font-style": true,
+	"font-family": true, "line-height": true, "text-align": true,
+	"letter-spacing": true, "word-spacing": true, "text-indent": true,
+	"white-space": true, "text-transform": true, "visibility": true,
+	"cursor": true, "list-style-type": true, "accent-color": true,
+	"direction": true, "user-select": true,
+}
+
+// builtinInitial is the initial value of the built-in properties whose
+// initial value differs from what interpret assumes when the property is
+// simply absent (an inherited property would otherwise keep the parent's
+// value; display would fall back to the tag's UA default).
+var builtinInitial = map[string]string{
+	"color": "#000000", "font-size": "16px", "font-weight": "400",
+	"font-style": "normal", "line-height": "normal", "text-align": "start",
+	"letter-spacing": "normal", "word-spacing": "normal", "text-indent": "0",
+	"white-space": "normal", "text-transform": "none", "visibility": "visible",
+	"list-style-type": "disc", "display": "inline",
+}
+
+// resolveCSSWideKeywords applies inherit / initial / unset / revert on
+// built-in properties (registered ones are handled by
+// inheritRegisteredProps): inherit takes the parent's value, initial the
+// property's initial value, and unset / revert inherit an inherited
+// property and reset any other (revert approximated as unset). A keyword
+// mixed with other tokens (`border-top: 3px solid inherit`) makes the
+// declaration invalid, so it is dropped — the browser behavior.
+func resolveCSSWideKeywords(m map[string]string, parent *ComputedStyle) {
+	for prop, v := range m {
+		if strings.HasPrefix(prop, "--") {
+			continue
+		}
+		kw := cssWideKeyword(v)
+		if kw == "" {
+			if fields := strings.Fields(v); len(fields) > 1 {
+				for _, f := range fields {
+					if cssWideKeyword(f) != "" {
+						delete(m, prop)
+						break
+					}
+				}
+			}
+			continue
+		}
+		if kw == "unset" || kw == "revert" {
+			kw = "initial"
+			if inheritedBuiltins[prop] {
+				kw = "inherit"
+			}
+		}
+		switch kw {
+		case "inherit":
+			if parent != nil {
+				if pv, ok := parent.raw[prop]; ok && cssWideKeyword(pv) == "" {
+					m[prop] = pv
+					continue
+				}
+			}
+			if inheritedBuiltins[prop] {
+				delete(m, prop) // the inherited copy already holds the parent's value
+			} else if iv, ok := builtinInitial[prop]; ok {
+				m[prop] = iv
+			} else {
+				delete(m, prop)
+			}
+		case "initial":
+			if iv, ok := builtinInitial[prop]; ok {
+				m[prop] = iv
+			} else {
+				delete(m, prop) // absent is the initial value
+			}
+		}
+	}
+}

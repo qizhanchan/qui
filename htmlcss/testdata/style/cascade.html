@@ -1,0 +1,48 @@
+<!doctype html>
+<html><head><style>
+:root { --accent: #1a66e6; --pad: 12px; --size: 18px; }
+body { font-size: 16px; color: #222; }
+.box { padding: var(--pad); margin: 4px 8px 12px 16px; border: 2px solid #c00; border-radius: 6px; }
+.box.tight { padding: 2px; }
+#spec { color: green; }
+.spec { color: blue; }
+div.spec { color: orange; }
+.imp { color: purple !important; }
+#imp { color: teal; }
+.var { color: var(--accent); font-size: var(--size); background: var(--missing, #eee); }
+.em { font-size: 1.5em; margin-top: 1em; padding-left: 2rem; letter-spacing: 0.1em; }
+.inherit-child { border-top: 3px solid inherit; color: inherit; }
+.initial { color: initial; display: initial; }
+.font { font: italic bold 20px/30px serif; }
+.colors1 { color: hsl(120, 100%, 25%); background-color: rgba(255, 0, 0, 0.5); }
+.colors2 { color: #abc; border-top-color: currentColor; }
+.text { text-align: center; text-transform: uppercase; text-decoration: underline line-through; white-space: nowrap; }
+.pre { white-space: pre-wrap; }
+.op { opacity: 0.5; visibility: hidden; }
+.flex { display: flex; } .flex > .item { flex: 2 0 auto; }
+.bs { box-sizing: border-box; width: 100px; }
+.pos { position: relative; }
+.lh { line-height: 1.5; } .lh2 { line-height: 24px; } .lhn { line-height: normal; }
+</style></head><body>
+<div id="box" class="box">box</div>
+<div id="tight" class="box tight">tight</div>
+<div id="spec" class="spec">specificity</div>
+<p id="spec2" class="spec">class beats nothing</p>
+<div id="spec3" class="spec">div.spec</div>
+<div id="imp" class="imp">important</div>
+<div id="var" class="var">var</div>
+<div id="em" class="em">em<span id="em-child" class="em">nested em</span></div>
+<div id="parent" style="color: maroon; border-top: 3px solid navy"><span id="ichild" class="inherit-child">inherit</span></div>
+<span id="initial" class="initial">initial</span>
+<div id="font" class="font">font shorthand</div>
+<div id="c1" class="colors1">hsl</div>
+<div id="c2" class="colors2">short hex</div>
+<div id="text" class="text">text props</div>
+<div id="pre" class="pre">pre wrap</div>
+<div id="op" class="op">opacity</div>
+<div id="flex" class="flex"><div id="item" class="item">item</div></div>
+<div id="bs" class="bs">bs</div>
+<div id="pos" class="pos">pos</div>
+<div id="lh" class="lh">lh</div><div id="lh2" class="lh2">lh2</div><div id="lhn" class="lhn">lhn</div>
+<h1 id="h1">h1</h1><h3 id="h3">h3</h3><p id="p">p</p><a id="a" href="#">a</a><strong id="strong">s</strong><small id="small">sm</small><ul id="ul"><li id="li">li</li></ul>
+</body></html>
