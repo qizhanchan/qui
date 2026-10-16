@@ -25,8 +25,7 @@ func findTag(w qui.Widget, tag string) *htmlcss.El {
 }
 
 // Padding and height on <input> / <select> are honoured: the element is the
-// control's box (no hidden inset), padding grows the field, and a dialog's
-// fields are GM3 40 px outlined fields.
+// control's box (no hidden inset) and padding grows the field.
 func TestControlPaddingAndHeightAreCSS(t *testing.T) {
 	win := qui.NewTestWindow(qui.Size{W: 800, H: 600})
 	css := `.tb select { height: 28px; padding: 0 8px; box-sizing: border-box; }
@@ -50,34 +49,36 @@ func TestControlPaddingAndHeightAreCSS(t *testing.T) {
 	}
 }
 
-func TestDialogFieldsAreGM3Height(t *testing.T) {
-	win := qui.NewTestWindow(qui.Size{W: 800, H: 600})
-	h.Mount(win, ``, func() h.Node {
-		return h.Div(h.Dialog(h.DialogProps{Title: "Rename", Body: h.Div(h.Input(), h.Select("A", "B"))}))
-	})
-	var dlgInput, dlgSelect *htmlcss.El
-	for _, ov := range win.Overlays() {
-		ov.Layout(qui.Rect{W: 800, H: 600})
-		if dlgInput == nil {
-			dlgInput = findTag(ov, "input")
-		}
-		if dlgSelect == nil {
-			dlgSelect = findTag(ov, "select")
-		}
-	}
-	if dlgInput == nil || dlgSelect == nil {
-		t.Fatal("dialog fields not found")
-	}
-	for name, el := range map[string]*htmlcss.El{"input": dlgInput, "select": dlgSelect} {
-		var bh float32
+// Fields in a dialog body keep the native control look: the framework
+// dialog CSS styles the shell, not the controls inside it.
+func TestDialogFieldsKeepNativeLook(t *testing.T) {
+	height := func(win *qui.Window, el *htmlcss.El) float32 {
 		for _, c := range el.ChildList() {
 			switch c.(type) {
 			case *widgets.Input, *widgets.Select:
-				bh = c.Measure(qui.Size{W: 400, H: 600}).H
+				return c.Measure(qui.Size{W: 400, H: 600}).H
 			}
 		}
-		if bh != 40 {
-			t.Errorf("dialog %s field height = %v, want 40", name, bh)
+		t.Fatalf("<%s> has no backing control", el.Tag())
+		return 0
+	}
+	win := qui.NewTestWindow(qui.Size{W: 800, H: 600})
+	h.Mount(win, ``, func() h.Node {
+		return h.Div(h.Input(), h.Select("A", "B"),
+			h.Dialog(h.DialogProps{Title: "Rename", Body: h.Div(h.Input(), h.Select("A", "B"))}))
+	})
+	win.Root().Layout(qui.Rect{W: 800, H: 600})
+	for _, tag := range []string{"input", "select"} {
+		page := findTag(win.Root(), tag)
+		dlg := dlgField(t, win, tag)
+		if page == nil {
+			t.Fatalf("no page <%s>", tag)
+		}
+		if hp, hd := height(win, page), height(win, dlg); hp != hd {
+			t.Errorf("dialog <%s> height = %v, page one %v — the dialog restyled a control", tag, hd, hp)
+		}
+		if bp, bd := page.Style().Border, dlg.Style().Border; bp != bd {
+			t.Errorf("dialog <%s> border = %+v, page one %+v", tag, bd, bp)
 		}
 	}
 }
@@ -101,63 +102,6 @@ func backingInput(el *htmlcss.El) *widgets.Input {
 		}
 	}
 	return nil
-}
-
-// The dialog field is Google's outlined field: 14 px text, 12 px from the
-// outer edge to the text (1 px border + 11 px padding), a darker outline on
-// hover, a 2 px accent outline on focus and a faded one when disabled -
-// all through CSS state rules on the <input>.
-func TestDialogFieldStatesAndMetrics(t *testing.T) {
-	win := qui.NewTestWindow(qui.Size{W: 800, H: 600})
-	h.Mount(win, ``, func() h.Node {
-		return h.Div(h.Dialog(h.DialogProps{Title: "T", Body: h.Div(h.Input().Value("x"), h.Input().Disabled(true))}))
-	})
-	var fields []*widgets.Input
-	for _, ov := range win.Overlays() {
-		ov.Layout(qui.Rect{W: 800, H: 600})
-		var walk func(w qui.Widget)
-		walk = func(w qui.Widget) {
-			if in, ok := w.(*widgets.Input); ok {
-				fields = append(fields, in)
-			}
-			if cl, ok := w.(qui.ChildLister); ok {
-				for _, c := range cl.ChildList() {
-					walk(c)
-				}
-			}
-		}
-		walk(ov)
-	}
-	if len(fields) != 2 {
-		t.Fatalf("found %d inputs, want 2", len(fields))
-	}
-	rgb := func(r, g, b float32) qui.Color { return qui.Color{R: r / 255, G: g / 255, B: b / 255, A: 1} }
-	in := fields[0]
-	base := in.States.Base
-	if base.Font.Size != 14 || base.Padding.Left != 11 || base.Padding.Right != 11 || base.Padding.Top != 9 || base.BorderSize != 1 || base.Radius != 4 {
-		t.Errorf("base: font %v pad %v border %v radius %v", base.Font.Size, base.Padding, base.BorderSize, base.Radius)
-	}
-	if base.Border != rgb(116, 119, 117) {
-		t.Errorf("base border = %v, want #747775", base.Border)
-	}
-	if b := in.Bounds(); b.H != 40 {
-		t.Errorf("field height = %v, want 40", b.H)
-	}
-	if got := in.States.Resolve(qui.StateHover).Border; got != rgb(31, 31, 31) {
-		t.Errorf(":hover border = %v, want #1f1f1f", got)
-	}
-	f := in.States.Resolve(qui.StateFocused)
-	if f.BorderSize != 2 || f.Border != rgb(11, 87, 208) {
-		t.Errorf(":focus border = %v / %v, want 2px #0b57d0", f.Border, f.BorderSize)
-	}
-	// Hovering the focused field keeps the focus outline.
-	if f := in.States.Resolve(qui.StateFocused | qui.StateHover); f.Border != rgb(11, 87, 208) {
-		t.Errorf(":focus:hover border = %v, want the accent", f.Border)
-	}
-	d := fields[1].States.Resolve(qui.StateDisabled)
-	if d.Border.A >= 0.2 || d.Foreground.A >= 0.5 {
-		t.Errorf(":disabled border %v / text %v, want faded", d.Border, d.Foreground)
-	}
 }
 
 // Text sits at border + padding from the field's edge, and the box keeps
@@ -200,58 +144,5 @@ func TestInputTextInsetIsBorderPlusPadding(t *testing.T) {
 	}
 	if mid := float32(top+bot) / 2; mid < 18 || mid > 22 {
 		t.Errorf("text is centred at y=%v in a 40 px field", mid)
-	}
-}
-
-// A dialog textarea is the same outlined field as an input: 4px radius,
-// 1px #747775 border, 14/20 text, 9/11 padding inside the border, with
-// hover / focus / disabled outlines — and it is tall enough for two lines
-// of that text.
-func TestDialogTextareaMatchesOutlinedField(t *testing.T) {
-	win := qui.NewTestWindow(qui.Size{W: 800, H: 600})
-	h.Mount(win, ``, func() h.Node {
-		return h.Div(h.Dialog(h.DialogProps{Title: "T", Body: h.Div(
-			h.Textarea().Value("x"), h.Textarea().Disabled(true))}))
-	})
-	var areas []*widgets.TextArea
-	for _, ov := range win.Overlays() {
-		ov.Layout(qui.Rect{W: 800, H: 600})
-		var walk func(w qui.Widget)
-		walk = func(w qui.Widget) {
-			if ta, ok := w.(*widgets.TextArea); ok {
-				areas = append(areas, ta)
-			}
-			if cl, ok := w.(qui.ChildLister); ok {
-				for _, c := range cl.ChildList() {
-					walk(c)
-				}
-			}
-		}
-		walk(ov)
-	}
-	if len(areas) != 2 {
-		t.Fatalf("found %d textareas, want 2", len(areas))
-	}
-	rgb := func(r, g, b float32) qui.Color { return qui.Color{R: r / 255, G: g / 255, B: b / 255, A: 1} }
-	ta := areas[0]
-	st := ta.Style()
-	if st.Font.Size != 14 || st.LineHeight*st.Font.Size != 20 || st.Padding != (qui.Insets{Top: 9, Right: 11, Bottom: 9, Left: 11}) ||
-		st.BorderSize != 1 || st.Radius != 4 || st.Border != rgb(116, 119, 117) {
-		t.Errorf("base: font %v line %v pad %v border %v %v radius %v", st.Font.Size, st.LineHeight, st.Padding, st.BorderSize, st.Border, st.Radius)
-	}
-	if !ta.BoxModel {
-		t.Error("a CSS textarea is not in the box model")
-	}
-	if got := ta.Bounds().H; got != 60 {
-		t.Errorf("textarea height = %v, want 60 (two 20px lines + 9+9 padding + 1+1 border)", got)
-	}
-	if ta.HoverStyle == nil || ta.HoverStyle.Border != rgb(31, 31, 31) {
-		t.Errorf(":hover style = %+v, want a #1f1f1f outline", ta.HoverStyle)
-	}
-	if ta.FocusedStyle == nil || ta.FocusedStyle.BorderSize != 2 || ta.FocusedStyle.Border != rgb(11, 87, 208) {
-		t.Errorf(":focus style = %+v, want a 2px #0b57d0 outline", ta.FocusedStyle)
-	}
-	if d := areas[1].Style(); d.Border.A >= 0.2 || d.Foreground.A >= 0.5 || areas[1].Enabled() {
-		t.Errorf("disabled: border %v text %v enabled %v, want faded and inert", d.Border, d.Foreground, areas[1].Enabled())
 	}
 }

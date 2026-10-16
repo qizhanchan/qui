@@ -7,7 +7,7 @@ import (
 
 // TooltipStyle configures a window's built-in hover tooltip. Zero fields
 // keep the default: the theme's tooltip chip (Theme.Popup.TooltipSurface /
-// TooltipText, no border — a dark Workspace-style chip on the light
+// TooltipText, no border — a dark chip on the light
 // theme), the default font at the theme's small size (12px), 3/8px
 // padding (a 24px chip), a 4px radius, a 360px wrap width, a 5px gap, no show delay and
 // a 250ms grace period. Set it with Window.SetTooltipStyle — per window, so a dark
@@ -159,7 +159,7 @@ func newTooltipView(text string, st TooltipStyle) *tooltipView {
 	if small := CurrentTheme().FontSmall; small > 0 {
 		t.font.Size = small
 	}
-	// Workspace chip: 3/8 padding around a 12px line = 24 px tall.
+	// Chip: 3/8 padding around a 12px line = 24 px tall.
 	t.style.Padding = Insets{Top: 3, Right: 8, Bottom: 3, Left: 8}
 	t.style.Radius = 4
 	if st.Padding != (Insets{}) {

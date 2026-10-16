@@ -1034,10 +1034,9 @@ func (cb *Select) toggleDropdown() {
 }
 
 // openDropdown shows the option list anchored below the trigger as a
-// Workspace (Material 3) menu — the same panel, rows, hover and shadow as
+// stock live menu — the same panel, rows, hover and shadow as
 // every other live menu (themedMenuStyle), with the current option marked
-// by a ✓ in the icon column (the way the Docs font / zoom dropdowns mark
-// theirs). The palette follows the current theme's popup tokens; an
+// by a ✓ in the icon column. The palette follows the current theme's popup tokens; an
 // explicit DropdownColors then overrides field-by-field.
 func (cb *Select) openDropdown() {
 	w := cb.win()

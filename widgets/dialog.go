@@ -157,8 +157,8 @@ const (
 	DialogActionsStretch
 )
 
-// DialogMetrics is the dialog's spacing. The defaults are a 24 px inset,
-// a 40 px action row and an alert box inside a 280–560 band.
+// DialogMetrics is the dialog's spacing. The defaults are a 16 px inset,
+// a 32 px action row and an alert box inside a 280–560 band.
 type DialogMetrics struct {
 	HeadlinePadTop float32 // above the title / Header
 	HeadlinePadX   float32
@@ -181,10 +181,10 @@ type DialogMetrics struct {
 // DefaultDialogMetrics returns the stock spacing.
 func DefaultDialogMetrics() DialogMetrics {
 	return DialogMetrics{
-		HeadlinePadTop: 24, HeadlinePadX: 24, HeadlineHeight: 32,
-		ContentPadTop: 24, ContentPadX: 24, ContentPadBottom: 8,
-		ActionsPadTop: 16, ActionsPadX: 24, ActionsPadBottom: 24,
-		ActionsHeight: 40, ActionsGap: 8,
+		HeadlinePadTop: 16, HeadlinePadX: 16, HeadlineHeight: 32,
+		ContentPadTop: 12, ContentPadX: 16, ContentPadBottom: 4,
+		ActionsPadTop: 12, ActionsPadX: 16, ActionsPadBottom: 16,
+		ActionsHeight: 32, ActionsGap: 8,
 		MinWidth: 280, MaxWidth: 560, DefaultWidth: 312,
 		WindowMargin: 24,
 	}
@@ -199,13 +199,13 @@ func (d *Dialog) metrics() *DialogMetrics {
 	return &defaultDialogMetrics
 }
 
-// NewDialog creates a dialog with the given title and body content in
-// the theme's Workspace (Material 3) look: a theme-colored box with
-// Theme.Popup.DialogRadius corners (28), the Theme.Popup.Scrim backdrop
-// (32% black), no shadow, and AddButton actions drawn as 40px pill text
-// buttons in Theme.Popup.DialogAccent — the DefaultAction one filled.
-// For another look set the color knobs (or the buttons' States after
-// Show), or render a dialog on the htmlcss layer with h.Dialog.
+// NewDialog creates a dialog with the given title and body content in the
+// theme's look: a theme-colored box with Theme.Popup.DialogRadius corners,
+// the Theme.Popup.Scrim backdrop, and AddButton actions drawn as plain
+// bordered buttons — the DefaultAction one filled in
+// Theme.Popup.DialogAccent (see DialogButtonStates). For another look set
+// the color knobs (or the buttons' States after Show), or render a dialog
+// on the htmlcss layer with h.Dialog.
 func NewDialog(title string, content Widget) *Dialog {
 	p := CurrentTheme().ResolvedPopup()
 	d := &Dialog{
@@ -278,37 +278,40 @@ func (d *Dialog) AddButton(text string, onClick func()) *Button {
 	return btn
 }
 
-// DialogButtonStates returns the Workspace (Material 3) dialog button
-// look from the current theme's popup tokens: a 40px pill with a 14px
-// medium label — filled in Theme.Popup.DialogAccent when filled, else a
-// text button in that color with an 8% / 12% hover / press tint. Dialog
-// applies it to its AddButton buttons; use it for AddAction buttons that
-// should match.
+// DialogButtonStates returns the dialog button look from the current
+// theme: a plain button with a hairline Border, Text label and
+// RadiusSmall corners, tinted by HoverOpacity / PressedOpacity — or, when
+// filled (the default action), filled in Theme.Popup.DialogAccent with a
+// DialogOnAccent label and no border. Dialog applies it to its AddButton
+// buttons; use it for AddAction buttons that should match.
 func DialogButtonStates(filled bool) StateStyle {
-	p := CurrentTheme().ResolvedPopup()
-	accent := p.DialogAccent
-	tint := func(a float32) Color { c := accent; c.A = a; return c }
+	t := CurrentTheme()
+	p := t.ResolvedPopup()
 	base := Style{
-		Foreground: accent,
-		Radius:     20,
-		Padding:    Insets{Top: 10, Right: 12, Bottom: 10, Left: 12},
-		Font:       Font{Size: CurrentTheme().FontBase, Weight: FontWeightMedium},
+		Background: p.MenuSurface,
+		Foreground: t.Text,
+		Border:     t.Border,
+		BorderSize: 1,
+		Radius:     t.RadiusSmall,
+		Padding:    Insets{Top: 6, Right: 14, Bottom: 6, Left: 14},
+		Font:       Font{Size: t.FontBase, Weight: FontWeightNormal},
 	}
 	hover, pressed := base, base
-	hover.Background, pressed.Background = tint(0.08), tint(0.12)
+	hover.Background = LerpColor(base.Background, t.Text, t.HoverOpacity)
+	pressed.Background = LerpColor(base.Background, t.Text, t.PressedOpacity)
 	if filled {
-		base.Background, base.Foreground = accent, p.DialogOnAccent
-		base.Padding.Left, base.Padding.Right = 24, 24
+		base.Background, base.Foreground = p.DialogAccent, p.DialogOnAccent
+		base.Border, base.BorderSize = Color{}, 0
 		hover, pressed = base, base
-		hover.Background = LerpColor(accent, p.DialogOnAccent, 0.08)
-		pressed.Background = LerpColor(accent, p.DialogOnAccent, 0.12)
+		hover.Background = LerpColor(p.DialogAccent, p.DialogOnAccent, t.HoverOpacity)
+		pressed.Background = LerpColor(p.DialogAccent, t.Text, t.PressedOpacity)
 	}
 	focused := hover
 	disabled := base
-	// #1f1f1f at 38% / 12% over the white dialog surface, opaque.
-	disabled.Foreground = Color{R: 0.667, G: 0.667, B: 0.667, A: 1}
+	disabled.Foreground = LerpColor(base.Background, t.Text, 0.38)
 	if filled {
-		disabled.Background = Color{R: 0.894, G: 0.894, B: 0.894, A: 1}
+		disabled.Background = LerpColor(p.MenuSurface, t.Text, 0.12)
+		disabled.Foreground = LerpColor(disabled.Background, t.Text, 0.38)
 	}
 	return StateStyle{Base: base, Hover: &hover, Pressed: &pressed, Focused: &focused, Disabled: &disabled}
 }

@@ -78,7 +78,7 @@ type ScrollbarColors struct {
 
 // DefaultScrollbarColors derives the bar colors by mixing the theme's
 // Text toward its Surface: a barely-there track and a mid-gray thumb that
-// darkens while dragged (the thin rounded Chrome / Workspace bar). Opaque
+// darkens while dragged (a thin rounded overlay-style bar). Opaque
 // results, because the rounded-rect fill doesn't alpha-blend.
 func DefaultScrollbarColors() ScrollbarColors {
 	th := CurrentTheme()

@@ -65,7 +65,7 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 
 **Theme**
 
-- Global design-token `Theme`: surface ladder, text roles, accent, borders, semantic colors, elevation, state opacities, spacing/radius/font/transition scales, and `Popup` tokens for floating chrome (menus, select lists, tooltips, scrim, dialogs — Google Workspace / Material 3 look by default).
+- Global design-token `Theme`: surface ladder, text roles, accent, borders, semantic colors, elevation, state opacities, spacing/radius/font/transition scales, and `Popup` tokens for floating chrome (menus, select lists, tooltips, scrim, dialogs — derived from the palette by default, no design system baked in).
 - `SetTheme` invalidation; live `CurrentTheme()` reads; `ThemeGeneration()` for caches; removable `SubscribeTheme`. Native controls built with baseline colors follow a theme swap. One light scheme; dark UI is CSS.
 - Configurable tooltips per window (`SetTooltipStyle`: colors, font, padding, width, show delay, grace period).
 

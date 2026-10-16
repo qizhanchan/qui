@@ -11,12 +11,12 @@ import (
 // clickable items. The helpers below construct those popups with
 // consistent styling, keyboard navigation, and auto-close-on-select.
 //
-// Visual defaults (live popups) follow the Google Workspace editors'
-// Material 3 menus: a white panel with a 4 px radius and a soft
+// Visual defaults (live popups) are a plain desktop menu in the theme's
+// colors: a SurfaceOverlay panel with RadiusSmall corners and a soft
 // 0 2px 6px 2px shadow, 6 px vertical padding, 32 px rows with a 14 px
 // label starting 38 px in (an 18 px icon / check column sits 12 px from
-// the left), right-aligned 14 px medium shortcuts at 38% grey, a filled
-// submenu arrow, a 10% hover fill and 17 px separator blocks with a
+// the left), right-aligned 14 px medium shortcuts in TextMuted, a filled
+// submenu arrow, a HoverOpacity hover fill and 17 px separator blocks with a
 // full-width hairline. The tokens live in Theme.Popup (see PopupTokens);
 // colors are also overridable per menu through MenuColors.
 
@@ -32,7 +32,7 @@ import (
 //
 // `Selected` is orthogonal to `Checkable`/`Checked`: it marks the row
 // as "current value" for radio-style menus (select dropdowns, picked
-// option in a chooser). Live (Workspace-style) menus mark it with the ✓
+// option in a chooser). Live menus mark it with the ✓
 // in the icon column; the plain MenuPanel look tints the row instead.
 // Use it when one item out of N is the active choice.
 type MenuItem struct {
@@ -165,8 +165,8 @@ type MenuColors struct {
 // menu-bar dropdowns, the sheet-list-style anchored menus, and the Select
 // dropdown) reads these, so an app retunes ALL its menus once at startup
 // via SetMenuMetrics — mirroring how jetbrainsmono.Use() swaps the global
-// default font. Defaults are the Workspace editors' compact menu: body
-// (14px) labels, label (14px medium) shortcuts, 32px rows.
+// default font. Defaults are a compact desktop menu: body (14px) labels,
+// label (14px medium) shortcuts, 32px rows.
 var (
 	menuLabelRole    = TextBody
 	menuShortcutRole = TextLabel
@@ -176,8 +176,8 @@ var (
 // SetMenuMetrics overrides the default menu typography + row height for
 // every popup created afterward. Pass itemHeight <= 0 to keep the current
 // height. Intended to be called once at startup (not per-window state, so
-// it is safe as a package-level default). Example — the roomier Material 3
-// list-menu look (16px labels, 48px rows):
+// it is safe as a package-level default). Example — a roomier list-menu
+// look (16px labels, 48px rows):
 //
 //	widgets.SetMenuMetrics(qui.TextBodyLarge, qui.TextLabel, 48)
 func SetMenuMetrics(labelRole, shortcutRole TextRole, itemHeight float32) {
@@ -220,14 +220,14 @@ type menuStyle struct {
 	iconW         float32
 
 	// shadow is a single drop shadow painted when elevation is 0 (the
-	// Workspace menu's 0 2px 6px 2px). Zero = flat.
+	// stock 0 2px 6px 2px). Zero = flat.
 	shadow ElevationSpec
 	// corners, when set, overrides radius per corner for the panel fill —
 	// a menu-bar dropdown's square top-left corner joining its trigger.
 	corners CornerRadii
-	// minWidth floors the panel width (top-level Workspace menus are 320).
+	// minWidth floors the panel width (Theme.Popup.MenuMinWidth for top-level menus).
 	minWidth float32
-	// labelInset > 0 switches rows to the Workspace column layout: the
+	// labelInset > 0 switches rows to the column layout: the
 	// label always starts labelInset px in, and the check mark or icon is
 	// drawn iconSize px square, iconInset px from the row's left edge.
 	// Zero keeps the collapsing gutter/icon columns (Select, MenuPanel).
@@ -248,7 +248,7 @@ type menuStyle struct {
 	// zero = 9.
 	sepHeight float32
 	// filledArrow draws the submenu indicator as a small solid ► (the
-	// Workspace glyph) instead of a stroked chevron.
+	// glyph) instead of a stroked chevron.
 	filledArrow bool
 
 	// navigate, set by a MenuBar, switches to the previous (-1) or next
@@ -396,8 +396,8 @@ func themedMenuColors() MenuColors {
 }
 
 // themedMenuStyle is the base for every live menu popup — menus,
-// submenus, context menus and menu-bar dropdowns: the Workspace menu
-// geometry (see the package comment) in the current theme's popup tokens.
+// submenus, context menus and menu-bar dropdowns: the stock menu geometry
+// (see the package comment) in the current theme's popup tokens.
 // Explicit callers layer overrides on top via styledMenuStyle.
 func themedMenuStyle() menuStyle {
 	st := defaultMenuStyle()
@@ -651,7 +651,7 @@ func showAnchoredPopup(window *Window, popup *Popup, focus Widget, anchorFn func
 // ShowMenuBarDropdown opens items as a menu-bar dropdown under the trigger
 // whose live bounds anchorFn returns: flush against the trigger's bottom
 // edge, at least Theme.Popup.MenuMinWidth wide, with a square top-left
-// corner so panel and (open) trigger read as one shape — the Workspace
+// corner so panel and (open) trigger read as one shape — the column-layout
 // editors' File / Edit / … menus. It flips above, all corners round, when
 // there's no room below. Returns the popup so callers can force-close it.
 func ShowMenuBarDropdown(window *Window, anchorFn func() Rect, items []*MenuItem) *Popup {
@@ -805,7 +805,7 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 		}
 	}
 	if st.labelInset > 0 {
-		// Workspace layout: one fixed icon / check column, label at
+		// column layout: one fixed icon / check column, label at
 		// labelInset whether or not any row has an icon.
 		st.gutterW, st.iconW = 0, 0
 	}
@@ -883,7 +883,7 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 				}
 				closeOpenSub()
 				// Open submenu anchored to this row's right edge. In the
-				// Workspace layout the panel rises by its own padding so its
+				// column layout the panel rises by its own padding so its
 				// first row lines up with the row that opened it.
 				row := itemWidgets[idx].Bounds()
 				y := row.Y
@@ -1268,7 +1268,7 @@ func (v *menuItemView) Draw(canvas Canvas) {
 	selected := v.item.Selected || (v.item.Checkable && v.item.Checked)
 	showCheckGlyph := v.item.Checkable && v.item.Checked
 	if st.labelInset > 0 {
-		// Workspace menus mark both a checked row and a radio-style
+		// Live menus mark both a checked row and a radio-style
 		// current value (Selected — a <select>'s option) with the ✓ alone.
 		selected = false
 		showCheckGlyph = (v.item.Checkable && v.item.Checked) || v.item.Selected
@@ -1344,7 +1344,7 @@ func (v *menuItemView) Draw(canvas Canvas) {
 	cursor := b.X + st.leadingSpace
 
 	if st.labelInset > 0 {
-		// Workspace layout: the check mark (or else the icon) in the
+		// column layout: the check mark (or else the icon) in the
 		// fixed column, the label at labelInset.
 		col := Rect{X: b.X + st.iconInset, Y: b.Y + (b.H-st.iconSize)/2, W: st.iconSize, H: st.iconSize}
 		if showCheckGlyph {
@@ -1414,7 +1414,7 @@ func (v *menuItemView) Draw(canvas Canvas) {
 	}
 }
 
-// Badge pill geometry (Workspace's "New" marker): 11 px medium caption in
+// Badge pill geometry (a "New"-style marker): 11 px medium caption in
 // a 16 px pill with 6 px side padding, 8 px clear of what it sits beside.
 const (
 	menuBadgeHeight float32 = 16
@@ -1489,10 +1489,10 @@ func drawMenuChevron(canvas Canvas, slot Rect, size float32, color Color) {
 }
 
 // menuArrowInset is the gap between a submenu arrow's tip and the row's
-// right edge in the Workspace layout.
+// right edge in the column layout.
 const menuArrowInset float32 = 10
 
-// drawMenuArrow fills the Workspace submenu indicator: a small solid ►
+// drawMenuArrow fills the submenu indicator: a small solid ►
 // (5 x 8) whose tip sits at (tipX, midY).
 func drawMenuArrow(canvas Canvas, tipX, midY float32, color Color) {
 	const w, h = 5, 8
@@ -2175,7 +2175,7 @@ func (mb *MenuBar) SetMenuItems(i int, items []*MenuItem) {
 	}
 }
 
-// styleTrigger applies TriggerStyle, or the flat Workspace menubar look
+// styleTrigger applies TriggerStyle, or the flat stock menubar look
 // derived from the bar's style: 14px captions with 2/7 px padding and a
 // 4 px radius, flat on the bar, filled Theme.Popup.MenuBarHover while
 // hovered or while its dropdown is open.

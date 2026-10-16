@@ -90,8 +90,8 @@ type Theme struct {
 
 	// === Radius scale =================================================
 	RadiusSmall  float32 // 4
-	RadiusMedium float32 // 12
-	RadiusLarge  float32 // 28
+	RadiusMedium float32 // 8
+	RadiusLarge  float32 // 12
 
 	// === Font sizes ===================================================
 	// ThemeFont(role) resolves these into a Font; widgets should go
@@ -115,38 +115,37 @@ type Theme struct {
 
 // PopupTokens is the look of floating chrome: menu panels (menu-bar
 // dropdowns, context menus, submenus, toolbar dropdown menus, <select>
-// lists), tooltips, and modal dialogs. The LightTheme values follow the
-// Google Workspace (Material 3) editors — white menus with a soft shadow,
-// a dark tooltip chip, a 32% scrim and a 28 px dialog box.
+// lists), tooltips, and modal dialogs.
 //
 // A zero field falls back to a value derived from the rest of the theme
-// (SurfaceOverlay, Text, Border, …), so a Theme built from scratch still
-// paints sensible popups.
+// (SurfaceOverlay, Text, Border, Accent, …) — LightTheme leaves them all
+// zero — so popups follow whatever palette the theme has; set a field to
+// restyle that part alone.
 type PopupTokens struct {
 	// Menus.
-	MenuSurface      Color         // panel fill (#ffffff)
-	MenuText         Color         // row label, icon, check and arrow (#1f1f1f)
-	MenuTextMuted    Color         // shortcut text (rgba(31,31,31,.38))
-	MenuDivider      Color         // separator line (#c4c7c5)
-	MenuHover        Color         // hovered / keyboard-highlighted row, painted as-is (rgba(31,31,31,.10))
+	MenuSurface      Color         // panel fill (SurfaceOverlay)
+	MenuText         Color         // row label, icon, check and arrow (Text)
+	MenuTextMuted    Color         // shortcut text (TextMuted)
+	MenuDivider      Color         // separator line (Border)
+	MenuHover        Color         // hovered / keyboard-highlighted row, painted as-is (Text at HoverOpacity)
 	MenuSelected     Color         // current value in a radio-style chooser (e.g. a <select> list)
 	MenuShadow       ElevationSpec // panel drop shadow (0 2px 6px 2px @ 15%)
-	MenuRadius       float32       // panel corner radius (4)
-	MenuMinWidth     float32       // floor for top-level menus: menu-bar dropdowns and context menus (320)
-	MenuBarHover     Color         // menu-bar trigger hovered / open (#ededed)
-	MenuBarText      Color         // menu-bar trigger caption (#1f1f1f)
-	MenuBadgeText    Color         // "New" pill label (MenuItem.Badge, #0b57d0)
-	MenuBadgeSurface Color         // "New" pill fill (#d3e3fd)
+	MenuRadius       float32       // panel corner radius (RadiusSmall)
+	MenuMinWidth     float32       // floor for top-level menus: menu-bar dropdowns and context menus (none)
+	MenuBarHover     Color         // menu-bar trigger hovered / open
+	MenuBarText      Color         // menu-bar trigger caption (Text)
+	MenuBadgeText    Color         // "New" pill label (MenuItem.Badge; Accent)
+	MenuBadgeSurface Color         // "New" pill fill (Accent tint)
 
 	// Tooltips.
-	TooltipSurface Color // chip fill (#1f1f1f)
-	TooltipText    Color // chip text (#f2f2f2)
+	TooltipSurface Color // chip fill (Text)
+	TooltipText    Color // chip text (Surface)
 
 	// Modal dialogs.
 	Scrim          Color   // backdrop behind a modal (rgba(0,0,0,.32))
-	DialogRadius   float32 // dialog box corner radius (28)
-	DialogAccent   Color   // dialog text-button label / filled-button fill (#0b57d0)
-	DialogOnAccent Color   // filled dialog button label (#ffffff)
+	DialogRadius   float32 // dialog box corner radius (RadiusLarge)
+	DialogAccent   Color   // default-button fill (Accent)
+	DialogOnAccent Color   // default-button label (AccentText)
 }
 
 // ElevationSpec is one component of a drop shadow: offset, blur, spread
@@ -269,35 +268,15 @@ func newLightTheme() Theme {
 		DraggedOpacity: 0.16,
 
 		Spacing1: 4, Spacing2: 8, Spacing3: 12, Spacing4: 16, Spacing5: 24,
-		RadiusSmall: 4, RadiusMedium: 12, RadiusLarge: 28,
+		RadiusSmall: 4, RadiusMedium: 8, RadiusLarge: 12,
 		FontSmall: 12, FontBase: 14, FontLarge: 16, FontHeading: 24,
 
 		TransitionShort:  Duration(200_000_000),
 		TransitionMedium: Duration(300_000_000),
 
-		Popup: PopupTokens{
-			MenuSurface:      argbColor(0xffffffff),
-			MenuText:         argbColor(0xff1f1f1f),
-			MenuTextMuted:    argbColor(0x611f1f1f), // 38%
-			MenuDivider:      argbColor(0xffc4c7c5),
-			MenuHover:        argbColor(0x1a1f1f1f), // 10%
-			MenuSelected:     argbColor(0xffe4e4e4),
-			MenuShadow:       ElevationSpec{Y: 2, Blur: 6, Spread: 2, Opacity: 0.15},
-			MenuRadius:       4,
-			MenuMinWidth:     320,
-			MenuBarHover:     argbColor(0xffededed),
-			MenuBarText:      argbColor(0xff1f1f1f),
-			MenuBadgeText:    argbColor(0xff0b57d0),
-			MenuBadgeSurface: argbColor(0xffd3e3fd),
-
-			TooltipSurface: argbColor(0xff1f1f1f),
-			TooltipText:    argbColor(0xfff2f2f2),
-
-			Scrim:          argbColor(0x52000000), // 32%
-			DialogRadius:   28,
-			DialogAccent:   argbColor(0xff0b57d0),
-			DialogOnAccent: argbColor(0xffffffff),
-		},
+		// Popup is left zero: every popup token derives from the palette
+		// above (see ResolvedPopup), so floating chrome follows the theme
+		// rather than a particular design system.
 	}
 	t.Elevation = [6]ElevationLevel{
 		0: {},

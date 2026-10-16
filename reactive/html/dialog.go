@@ -101,16 +101,12 @@ type DialogProps struct {
 //	  div.q-dialog-body
 //	  footer.q-dialog-actions
 //
-// The built-in look is the Google Workspace (Material 3) dialog (see
-// dialogCSS), from framework-origin CSS: any author rule beats it,
-// whatever its specificity, and the custom properties --q-dialog-bg /
-// --q-dialog-fg / --q-dialog-radius / --q-dialog-shadow / --q-dialog-accent
-// theme it without restating the rules. Text inputs, selects and textareas
-// in the body are Material 3 outlined fields (a text input or select is
-// 40 px tall, with a 4 px radius, 1 px #747775 border, 2 px accent border
-// on :focus, and 14 px text 12 px from the edge; :hover and :disabled are
-// styled too); a textarea has the same outline, padding and text, two
-// lines tall unless sized.
+// The built-in look is a plain dialog box (see dialogCSS), from
+// framework-origin CSS: any author rule beats it, whatever its
+// specificity, and the custom properties --q-dialog-bg / --q-dialog-fg /
+// --q-dialog-border / --q-dialog-radius / --q-dialog-shadow /
+// --q-dialog-accent theme it without restating the rules. Controls in the
+// body keep their native look.
 // The LAST action is drawn as the filled default button. Render it conditionally:
 //
 //	if open {
@@ -181,95 +177,51 @@ func Dialog(p DialogProps) Node {
 }
 
 // dialogCSS is the Dialog shell's built-in look (framework origin — see
-// htmlcss.RegisterFrameworkCSS): the Google Workspace (Material 3) dialog —
-// a white 28px-radius box with no shadow over a 32% scrim, a 24/32 title,
-// 40px pill actions (text buttons in the accent, the LAST action a filled
-// accent button — the default action by convention: Cancel, OK) and
-// outlined 4px fields with a 2px accent focus border. Custom properties
-// re-theme it without restating rules: --q-dialog-bg, --q-dialog-fg,
-// --q-dialog-radius, --q-dialog-shadow, --q-dialog-accent (button / focus
-// / checkbox colour) and --q-dialog-on-accent (filled button label).
-// Give an action the class q-dialog-text-button to keep it a text button
-// even when it is last.
+// htmlcss.RegisterFrameworkCSS): a white box with a hairline border, 8px
+// corners and a soft shadow, a 16px bold title, and actions that are the
+// native buttons — the LAST one (the default action by convention:
+// Cancel, OK) filled in the accent. Custom properties re-theme it without
+// restating rules: --q-dialog-bg, --q-dialog-fg, --q-dialog-border,
+// --q-dialog-radius, --q-dialog-shadow, --q-dialog-accent (default button
+// / focus / checkbox colour) and --q-dialog-on-accent (default button
+// label). Give an action the class q-dialog-text-button to keep it a
+// plain button even when it is last.
 const dialogCSS = `
 .q-dialog {
 	display: flex; flex-direction: column;
 	min-width: 280px; max-width: 560px;
 	background: var(--q-dialog-bg, #ffffff);
-	color: var(--q-dialog-fg, #1f1f1f);
-	border-radius: var(--q-dialog-radius, 28px);
-	box-shadow: var(--q-dialog-shadow, none);
-	accent-color: var(--q-dialog-accent, #0b57d0);
-	font-size: 14px;
+	color: var(--q-dialog-fg, #1c1c1c);
+	border: 1px solid var(--q-dialog-border, #c8c8c8);
+	border-radius: var(--q-dialog-radius, 8px);
+	box-shadow: var(--q-dialog-shadow, 0 4px 16px rgba(0,0,0,0.18));
+	accent-color: var(--q-dialog-accent, #4d8cd8);
 }
 .q-dialog-header {
 	display: flex; flex-direction: row; align-items: center; gap: 8px;
-	padding: 24px 24px 0 24px;
+	padding: 16px 16px 0 16px;
 }
 .q-dialog-title {
 	flex: 1; margin: 0;
-	font-size: 24px; line-height: 32px; font-weight: normal;
+	font-size: 16px; line-height: 24px; font-weight: bold;
 }
 .q-dialog-close {
-	width: 32px; height: 32px; padding: 0;
-	border: none; border-radius: 16px; background: transparent;
-	color: #444746; font-size: 22px;
+	width: 24px; height: 24px; padding: 0;
+	border: none; border-radius: 4px; background: transparent;
+	color: inherit; font-size: 18px;
 }
-.q-dialog-close:hover { background: rgba(68,71,70,0.08); }
-.q-dialog-close:active { background: rgba(68,71,70,0.12); }
-.q-dialog-body { padding: 16px 24px; }
+.q-dialog-close:hover { background: rgba(0,0,0,0.06); }
+.q-dialog-close:active { background: rgba(0,0,0,0.12); }
+.q-dialog-body { padding: 12px 16px; }
 .q-dialog-actions {
 	display: flex; flex-direction: row; justify-content: flex-end; align-items: center; gap: 8px;
-	padding: 8px 24px 24px 24px;
+	padding: 4px 16px 16px 16px;
 }
-.q-dialog-actions button {
-	height: 40px; padding: 0 12px;
-	border: none; border-radius: 20px; background: transparent;
-	color: var(--q-dialog-accent, #0b57d0);
-	font-size: 14px; font-weight: 500;
-}
-.q-dialog-actions button:hover { background: rgba(11,87,208,0.08); }
-.q-dialog-actions button:active { background: rgba(11,87,208,0.12); }
-.q-dialog-actions button:disabled { background: transparent; color: rgba(31,31,31,0.38); }
 .q-dialog-actions button:last-child {
-	padding: 0 24px;
-	background: var(--q-dialog-accent, #0b57d0);
+	background: var(--q-dialog-accent, #4d8cd8);
 	color: var(--q-dialog-on-accent, #ffffff);
 }
-.q-dialog-actions button:last-child:hover { background: #1e64d4; }
-.q-dialog-actions button:last-child:active { background: #286bd6; }
-.q-dialog-actions button:last-child:disabled { background: rgba(31,31,31,0.12); color: rgba(31,31,31,0.38); }
-.q-dialog-actions button.q-dialog-text-button { padding: 0 12px; background: transparent; color: var(--q-dialog-accent, #0b57d0); }
-.q-dialog-actions button.q-dialog-text-button:hover { background: rgba(11,87,208,0.08); }
-.q-dialog-body input:not([type=checkbox]):not([type=radio]),
-.q-dialog-body select,
-.q-dialog-body textarea {
-	border: 1px solid #747775; border-radius: 4px;
-	background: #ffffff; color: #1f1f1f;
-	font-size: 14px;
-}
-.q-dialog-body input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=range]),
-.q-dialog-body select,
-.q-dialog-body textarea {
-	padding: 9px 11px;
-	line-height: 20px;
-}
-.q-dialog-body input:not([type=checkbox]):not([type=radio]):hover,
-.q-dialog-body select:hover,
-.q-dialog-body textarea:hover {
-	border-color: #1f1f1f;
-}
-.q-dialog-body input:focus,
-.q-dialog-body select:focus,
-.q-dialog-body textarea:focus,
-.q-dialog-body input:not([type=checkbox]):not([type=radio]):focus {
-	border-color: var(--q-dialog-accent, #0b57d0); border-width: 2px;
-}
-.q-dialog-body input:not([type=checkbox]):not([type=radio]):disabled,
-.q-dialog-body select:disabled,
-.q-dialog-body textarea:disabled {
-	border-color: rgba(31,31,31,0.12); background: transparent; color: rgba(31,31,31,0.38);
-}
+.q-dialog-actions button.q-dialog-text-button { background: transparent; color: inherit; }
 `
 
 func init() { htmlcss.RegisterFrameworkCSS(dialogCSS) }

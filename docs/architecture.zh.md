@@ -116,7 +116,7 @@ GL 控件通过 `GPUCanvas.QueueGLDraw` + `ActiveGLRenderer().DrawTexture` 合�
 
 ## 主题
 
-一个全局的设计 token `Theme`，刻意与具体设计系统无关：五级表面阶梯（`Surface` / `SurfaceSunken` / `SurfaceRaised` / `SurfaceStrong` / `SurfaceOverlay`）、`Text` / `TextMuted` / `TextSelection`、`Accent` 家族、`Border` / `BorderStrong` / `BorderFocus`、语义色 `Error` / `Warning` / `Success`、六级 `Elevation` 阴影阶梯、hover/focus/pressed/dragged 覆盖不透明度，间距 / 圆角 / 字体 / 过渡比例尺，以及 `Popup`（`PopupTokens`）——所有菜单、`<select>` 列表、tooltip 与模态框共用的浮层外观（LightTheme 采用 Google Workspace / Material 3 编辑器的取值：白色 4 px 圆角菜单配柔和阴影、32 px 行高、深色 tooltip、32% 遮罩、28 px 圆角对话框；`Theme.ResolvedPopup()` 用主题其余字段补全未设置的项）。`ThemeFont(role)` 在该字体比例尺上解析六种中性文字角色（`TextBody`、`TextLabel`、`TextHeading` 等）。`SetTheme` 会使订阅的窗口失效；控件在 `Draw` 里实时读取 `CurrentTheme()`。
+一个全局的设计 token `Theme`，刻意与具体设计系统无关：五级表面阶梯（`Surface` / `SurfaceSunken` / `SurfaceRaised` / `SurfaceStrong` / `SurfaceOverlay`）、`Text` / `TextMuted` / `TextSelection`、`Accent` 家族、`Border` / `BorderStrong` / `BorderFocus`、语义色 `Error` / `Warning` / `Success`、六级 `Elevation` 阴影阶梯、hover/focus/pressed/dragged 覆盖不透明度，间距 / 圆角 / 字体 / 过渡比例尺，以及 `Popup`（`PopupTokens`）——所有菜单、`<select>` 列表、tooltip 与模态框共用的浮层外观（LightTheme 的浮层 token 全部留空，由调色板派生：SurfaceOverlay 菜单配 RadiusSmall 圆角与柔和阴影、32 px 行高、Text 色 tooltip、32% 遮罩、RadiusLarge 圆角对话框）。`ThemeFont(role)` 在该字体比例尺上解析六种中性文字角色（`TextBody`、`TextLabel`、`TextHeading` 等）。`SetTheme` 会使订阅的窗口失效；控件在 `Draw` 里实时读取 `CurrentTheme()`。
 
 **qui 只有一套配色：浅色。** 引擎和 `widgets` 中都没有深色主题，也没有任何明暗分支 —— 深色界面是应用层的事，在 htmlcss 层用 CSS 表达（见 `examples/reactive-html`，它切换 `.dark` class）。同样地，也不捆绑设计系统：给 `Theme` 重新着色就是换一套品牌色，而「有设计感」的外观（Material、Fluent、你自己的）是一张样式表，不是 token 包。
 
