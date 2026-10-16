@@ -82,3 +82,21 @@ Known differences live in `domLayoutAllowlist` in
 `htmlcss/dom_layout_test.go`, split into documented limits (COVERAGE.md) and
 undocumented differences that are fix candidates. As with the event goldens,
 an entry that no longer matches a difference fails the test.
+
+## web/dom-style.mjs — computed-style goldens
+
+Records `getComputedStyle` for every element with an id in
+`htmlcss/testdata/style/` over a fixed property list (display, colors,
+font, line-height, text, box model, borders, flex) and writes
+`<name>.golden.json`. `go test ./htmlcss -run DOMStyle` serializes each El's
+resolved `ComputedStyle` the same way and diffs it per property — lengths
+within 0.05px, colors within 1 per channel. It checks the cascade,
+inheritance, `var()` and unit resolution; layout is `DOMLayout`'s job.
+
+```bash
+REFRESH_REF=1 go test ./htmlcss -run DOMStyle
+```
+
+Known differences live in `domStyleAllowlist` in
+`htmlcss/dom_style_test.go` (mostly control chrome that qui's backing
+widgets paint themselves); a stale entry fails the test.

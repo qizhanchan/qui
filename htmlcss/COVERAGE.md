@@ -24,7 +24,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | `br` | ✅ | inline forced break |
 | `blockquote` | ✅ | UA left border + indent |
 | `hr` | ✅ | rendered as `widgets.Rule`; `border-*` applies to the line itself |
-| `ul` `ol` `li` | ✅ | hanging `[marker\|content]` row; disc/circle/square/decimal; `ol` auto-numbering; the clipboard rebuilds list structure |
+| `ul` `ol` `li` | ✅ | the marker hangs outside the content (`list-style-position: outside`), so content starts at the item's content edge; disc/circle/square/decimal; `ol` auto-numbering; the clipboard rebuilds list structure. `li` computes as `display: block` (not `list-item`) |
 | `img` | 🟡 | local raster (PNG / JPEG / GIF first frame / BMP / TIFF / WebP / ICO·CUR) + `.svg` (with tint) + `data:` URI + an in-memory `image.Image` (`h.Img().Image(img)` / `El.SetImage`) + `object-fit: cover/contain/scale-down`; **no** remote URL / `srcset` / animated GIF |
 | `label` | 🟡 | folds to inline text; `for=` click linkage is implemented on the `label[for]` row below |
 | `table` `thead` `tbody` `tfoot` `tr` `td` `th` `caption` `colgroup` `col` | ✅ | cells flattened onto one grid (columns align across rows) with column widths from the CSS 2.1 algorithms at layout time: automatic layout (max-content columns, cell `width` sizes its column, `colspan` excess spread over the spanned columns, a wider table's extra shared in proportion to content, a narrower one shrunk from min-content) and `table-layout: fixed` (`<col>` / first-row widths, the rest equal). `th` bold + centered, `tr:nth-child` striping, `border-spacing` between and around cells (UA default 2px, cell padding 1px, as in Chrome), auto-width shrink-to-fit. Also: `<caption>` as a full-width spanning row (`caption-side: top/bottom`), `<colgroup>`/`<col>` widths (`width` attr or inline style, with `span`, `%` of table width), `border-collapse: collapse` (single-line merging), `rowspan` row-height contribution. Limit: `<col>` does not take class selectors |
@@ -49,7 +49,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | `input[type=file]` | ✅ | rendered as a button; click opens the native file dialog (`qui.OpenFile`/`OpenFiles`; `multiple`; `accept` `.ext` tokens → `AllowedExtensions`). Label is the selected file's base name (`(+N)` for multiple), default `Choose File…`; serializes absolute paths. Non-darwin returns `ErrDialogNotSupported` |
 | `textarea` | ✅ | `widgets.TextArea` (`BoxModel`: CSS padding sits inside the border, `border-radius` shapes the border, the scrollbar sits against the border's inner edge; `:hover` / `:focus` / `:disabled` restyle it; unpadded keeps the UA inset) |
 | `select` `option` `optgroup` | ✅ | requires `Options.Window` (or attachment to a window); without one it degrades to a placeholder label until attached. `option value` is the submitted value (falling back to visible text), `selected` is initial and restored by form reset (none = the first enabled option, as in a browser; an explicit `-1` stays blank), `disabled` is skipped by click / arrows / type-ahead; `<optgroup>` inserts a non-clickable group header. Keyboard type-ahead (cycles on repeated letters, buffer clears after 1s). Limits: groups are a header + flattened approximation; no `multiple`/`size` |
-| `button` | ✅ | Box rendering + built-in hover/press feedback. Tab-reachable and pressed by Enter / Space (also push-button `<input>`s); a mouse click does not move focus (a text field keeps it) unless the author styles `:focus`. No built-in focus ring — style `:focus` |
+| `button` | ✅ | Chrome's push button (#efefef face, 1px #767676 rounded border as its native theme paints it, 13.33px control font, centered) + hover/press feedback. Space presses on keyup, Enter on keydown. Tab-reachable and pressed by Enter / Space (also push-button `<input>`s); a mouse click does not move focus (a text field keeps it) unless the author styles `:focus`. No built-in focus ring — style `:focus` |
 | `form` | ✅ | `El.SetOnFormSubmit(func(map[string]string))` collects the current values of named descendant controls. Triggered by Enter in a text field or a submit button; `<input type=reset>` restores defaults. Limits: no native action/method network submit, no `formdata`/validation |
 | `fieldset` `legend` | ✅ | UA border/padding + bold legend |
 | `label[for]` | ✅ | click activates the control (toggle checkbox, select radio, focus text field). As a control surface its text is not drag-selectable; a click only toggles |
@@ -89,7 +89,8 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | `font-style` | ✅ | italic |
 | `font-family` | ✅ | first installed (registered) family of the list; a generic keyword ends the search; none installed → first name |
 | `font` (shorthand) | ✅ | `expandFont` |
-| `line-height` | ✅ | unitless multiple (inherits as a factor) / length or % (inherits as that length) |
+| `line-height` | ✅ | `normal` (the initial value: the face's own metrics, as in Chrome) / unitless multiple (inherits as a factor) / length or % (inherits as that length). Form controls reset it to `normal` |
+| `vertical-align` (inline boxes) | ✅ | `baseline` (an inline-block's last text baseline; its bottom edge when it has no text or clips; a checkbox's border-box bottom), `middle`, `top` / `bottom` (pinned to the line box, growing it away from that edge) |
 | `text-align` | ✅ | start/center/end/**justify**. Justify stretches only soft-wrapped lines; it flows through the root `JustifyExtra` + `Font.WordSpacing` channel on both plain (Label) and inline (InlineBox) paths, so drawing/selection/hit-testing agree. Rich-text spans do not participate |
 | `text-decoration` / `-line` | ✅ | underline / line-through / overline + `-color` + `-style` (solid/double/dotted/dashed/wavy) + `-thickness`. The root `DecorationPaint` runs through plain / rich / inline paths. Limit: wavy is approximated with a zig-zag path |
 | `text-transform` | ✅ | upper/lower/capitalize |
@@ -140,10 +141,10 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | Grid: `grid-template-columns/rows` (px/fr/auto/repeat), `grid-auto-rows/columns`, `gap`/`row-gap`/`column-gap` | ✅ | items past the template get implicit tracks sized by `grid-auto-*` |
 | Grid placement: `grid-column/row`, `span`, `grid-template-areas` | ✅ | line numbers (1-based `a / b`), `span N`, `grid-area` (named area or 4 line numbers); named areas with implicit track counts. Limit: only the `grid-column/row` shorthand (not `*-start`/`*-end`); mixing an explicit axis with an auto axis degrades to pure span auto-placement |
 | `position: relative` | ✅ | top/right/bottom/left offsets; establishes a containing block |
-| `position: absolute` | ✅ | out of flow, positioned against the nearest positioned ancestor. Limits: containing block approximated as the border box; no `z-index` stacking; an `auto` side lands at the containing-block origin rather than the static position |
+| `position: absolute` | ✅ | out of flow, positioned against the nearest positioned ancestor. The containing block is the positioned ancestor's padding box; `%` insets and sizes resolve against it. Limits: no `z-index` stacking; an `auto` side lands at the containing-block origin rather than the static position |
 | `position: fixed` | 🟡 | treated as absolute (relative to the nearest positioned ancestor / root); **not** viewport-fixed |
 | `position: sticky` | ❌ | |
-| `overflow: hidden/clip/auto/scroll` (incl. `-x`/`-y`) | ✅ | `auto`/`scroll` hosts a `ScrollView` |
+| `overflow: hidden/clip/auto/scroll` (incl. `-x`/`-y`) | ✅ | `auto`/`scroll` hosts a `ScrollView` with an overlay scrollbar (no gutter, like Chrome on macOS) |
 | `visibility: hidden/collapse` | ✅ | keeps the layout box, does not draw (self + subtree). Limit: descendant `visibility:visible` re-show is not supported |
 | `z-index` | 🟡 | paint order ascending by z; **no** full stacking context (no new context, no subtree isolation) |
 | `float` `clear` `columns` | ❌ | no floats / multi-column |
@@ -177,6 +178,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | `::before` `::after` | 🟡 | generate `content` text (leaf/inline elements fold into the same InlineBox). `content` supports quoted strings + `attr(name)` + concatenation. Limits: not generated on elements with block children; no `counter()` or full generated-box model |
 | Other pseudo-elements (`::first-line`, …) | ❌ | parsed but not generated |
 | CSS variables `--x` / `var(--x, fallback)` / `:root` | ✅ | inheritance + recursive resolution (depth limit 16). Readable from Go with `ComputedStyle.Var` |
+| CSS-wide keywords `inherit` / `initial` / `unset` / `revert` | ✅ | on every property; `revert` behaves as `unset`. A shorthand mixing one with other tokens is dropped as invalid |
 | Custom properties and elements | ✅ | `RegisterProperty(name, PropertyDef{Inherited, Initial})` makes any property name readable through `ComputedStyle.Property` (`inherit` / `initial` / `unset` resolve as on built-in properties); `RegisterElement(tag, ElementDef{Create, Apply})` backs a custom tag with a native widget that the element hosts, with `Apply` mapping the computed style onto it after each restyle. `El.SetOnStyle` is the per-element form |
 | Shorthands `font` `flex` `inset` | ✅ | |
 | `@media` | 🟡 | `min-width`/`max-width` (`and`, screen/all/print) evaluated at parse time against the viewport width; matching blocks flatten into the stylesheet. **Not responsive** (does not re-evaluate on resize) |

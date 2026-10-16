@@ -24,7 +24,7 @@
 | `br` | ✅ | inline 强制换行 |
 | `blockquote` | ✅ | UA 左边框 + 缩进 |
 | `hr` | ✅ | 渲染为 `widgets.Rule`；`border-*` 作用于线本身 |
-| `ul` `ol` `li` | ✅ | 悬挂 `[marker\|content]` 行；disc/circle/square/decimal；ol 自动编号；剪贴板可重建列表结构 |
+| `ul` `ol` `li` | ✅ | 标记悬挂在内容之外（`list-style-position: outside`），内容从列表项内容边开始；disc/circle/square/decimal；ol 自动编号；剪贴板可重建列表结构。`li` 的计算值为 `display: block`（非 `list-item`） |
 | `img` | 🟡 | 本地光栅 + `.svg`（可染色）+ `data:` URI + `object-fit: cover/contain`；**不支持**远程 URL / `srcset` |
 | `label` | 🟡 | 折叠为 inline 文本；`for=` 点击联动见下方 `label[for]` 行 |
 | `table` `thead` `tbody` `tfoot` `tr` `td` `th` `caption` `colgroup` `col` | ✅ | 单元格拍平到一个网格（列跨行对齐），列宽在布局期按 CSS 2.1 算法求解：自动布局（列取 max-content、单元格 `width` 决定其列宽、`colspan` 超出部分分摊到所跨列、表比内容宽时按内容比例分配余量、比内容窄时从 min-content 收缩）与 `table-layout: fixed`（取 `<col>` / 首行宽度，其余等分）。`th` 粗体居中、`tr:nth-child` 行条纹、`border-spacing` 作用于单元格之间及四周（UA 默认 2px、单元格 padding 1px，同 Chrome）、auto-width 表 shrink-to-fit。另有：`<caption>` 全宽跨列行（`caption-side: top/bottom`）、`<colgroup>/<col>` 列宽（`width` 属性或内联样式，含 `span`、相对表宽的 `%`）、`border-collapse: collapse`（单线合并）、`rowspan` 行高贡献。限制：`<col>` 不接受 class 选择器 |
@@ -49,7 +49,7 @@
 | `input[type=file]` | ✅ | 渲染为按钮；点击弹原生文件对话框（`qui.OpenFile`/`OpenFiles`；`multiple`；`accept` 的 `.ext` 令牌→`AllowedExtensions`）。label 为所选文件基名（多选加 `(+N)`），缺省 `Choose File…`；序列化回传绝对路径。非 darwin 返回 `ErrDialogNotSupported` |
 | `textarea` | ✅ | `widgets.TextArea` |
 | `select` `option` `optgroup` | ✅ | 需 `Options.Window`；无 window 时降级为占位 label。`option value` 是提交值（缺省回退到可见文字）、`selected` 设初选且被 form reset 还原、`disabled` 被点击 / 方向键 / type-ahead 跳过；`<optgroup>` 在其选项前插一条不可点的分组标题行。键盘 type-ahead（连敲同一字母循环、1s 无输入清空缓冲）。限制：分组是「标题行 + 平铺」的近似；无 `multiple`/`size` |
-| `button` | ✅ | Box 渲染 + 内建 hover/press 反馈。可以 Tab 到达，Enter / Space 按下（推按钮型 `<input>` 也一样）。鼠标点击不转移焦点（输入框保持焦点），除非作者写了 `:focus` 样式。不画内建焦点环，需要的话自己写 `:focus` |
+| `button` | ✅ | Chrome 原生按钮外观（#efefef 底色、按其原生主题绘制的 1px #767676 圆角边框、13.33px 控件字号、居中）+ hover/press 反馈。Space 在 keyup 时按下，Enter 在 keydown 时按下。可以 Tab 到达，Enter / Space 按下（推按钮型 `<input>` 也一样）。鼠标点击不转移焦点（输入框保持焦点），除非作者写了 `:focus` 样式。不画内建焦点环，需要的话自己写 `:focus` |
 | `form` | ✅ | `El.SetOnFormSubmit(func(map[string]string))` 收集具名后代控件的当前值。文本框回车或 submit 按钮触发；`<input type=reset>` 恢复默认。限制：无原生 action/method 网络提交、无 `formdata`/校验 |
 | `fieldset` `legend` | ✅ | UA 边框 / 内距 + legend 粗体 |
 | `label[for]` | ✅ | 点击激活关联控件（勾选 checkbox / 选中 radio / 聚焦文本框）。作为控件面，其文字不可拖选；点击只 toggle |
@@ -89,7 +89,8 @@
 | `font-style` | ✅ | italic |
 | `font-family` | ✅ | 取列表中第一个已安装（已注册）的 family；遇到通用族关键字即停止；都未安装时取第一个 |
 | `font`（简写） | ✅ | `expandFont` |
-| `line-height` | ✅ | 无单位倍数（按倍数继承）/ 长度或 %（按算出的长度继承） |
+| `line-height` | ✅ | `normal`（初始值：取字体自身度量，同 Chrome）/ 无单位倍数（按倍数继承）/ 长度或 %（按算出的长度继承）。表单控件重置为 `normal` |
+| `vertical-align`（行内盒） | ✅ | `baseline`（inline-block 取其文本基线；无文本或裁剪溢出时取底边；复选框取 border-box 底边）、`middle`、`top` / `bottom`（贴住行盒边缘，并向另一侧撑高行盒） |
 | `text-align` | ✅ | start/center/end/**justify**。justify 只拉伸软换行行；经 root `JustifyExtra` + `Font.WordSpacing` 通道贯穿 plain（Label）与 inline（InlineBox）两条路径，绘制 / 选择 / 命中一致。富文本 spans 不参与 |
 | `text-decoration` / `-line` | ✅ | underline / line-through / overline + `-color` + `-style`（solid/double/dotted/dashed/wavy）+ `-thickness`。root `DecorationPaint` 贯穿 plain / rich / inline 三路径。限制：wavy 用 zig-zag path 近似 |
 | `text-transform` | ✅ | upper/lower/capitalize |
@@ -140,10 +141,10 @@
 | Grid：`grid-template-columns/rows`（px/fr/auto/repeat）、`grid-auto-rows/columns`、`gap`/`row-gap`/`column-gap` | ✅ | 超出模板的项获得按 `grid-auto-*` 定尺寸的隐式轨道 |
 | Grid 单元格放置：`grid-column/row`、`span`、`grid-template-areas` | ✅ | 行/列线号（1-based `a / b`）、`span N`、`grid-area`（命名区或 4 线号）；命名区 + 隐含轨道数。限制：仅 `grid-column/row` 简写（不读 `*-start`/`*-end`）；混合「显式一轴 + 自动另一轴」退化为纯 span 自动排布 |
 | `position: relative` | ✅ | top/right/bottom/left 偏移；建立包含块 |
-| `position: absolute` | ✅ | 脱离常规流，相对最近 positioned 祖先定位。限制：包含块用 border box 近似；无 `z-index` 层叠；`auto` 侧落在包含块原点而非静态位 |
+| `position: absolute` | ✅ | 脱离常规流，相对最近 positioned 祖先定位。包含块为 positioned 祖先的 padding box，`%` 偏移与尺寸据此解析。限制：无 `z-index` 层叠；`auto` 侧落在包含块原点而非静态位 |
 | `position: fixed` | 🟡 | 当作 absolute（相对最近 positioned 祖先 / root）；**不随视口固定** |
 | `position: sticky` | ❌ | |
-| `overflow: hidden/clip/auto/scroll`（含 `-x`/`-y`） | ✅ | auto/scroll 托管 `ScrollView` |
+| `overflow: hidden/clip/auto/scroll`（含 `-x`/`-y`） | ✅ | auto/scroll 托管 `ScrollView`，滚动条为覆盖式（不占位，同 macOS 上的 Chrome） |
 | `visibility: hidden/collapse` | ✅ | 保留布局盒、不绘制（自身 + 子树）。限制：子孙 `visibility:visible` 反显未支持 |
 | `z-index` | 🟡 | 绘制顺序按 z 升序；**无完整 stacking context** |
 | `float` `clear` `columns` | ❌ | 无浮动 / 多列 |
@@ -177,6 +178,7 @@
 | `::before` `::after` | 🟡 | 生成 `content` 文本（叶 / 行内元素折进同一 InlineBox）。`content` 支持引号字符串 + `attr(name)` + 拼接。限制：带块级子元素的元素上不生成；不支持 `counter()` 或生成盒的完整盒模型 |
 | 其他伪元素（`::first-line`…） | ❌ | 解析但不生成 |
 | CSS 变量 `--x` / `var(--x, fallback)` / `:root` | ✅ | 继承 + 递归解析（深度上限 16）。Go 侧用 `ComputedStyle.Var` 读取 |
+| CSS 全局关键字 `inherit` / `initial` / `unset` / `revert` | ✅ | 作用于所有属性；`revert` 按 `unset` 处理。简写中混入其他值时整条声明按无效丢弃 |
 | 自定义属性与自定义元素 | ✅ | `RegisterProperty(name, PropertyDef{Inherited, Initial})` 让任意属性名可经 `ComputedStyle.Property` 读取（`inherit` / `initial` / `unset` 的解析与内置属性一致）；`RegisterElement(tag, ElementDef{Create, Apply})` 让自定义标签承载一个原生 widget，`Apply` 在每次 restyle 后把计算样式映射到它上面。逐元素版本是 `El.SetOnStyle` |
 | 简写 `font` `flex` `inset` | ✅ | |
 | `@media` | 🟡 | `min-width`/`max-width`（`and`、screen/all/print）在解析时对视口宽度求值；匹配块扁平进样式表。**非响应式**（不随 resize 重算） |
