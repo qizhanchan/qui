@@ -40,7 +40,7 @@ func TestControlBoxFollowsCSS(t *testing.T) {
 		{"height + box-sizing", border + `height: 40px; padding: 0 12px; box-sizing: border-box;`, 40},
 		{"min-height", border + `min-height: 40px; padding: 0 12px; box-sizing: border-box;`, 40},
 		{"padding only", border + `padding: 9px 11px;`, 40},
-		{"content-box height", border + `height: 40px; padding: 0 12px;`, 42},
+		{"content-box height", border + `height: 40px; padding: 0 12px; box-sizing: content-box;`, 42},
 		{"taller than the text", border + `height: 60px; padding: 0 12px; box-sizing: border-box;`, 60},
 	}
 	for _, tag := range []string{"input", "select"} {

@@ -613,13 +613,7 @@ func matchedRulesFor(n *Node, sheet *Stylesheet, winning map[string]string) []Ma
 	}
 	out = append(out, author...)
 
-	uaTag := n.Tag
-	if n.Tag == "input" {
-		switch n.AttrOr("type", "") {
-		case "submit", "reset", "button", "file", "color":
-			uaTag = "button"
-		}
-	}
+	uaTag := uaTagFor(n)
 	if ua := uaDeclarations(uaTag); len(ua) > 0 {
 		out = append(out, MatchedRule{
 			Selector:     n.Tag,

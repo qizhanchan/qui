@@ -154,16 +154,22 @@ func (b *InlineBox) buildItems(maxW float32) []InlineItem {
 	boxN := 0
 	for _, p := range b.parts {
 		if p.isBox {
+			// The box rides the line as its margin box (CSS: an atomic
+			// inline's margins take inline space); Layout insets it again.
+			m := boxMargin(p.child)
+			sz := inlineChildSize(p.child, Size{W: maxW - m.Horizontal()})
 			it := InlineItem{
 				Box:      true,
-				Size:     inlineChildSize(p.child, Size{W: maxW}),
+				Size:     Size{W: sz.W + m.Horizontal(), H: sz.H + m.Vertical()},
 				VAlign:   p.valign,
 				BoxIndex: boxN,
 			}
 			// A text-carrying atomic box (e.g. a styled link kept as its own
 			// box) reports its baseline so the IFC aligns it with the run.
 			if bp, ok := p.child.(InlineBaselineProvider); ok {
-				it.Baseline = bp.InlineBaseline()
+				if bl := bp.InlineBaseline(); bl > 0 {
+					it.Baseline = bl + m.Top
+				}
 			}
 			items = append(items, it)
 			boxN++
@@ -284,11 +290,13 @@ func (b *InlineBox) Layout(rect Rect) {
 			if f.BoxIndex < 0 || f.BoxIndex >= b.ChildCount() {
 				continue
 			}
-			b.ChildAt(f.BoxIndex).Layout(Rect{
-				X: origin.X + f.Rect.X,
-				Y: origin.Y + f.Rect.Y,
-				W: f.Rect.W,
-				H: f.Rect.H,
+			child := b.ChildAt(f.BoxIndex)
+			m := boxMargin(child)
+			child.Layout(Rect{
+				X: origin.X + f.Rect.X + m.Left,
+				Y: origin.Y + f.Rect.Y + m.Top,
+				W: max(f.Rect.W-m.Horizontal(), 0),
+				H: max(f.Rect.H-m.Vertical(), 0),
 			})
 		}
 	}
@@ -747,6 +755,14 @@ func (b *InlineBox) LinkSourceAt(p Point) (href string, source any, ok bool) {
 // inlineChildSize measures a child and applies its Style sizing hints
 // (explicit width/height, min/max) — the engine only knows a box's final
 // Size, so an inline-block with an explicit CSS width is honored here.
+// boxMargin is an atomic inline child's margin (zero when it has no style).
+func boxMargin(w Widget) Insets {
+	if st := w.Style(); st != nil {
+		return st.Margin
+	}
+	return Insets{}
+}
+
 func inlineChildSize(w Widget, avail Size) Size {
 	m := MeasureChild(w, avail)
 	st := w.Style()

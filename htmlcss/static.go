@@ -91,7 +91,10 @@ func (eng *StyleEngine) buildStaticEl(n *Node, styles map[*Node]*ComputedStyle) 
 			hasInlineish = true
 			break
 		}
-		if c.Type == ElementNode && textLikeInline[c.Tag] {
+		// Any inline-level element counts — inline-block controls too
+		// (`<button>A</button> <input>` keeps its word space).
+		if c.Type == ElementNode && (textLikeInline[c.Tag] ||
+			(styles[c] != nil && strings.HasPrefix(styles[c].Display, "inline"))) {
 			hasInlineish = true
 			break
 		}

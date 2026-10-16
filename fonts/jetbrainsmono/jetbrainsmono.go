@@ -54,7 +54,7 @@ var (
 )
 
 // Use installs JetBrains Mono as the global default font for every widget,
-// including the weighted (Medium/Bold) Material typescales. Returns an
+// including the weighted (Medium/Bold) text roles. Returns an
 // error only if an embedded face fails to parse (should never happen with
 // the bundled bytes). Safe to call after widgets have been drawn — the
 // face cache is invalidated, so the next frame re-rasterizes.

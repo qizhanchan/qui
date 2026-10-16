@@ -10,6 +10,11 @@ import (
 // TextArea provides multiline text input.
 type TextArea struct {
 	BaseWidget
+	// Cols, when > 0, sizes a box-model (raw-HTML) area to that many
+	// average characters — HTML's `cols` attribute (browsers default to
+	// 20): Cols × the font's "0" advance (CSS `ch`) plus the 15px of
+	// padding, border and scrollbar allowance a browser adds.
+	Cols        int
 	Text        string
 	Placeholder string
 	// placeholderKey, when set, supersedes Placeholder and is resolved
@@ -158,6 +163,9 @@ func (t *TextArea) Measure(available Size) Size {
 		// Two text lines inside the padding and border, as a browser sizes
 		// a default <textarea rows=2>.
 		height = max(height, 2*t.lineHeight()+t.insets().Vertical())
+		if t.Cols > 0 {
+			width = float32(t.Cols)*RuneAdvance('0', t.font()) + 15
+		}
 	}
 	if t.MaxWidth > 0 && width > t.MaxWidth {
 		width = t.MaxWidth

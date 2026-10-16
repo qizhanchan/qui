@@ -65,6 +65,11 @@ type El struct {
 	earlyEvent qui.Event
 	// spaceArmed: Space went down on this push button; its keyup presses.
 	spaceArmed bool
+	// folded: this inline element is folded into an ancestor's inline run
+	// (appendInlineChild), which owns its content — atomic children such as
+	// a <label>'s checkbox are boxes in that run, so this element must not
+	// adopt them into a run of its own.
+	folded bool
 	node       *Node // mirror used for selector matching / cascade
 
 	// elParent is the adopting parent element (set by the parent's
@@ -1606,6 +1611,7 @@ func (e *El) ensureBacking() {
 	case "textarea":
 		ta := widgets.NewTextArea(e.attrs["placeholder"])
 		ta.BoxModel = true // CSS padding sits inside the border
+		ta.Cols = intAttr(e.attrs["cols"], 20)
 		ta.OnChange = e.onInput
 		if v, ok := e.attrs["value"]; ok {
 			ta.SetText(v)
@@ -1689,6 +1695,7 @@ func (e *El) ensureBacking() {
 				placeholder = typeFormatHint(e.attrs["type"])
 			}
 			in := widgets.NewInput(placeholder)
+			in.Chars = intAttr(e.attrs["size"], 20)
 			// Enter fires the input's own onSubmit, then submits the enclosing
 			// <form> (if any) so form-level handlers see the field values.
 			in.OnSubmit = func(s string) {
@@ -2859,6 +2866,13 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 // <textarea> behave like they do on any block — previously they were inert
 // because the backing's parent is the El's own (non-flex) flow layout.
 func (e *El) hoistControlLayout(cs *ComputedStyle) {
+	// The El is what sits in the parent's flow: an inline-block control
+	// (the UA default) packs onto the line at its own width instead of
+	// filling the band like a block.
+	e.Box.Display = qui.FlowBlock
+	if strings.HasPrefix(cs.Display, "inline") {
+		e.Box.Display = qui.FlowInline
+	}
 	est := e.Style()
 	bst := e.backing.Style()
 	extraH, _ := cs.boxSizingExtra()
@@ -2981,8 +2995,8 @@ func (e *El) ensureLabel() {
 // common all-block container: the tag pre-filter rejects it without
 // computing any child style.
 func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
-	if len(e.elementKids) == 0 || cs.Display == "flex" || cs.Display == "grid" {
-		return nil
+	if e.folded || len(e.elementKids) == 0 || cs.Display == "flex" || cs.Display == "grid" {
+		return nil // a folded element's content rides in its ancestor's run
 	}
 	hasFoldCandidate := e.text != ""
 	for _, k := range e.elementKids {
@@ -3004,6 +3018,11 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 	)
 	kinds := make([]int, len(e.elementKids))
 	styles := make([]*ComputedStyle, len(e.elementKids))
+	for _, k := range e.elementKids {
+		if ke, ok := k.(*El); ok {
+			ke.unfold() // appendInlineChild re-marks what still folds
+		}
+	}
 	anyFold := e.text != ""
 	for i, k := range e.elementKids {
 		ke, ok := k.(*El)
@@ -3028,6 +3047,21 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 			}
 		default:
 			kinds[i] = kindBlock
+		}
+	}
+	// Whitespace between two inline-level siblings is a word space on their
+	// line (`<button>A</button> <button>B</button>`), so even a run of only
+	// atomic boxes needs an inline run to keep it.
+	for i, k := range e.elementKids {
+		if anyFold {
+			break
+		}
+		ke, ok := k.(*El)
+		if !ok || !ke.isTextSeg() || i == 0 || i == len(e.elementKids)-1 {
+			continue
+		}
+		if kinds[i-1] != kindBlock && kinds[i+1] != kindBlock {
+			anyFold = true
 		}
 	}
 	if !anyFold {
@@ -3241,6 +3275,7 @@ func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *Compu
 		}
 		return
 	}
+	ke.folded = true
 	if ke.tag == "a" {
 		if v := ke.attrs["href"]; v != "" {
 			href, link = v, ke
@@ -3257,6 +3292,28 @@ func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *Compu
 			e.appendInlineChild(ib, kke, e.childStyle(kke, kcs), kcs, href, link)
 		} else {
 			ib.AddBox(k, qui.InlineBaseline)
+		}
+	}
+}
+
+// intAttr parses a positive integer attribute, or returns def.
+func intAttr(v string, def int) int {
+	if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+		return n
+	}
+	return def
+}
+
+// unfold clears the folded mark on e and its folded descendants, so a
+// restyle that stops folding them lets them own their children again.
+func (e *El) unfold() {
+	if !e.folded {
+		return
+	}
+	e.folded = false
+	for _, k := range e.elementKids {
+		if ke, ok := k.(*El); ok {
+			ke.unfold()
 		}
 	}
 }
@@ -3502,6 +3559,9 @@ func (e *El) attachInto(box *widgets.Box, kids []qui.Widget) {
 // text+children (leading label) covers the frame between a mutation and
 // the coalesced restyle that assembles the inline runs.
 func (e *El) syncChildren() {
+	if e.folded {
+		return // the ancestor's inline run holds this element's content
+	}
 	var kids []qui.Widget
 	switch {
 	case e.isControl() && e.backing != nil:
@@ -4643,6 +4703,12 @@ func (e *El) InlineBaseline() float32 {
 	cs := e.lastCS
 	if cs == nil {
 		return 0
+	}
+	// A checkbox / radio / switch sits with its border-box bottom on the
+	// baseline (its bottom margin hangs into the descent), as in Chrome.
+	switch e.backing.(type) {
+	case *widgets.CheckBox, *widgets.RadioButton, *widgets.Switch:
+		return qui.MeasureChild(e, qui.Size{}).H
 	}
 	// CSS: an inline-block with no in-flow line boxes, or whose overflow is
 	// not visible, takes its bottom margin edge as its baseline — 0 here

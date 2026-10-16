@@ -197,6 +197,9 @@ func applyBox(box *widgets.Box, cs *ComputedStyle, forceContainingBlock bool) {
 	applyPointerEvents(box, cs)
 	box.BackgroundShader = nil
 
+	// Reset both ways: a reused El whose display changed must not keep the
+	// old flow level.
+	box.Display = qui.FlowBlock
 	if strings.HasPrefix(cs.Display, "inline") {
 		box.Display = qui.FlowInline
 	}

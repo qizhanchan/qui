@@ -115,7 +115,7 @@ var inlineTags = map[string]bool{
 	"a": true, "span": true, "strong": true, "b": true, "em": true,
 	"i": true, "small": true, "code": true, "label": true, "u": true,
 	"abbr": true, "mark": true, "sub": true, "sup": true, "img": true,
-	"input": true, "button": true, "select": true, "br": true,
+	"input": true, "button": true, "select": true, "textarea": true, "br": true,
 	"s": true, "del": true, "strike": true, "ins": true,
 	"canvas": true,
 }
@@ -144,12 +144,28 @@ func defaultDisplay(tag string) string {
 		return "none"
 	}
 	if inlineTags[tag] {
-		if tag == "img" || tag == "input" || tag == "button" || tag == "select" || tag == "canvas" {
+		if tag == "img" || tag == "input" || tag == "button" || tag == "select" || tag == "textarea" || tag == "canvas" {
 			return "inline-block"
 		}
 		return "inline"
 	}
 	return "block"
+}
+
+// uaTagFor is the UA-sheet key for a node: its tag, except that push-button
+// input types borrow <button>'s chrome and checkbox / radio inputs get
+// their own rule.
+func uaTagFor(n *Node) string {
+	if n.Tag != "input" {
+		return n.Tag
+	}
+	switch n.AttrOr("type", "") {
+	case "submit", "reset", "button", "file", "color":
+		return "button"
+	case "checkbox", "radio":
+		return "input-checkable"
+	}
+	return n.Tag
 }
 
 // uaDeclarations returns the default declarations for a tag.
@@ -175,7 +191,8 @@ func uaDeclarations(tag string) []Declaration {
 	case "strong", "b":
 		return decls("font-weight", "bold")
 	case "table":
-		return decls("border-spacing", "2px")
+		// A table's width is its border box, as in Chrome's UA sheet.
+		return decls("border-spacing", "2px", "box-sizing", "border-box")
 	case "td":
 		return decls("padding", "1px")
 	case "th":
@@ -200,7 +217,7 @@ func uaDeclarations(tag string) []Declaration {
 	case "code":
 		return decls("font-family", "monospace")
 	case "pre":
-		return decls("font-family", "monospace", "margin", "1em 0")
+		return decls("font-family", "monospace", "margin", "1em 0", "white-space", "pre")
 	case "ul", "ol":
 		return decls("margin", "1em 0", "padding-left", "40px")
 	case "dl":
@@ -210,23 +227,39 @@ func uaDeclarations(tag string) []Declaration {
 	case "figure":
 		return decls("margin", "1em 40px")
 	case "fieldset":
-		return decls("border", "1px solid #c0c0c8", "border-radius", "4px",
-			"padding", "8px 12px", "margin", "8px 0")
+		// Chrome: margin 0 2px, padding .35em .75em .625em, a 2px groove
+		// border (painted solid here — qui has no groove style).
+		return decls("border", "2px solid #c0c0c0",
+			"padding", "0.35em 0.75em 0.625em", "margin", "0 2px")
 	case "legend":
-		return decls("font-weight", "bold", "padding", "0 4px")
+		return decls("padding", "0 2px")
 	case "blockquote":
 		return decls("margin", "1em 40px")
 	case "hr":
 		return decls("margin", "0.5em 0")
 	case "button":
-		// Minimal, borderless default: a bare <button> is a flat, padded,
-		// rounded hit target with NO box (border/fill) of its own — the box
-		// chrome a browser draws reads as an unwanted extra layer in this
-		// engine's minimalist UIs and reserves layout space even when made
-		// transparent. Authors add their own background via CSS; hover
-		// feedback is synthesized in el.go (defaultButtonStates), and the
-		// border-radius keeps that hover/author fill rounded.
-		return decls("padding", "6px 14px", "border-radius", "6px")
+		// Chrome's push button: its UA values (padding 1px 6px, the #efefef
+		// face, centered text, border-box, the 13.33px control font), with
+		// the border drawn the way its native theme paints it — a 1px
+		// #767676 hairline with slightly rounded corners — rather than the
+		// 2px outset border it reports. Hover / press darken the face
+		// (defaultButtonStates).
+		// The 1px hairline sits in Chrome's 2px border box, so the padding
+		// takes the other pixel per side: same outer size as Chrome's.
+		return decls("padding", "2px 7px", "background-color", "#efefef",
+			"border", "1px solid #767676", "border-radius", "3px",
+			"text-align", "center", "box-sizing", "border-box",
+			"font-size", "13.3333px", "line-height", "normal")
+	case "input", "textarea":
+		// Form controls use the small control font (Chrome's
+		// `font: -webkit-small-control`, which also resets line-height).
+		return decls("font-size", "13.3333px", "line-height", "normal")
+	case "select":
+		return decls("font-size", "13.3333px", "line-height", "normal", "box-sizing", "border-box")
+	case "input-checkable":
+		// <input type=checkbox|radio> (see uaTagFor).
+		return decls("font-size", "13.3333px", "line-height", "normal",
+			"margin", "3px 3px 3px 4px", "box-sizing", "border-box")
 	case "body":
 		return decls("margin", "8px")
 	default:

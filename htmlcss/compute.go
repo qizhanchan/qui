@@ -480,13 +480,7 @@ func mergedDecls(n *Node, sheet *Stylesheet, st selectorState) map[string]string
 
 	// Tier 0: user-agent defaults for this tag. Push-button input types
 	// (submit/reset/button) borrow the <button> default chrome.
-	uaTag := n.Tag
-	if n.Tag == "input" {
-		switch n.AttrOr("type", "") {
-		case "submit", "reset", "button", "file", "color":
-			uaTag = "button"
-		}
-	}
+	uaTag := uaTagFor(n)
 	// The global `hidden` attribute is a UA rule (`[hidden] { display: none }`),
 	// not an intrinsic property — so author CSS can override it, exactly as in
 	// a browser. Emitting it at tier 0 gets that for free.
@@ -612,7 +606,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		// too, unless one says `auto`.
 		cs.PointerNone = parent.PointerNone
 	} else {
-		cs.Color = qui.Color{R: 0.1, G: 0.1, B: 0.1, A: 1}
+		cs.Color = qui.Color{A: 1} // CSS initial (canvastext): black
 		cs.FontSize = 16
 		cs.FontWeight = qui.FontWeightNormal
 		cs.LineHeight = 0 // CSS initial `normal`: the face's own line height, as in a browser

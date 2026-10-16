@@ -130,14 +130,10 @@ func TestInputButtonTypesRenderAsButtons(t *testing.T) {
 		if el.text != c.wantLabel {
 			t.Errorf("%s: label = %q, want %q", c.html, el.text, c.wantLabel)
 		}
-		// Button-type inputs borrow the <button> UA default. That default is
-		// minimal (borderless, no fill) — the borrowed chrome shows up as the
-		// rounded corner + padding, not a background box.
-		if el.lastCS == nil || el.lastCS.Radius <= 0 {
-			t.Errorf("%s: expected borrowed button chrome (border-radius)", c.html)
-		}
-		if el.lastCS != nil && el.lastCS.HasBackground {
-			t.Errorf("%s: minimal button default should have no background box", c.html)
+		// Button-type inputs borrow the <button> UA default: Chrome's push
+		// button — the #efefef face with a hairline border.
+		if el.lastCS == nil || !el.lastCS.HasBackground || !el.lastCS.HasBorder {
+			t.Errorf("%s: expected borrowed button chrome (face + border)", c.html)
 		}
 		res.Root.Layout(qui.Rect{X: 0, Y: 0, W: 300, H: 100})
 		if el.textLabel == nil || el.textLabel.Selectable {

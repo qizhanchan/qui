@@ -47,6 +47,19 @@ var domStyleAllowlist = []domStyleAllow{
 	// qui models a list item as a block plus a hung marker (listmarker.go)
 	// rather than a distinct display type.
 	{"*", "li", "display", "list-item computes as block: qui lays a list item out as a block plus its marker"},
+
+	// Native appearance: Chrome reports CSS values its native theme then
+	// paints over; qui's backing widgets paint that chrome themselves.
+	{"controls", "text", "*", "a text field's border / padding / face are the backing Input's own chrome, not CSS"},
+	{"controls", "area", "*", "a textarea's border / padding / face are the backing TextArea's own chrome, not CSS"},
+	{"controls", "select", "*", "a select's border / face are the backing Select's own chrome, not CSS"},
+	{"controls", "hr", "*", "<hr> is drawn as a rule widget, not a CSS inset border"},
+	{"controls", "button", "border-*", "the push-button border is styled as Chrome paints it (1px #767676, rounded), not the 2px outset it reports"},
+	{"controls", "submit", "border-*", "the push-button border is styled as Chrome paints it (1px #767676, rounded), not the 2px outset it reports"},
+	{"controls", "button", "padding-*", "1px of the 2px border Chrome reports is padding here, beside the 1px painted hairline (same outer size)"},
+	{"controls", "submit", "padding-*", "1px of the 2px border Chrome reports is padding here, beside the 1px painted hairline (same outer size)"},
+	{"controls", "submit", "white-space", "an input button's value renders as a label: white-space isn't modeled"},
+	{"controls", "fieldset", "border-top-color", "the fieldset's 2px groove border is painted solid (no groove style) in its dark tone"},
 }
 
 type domStyleGolden struct {

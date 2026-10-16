@@ -315,9 +315,8 @@ func TestInputDenseMatchesButtonHeight(t *testing.T) {
 	tf := NewInput("")
 	tf.Label = "Name"
 	tf.Dense = true
-	// Dense Input aligns to the M3 button pill height (40 dp).
-	// Use a Button configured with the same Height to represent that
-	// reference — mirrors the M3 40 dp button pill.
+	// Dense Input aligns to a 40 px button height. Use a Button configured
+	// with the same Height to represent that reference.
 	btn := NewButton("Ok", nil)
 	btn.States.Base.Height = 40
 
@@ -343,7 +342,7 @@ func TestInputDenseSuppressesFloatingLabel(t *testing.T) {
 }
 
 func TestInputDenseInputHasRoomForBodyLargeFont(t *testing.T) {
-	// Regression: M3's 16+16 vertical padding leaves only 8 px of input
+	// Regression: 16+16 vertical padding leaves only 8 px of input
 	// height in a 40-dp dense field; TextBodyLarge is ~22 px tall and
 	// ClipCanvas crops the descenders. inputBounds must reserve enough
 	// vertical space for the body-large face in Dense mode.

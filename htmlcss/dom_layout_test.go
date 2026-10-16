@@ -60,6 +60,11 @@ var domLayoutAllowlist = []domLayoutAllow{
 	// because it has an id) is a line-height-tall box in qui; Chrome reports
 	// its content area (the font's ascent + descent), which is shorter.
 	{"inline-text", "[cr]-span", "h", "an inline element's box is line-height tall, Chrome's is the font's content area"},
+	{"controls", "l1", "h", "an inline element's box is line-height tall, Chrome's is the font's content area"},
+	// Native control metrics: qui's backing widgets size their own chrome.
+	{"controls", "sel", "w", "the native <select> trigger's padding and arrow are ~5px wider than Chrome's"},
+	{"controls", "d5", "h", "the native <select> box is 22px tall, Chrome's 19px — its line grows by 2px"},
+	{"controls", "d6", "h", "a <textarea>'s baseline sits on its last line in Chrome, at its bottom edge here"},
 
 	// Undocumented differences — each a fix candidate.
 }

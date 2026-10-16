@@ -18,7 +18,10 @@ func TestInheritedFontReachesFormControls(t *testing.T) {
 			<input type="checkbox" value="ok">
 			<button>Go</button>
 		</div></body>`,
-		`.form { display: flex; font-size: 30px; }`,
+		// As in a browser, controls don't inherit the page font by default
+		// (their UA font is the 13.33px control font); `font-size: inherit`
+		// on them opts in.
+		`.form { display: flex; font-size: 30px; } input, button { font-size: inherit; }`,
 		Options{},
 	)
 

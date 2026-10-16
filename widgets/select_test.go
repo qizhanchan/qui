@@ -299,10 +299,10 @@ func TestSelectDrawsTextInsidePadding(t *testing.T) {
 	}
 }
 
-// The dropdown is a Workspace (GM3) menu: option labels start at the
-// menu's 38 px label inset (the ✓ column for the current option sits to
-// their left), not under the trigger's text.
-func TestSelectDropdownUsesWorkspaceMenuInset(t *testing.T) {
+// The dropdown is the stock live menu: option labels start at the menu's
+// 38 px label inset (the ✓ column for the current option sits to their
+// left), not under the trigger's text.
+func TestSelectDropdownUsesMenuLabelInset(t *testing.T) {
 	w := NewTestWindow(Size{W: 500, H: 500})
 	cb := NewSelect(w, []string{"0.5x", "1x"}, nil)
 	cb.SelectedIdx = 1

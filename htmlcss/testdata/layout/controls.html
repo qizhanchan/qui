@@ -1,0 +1,16 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+/* Zero the body box so page coordinates start at the origin. */
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+/* Controls keep the UA control font, here pinned to GoRegular. */
+input, button, select, textarea { font-family: GoRegular; }
+.case { height: 80px; border-top: 1px solid #ccc; }
+</style></head><body>
+<section class="case"><p id="p1" style="margin:0"><label id="l1"><input id="cb1" type="checkbox" checked> check</label></p></section>
+<section class="case"><div id="d2">text <input id="cb2" type="checkbox"> after</div></section>
+<section class="case"><div id="d3"><button id="btn" data-tol="2">Button</button> <input id="sub" type="submit" value="Send" data-tol="2"></div></section>
+<section class="case"><div id="d4"><input id="txt" value="text" data-tol="3"></div></section>
+<section class="case"><div id="d5"><select id="sel" data-tol="3"><option>One</option></select></div></section>
+<section class="case"><div id="d6"><textarea id="ta" data-tol="3">area</textarea></div></section>
+</body></html>

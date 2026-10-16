@@ -40,6 +40,11 @@ type Input struct {
 	BaseWidget
 	labelKey messageKey
 	Text     string
+	// Chars, when > 0, sizes a native (raw-HTML) field to that many
+	// average characters — HTML's `size` attribute (browsers default to
+	// 20): Chars × the font's "0" advance (CSS `ch`) plus the UA field's
+	// 2px border and 2px padding a side. Zero keeps the fixed native width.
+	Chars int
 	// Password masks the displayed text with dots while keeping the real
 	// characters in Text for GetText/editing. The mask is drawn as geometry
 	// at a fixed pitch (see maskPitchEm) rather than as glyphs, so caret,
@@ -674,10 +679,13 @@ func (t *Input) Measure(available Size) Size {
 		// grow the height with a larger font so inherited font-size isn't
 		// clipped (border 1 + padding 1 on each side = 4 px of chrome).
 		width = htmlInputWidth
+		if t.Chars > 0 {
+			width = float32(t.Chars)*RuneAdvance('0', t.States.Base.Font) + 8
+		}
 		height = htmlControlHeight
 		if pad, ok := nativeBoxPadding(&t.States.Base); ok {
-			// Authored padding: border + padding + a text line (a GM3
-			// outlined field's `padding: 7px 15px` makes it ~40 px).
+			// Authored padding: border + padding + a text line (an outlined
+			// field's `padding: 7px 15px` makes it ~40 px).
 			height = nativePaddedHeight(&t.States.Base, pad)
 			break
 		}
