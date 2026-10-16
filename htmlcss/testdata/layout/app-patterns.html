@@ -1,0 +1,26 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+/* Zero the body box so page coordinates start at the origin. */
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+/* Patterns lifted from the examples, with their CSS (font metrics aside):
+   chrome-tabs' pane, reactive-html's feature card, and html-css's
+   heading + paragraph flow. Text is UA-margined wherever the example
+   leaves margins unset. */
+.case { height: 220px; border-top: 1px solid #ccc; }
+.pane { display: flex; flex-direction: column; gap: 12px; padding: 28px 32px; }
+.pane h2 { font-size: 22px; font-weight: bold; }
+.pane p { max-width: 620px; line-height: 1.5; }
+.card { display: flex; flex-direction: column; gap: 6px; padding: 16px; width: 180px;
+  border-radius: 14px; border: 1px solid #e1e5ef; }
+.card-icon { width: 28px; height: 28px; }
+.card-title { font-size: 15px; font-weight: bold; }
+.card-desc { font-size: 12px; }
+.section { padding: 0 16px; }
+.section h4 { font-size: 13px; }
+.section p { font-size: 14px; line-height: 1.6; }
+</style></head><body>
+<section class="case"><div class="pane" id="pane"><h2 id="pane-h2">Counter</h2><p id="pane-p" data-tol="2">This pane keeps its value while other tabs are on screen — panes stay mounted.</p></div></section>
+<section class="case"><div class="card" id="card"><div class="card-icon" id="card-icon"></div><h3 class="card-title" id="card-title">CSS Engine</h3><p class="card-desc" id="card-desc" data-tol="2">Styled entirely by cascading CSS classes and variables.</p></div></section>
+<section class="case"><div class="section" id="sec"><h4 id="sec-h4a">Inline runs</h4><p id="sec-p" data-tol="2">Mixed bold, italic and links flow together inside one wrapping text box.</p><h4 id="sec-h4b">text-decoration</h4></div></section>
+</body></html>
