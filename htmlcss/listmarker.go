@@ -118,3 +118,36 @@ func (m *listMarkerWidget) Draw(canvas qui.Canvas) {
 		canvas.FillRoundedRect(rect, size/2, m.color)
 	}
 }
+
+// outsideMarkerLayout is list-style-position: outside — the marker hangs in
+// the list item's start margin instead of taking inline space: the host is
+// zero wide and its one child (the marker) is laid out just before it,
+// ending outsideMarkerGap short of the content, so the item's content starts
+// at its own content edge as in a browser.
+type outsideMarkerLayout struct{}
+
+const (
+	outsideMarkerGap = 6
+	// outsideMarkerMeasureW is the (unconstraining) width a marker measures
+	// against: the host itself is zero wide.
+	outsideMarkerMeasureW = 1 << 12
+)
+
+func (outsideMarkerLayout) Measure(children []qui.Widget, avail qui.Size) qui.Size {
+	var h float32
+	for _, c := range children {
+		h = max(h, qui.MeasureChild(c, qui.Size{W: outsideMarkerMeasureW, H: avail.H}).H)
+	}
+	return qui.Size{H: h}
+}
+
+func (outsideMarkerLayout) Apply(children []qui.Widget, bounds qui.Rect) {
+	for _, c := range children {
+		sz := qui.MeasureChild(c, qui.Size{W: outsideMarkerMeasureW, H: bounds.H})
+		c.Layout(qui.Rect{X: bounds.X - outsideMarkerGap - sz.W, Y: bounds.Y, W: sz.W, H: sz.H})
+	}
+}
+
+// MinContentWidth implements qui.MinContentLayout: an outside marker takes
+// no inline space.
+func (outsideMarkerLayout) MinContentWidth([]qui.Widget) float32 { return 0 }

@@ -179,6 +179,10 @@ type ComputedStyle struct {
 	Position                             string // "", static, relative, absolute, fixed
 	Top, Right, Bottom, Left             float32
 	HasTop, HasRight, HasBottom, HasLeft bool
+	// InsetPct holds percentage insets (top, right, bottom, left) as
+	// fractions of the containing block, resolved at layout time; the
+	// matching Has* is set and the px field stays 0.
+	InsetPct [4]float32
 	ZIndex                               int  // paint order among siblings (0 = default)
 	OverflowClip                         bool // overflow: hidden / clip
 	OverflowClipX, OverflowClipY         bool // per-axis hidden / clip
@@ -732,7 +736,11 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		cs.LineHeight = cs.LineHeightPx / fs
 	}
 	if v, ok := m["line-height"]; ok {
-		if lh, ok := parseFloat(strings.TrimSpace(v)); ok && !strings.ContainsAny(v, "px%rem") {
+		if strings.EqualFold(strings.TrimSpace(v), "normal") {
+			cs.LineHeight = 0 // the face's own line height (text layouts read <=0 as normal)
+			cs.LineHeightPx = 0
+			cs.LineHeightOwn = true
+		} else if lh, ok := parseFloat(strings.TrimSpace(v)); ok && !strings.ContainsAny(v, "px%rem") {
 			cs.LineHeight = lh // unitless multiplier
 			cs.LineHeightPx = 0
 			cs.LineHeightOwn = true
@@ -902,22 +910,30 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		}
 	}
 	if v, ok := m["top"]; ok {
-		if px, ok := parseLength(v, fs, 0); ok {
+		if pct, ok := parsePercentFraction(v); ok {
+			cs.InsetPct[0], cs.HasTop = pct, true
+		} else if px, ok := parseLength(v, fs, 0); ok {
 			cs.Top, cs.HasTop = px, true
 		}
 	}
 	if v, ok := m["right"]; ok {
-		if px, ok := parseLength(v, fs, 0); ok {
+		if pct, ok := parsePercentFraction(v); ok {
+			cs.InsetPct[1], cs.HasRight = pct, true
+		} else if px, ok := parseLength(v, fs, 0); ok {
 			cs.Right, cs.HasRight = px, true
 		}
 	}
 	if v, ok := m["bottom"]; ok {
-		if px, ok := parseLength(v, fs, 0); ok {
+		if pct, ok := parsePercentFraction(v); ok {
+			cs.InsetPct[2], cs.HasBottom = pct, true
+		} else if px, ok := parseLength(v, fs, 0); ok {
 			cs.Bottom, cs.HasBottom = px, true
 		}
 	}
 	if v, ok := m["left"]; ok {
-		if px, ok := parseLength(v, fs, 0); ok {
+		if pct, ok := parsePercentFraction(v); ok {
+			cs.InsetPct[3], cs.HasLeft = pct, true
+		} else if px, ok := parseLength(v, fs, 0); ok {
 			cs.Left, cs.HasLeft = px, true
 		}
 	}

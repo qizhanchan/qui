@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+/* Zero the body box so page coordinates start at the origin. */
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+/* One case per fixed-height section, so a difference in one case does not
+   shift every box after it. The border keeps child margins inside. */
+.case { height: 120px; border-top: 1px solid #ccc; }
+ul, ol { font-size: 16px; }
+#ul1 li, #ol1 li { height: 20px; }
+#nested-ul ul { margin: 0; }
+#nopad { padding-left: 0; list-style: none; }
+#dl dt { height: 20px; } #dl dd { height: 20px; }
+</style></head><body>
+<section class="case"><ul id="ul1"><li id="u1">one</li><li id="u2">two</li></ul></section>
+<section class="case"><ol id="ol1"><li id="o1">first</li><li id="o2">second</li></ol></section>
+<section class="case" style="height:160px"><ul id="nested-ul"><li id="n1">outer<ul id="inner-ul"><li id="n2">inner</li></ul></li><li id="n3">next</li></ul></section>
+<section class="case"><ul id="nopad"><li id="np1">bare</li></ul></section>
+<section class="case"><dl id="dl"><dt id="dt1">term</dt><dd id="dd1">definition</dd></dl></section>
+</body></html>

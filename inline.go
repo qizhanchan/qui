@@ -292,8 +292,19 @@ func tabAdvance(x, segW, glyphW float32, opts *InlineLayoutOptions) (float32, Ta
 // caret still needs a line to sit on).
 func inlineLineVMetrics(toks []inlineTok, idxs []int, scale, spacing, mid, baseAsc, baseDesc, baseLA, baseLB float32, strut, leadBelow bool) (ascent, descent, inkA, inkD float32) {
 	text := false
+	var topBox, bottomBox float32 // tallest vertical-align: top / bottom box
 	for _, ti := range idxs {
 		t := toks[ti]
+		if t.box && (t.valign == InlineTop || t.valign == InlineBottom) {
+			// Aligned to the line box's edge, not the baseline: they only
+			// stretch the line once the rest of it is known (below).
+			if t.valign == InlineTop {
+				topBox = max(topBox, t.size.H)
+			} else {
+				bottomBox = max(bottomBox, t.size.H)
+			}
+			continue
+		}
 		ab, bb := t.aboveBelow(scale, spacing, mid, leadBelow)
 		if ab > ascent {
 			ascent = ab
@@ -317,6 +328,14 @@ func inlineLineVMetrics(toks []inlineTok, idxs []int, scale, spacing, mid, baseA
 	} else if strut && !text {
 		ascent = max(ascent, baseAsc+baseLA)
 		descent = max(descent, baseDesc+baseLB)
+	}
+	// A top / bottom box taller than the line grows it away from the edge it
+	// is pinned to (CSS: a bottom-aligned box pushes the line's top up).
+	if h := ascent + descent; bottomBox > h {
+		ascent += bottomBox - h
+	}
+	if h := ascent + descent; topBox > h {
+		descent += topBox - h
 	}
 	if inkA == 0 && inkD == 0 {
 		inkA, inkD = baseAsc, baseDesc
@@ -999,7 +1018,7 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 				}
 			}
 
-			segFrags, segWidth := placeInlineLine(toks, segIdxs, baseline, mid, justify, ind,
+			segFrags, segWidth := placeInlineLine(toks, segIdxs, baseline, lineAsc[li], lineDesc[li], mid, justify, ind,
 				opts.PreserveWhitespace, &opts)
 			// The slot's left edge and the first-line indent are both a shift
 			// of the whole slot. Tab stops stay measured from the layout's
@@ -1126,7 +1145,9 @@ func (t inlineTok) aboveBelow(scale, spacing, mid float32, leadBelow bool) (abov
 // ind is the text-indent the caller will shift the finished line by; tab
 // stops are measured from the layout's left edge, so the placement pass has
 // to know about it before the shift happens.
-func placeInlineLine(toks []inlineTok, idxs []int, baseline, mid, justify, ind float32, preserve bool, opts *InlineLayoutOptions) ([]InlineFrag, float32) {
+// asc / desc are the line box's extent above / below baseline, which
+// vertical-align: top / bottom boxes are pinned to.
+func placeInlineLine(toks []inlineTok, idxs []int, baseline, asc, desc, mid, justify, ind float32, preserve bool, opts *InlineLayoutOptions) ([]InlineFrag, float32) {
 	logicalIdxs := idxs
 	idxs = visualInlineTokenOrder(toks, idxs, opts)
 	reordered := !sameTokenOrder(logicalIdxs, idxs)
@@ -1190,6 +1211,10 @@ func placeInlineLine(toks []inlineTok, idxs []int, baseline, mid, justify, ind f
 			case InlineMiddle:
 				// Center the box on the reference ink midline (baseline - mid).
 				by = baseline - mid - t.size.H/2
+			case InlineTop:
+				by = baseline - asc
+			case InlineBottom:
+				by = baseline + desc - t.size.H
 			default:
 				if t.valign == InlineBaseline && t.baseline > 0 {
 					by = baseline - t.baseline // align the box's own baseline

@@ -29,6 +29,10 @@ type FlowLayout struct {
 	LineGap float32
 	// InlineGap is horizontal space between inline boxes on one line.
 	InlineGap float32
+	// Align places each line of inline boxes within the content width
+	// (CSS text-align on the container): start, center or end. Block
+	// children are unaffected.
+	Align TextAlign
 }
 
 // FlowLevel selects how a child participates in a FlowLayout.
@@ -278,6 +282,31 @@ func (f FlowLayout) run(children []Widget, bounds Rect, apply bool) (contentH, m
 	x, y := bounds.X, bounds.Y
 	var lineW, lineH float32
 	lineOpen := false
+	// The open line's boxes, laid out when the line closes so text-align
+	// can shift the whole line.
+	type placed struct {
+		w Widget
+		r Rect
+	}
+	var line []placed
+	layLine := func() {
+		if apply && len(line) > 0 {
+			var off float32
+			if free := bounds.W - (lineW - f.InlineGap); free > 0 {
+				switch f.Align {
+				case TextAlignCenter:
+					off = free / 2
+				case TextAlignEnd:
+					off = free
+				}
+			}
+			for _, p := range line {
+				p.r.X += off
+				p.w.Layout(p.r)
+			}
+		}
+		line = line[:0]
+	}
 	var pending marginRun // margins waiting below the last block band
 	placedAny := false    // a band or line exists (LineGap goes between them)
 
@@ -289,6 +318,7 @@ func (f FlowLayout) run(children []Widget, bounds Rect, apply bool) (contentH, m
 	}
 	flushLine := func() {
 		if lineOpen {
+			layLine()
 			if lineW > maxW {
 				maxW = lineW
 			}
@@ -310,15 +340,14 @@ func (f FlowLayout) run(children []Widget, bounds Rect, apply bool) (contentH, m
 				gap()
 			} else if lineW+boxW > bounds.W {
 				// Wrap when this box's margin box would overflow the line.
+				layLine()
 				if lineW > maxW {
 					maxW = lineW
 				}
 				y += lineH + f.LineGap
 				x, lineW, lineH = bounds.X, 0, 0
 			}
-			if apply {
-				child.Layout(Rect{X: x + m.Left, Y: y + m.Top, W: sz.W, H: sz.H})
-			}
+			line = append(line, placed{child, Rect{X: x + m.Left, Y: y + m.Top, W: sz.W, H: sz.H}})
 			x += boxW + f.InlineGap
 			lineW += boxW + f.InlineGap
 			if h := m.Top + sz.H + m.Bottom; h > lineH {

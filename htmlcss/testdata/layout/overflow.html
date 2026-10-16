@@ -1,0 +1,23 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+/* Zero the body box so page coordinates start at the origin. */
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+/* One case per fixed-height section, so a difference in one case does not
+   shift every box after it. The border keeps child margins inside. */
+.case { height: 120px; border-top: 1px solid #ccc; }
+#clip { width: 200px; height: 50px; overflow: hidden; background: #eee; }
+#clip > div { width: 300px; height: 80px; background: #aaa; }
+#scroll { width: 200px; height: 60px; overflow: auto; padding: 6px; border: 1px solid #333; }
+#scroll > div { height: 30px; margin-bottom: 4px; background: #ccc; }
+#scrollx { width: 200px; height: 40px; overflow-x: auto; white-space: nowrap; }
+#flexscroll { display: flex; flex-direction: column; height: 100px; width: 240px; }
+#fs-head { height: 20px; background: #ddd; }
+#fs-body { flex: 1; overflow: auto; }
+#fs-body > div { height: 30px; background: #bbb; margin-bottom: 2px; }
+</style></head><body>
+<section class="case"><div id="clip"><div id="clipchild"></div></div></section>
+<section class="case"><div id="scroll"><div id="s1"></div><div id="s2"></div><div id="s3"></div></div></section>
+<section class="case"><div id="scrollx"><span>a long line of text that keeps going and going past the box</span></div></section>
+<section class="case"><div id="flexscroll"><div id="fs-head"></div><div id="fs-body"><div id="fb1"></div><div id="fb2"></div><div id="fb3"></div><div id="fb4"></div></div></div></section>
+</body></html>

@@ -100,6 +100,11 @@ type ScrollView struct {
 	// area — while wheel, keys and ScrollTo keep scrolling (CSS
 	// `scrollbar-width: none`; e.g. an editor's tab strip).
 	HideBar bool
+	// OverlayBar paints the scrollbar over the content instead of in a
+	// slot beside it, so the content keeps the full viewport width — the
+	// overlay scrollbars of macOS (and of Chrome there). htmlcss scroll
+	// containers use it, matching how a browser lays them out.
+	OverlayBar bool
 
 	// OnScroll, when set, is invoked whenever the scroll offset changes
 	// value (wheel, drag, track click, keys, or ScrollTo). Hosts use it
@@ -245,32 +250,30 @@ func (s *ScrollView) Layout(rect Rect) {
 func (s *ScrollView) contentRect() Rect {
 	b := s.Bounds()
 	if s.Orientation == ScrollHorizontal {
-		h := b.H
-		if s.hasBar() {
-			h -= scrollBarThickness
-		}
-		return Rect{X: b.X, Y: b.Y, W: s.ContentSize.W, H: h}
+		return Rect{X: b.X, Y: b.Y, W: s.ContentSize.W, H: b.H - s.barSlot()}
 	}
-	w := b.W
-	if s.hasBar() {
-		w -= scrollBarThickness
-	}
-	return Rect{X: b.X, Y: b.Y, W: w, H: s.ContentSize.H}
+	return Rect{X: b.X, Y: b.Y, W: b.W - s.barSlot(), H: s.ContentSize.H}
 }
 
 // viewportRect is the on-screen area the content is visible through:
 // our bounds minus the scrollbar slot.
 func (s *ScrollView) viewportRect() Rect {
 	b := s.Bounds()
-	if !s.hasBar() {
-		return b
-	}
 	if s.Orientation == ScrollHorizontal {
-		b.H -= scrollBarThickness
+		b.H -= s.barSlot()
 	} else {
-		b.W -= scrollBarThickness
+		b.W -= s.barSlot()
 	}
 	return b
+}
+
+// barSlot is the cross-axis space the scrollbar takes from the content: its
+// thickness for a classic bar, nothing for an overlay one (or none).
+func (s *ScrollView) barSlot() float32 {
+	if !s.hasBar() || s.OverlayBar {
+		return 0
+	}
+	return scrollBarThickness
 }
 
 // contentTranslation is the offset from content coordinates to our own

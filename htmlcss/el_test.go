@@ -258,9 +258,9 @@ func TestElListMarkers(t *testing.T) {
 		if len(kids) != 2 {
 			t.Fatalf("li%d has %d children, want [marker, content]", i+1, len(kids))
 		}
-		mk, ok := kids[0].(*widgets.Label)
+		mk, ok := outsideMarker(t, kids[0]).(*widgets.Label)
 		if !ok {
-			t.Fatalf("li%d marker is %T, want *widgets.Label", i+1, kids[0])
+			t.Fatalf("li%d marker is %T, want *widgets.Label", i+1, outsideMarker(t, kids[0]))
 		}
 		want := []string{"1.", "2."}[i]
 		if mk.Text() != want {

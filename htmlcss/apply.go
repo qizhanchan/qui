@@ -155,7 +155,7 @@ func chooseLayout(cs *ComputedStyle) qui.Layout {
 			AlignContent: cs.AlignContent,
 		}
 	}
-	return qui.FlowLayout{}
+	return qui.FlowLayout{Align: cs.TextAlign}
 }
 
 // --- style application ---
@@ -268,6 +268,9 @@ func applyBox(box *widgets.Box, cs *ComputedStyle, forceContainingBlock bool) {
 		if cs.HasHeight {
 			absolutePosition.Height = cs.Height + extraV
 		}
+		absolutePosition.TopPct, absolutePosition.RightPct = cs.InsetPct[0], cs.InsetPct[1]
+		absolutePosition.BottomPct, absolutePosition.LeftPct = cs.InsetPct[2], cs.InsetPct[3]
+		absolutePosition.WidthPct, absolutePosition.HeightPct = cs.WidthPct, cs.HeightPct
 		absolutePosition.Anchor = anchor
 	}
 	box.SetPositionOffset(positionOffset)

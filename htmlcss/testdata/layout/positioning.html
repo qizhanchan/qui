@@ -1,0 +1,27 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+/* Zero the body box so page coordinates start at the origin. */
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+/* One case per fixed-height section, so a difference in one case does not
+   shift every box after it. The border keeps child margins inside. */
+.case { height: 120px; border-top: 1px solid #ccc; }
+.cb { position: relative; width: 300px; height: 100px; margin: 8px; background: #eee; }
+.cb > div { background: #aaa; }
+#tl { position: absolute; top: 10px; left: 20px; width: 50px; height: 30px; }
+#br { position: absolute; right: 10px; bottom: 5px; width: 40px; height: 20px; }
+#stretch { position: absolute; left: 10px; right: 10px; top: 60px; height: 20px; }
+#pct { position: absolute; left: 50%; top: 25%; width: 20%; height: 10px; }
+#inflow { width: 100px; height: 20px; }
+#absnext { position: absolute; top: 0; right: 0; width: 30px; height: 30px; }
+#after { width: 80px; height: 20px; }
+#rel1 { position: relative; top: 5px; left: 5px; width: 100px; height: 20px; background: #ccc; }
+#rel2 { width: 100px; height: 20px; background: #bbb; }
+#nested { position: relative; padding: 10px; border: 2px solid #333; width: 200px; height: 60px; }
+#deep { position: absolute; top: 0; left: 0; width: 20px; height: 20px; background: #888; }
+</style></head><body>
+<section class="case"><div class="cb" id="cb1"><div id="tl"></div><div id="br"></div><div id="stretch"></div></div></section>
+<section class="case"><div class="cb" id="cb2"><div id="pct"></div><div id="inflow"></div><div id="absnext"></div><div id="after"></div></div></section>
+<section class="case"><div id="rel1"></div><div id="rel2"></div></section>
+<section class="case"><div id="nested"><div><div id="deep"></div></div></div></section>
+</body></html>

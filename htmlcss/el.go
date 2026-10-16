@@ -125,6 +125,7 @@ type El struct {
 	markerLabel *widgets.Label
 	markerShape *listMarkerWidget
 	liContent   *widgets.Box
+	liMarker    *widgets.Box // zero-width host hanging the marker outside (outsideMarkerLayout)
 
 	// img leaf: raster/svg loaded from the src attribute (static path), or
 	// the in-memory bitmap given to SetImage (imgData, which wins over src).
@@ -2827,7 +2828,13 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 			cst.Padding = qui.Insets{}
 			cst.Margin = qui.Insets{}
 			cst.Background = qui.Color{}
-			e.LayoutEngine = qui.FlexLayout{Direction: qui.Horizontal, AlignItems: qui.AlignStart, Gap: 6}
+			if e.liMarker == nil {
+				e.liMarker = widgets.NewBox(outsideMarkerLayout{})
+				mst := e.liMarker.Style()
+				mst.Padding, mst.Margin, mst.Background = qui.Insets{}, qui.Insets{}, qui.Color{}
+				mst.Shrink = 0 // (zero wide anyway)
+			}
+			e.LayoutEngine = qui.FlexLayout{Direction: qui.Horizontal, AlignItems: qui.AlignStart}
 		}
 	}
 
@@ -3475,6 +3482,7 @@ func (e *El) ensureScroll() {
 	}
 	e.scrollInner = widgets.NewBox(qui.FlowLayout{})
 	sv := widgets.NewScrollView()
+	sv.OverlayBar = true // a browser's (macOS) overlay scrollbar: no gutter
 	sv.Style().Background = qui.Color{} // transparent viewport
 	st := sv.Style()
 	st.Grow = 1
@@ -3532,9 +3540,10 @@ func (e *El) syncChildren() {
 	}
 	// List-item marker: content moves into the liContent host so the
 	// bullet/number column hangs to the left of (possibly wrapping) content.
-	if mw := e.markerWidget(); mw != nil && e.liContent != nil {
+	if mw := e.markerWidget(); mw != nil && e.liContent != nil && e.liMarker != nil {
 		e.attachInto(e.liContent, kids)
-		kids = []qui.Widget{mw, e.liContent}
+		e.attachInto(e.liMarker, []qui.Widget{mw})
+		kids = []qui.Widget{e.liMarker, e.liContent}
 	}
 	e.setContainerChildren(kids)
 }
@@ -4633,6 +4642,12 @@ func (e *El) isDoubleClick(me qui.MouseEvent) bool {
 func (e *El) InlineBaseline() float32 {
 	cs := e.lastCS
 	if cs == nil {
+		return 0
+	}
+	// CSS: an inline-block with no in-flow line boxes, or whose overflow is
+	// not visible, takes its bottom margin edge as its baseline — 0 here
+	// (bottom on the line's baseline).
+	if cs.OverflowClip || e.overflowScroll || (e.text == "" && e.flowKids == nil && e.textLabel == nil) {
 		return 0
 	}
 	f := fontFrom(cs)

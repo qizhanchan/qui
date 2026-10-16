@@ -56,6 +56,11 @@ type domLayoutAllow struct {
 var domLayoutAllowlist = []domLayoutAllow{
 	// Documented limits (COVERAGE.md).
 
+	// A non-replaced inline element (a <span> kept as its own widget, e.g.
+	// because it has an id) is a line-height-tall box in qui; Chrome reports
+	// its content area (the font's ascent + descent), which is shorter.
+	{"inline-text", "[cr]-span", "h", "an inline element's box is line-height tall, Chrome's is the font's content area"},
+
 	// Undocumented differences — each a fix candidate.
 }
 

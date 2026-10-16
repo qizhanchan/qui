@@ -16,7 +16,7 @@ func renderList(t *testing.T, listStyle, tag string) (*El, qui.Widget) {
 		style = ` style="list-style-type:` + listStyle + `"`
 	}
 	root := Render(`<`+tag+style+`><li>item text</li></`+tag+`>`,
-		`body{font-size:14px} ul,ol{margin:0;padding:0}`, Options{})
+		`body{font-size:14px} ul,ol{margin:0;padding:0 0 0 40px}`, Options{})
 	root.Layout(qui.Rect{X: 0, Y: 0, W: 200, H: 80})
 
 	var li *El
@@ -30,9 +30,9 @@ func renderList(t *testing.T, listStyle, tag string) (*El, qui.Widget) {
 	}
 	kids := li.ChildList()
 	if len(kids) != 2 {
-		t.Fatalf("li has %d children, want [marker, content]", len(kids))
+		t.Fatalf("li has %d children, want [marker host, content]", len(kids))
 	}
-	return li, kids[0]
+	return li, outsideMarker(t, kids[0])
 }
 
 // Bullets draw as geometry; numbers stay text. The bullet codepoints are
@@ -93,7 +93,7 @@ func TestListBulletMarkersShareOneColumnWidth(t *testing.T) {
 func renderListImage(t *testing.T, style string) (*image.RGBA, qui.Widget) {
 	t.Helper()
 	root := Render(`<ul style="list-style-type:`+style+`"><li>item text</li></ul>`,
-		`body{font-size:14px} ul{margin:0;padding:0}`, Options{})
+		`body{font-size:14px} ul{margin:0;padding:0 0 0 40px}`, Options{})
 	img := image.NewRGBA(image.Rect(0, 0, 200, 80))
 	for i := range img.Pix {
 		img.Pix[i] = 255
@@ -103,6 +103,16 @@ func renderListImage(t *testing.T, style string) (*image.RGBA, qui.Widget) {
 
 	_, marker := renderList(t, style, "ul")
 	return img, marker
+}
+
+// outsideMarker unwraps the zero-width host an outside marker hangs from.
+func outsideMarker(t *testing.T, host qui.Widget) qui.Widget {
+	t.Helper()
+	h, ok := host.(*widgets.Box)
+	if !ok || len(h.ChildList()) != 1 {
+		t.Fatalf("marker host is %T, want a *widgets.Box holding the marker", host)
+	}
+	return h.ChildList()[0]
 }
 
 func inked(img *image.RGBA, x, y int) bool {

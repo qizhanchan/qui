@@ -1,0 +1,27 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+/* Zero the body box so page coordinates start at the origin. */
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+/* One case per fixed-height section, so a difference in one case does not
+   shift every box after it. The border keeps child margins inside. */
+.case { height: 120px; border-top: 1px solid #ccc; }
+#normal { line-height: normal; width: 300px; }
+#center { text-align: center; width: 300px; }
+#right { text-align: right; width: 300px; }
+.ib { display: inline-block; width: 40px; background: #ccc; }
+#va-base .ib { height: 30px; }
+#va-mid .ib { height: 30px; vertical-align: middle; }
+#va-bottom .ib { height: 30px; vertical-align: bottom; }
+#va-base, #va-mid, #va-bottom { width: 400px; }
+#big { font-size: 28px; line-height: normal; }
+#indent { text-indent: 30px; width: 200px; }
+</style></head><body>
+<section class="case"><div id="normal" data-tol="2">line height normal text that wraps to a second line here</div></section>
+<section class="case"><div id="center"><span id="c-span">centered</span></div><div id="right"><span id="r-span">right</span></div></section>
+<section class="case"><div id="va-base" data-tol="2">text <div class="ib" id="vb-ib"></div> after</div></section>
+<section class="case"><div id="va-mid" data-tol="2">text <div class="ib" id="vm-ib"></div> after</div></section>
+<section class="case"><div id="va-bottom" data-tol="2">text <div class="ib" id="vbo-ib"></div> after</div></section>
+<section class="case"><div id="big" data-tol="2">Big normal</div></section>
+<section class="case"><div id="indent" data-tol="2">indented first line wraps onto another line</div></section>
+</body></html>

@@ -451,7 +451,8 @@ func (c *Container) Layout(rect Rect) {
 	// root), position the out-of-flow descendants anchored to it now that its
 	// box is known. The descendants were skipped by the flow above.
 	if establishesAbsCB(c.selfOrContainer()) {
-		c.layoutAbsoluteDescendants(rect)
+		// The containing block is the padding box: inside the border.
+		c.layoutAbsoluteDescendants(rect.Inset(c.style.BorderInsets()))
 	}
 }
 
@@ -466,13 +467,13 @@ func (c *Container) selfOrContainer() Widget {
 
 // layoutAbsoluteDescendants positions every out-of-flow descendant whose
 // containing block is this container — its nearest positioned ancestor.
-// The containing block is this container's own box (border box; CSS uses the
-// padding box, a border-width inset — negligible for typical borders). Each
+// The containing block is this container's padding box (cb, inside its
+// border), against which percentage insets and sizes resolve too. Each
 // descendant's AbsolutePosition anchors + explicit size drive placement,
 // reusing the same axis solver AbsoluteLayout uses.
 func (c *Container) layoutAbsoluteDescendants(cb Rect) {
 	for _, ch := range c.collectAbsoluteDescendants(c.selfOrContainer()) {
-		pos := AbsolutePositionOf(ch)
+		pos := AbsolutePositionOf(ch).resolvedIn(cb, ch)
 		x, w := resolveAnchorAxis(pos.Anchor, AnchorLeft, AnchorRight,
 			pos.Left, pos.Right, pos.Width, cb.X, cb.W, ch, true)
 		y, h := resolveAnchorAxis(pos.Anchor, AnchorTop, AnchorBottom,

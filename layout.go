@@ -1552,6 +1552,37 @@ type AbsolutePosition struct {
 	// both ends. Ignored otherwise (axis derives from parent edges).
 	Width, Height float32
 	Anchor        AnchorSide
+	// *Pct are fractions of the containing block (CSS `left: 50%`,
+	// `width: 20%`), used in place of the px field on their side / axis
+	// when non-zero. A percentage size also gets the child's
+	// Style.PctExtra (content-box padding + border).
+	LeftPct, TopPct, RightPct, BottomPct float32
+	WidthPct, HeightPct                  float32
+}
+
+// resolvedIn returns pos with its percentages resolved against the
+// containing block cb, for child w.
+func (pos AbsolutePosition) resolvedIn(cb Rect, w Widget) AbsolutePosition {
+	pct := func(px *float32, frac, base float32) {
+		if frac != 0 {
+			*px = frac * base
+		}
+	}
+	pct(&pos.Left, pos.LeftPct, cb.W)
+	pct(&pos.Right, pos.RightPct, cb.W)
+	pct(&pos.Top, pos.TopPct, cb.H)
+	pct(&pos.Bottom, pos.BottomPct, cb.H)
+	var extra Size
+	if s := w.Style(); s != nil {
+		extra = s.PctExtra
+	}
+	if pos.WidthPct != 0 {
+		pos.Width = pos.WidthPct*cb.W + extra.W
+	}
+	if pos.HeightPct != 0 {
+		pos.Height = pos.HeightPct*cb.H + extra.H
+	}
+	return pos
 }
 
 // AbsoluteLayout positions children by their AbsolutePosition anchors.
@@ -1562,7 +1593,7 @@ type AbsoluteLayout struct{}
 
 func (AbsoluteLayout) Apply(children []Widget, bounds Rect) {
 	for _, ch := range children {
-		pos := AbsolutePositionOf(ch)
+		pos := AbsolutePositionOf(ch).resolvedIn(bounds, ch)
 		x, w := resolveAnchorAxis(pos.Anchor, AnchorLeft, AnchorRight,
 			pos.Left, pos.Right, pos.Width, bounds.X, bounds.W, ch, true)
 		y, h := resolveAnchorAxis(pos.Anchor, AnchorTop, AnchorBottom,
