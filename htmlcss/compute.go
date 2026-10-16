@@ -1,6 +1,7 @@
 package htmlcss
 
 import (
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -233,6 +234,11 @@ type ComputedStyle struct {
 	// (:focus-visible rules on top of :focus ones); nil when the sheet has
 	// no :focus-visible rule.
 	FocusVisible *ComputedStyle
+	// FocusOptIn reports that a rule other than :focus-within changes the
+	// element's focused style. :focus-within styles a container whose
+	// descendant holds focus; it must not make the container itself a
+	// focus target (a Tab stop in front of the field it frames).
+	FocusOptIn bool
 	// AncestorHover / AncestorFocus / AncestorActive are the UNION variants
 	// while an ANCESTOR (or preceding sibling) is hovered / focus-within /
 	// pressed — the `.row:hover .del` case, with ALL such rules for this node
@@ -342,7 +348,16 @@ func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedSty
 		base.Hover = interpret(n, mergedDecls(n, sheet, selectorState{hover: true}), parent)
 	}
 	if sheet.HasFocus || fwFocus {
-		base.Focus = interpret(n, mergedDecls(n, sheet, selectorState{focus: true}), parent)
+		focusDecls := mergedDecls(n, sheet, selectorState{focus: true})
+		base.Focus = interpret(n, focusDecls, parent)
+		base.FocusOptIn = true
+		if sheet.HasFocusWithin {
+			// Only when a :focus-within rule exists can it be the sole
+			// reason for the focus variant.
+			base.FocusOptIn = !maps.Equal(
+				mergedDecls(n, sheet, selectorState{focus: true, noFocusWithin: true}),
+				mergedDecls(n, sheet, selectorState{}))
+		}
 	}
 	if sheet.HasFocusVisible || fwFocusVisible {
 		base.FocusVisible = interpret(n, mergedDecls(n, sheet, selectorState{focus: true, focusVisible: true}), parent)

@@ -1,0 +1,103 @@
+{
+ "fixture": "focus-within",
+ "chrome": "Chrome/155.0.8059.84",
+ "log": [
+  {
+   "step": {
+    "do": "click",
+    "on": "q"
+   },
+   "entries": [
+    "pointerdown q target",
+    "focus q target",
+    "pointerup q target",
+    "click q target",
+    "@focus q",
+    "@value q \"a\"",
+    "@value r \"b\"",
+    "@value e \"x\""
+   ]
+  },
+  {
+   "step": {
+    "do": "key",
+    "key": "Tab"
+   },
+   "entries": [
+    "keydown q target",
+    "blur q target",
+    "focus r target",
+    "keyup r target",
+    "@focus r",
+    "@value q \"a\"",
+    "@value r \"b\"",
+    "@value e \"x\""
+   ]
+  },
+  {
+   "step": {
+    "do": "key",
+    "key": "z"
+   },
+   "entries": [
+    "keydown r target",
+    "keyup r target",
+    "@focus r",
+    "@value q \"a\"",
+    "@value r \"z\"",
+    "@value e \"x\""
+   ]
+  },
+  {
+   "step": {
+    "do": "key",
+    "key": "Tab"
+   },
+   "entries": [
+    "keydown r target",
+    "blur r target",
+    "focus e target",
+    "keyup e target",
+    "keyup dlg bubble",
+    "@focus e",
+    "@value q \"a\"",
+    "@value r \"z\"",
+    "@value e \"x\""
+   ]
+  },
+  {
+   "step": {
+    "do": "click",
+    "on": "e"
+   },
+   "entries": [
+    "pointerdown e target",
+    "pointerdown dlg bubble",
+    "pointerup e target",
+    "pointerup dlg bubble",
+    "click e target",
+    "click dlg bubble",
+    "@focus e",
+    "@value q \"a\"",
+    "@value r \"z\"",
+    "@value e \"x\""
+   ]
+  },
+  {
+   "step": {
+    "do": "key",
+    "key": "Enter"
+   },
+   "entries": [
+    "keydown e target",
+    "keydown dlg bubble",
+    "keyup e target",
+    "keyup dlg bubble",
+    "@focus e",
+    "@value q \"a\"",
+    "@value r \"z\"",
+    "@value e \"x\""
+   ]
+  }
+ ]
+}

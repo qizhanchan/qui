@@ -1,0 +1,17 @@
+<!doctype html>
+<html><head><style>
+body { margin: 8px; font: 14px sans-serif; }
+/* A find-bar field: an <input> framed by a wrapper that only styles
+   :focus-within. The wrapper must not become a Tab stop of its own. */
+.field { display: flex; width: 240px; padding: 2px; margin-bottom: 6px; border: 1px solid #999; }
+.field:focus-within { border-color: #c00; }
+.field input { flex-grow: 1; height: 20px; }
+#dlg { width: 240px; padding: 4px; }
+#e { width: 200px; height: 20px; }
+</style></head><body>
+<div class="field"><input id="q" value="a"></div>
+<div class="field"><input id="r" value="b"></div>
+<!-- Enter in a bare input (no form, no handler) bubbles to the container:
+     a dialog's default action listens there. -->
+<div id="dlg" tabindex="-1"><input id="e" value="x"></div>
+</body></html>

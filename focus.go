@@ -16,6 +16,14 @@ type childLister = ChildLister
 
 type focusVisibleAware = FocusVisibleAware
 
+// TabFocusReceiver is optional for focusable widgets: TabFocused runs
+// after Tab / Shift+Tab (FocusNext / FocusPrev) moved focus onto the
+// widget — a text field selects its contents then, as a browser does on
+// sequential focus navigation, so typing replaces the value.
+type TabFocusReceiver interface {
+	TabFocused()
+}
+
 // ClickFocusPolicy is optional for focusable widgets. One whose
 // FocusOnClick returns false is reached by Tab but a click on it — or on
 // anything inside it, such as its caption — leaves focus where it was — the macOS push-button convention, which keeps a
@@ -484,6 +492,9 @@ func (w *Window) FocusNext() {
 	}
 	w.focusVisible = true
 	w.SetFocus(list[nextFocusIndex(list, w.focused, +1)])
+	if r, ok := w.focused.(TabFocusReceiver); ok {
+		r.TabFocused()
+	}
 	w.scrollAncestorsIntoView(w.focused)
 }
 
@@ -501,6 +512,9 @@ func (w *Window) FocusPrev() {
 	}
 	w.focusVisible = true
 	w.SetFocus(list[nextFocusIndex(list, w.focused, -1)])
+	if r, ok := w.focused.(TabFocusReceiver); ok {
+		r.TabFocused()
+	}
 	w.scrollAncestorsIntoView(w.focused)
 }
 

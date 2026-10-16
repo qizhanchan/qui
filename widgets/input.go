@@ -1675,6 +1675,10 @@ func (t *Input) SetCursorPos(pos int) {
 	t.Invalidate()
 }
 
+// TabFocused implements qui.TabFocusReceiver: Tab into the field selects
+// its whole value, as in a browser.
+func (t *Input) TabFocused() { t.SelectRange(0, len([]rune(t.Text))) }
+
 // SelectRange selects [start, end) (rune indices, clamped) and parks the
 // caret at end. start==end collapses to a caret with no selection.
 func (t *Input) SelectRange(start, end int) {

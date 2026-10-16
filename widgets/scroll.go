@@ -105,6 +105,11 @@ type ScrollView struct {
 	// overlay scrollbars of macOS (and of Chrome there). htmlcss scroll
 	// containers use it, matching how a browser lays them out.
 	OverlayBar bool
+	// FitContent sizes the viewport on the scroll axis like a CSS
+	// `overflow: auto` box of auto height: as tall (wide) as its content,
+	// up to the space available — a max-height-capped popup list shrinks
+	// to a single row. Off, the viewport fills whatever it is given.
+	FitContent bool
 
 	// OnScroll, when set, is invoked whenever the scroll offset changes
 	// value (wheel, drag, track click, keys, or ScrollTo). Hosts use it
@@ -216,6 +221,16 @@ func (s *ScrollView) Measure(available Size) Size {
 	// stretching the row to fill the screen even though the toolbar
 	// inside only needs 76 px. The vertical case is symmetric.
 	out := available
+	if s.Content != nil && s.FitContent {
+		natural := s.Content.Measure(available)
+		// A non-positive extent is unconstrained: report the content's.
+		if s.Orientation == ScrollHorizontal && (out.W <= 0 || natural.W < out.W) {
+			out.W = natural.W
+		}
+		if s.Orientation != ScrollHorizontal && (out.H <= 0 || natural.H < out.H) {
+			out.H = natural.H
+		}
+	}
 	if s.Content != nil {
 		if s.Orientation == ScrollHorizontal && s.ContentSize.H > 0 && s.ContentSize.H < out.H {
 			out.H = s.ContentSize.H

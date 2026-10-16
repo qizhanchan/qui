@@ -135,6 +135,9 @@ type selectorState struct {
 	active bool
 	// focusVisible narrows focus to keyboard focus (:focus-visible).
 	focusVisible bool
+	// noFocusWithin keeps :focus-within from matching (FocusOptIn: only a
+	// real :focus rule makes an element a focus target).
+	noFocusWithin bool
 
 	ancestorHover  bool
 	ancestorFocus  bool
@@ -191,6 +194,9 @@ type Stylesheet struct {
 	// HasFocusVisible is true when a rule's subject is gated on
 	// :focus-visible — gates the FocusVisible variant.
 	HasFocusVisible bool
+	// HasFocusWithin is true when a selector uses :focus-within — only then
+	// can a focus variant come from it alone (ComputedStyle.FocusOptIn).
+	HasFocusWithin bool
 	// HasAncestorHover / Focus / Active are true when some selector carries
 	// the state pseudo on a NON-subject compound (`.row:hover .del`) — gates
 	// computing the per-element AncestorHover/Focus/Active union variants.
@@ -276,6 +282,7 @@ func ParseCSSViewport(src string, viewportW float32) *Stylesheet {
 				sheet.HasHover = sheet.HasHover || inner.HasHover
 				sheet.HasFocus = sheet.HasFocus || inner.HasFocus
 				sheet.HasFocusVisible = sheet.HasFocusVisible || inner.HasFocusVisible
+				sheet.HasFocusWithin = sheet.HasFocusWithin || inner.HasFocusWithin
 				sheet.HasActive = sheet.HasActive || inner.HasActive
 				sheet.HasAncestorHover = sheet.HasAncestorHover || inner.HasAncestorHover
 				sheet.HasAncestorFocus = sheet.HasAncestorFocus || inner.HasAncestorFocus
@@ -314,6 +321,7 @@ func ParseCSSViewport(src string, viewportW float32) *Stylesheet {
 				sheet.HasHover = sheet.HasHover || h
 				sheet.HasFocus = sheet.HasFocus || f
 				sheet.HasFocusVisible = sheet.HasFocusVisible || sel.usesFocusVisible()
+				sheet.HasFocusWithin = sheet.HasFocusWithin || sel.usesFocusWithin()
 				sheet.HasActive = sheet.HasActive || a
 				nh, nf, na, viaSibling := sel.nonSubjectStateGates()
 				if nh || nf || na {
@@ -1183,6 +1191,18 @@ func (s Selector) usesFocusVisible() bool {
 	return false
 }
 
+// usesFocusWithin reports whether any compound carries :focus-within.
+func (s Selector) usesFocusWithin() bool {
+	for _, part := range s.parts {
+		for _, ps := range part.sel.pseudos {
+			if ps.kind == pseudoFocus && ps.raw == "focus-within" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // stateGates reports which interactive-state pseudos this selector uses,
 // so the sheet knows which per-element variants to compute.
 func (s Selector) stateGates() (hover, focus, active bool) {
@@ -1270,7 +1290,7 @@ func (ps pseudoSelector) matches(n *Node, st selectorState) bool {
 	case pseudoHover:
 		return st.hover
 	case pseudoFocus:
-		return st.focus
+		return st.focus && !(st.noFocusWithin && ps.raw == "focus-within")
 	case pseudoFocusVisible:
 		return st.focus && st.focusVisible
 	case pseudoActive:

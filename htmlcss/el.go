@@ -301,6 +301,9 @@ type El struct {
 	// the text color or decoration, so Draw swaps the label/marker/icon
 	// typography to match the box's current interactive state.
 	textStateActive bool
+	// focusWithinOnly: the focused variant comes only from :focus-within
+	// rules, which never make the element itself focusable.
+	focusWithinOnly bool
 	// Background-image: url() bitmap, cached by source URL (applyBackgroundImage).
 	bgImg    image.Image
 	bgImgSrc string
@@ -712,6 +715,11 @@ func (e *El) Focusable() bool {
 	// control instead, which the index orders via TabIndexFor.
 	if e.tabFocusable() {
 		return e.Enabled()
+	}
+	// A :focus-within style is for the focused descendant's sake: it must
+	// not turn the container into a Tab stop that swallows typing.
+	if e.focusWithinOnly && e.Box.FocusVisible == nil {
+		return false
 	}
 	return e.Box.Focusable()
 }
@@ -2530,6 +2538,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	// Box decorations (background / border / radius / shadow / gradient /
 	// transform / overflow-clip / relative offset / hover-focus-active).
 	applyBox(&e.Box, cs, e.isStyleRoot())
+	e.focusWithinOnly = cs.Focus != nil && !cs.FocusOptIn
 
 	// A text-only state change (e.g. `a:hover{color}`) carries no box
 	// decoration, so applyBox left the matching Box.Hover/Focus/Active nil
@@ -3540,6 +3549,7 @@ func (e *El) ensureScroll() {
 	e.scrollInner = widgets.NewBox(qui.FlowLayout{})
 	sv := widgets.NewScrollView()
 	sv.OverlayBar = true // a browser's (macOS) overlay scrollbar: no gutter
+	sv.FitContent = true // auto height = content height, capped by max-height
 	sv.Style().Background = qui.Color{} // transparent viewport
 	st := sv.Style()
 	st.Grow = 1
@@ -3739,7 +3749,24 @@ func (e *El) Measure(available qui.Size) qui.Size {
 	if e.displayNone {
 		return qui.Size{}
 	}
-	return e.Box.Measure(available)
+	m := e.Box.Measure(available)
+	if e.overflowScroll && e.scrollView != nil {
+		// The ScrollView grows into the element's box, so the flex column
+		// holding it reports the offer (or 0 when unconstrained) on the
+		// scroll axis. CSS sizes an auto-height scroll box to its content
+		// instead; max-height then caps it like any box.
+		ins := e.Style().ContentInsets()
+		sv := e.scrollView.Measure(qui.Size{
+			W: max(0, available.W-ins.Horizontal()),
+			H: max(0, available.H-ins.Vertical()),
+		})
+		if e.scrollView.Orientation == widgets.ScrollHorizontal {
+			m.W = sv.W + ins.Horizontal()
+		} else {
+			m.H = sv.H + ins.Vertical()
+		}
+	}
+	return m
 }
 
 // triggerMask returns one bit per (trigger, state) pair that is currently

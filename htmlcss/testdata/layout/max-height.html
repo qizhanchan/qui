@@ -1,0 +1,31 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+/* An `overflow: auto` box capped by max-height is as tall as its content
+   until the content passes the cap (popup lists, a completion doc pane).
+   One fixed-height case per section. */
+.case { position: relative; height: 140px; border-top: 1px solid #ccc; }
+.cap { overflow: auto; max-height: 100px; width: 160px; background: #eef; }
+.row { height: 20px; }
+#abs { position: absolute; left: 200px; top: 4px; width: 180px; border: 1px solid #333; }
+#fcol { display: flex; flex-direction: column; width: 180px; }
+#frow { display: flex; flex-direction: row; align-items: flex-start; width: 360px; }
+#frow-list { width: 100px; }
+</style></head><body>
+<section class="case">
+  <div class="cap" id="block-short"><div class="row">one line</div></div>
+</section>
+<section class="case">
+  <div class="cap" id="block-tall"><div class="row"></div><div class="row"></div><div class="row"></div><div class="row"></div><div class="row"></div><div class="row"></div><div class="row"></div><div class="row"></div></div>
+</section>
+<section class="case">
+  <div id="abs"><div class="cap" id="abs-short"><div class="row">one line</div></div></div>
+</section>
+<section class="case">
+  <div id="fcol"><div class="row" id="fcol-head">head</div><div class="cap" id="fcol-short"><div class="row">one line</div></div></div>
+</section>
+<section class="case">
+  <div id="frow"><div id="frow-list"><div class="row"></div><div class="row"></div><div class="row"></div></div><div class="cap" id="frow-short"><div class="row">doc</div></div></div>
+</section>
+</body></html>

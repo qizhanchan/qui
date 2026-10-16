@@ -1,0 +1,8 @@
+[
+  {"do": "click", "on": "q"},
+  {"do": "key", "key": "Tab"},
+  {"do": "key", "key": "z"},
+  {"do": "key", "key": "Tab"},
+  {"do": "click", "on": "e"},
+  {"do": "key", "key": "Enter"}
+]
