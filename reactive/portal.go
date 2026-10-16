@@ -244,6 +244,14 @@ func (h *portalHost) Tick(now time.Time) qui.Rect {
 	return dirty
 }
 
+// RelayoutOverlay lays a layout-dirty host out in the window's layout
+// pass (qui.OverlayLayouter), so content restyled or resized since the
+// last frame is placed before paint — and in a headless window, which
+// never ticks, at all.
+func (h *portalHost) RelayoutOverlay(winSize qui.Size) {
+	h.Layout(qui.Rect{W: winSize.W, H: winSize.H})
+}
+
 // HitTest: content first; the backdrop itself only intercepts when the
 // portal is modal or wants dismiss clicks — a plain non-modal portal is
 // pointer-transparent outside its content.
