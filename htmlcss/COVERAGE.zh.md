@@ -17,7 +17,7 @@
 | `html` `head` `body` | ✅ | head 及其内容不渲染；body 为根 |
 | `div` `section` `article` `header` `footer` `nav` `main` `aside` | ✅ | 通用 block 容器 |
 | `span` | ✅ | inline，折进文本 run |
-| `p` `h1`–`h6` | ✅ | 带 UA 默认 margin / font-size |
+| `p` `h1`–`h6` | ✅ | UA 默认 margin / font-size 与 Chrome 一致（标题按 em，`p` 为 1em） |
 | `strong` `b` `em` `i` `small` `u` `s` `del` `ins` `strike` `mark` `abbr` `sub` `sup` | ✅ | inline，折叠为带样式 span |
 | `code` `pre` | ✅ | monospace；`<pre>` / `white-space:pre` 保留空白与换行 |
 | `a` | ✅ | href 点击调用 `OpenURL`；折叠 span 里也可点（`InlineBox.LinkAt`） |
@@ -27,7 +27,7 @@
 | `ul` `ol` `li` | ✅ | 悬挂 `[marker\|content]` 行；disc/circle/square/decimal；ol 自动编号；剪贴板可重建列表结构 |
 | `img` | 🟡 | 本地光栅 + `.svg`（可染色）+ `data:` URI + `object-fit: cover/contain`；**不支持**远程 URL / `srcset` |
 | `label` | 🟡 | 折叠为 inline 文本；`for=` 点击联动见下方 `label[for]` 行 |
-| `table` `thead` `tbody` `tfoot` `tr` `td` `th` `caption` `colgroup` `col` | ✅ | 拍平成一个 `GridLayout`：列跨行对齐、内容自适应列宽（有 width 时等分 1fr）、`colspan`、`th` 粗体居中、`tr:nth-child` 行条纹、`border-spacing`、auto-width 表 shrink-to-fit。另有：`<caption>` 全宽跨列行（`caption-side:top/bottom`）、`<colgroup>/<col>` 列宽（`width` 属性或内联 `style`→`GridFixedTrack`，支持 `span`、% 参照表宽）、`table-layout:fixed`、`border-collapse:collapse`（单线合并）、`rowspan` 行高计入。限制：`<col>` 不吃 class 选择器；内容比例分配列宽未做 |
+| `table` `thead` `tbody` `tfoot` `tr` `td` `th` `caption` `colgroup` `col` | ✅ | 单元格拍平到一个网格（列跨行对齐），列宽在布局期按 CSS 2.1 算法求解：自动布局（列取 max-content、单元格 `width` 决定其列宽、`colspan` 超出部分分摊到所跨列、表比内容宽时按内容比例分配余量、比内容窄时从 min-content 收缩）与 `table-layout: fixed`（取 `<col>` / 首行宽度，其余等分）。`th` 粗体居中、`tr:nth-child` 行条纹、`border-spacing` 作用于单元格之间及四周（UA 默认 2px、单元格 padding 1px，同 Chrome）、auto-width 表 shrink-to-fit。另有：`<caption>` 全宽跨列行（`caption-side: top/bottom`）、`<colgroup>/<col>` 列宽（`width` 属性或内联样式，含 `span`、相对表宽的 `%`）、`border-collapse: collapse`（单线合并）、`rowspan` 行高贡献。限制：`<col>` 不接受 class 选择器 |
 | `dl` `dt` `dd` `figure` `figcaption` | ✅ | UA 默认样式：dd/figure 缩进、dt 粗体、figcaption 弱化 |
 | `script` `style` `meta` `link` `title` | 🚫 | 不渲染；`<style>` 内容会被采集进样式表 |
 
@@ -89,7 +89,7 @@
 | `font-style` | ✅ | italic |
 | `font-family` | ✅ | 取列表中第一个已安装（已注册）的 family；遇到通用族关键字即停止；都未安装时取第一个 |
 | `font`（简写） | ✅ | `expandFont` |
-| `line-height` | ✅ | 无单位倍数 / 长度 |
+| `line-height` | ✅ | 无单位倍数（按倍数继承）/ 长度或 %（按算出的长度继承） |
 | `text-align` | ✅ | start/center/end/**justify**。justify 只拉伸软换行行；经 root `JustifyExtra` + `Font.WordSpacing` 通道贯穿 plain（Label）与 inline（InlineBox）两条路径，绘制 / 选择 / 命中一致。富文本 spans 不参与 |
 | `text-decoration` / `-line` | ✅ | underline / line-through / overline + `-color` + `-style`（solid/double/dotted/dashed/wavy）+ `-thickness`。root `DecorationPaint` 贯穿 plain / rich / inline 三路径。限制：wavy 用 zig-zag path 近似 |
 | `text-transform` | ✅ | upper/lower/capitalize |
@@ -103,8 +103,8 @@
 
 | 属性 | 状态 | 备注 |
 |---|---|---|
-| `width` `height` `min-*` `max-*` | 🟡 | px/em/rem/pt/`calc()`；常规流 block 认显式 width/height（左对齐、不撑满；min/max clamp）+ flex/grid/inline-block。`%` 参照包含块在布局期解析（含 min/max，如 `max-width:100%` 防溢出），按 border-box 计。**欠**：`calc()` 内含 `%`、inline-block / 绝对定位的 `%` |
-| `padding` `margin`（简写 + 单边） | ✅ | 1–4 值规则；CSS margin-box 语义（Flex/Flow）；`margin: 0 auto` 水平居中；flex 项 auto margin。**欠**：flex 项 auto margin 在 overflow 下按 0（合规） |
+| `width` `height` `min-*` `max-*` | 🟡 | px/em/rem/pt/`calc()`；常规流 block 认显式 width/height（左对齐、不撑满；min/max clamp），flex / grid 项与 inline-block 同样认。`%` 参照包含块在布局期解析（含 min/max，如 `max-width:100%` 防溢出），遵循 `box-sizing`（content-box 再加 padding + border）。**欠**：`calc()` 内含 `%`、绝对定位的 `%` |
+| `padding` `margin`（简写 + 单边） | ✅ | 1–4 值规则；CSS margin-box 语义（Flex/Flow）；常规流纵向 margin 折叠（相邻兄弟、空块、父与首/末子元素——父为 BFC 根或该边有 padding / border 时不折叠）；`margin: 0 auto` 水平居中；flex 项 auto margin。**欠**：flex 项 auto margin 在 overflow 下按 0（合规） |
 | `border` / `border-width/color/style` | ✅ | `border: none` 显式声明会清除控件的原生边框（`HasBorder` 区分「声明了 none」与「未声明」） |
 | `border-<side>*` 单边 | ✅ | |
 | `border-style` | 🟡 | solid/dashed/dotted/none；double/groove/ridge/inset/outset 退化为 solid |
@@ -137,7 +137,7 @@
 | Flex：`flex-direction/justify-content/align-items/flex-wrap/gap/flex-grow` | ✅ | `align-items:stretch`（默认）只拉伸交叉轴为 auto 的项；显式 `width`（column）/`height`（row），含百分比，保持自己的尺寸并贴行首，同浏览器 |
 | Flex：`align-self/flex-shrink/flex-basis/order` | ✅ | `flex` 简写展开 grow/shrink/basis（none/auto/initial）；`order` 稳定排序；`flex-shrink:0`→NoShrink |
 | Flex：`align-content` | ✅ | wrap 多行在剩余交叉轴空间的分布：start/center/end/space-between/around/evenly/stretch |
-| Grid：`grid-template-columns/rows`（px/fr/auto/repeat）、`gap`/`row-gap`/`column-gap` | ✅ | |
+| Grid：`grid-template-columns/rows`（px/fr/auto/repeat）、`grid-auto-rows/columns`、`gap`/`row-gap`/`column-gap` | ✅ | 超出模板的项获得按 `grid-auto-*` 定尺寸的隐式轨道 |
 | Grid 单元格放置：`grid-column/row`、`span`、`grid-template-areas` | ✅ | 行/列线号（1-based `a / b`）、`span N`、`grid-area`（命名区或 4 线号）；命名区 + 隐含轨道数。限制：仅 `grid-column/row` 简写（不读 `*-start`/`*-end`）；混合「显式一轴 + 自动另一轴」退化为纯 span 自动排布 |
 | `position: relative` | ✅ | top/right/bottom/left 偏移；建立包含块 |
 | `position: absolute` | ✅ | 脱离常规流，相对最近 positioned 祖先定位。限制：包含块用 border box 近似；无 `z-index` 层叠；`auto` 侧落在包含块原点而非静态位 |
@@ -234,7 +234,7 @@
 
 **高价值（原生 + 日常）：** `aspect-ratio`；`position: sticky`；`::placeholder` 与 `:placeholder-shown`/`:valid`/`:invalid`/`:indeterminate`/`:default`（共用「值变化 → 作用域 restyle」实时钩子）；`::selection`/`::marker`；`:is()`/`:where()`/CSS 嵌套；`transition`；`scroll` 与 `change` 事件；`minlength`/`pattern`/`rows`/`cols`/`inputmode`/`spellcheck` 属性。
 
-**中价值：** Grid `justify-items`/`justify-self`/`place-*`/`grid-auto-*`/隐式轨道；`min-content`/`max-content`/`fit-content` 尺寸关键字；`@media` 响应式重算与 `prefers-color-scheme`/`(hover)`/`(pointer)`/`prefers-reduced-motion`；`@container`；`color-scheme`；`oklch()`/`color-mix()`/`light-dark()`/`hwb()`/`lab()`；`text-shadow`；文本抛光（`text-wrap`、`hyphens`、`tab-size`、`font-variant*`、`font-feature-settings`、`text-underline-offset`）；`background-position`/`-repeat`/显式 `background-size`/repeating 渐变；远程图片 URL / `srcset`；滚动与 resize 抛光（`resize`、`appearance`、`caret-color`、`scrollbar-gutter`、`overscroll-behavior`、`scroll-behavior`、scroll-snap）；`<select multiple>`/`size`；原生日期 / 颜色选择器；`<a target>`/`download`。
+**中价值：** Grid `justify-items`/`justify-self`/`place-*`；`min-content`/`max-content`/`fit-content` 尺寸关键字；`@media` 响应式重算与 `prefers-color-scheme`/`(hover)`/`(pointer)`/`prefers-reduced-motion`；`@container`；`color-scheme`；`oklch()`/`color-mix()`/`light-dark()`/`hwb()`/`lab()`；`text-shadow`；文本抛光（`text-wrap`、`hyphens`、`tab-size`、`font-variant*`、`font-feature-settings`、`text-underline-offset`）；`background-position`/`-repeat`/显式 `background-size`/repeating 渐变；远程图片 URL / `srcset`；滚动与 resize 抛光（`resize`、`appearance`、`caret-color`、`scrollbar-gutter`、`overscroll-behavior`、`scroll-behavior`、scroll-snap）；`<select multiple>`/`size`；原生日期 / 颜色选择器；`<a target>`/`download`。
 
 **明确不做：** `float`/`clear`；多列；`@keyframes` + `animation`；`writing-mode`；`clip-path`/`mask`；`mix-blend-mode`/`isolation`；完整 stacking context；`backdrop-filter`；3D `transform`；`contenteditable`；`<iframe>`（走 `webview`）；Shadow DOM / `<template>` / `<slot>`；`content-visibility`/`will-change`；`@import`；`@supports`。
 

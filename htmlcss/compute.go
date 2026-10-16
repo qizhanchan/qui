@@ -37,11 +37,11 @@ type ComputedStyle struct {
 	// still scrolls, without a visible scrollbar.
 	ScrollbarNone bool
 
-	FontSize                       float32
-	FontWeight                     qui.FontWeight
-	Italic                         bool
-	FontFamily                     string
-	LineHeight                     float32 // multiplier over font size
+	FontSize   float32
+	FontWeight qui.FontWeight
+	Italic     bool
+	FontFamily string
+	LineHeight float32 // multiplier over font size
 	// LineHeightPx is the computed line height in px when it was declared
 	// with a length or percentage (0 for a unitless number). CSS inherits
 	// such a line-height as that absolute length, not as a factor: a 32px
@@ -51,7 +51,7 @@ type ComputedStyle struct {
 	// (not inherited). Form controls use only their own: a browser's UA
 	// sheet resets theirs to normal.
 	LineHeightOwn bool
-	TextAlign                      qui.TextAlign
+	TextAlign     qui.TextAlign
 	// LetterSpacing / WordSpacing (px) are CSS tracking, inherited; they flow
 	// into qui.Font so the root text engine measures + paints them.
 	LetterSpacing float32

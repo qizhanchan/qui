@@ -1161,6 +1161,11 @@ type GridLayout struct {
 	RowGap      float32
 }
 
+// gridMaxTracks caps each axis of the implicit grid (CSS lets a UA clamp
+// it): an item placed at line 1e6 is dropped rather than allocating a
+// million tracks.
+const gridMaxTracks = 10000
+
 // implicitTrack is the i-th implicit track after the explicit ones.
 func implicitTrack(pattern []GridTrack, i int) GridTrack {
 	if len(pattern) == 0 {
@@ -1197,9 +1202,9 @@ func (l GridLayout) withImplicit(children []Widget) (GridLayout, []GridItem) {
 		}
 		return out
 	}
-	g.Columns = extend(l.Columns, l.AutoColumns, nCols)
+	g.Columns = extend(l.Columns, l.AutoColumns, min(nCols, max(gridMaxTracks, len(l.Columns))))
 	// Room for every auto item on a row of its own; trimmed below.
-	g.Rows = extend(l.Rows, l.AutoRows, rowEnd+autoRows)
+	g.Rows = extend(l.Rows, l.AutoRows, min(rowEnd+autoRows, max(gridMaxTracks, len(l.Rows))))
 	g.autoPlace(placements)
 	used := len(l.Rows)
 	for _, p := range placements {

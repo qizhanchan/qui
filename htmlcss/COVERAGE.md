@@ -17,7 +17,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | `html` `head` `body` | ✅ | head and its contents are not rendered; body is the root |
 | `div` `section` `article` `header` `footer` `nav` `main` `aside` | ✅ | generic block containers |
 | `span` | ✅ | inline, folds into text runs |
-| `p` `h1`–`h6` | ✅ | UA default margin / font-size |
+| `p` `h1`–`h6` | ✅ | UA default margin / font-size as in Chrome (headings in em, `p` 1em) |
 | `strong` `b` `em` `i` `small` `u` `s` `del` `ins` `strike` `mark` `abbr` `sub` `sup` | ✅ | inline, fold to styled spans |
 | `code` `pre` | ✅ | monospace; `<pre>` / `white-space:pre` preserves whitespace and newlines |
 | `a` | ✅ | href click calls `OpenURL`; also clickable inside a folded span (`InlineBox.LinkAt`) |
@@ -27,7 +27,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | `ul` `ol` `li` | ✅ | hanging `[marker\|content]` row; disc/circle/square/decimal; `ol` auto-numbering; the clipboard rebuilds list structure |
 | `img` | 🟡 | local raster (PNG / JPEG / GIF first frame / BMP / TIFF / WebP / ICO·CUR) + `.svg` (with tint) + `data:` URI + an in-memory `image.Image` (`h.Img().Image(img)` / `El.SetImage`) + `object-fit: cover/contain/scale-down`; **no** remote URL / `srcset` / animated GIF |
 | `label` | 🟡 | folds to inline text; `for=` click linkage is implemented on the `label[for]` row below |
-| `table` `thead` `tbody` `tfoot` `tr` `td` `th` `caption` `colgroup` `col` | ✅ | flattened into one `GridLayout`: columns align across rows, content-based auto widths (equal `1fr` when the table has a width), `colspan`, `th` bold + centered, `tr:nth-child` striping, `border-spacing`, auto-width shrink-to-fit. Also: `<caption>` as a full-width spanning row (`caption-side: top/bottom`), `<colgroup>`/`<col>` widths (`width` attr or inline style → `GridFixedTrack`, with `span`, `%` of table width), `table-layout: fixed`, `border-collapse: collapse` (single-line merging), `rowspan` row-height contribution. Limits: `<col>` does not take class selectors; proportional column distribution is not implemented |
+| `table` `thead` `tbody` `tfoot` `tr` `td` `th` `caption` `colgroup` `col` | ✅ | cells flattened onto one grid (columns align across rows) with column widths from the CSS 2.1 algorithms at layout time: automatic layout (max-content columns, cell `width` sizes its column, `colspan` excess spread over the spanned columns, a wider table's extra shared in proportion to content, a narrower one shrunk from min-content) and `table-layout: fixed` (`<col>` / first-row widths, the rest equal). `th` bold + centered, `tr:nth-child` striping, `border-spacing` between and around cells (UA default 2px, cell padding 1px, as in Chrome), auto-width shrink-to-fit. Also: `<caption>` as a full-width spanning row (`caption-side: top/bottom`), `<colgroup>`/`<col>` widths (`width` attr or inline style, with `span`, `%` of table width), `border-collapse: collapse` (single-line merging), `rowspan` row-height contribution. Limit: `<col>` does not take class selectors |
 | `dl` `dt` `dd` `figure` `figcaption` | ✅ | UA defaults: `dd`/`figure` indented, `dt` bold, `figcaption` muted |
 | `script` `style` `meta` `link` `title` | 🚫 | not rendered; `<style>` contents are collected into the stylesheet |
 
@@ -89,7 +89,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | `font-style` | ✅ | italic |
 | `font-family` | ✅ | first installed (registered) family of the list; a generic keyword ends the search; none installed → first name |
 | `font` (shorthand) | ✅ | `expandFont` |
-| `line-height` | ✅ | unitless multiple / length |
+| `line-height` | ✅ | unitless multiple (inherits as a factor) / length or % (inherits as that length) |
 | `text-align` | ✅ | start/center/end/**justify**. Justify stretches only soft-wrapped lines; it flows through the root `JustifyExtra` + `Font.WordSpacing` channel on both plain (Label) and inline (InlineBox) paths, so drawing/selection/hit-testing agree. Rich-text spans do not participate |
 | `text-decoration` / `-line` | ✅ | underline / line-through / overline + `-color` + `-style` (solid/double/dotted/dashed/wavy) + `-thickness`. The root `DecorationPaint` runs through plain / rich / inline paths. Limit: wavy is approximated with a zig-zag path |
 | `text-transform` | ✅ | upper/lower/capitalize |
@@ -103,8 +103,8 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 
 | Property | Status | Notes |
 |---|---|---|
-| `width` `height` `min-*` `max-*` | 🟡 | px/em/rem/pt/`calc()`; normal-flow blocks respect explicit width/height (left-aligned, not full-width; min/max clamp) plus flex/grid/inline-block. `%` resolves against the containing block during layout, including min/max (e.g. `max-width:100%` prevents overflow), interpreted as border-box. Missing: `calc()` containing `%`, `%` on inline-block / absolute |
-| `padding` `margin` (shorthand + per-side) | ✅ | 1–4 value rules; CSS margin-box semantics (Flex/Flow); `margin: 0 auto` horizontal centering; flex-item auto margins. Missing: flex auto margin under overflow (treated as 0, per spec) |
+| `width` `height` `min-*` `max-*` | 🟡 | px/em/rem/pt/`calc()`; normal-flow blocks respect explicit width/height (left-aligned, not full-width; min/max clamp), and so do flex / grid items and inline-blocks. `%` resolves against the containing block during layout, including min/max (e.g. `max-width:100%` prevents overflow), honoring `box-sizing` (content-box adds padding + border). Missing: `calc()` containing `%`, `%` on absolute |
+| `padding` `margin` (shorthand + per-side) | ✅ | 1–4 value rules; CSS margin-box semantics (Flex/Flow); vertical margin collapsing in normal flow (siblings, empty blocks, parent with first / last child unless the parent is a BFC root or has padding / border there); `margin: 0 auto` horizontal centering; flex-item auto margins. Missing: flex auto margin under overflow (treated as 0, per spec) |
 | `border` / `border-width/color/style` | ✅ | `border: none` explicitly clears a control's native border (`HasBorder` distinguishes "declared none" from "undeclared") |
 | `border-<side>*` per-side | ✅ | |
 | `border-style` | 🟡 | solid/dashed/dotted/none; double/groove/ridge/inset/outset degrade to solid |
@@ -137,7 +137,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | Flex: `flex-direction/justify-content/align-items/flex-wrap/gap/flex-grow` | ✅ | `align-items:stretch` (default) stretches only cross-axis-auto items; explicit `width` (column) / `height` (row), including percentages, keep their size and align to the start, like the browser |
 | Flex: `align-self/flex-shrink/flex-basis/order` | ✅ | `flex` shorthand expands grow/shrink/basis (none/auto/initial); `order` uses stable sort; `flex-shrink:0` → `NoShrink` |
 | Flex: `align-content` | ✅ | multi-line distribution in the remaining cross-axis space: start/center/end/space-between/around/evenly/stretch |
-| Grid: `grid-template-columns/rows` (px/fr/auto/repeat), `gap`/`row-gap`/`column-gap` | ✅ | |
+| Grid: `grid-template-columns/rows` (px/fr/auto/repeat), `grid-auto-rows/columns`, `gap`/`row-gap`/`column-gap` | ✅ | items past the template get implicit tracks sized by `grid-auto-*` |
 | Grid placement: `grid-column/row`, `span`, `grid-template-areas` | ✅ | line numbers (1-based `a / b`), `span N`, `grid-area` (named area or 4 line numbers); named areas with implicit track counts. Limit: only the `grid-column/row` shorthand (not `*-start`/`*-end`); mixing an explicit axis with an auto axis degrades to pure span auto-placement |
 | `position: relative` | ✅ | top/right/bottom/left offsets; establishes a containing block |
 | `position: absolute` | ✅ | out of flow, positioned against the nearest positioned ancestor. Limits: containing block approximated as the border box; no `z-index` stacking; an `auto` side lands at the containing-block origin rather than the static position |
@@ -234,7 +234,7 @@ Grouped by how likely a desktop application is to need them.
 
 **High value (native + everyday):** `aspect-ratio`; `position: sticky`; `::placeholder` and `:placeholder-shown`/`:valid`/`:invalid`/`:indeterminate`/`:default` (all need a "value changed → scoped restyle" hook); `::selection`/`::marker`; `:is()`/`:where()`/CSS nesting; `transition`; the `scroll` and `change` events; the `minlength`/`pattern`/`rows`/`cols`/`inputmode`/`spellcheck` attributes.
 
-**Medium value:** Grid `justify-items`/`justify-self`/`place-*`/`grid-auto-*`/implicit tracks; `min-content`/`max-content`/`fit-content` sizing keywords; responsive `@media` re-evaluation and `prefers-color-scheme`/`(hover)`/`(pointer)`/`prefers-reduced-motion`; `@container`; `color-scheme`; `oklch()`/`color-mix()`/`light-dark()`/`hwb()`/`lab()`; `text-shadow`; text polish (`text-wrap`, `hyphens`, `tab-size`, `font-variant*`, `font-feature-settings`, `text-underline-offset`); `background-position`/`-repeat`/explicit `background-size`/repeating gradients; remote image URLs / `srcset`; scroll and resize polish (`resize`, `appearance`, `caret-color`, `scrollbar-gutter`, `overscroll-behavior`, `scroll-behavior`, scroll-snap); `<select multiple>`/`size`; native date/color pickers; `<a target>`/`download`.
+**Medium value:** Grid `justify-items`/`justify-self`/`place-*`; `min-content`/`max-content`/`fit-content` sizing keywords; responsive `@media` re-evaluation and `prefers-color-scheme`/`(hover)`/`(pointer)`/`prefers-reduced-motion`; `@container`; `color-scheme`; `oklch()`/`color-mix()`/`light-dark()`/`hwb()`/`lab()`; `text-shadow`; text polish (`text-wrap`, `hyphens`, `tab-size`, `font-variant*`, `font-feature-settings`, `text-underline-offset`); `background-position`/`-repeat`/explicit `background-size`/repeating gradients; remote image URLs / `srcset`; scroll and resize polish (`resize`, `appearance`, `caret-color`, `scrollbar-gutter`, `overscroll-behavior`, `scroll-behavior`, scroll-snap); `<select multiple>`/`size`; native date/color pickers; `<a target>`/`download`.
 
 **Deliberately not supported:** `float`/`clear`; multi-column; `@keyframes` + `animation`; `writing-mode`; `clip-path`/`mask`; `mix-blend-mode`/`isolation`; full stacking context; `backdrop-filter`; 3D `transform`; `contenteditable`; `<iframe>` (use `webview`); Shadow DOM / `<template>` / `<slot>`; `content-visibility`/`will-change`; `@import`; `@supports`.
 

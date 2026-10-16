@@ -172,15 +172,15 @@ func (e *El) buildTable(cs *ComputedStyle) {
 //     explicit cell widths; the remaining width is shared equally by the
 //     rest, whatever their content.
 type tableLayout struct {
-	grid    qui.GridLayout
-	cols    []colWidth // <col> widths; len = column count
-	fill    bool       // the table has a width: columns fill it
-	fixed   bool       // table-layout: fixed
+	grid  qui.GridLayout
+	cols  []colWidth // <col> widths; len = column count
+	fill  bool       // the table has a width: columns fill it
+	fixed bool       // table-layout: fixed
 	// collapse: border-collapse: collapse. applyTableCollapse gives a
 	// last-column cell its right edge on top of its left one, so its
 	// measured width is one border wider than its column's share.
 	collapse bool
-	caption qui.Widget // spans all columns; plays no part in column widths
+	caption  qui.Widget // spans all columns; plays no part in column widths
 }
 
 // MinContentWidth implements qui.MinContentLayout: the columns at their
