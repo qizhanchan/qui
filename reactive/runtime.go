@@ -32,6 +32,10 @@ type Runtime struct {
 	// (UseLayoutEffect); layoutScheduled says an AfterLayout is queued.
 	pendingLayoutEffects []effectRef
 	layoutScheduled      bool
+	// afterCommit holds AfterCommit callbacks (element refs) queued during
+	// the current pass; inPass says one is reconciling.
+	afterCommit []func()
+	inPass      bool
 
 	// hostData carries backend-specific state for the host layer driving
 	// this runtime (e.g. reactive/html stores its *htmlcss.StyleEngine
@@ -61,6 +65,21 @@ func setCurrentRuntime(r *Runtime) (prev *Runtime) {
 	prev, currentRT = currentRT, r
 	currentRTMu.Unlock()
 	return prev
+}
+
+// AfterCommit queues fn to run once the render pass in progress has
+// committed — the host tree attached to the window — and before that
+// pass's effects: when React attaches refs, so a ref may focus() or
+// measure a just-mounted element (one inside a new portal included).
+// Outside a pass it reports false and queues nothing; the caller runs fn
+// itself.
+func AfterCommit(fn func()) bool {
+	r := CurrentRuntime()
+	if r == nil || !r.inPass {
+		return false
+	}
+	r.afterCommit = append(r.afterCommit, fn)
+	return true
 }
 
 // CurrentRuntime returns the runtime executing the current render,
@@ -288,6 +307,8 @@ func (r *Runtime) flushOnePass() {
 
 		prev := setCurrentRuntime(r)
 		defer setCurrentRuntime(prev)
+		r.inPass = true
+		defer func() { r.inPass = false }()
 
 		r.mu.Lock()
 		renderFn := r.renderFn
@@ -340,6 +361,11 @@ func (r *Runtime) flushOnePass() {
 		if cleanup != nil {
 			cleanup()
 		}
+	}
+	refs := r.afterCommit
+	r.afterCommit = nil
+	for _, fn := range refs {
+		fn()
 	}
 	r.runPendingEffects()
 	r.scheduleLayoutEffects()

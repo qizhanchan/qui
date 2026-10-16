@@ -285,3 +285,30 @@ func TestDialogConfirmSeesLatestState(t *testing.T) {
 		t.Errorf("OnConfirm saw %q, want the re-rendered state %q", got, "second")
 	}
 }
+
+// A ref runs after the commit, with the element in the window, so a dialog
+// opened by a state change can focus its field from the ref — and the
+// modal host's own focus grab must not take it back.
+func TestDialogRefFocusSurvivesMount(t *testing.T) {
+	win := qui.NewTestWindow(qui.Size{W: 800, H: 600})
+	var open func(bool)
+	rt := h.Mount(win, ``, func() h.Node {
+		on, set := reactive.UseState(false)
+		open = set
+		if !on {
+			return h.Div()
+		}
+		return h.Div(h.Dialog(h.DialogProps{
+			Title:     "Find",
+			Body:      h.Input("").Class("q").Ref(func(el *htmlcss.El) { el.RequestFocus() }),
+			OnDismiss: func() {},
+		}))
+	})
+	layoutAll(win, rt.Root())
+	open(true)
+	rt.Flush()
+	q := findClass(win.Overlays()[0], "q")
+	if q == nil || win.Focused() != q.TextTarget() {
+		t.Fatalf("focused = %T, want the input the ref focused", win.Focused())
+	}
+}

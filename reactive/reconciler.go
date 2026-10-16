@@ -822,8 +822,11 @@ func mountPortal(elem Element, pass *reconcilePass) (*instance, Flags) {
 	layoutPortal(host, window)
 	// Grab focus so Escape / Enter reach the host even when the content
 	// has no focusable child. An `autofocus` element inside the content
-	// moves focus on from here (its focus job runs after this).
-	if (elem.portal.OnEscape != nil || elem.portal.OnEnter != nil) && !elem.portal.KeepFocus {
+	// moves focus on from here (its focus job runs after this); a focus()
+	// the content already made while mounting (a ref) stands, as a script
+	// focus inside a just-opened <dialog> does in a browser.
+	if (elem.portal.OnEscape != nil || elem.portal.OnEnter != nil) && !elem.portal.KeepFocus &&
+		!focusInside(window, host) {
 		window.SetFocus(host)
 	}
 	return node, FlagNone
@@ -1061,4 +1064,15 @@ func (p *reconcilePass) runtimeUnlock() {
 	if p != nil && p.runtime != nil {
 		p.runtime.mu.Unlock()
 	}
+}
+
+// focusInside reports whether the window's focused widget is root or lies
+// in its subtree.
+func focusInside(window *qui.Window, root qui.Widget) bool {
+	for w := window.Focused(); w != nil; w = w.Parent() {
+		if w == root {
+			return true
+		}
+	}
+	return false
 }

@@ -570,11 +570,21 @@ func (b *Builder) Build() reactive.Element {
 			el.SetUserData(refKey, bb.ref)
 			el.SetUserData(refToKey, bb.refTo)
 			defer func() {
-				if bb.ref != nil {
-					bb.ref(el)
+				if bb.ref == nil && bb.refTo == nil {
+					return
 				}
-				if bb.refTo != nil {
-					*bb.refTo = el
+				attach := func() {
+					if bb.ref != nil {
+						bb.ref(el)
+					}
+					if bb.refTo != nil {
+						*bb.refTo = el
+					}
+				}
+				// Refs attach after the commit (React's timing): the element
+				// is in the window then, so a ref can focus() it.
+				if !reactive.AfterCommit(attach) {
+					attach()
 				}
 			}()
 			onClick := bb.onClick
