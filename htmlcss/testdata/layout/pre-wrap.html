@@ -1,0 +1,52 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+.case { height: 200px; border-top: 1px solid #ccc; }
+.pw { white-space: pre-wrap; width: 300px; }
+.pre { white-space: pre; width: 300px; }
+.pl { white-space: pre-line; width: 300px; }
+.col { display: flex; flex-direction: column; gap: 6px; width: 300px; }
+.dq { display: flex; flex-direction: column; width: 440px; border: 1px solid #ccc; font-size: 12px; }
+.dq-head { padding: 12px 16px 0 16px; line-height: 20px; }
+.dq-body { padding: 10px 16px 14px 16px; }
+.dq-inner { display: flex; flex-direction: column; gap: 6px; }
+.dq-foot { display: flex; flex-direction: row; justify-content: flex-end; gap: 8px; padding: 0 16px 14px 16px; }
+.small { font-size: 12px; line-height: 18px; white-space: pre-wrap; }
+</style></head><body>
+<section class="case"><div id="blank" class="pw">first line
+
+after a blank line</div></section>
+<section class="case"><div id="blanks" class="pw">a
+
+
+b</div></section>
+<section class="case"><div id="blank-wrap" class="pw">intro:
+
+  indented item
+
+and a long closing sentence that wraps onto more lines in the box</div></section>
+<section class="case"><div id="trailing" class="pw">ends with a newline
+</div></section>
+<section class="case"><div id="pre-blank" class="pre">x
+
+y</div></section>
+<section class="case"><div id="preline-blank" class="pl">x
+
+y</div></section>
+<section class="case"><div class="col"><div id="flex-blank" class="small">Your local changes would be overwritten:
+
+  pkg/pkg.go
+
+Smart Checkout stashes them, checks out, and puts them back afterwards.</div></div></section>
+<section class="case"><div class="col" style="height: 60px"><div id="flex-short" class="small">Your local changes would be overwritten:
+
+  pkg/pkg.go
+
+Smart Checkout stashes them, checks out, and puts them back afterwards.</div></div></section>
+<section class="case" style="height: 260px"><div class="dq" id="dq"><header class="dq-head">Git Checkout Problem</header><div class="dq-body" id="dq-body"><div class="dq-inner"><div id="dq-msg" class="small">Your local changes would be overwritten by the checkout:
+
+  pkg/pkg.go
+
+Smart Checkout stashes them, checks out, and puts them back (you may need to resolve conflicts). Force Checkout discards them.</div></div></div><footer class="dq-foot"><button>Cancel</button><button>Smart Checkout</button></footer></div></section>
+</body></html>

@@ -67,6 +67,8 @@ var domLayoutAllowlist = []domLayoutAllow{
 	{"controls", "d6", "h", "a <textarea>'s baseline sits on its last line in Chrome, at its bottom edge here"},
 
 	// Undocumented differences — each a fix candidate.
+	{"pre-wrap", "flex-short", "h", "flex items have no content-based automatic minimum (min-height: auto): qui shrinks text below its content in a too-short column"},
+	{"pre-wrap", "trailing", "h", "a pre-wrap text's final newline adds an empty line in qui; Chrome ends the text there"},
 }
 
 type domLayoutGolden struct {

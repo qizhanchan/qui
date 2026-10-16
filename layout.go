@@ -395,16 +395,43 @@ func resolvedMaxSize(w Widget, cb Size) Size {
 // budget, overlays any PreferredSize axes, then applies min/max. Use
 // this anywhere a layout pass currently calls Measure + applyMinSize.
 func measureWithConstraints(w Widget, avail Size) Size {
-	m := MeasureChild(w, avail)
-	if p := widgetPreferredSize(w); p.W > 0 || p.H > 0 {
-		if p.W > 0 {
-			m.W = p.W
-		}
-		if p.H > 0 {
-			m.H = p.H
-		}
+	p := widgetPreferredSize(w)
+	min, max := widgetMinSize(w), widgetMaxSize(w)
+	m := MeasureChild(w, ownWidthAvail(avail, p.W, min.W, max.W))
+	if p.W > 0 {
+		m.W = p.W
 	}
-	return applyConstraints(m, widgetMinSize(w), widgetMaxSize(w))
+	if p.H > 0 {
+		m.H = p.H
+	}
+	return applyConstraints(m, min, max)
+}
+
+// ownWidthAvail narrows avail to the width a widget will be laid out at when
+// its own constraints fix that width — an explicit width (clamped to
+// min/max), or a max-width below the space offered. Its content must be
+// measured at that width: text wrapped into a 440px dialog is taller than
+// the same text measured across the whole window, and keeping the wide
+// measurement's height would clip it (CSS sizes a box's content at the box's
+// own used width).
+func ownWidthAvail(avail Size, prefW, minW, maxW float32) Size {
+	w := float32(0)
+	switch {
+	case prefW > 0:
+		w = prefW
+		if maxW > 0 && w > maxW {
+			w = maxW
+		}
+		if w < minW {
+			w = minW
+		}
+	case maxW > 0 && (avail.W <= 0 || maxW < avail.W):
+		w = maxW
+	}
+	if w > 0 && w != avail.W {
+		avail.W = w
+	}
+	return avail
 }
 
 // MeasureConstrained answers "what size does this widget want inside a box
@@ -415,7 +442,6 @@ func measureWithConstraints(w Widget, avail Size) Size {
 // must measure through this, or an explicitly sized child (a CSS-sized
 // dialog, say) silently keeps whatever its own Measure returned.
 func MeasureConstrained(w Widget, avail Size) Size {
-	m := MeasureChild(w, avail)
 	p := widgetPreferredSize(w)
 	if s := w.Style(); s != nil {
 		if p.W == 0 && s.WidthPct > 0 && avail.W > 0 {
@@ -425,13 +451,15 @@ func MeasureConstrained(w Widget, avail Size) Size {
 			p.H = s.pctHeight(s.HeightPct, avail.H)
 		}
 	}
+	min, max := resolvedMinSize(w, avail), resolvedMaxSize(w, avail)
+	m := MeasureChild(w, ownWidthAvail(avail, p.W, min.W, max.W))
 	if p.W > 0 {
 		m.W = p.W
 	}
 	if p.H > 0 {
 		m.H = p.H
 	}
-	return applyConstraints(m, resolvedMinSize(w, avail), resolvedMaxSize(w, avail))
+	return applyConstraints(m, min, max)
 }
 
 // widgetFlexItem resolves a child's flex hints from BOTH the controlled
