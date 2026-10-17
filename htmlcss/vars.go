@@ -11,7 +11,21 @@ import "strings"
 // property table from the parent's table plus any `--x` declarations in
 // the (post-cascade) merged map m. var() inside custom-prop values is
 // itself resolved (bounded) so `--a: var(--b)` works.
+//
+// The tables are never written once built, so an element that declares no
+// custom property shares its parent's (a page styled through a few dozen
+// tokens on its root would otherwise copy them into every element).
 func buildCustomProps(parent *ComputedStyle, m map[string]string) map[string]string {
+	own := false
+	for k := range m {
+		if strings.HasPrefix(k, "--") {
+			own = true
+			break
+		}
+	}
+	if !own && parent != nil && parent.customProps != nil {
+		return parent.customProps
+	}
 	props := map[string]string{}
 	if parent != nil {
 		for k, v := range parent.customProps {
