@@ -183,12 +183,12 @@ type ComputedStyle struct {
 	// InsetPct holds percentage insets (top, right, bottom, left) as
 	// fractions of the containing block, resolved at layout time; the
 	// matching Has* is set and the px field stays 0.
-	InsetPct [4]float32
-	ZIndex                               int  // paint order among siblings (0 = default)
-	OverflowClip                         bool // overflow: hidden / clip
-	OverflowClipX, OverflowClipY         bool // per-axis hidden / clip
-	OverflowScroll                       bool // overflow: auto / scroll
-	OverflowScrollX                      bool // horizontal scroll axis
+	InsetPct                     [4]float32
+	ZIndex                       int  // paint order among siblings (0 = default)
+	OverflowClip                 bool // overflow: hidden / clip
+	OverflowClipX, OverflowClipY bool // per-axis hidden / clip
+	OverflowScroll               bool // overflow: auto / scroll
+	OverflowScrollX              bool // horizontal scroll axis
 
 	// AppRegion is CSS `app-region` (Electron's `-webkit-app-region`, also
 	// accepted): "drag" makes pressing the element move the OS window,
@@ -518,9 +518,10 @@ func mergedDecls(n *Node, sheet *Stylesheet, st selectorState) map[string]string
 	// Still tier 0: framework component defaults (RegisterFrameworkCSS).
 	decls = append(decls, frameworkDecls(n, st)...)
 
-	// Tier 1: author rules that match.
+	// Tier 1: author rules that match (only the candidates for n can).
 	order := 0
-	for _, rule := range sheet.Rules {
+	for _, ri := range sheet.candidateRules(n) {
+		rule := &sheet.Rules[ri]
 		best := -1
 		var ba, bb, bc int
 		for _, sel := range rule.Selectors {

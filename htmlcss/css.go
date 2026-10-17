@@ -1,8 +1,10 @@
 package htmlcss
 
 import (
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // Declaration is a single CSS property/value pair, plus its !important flag.
@@ -169,6 +171,10 @@ type stateSel struct {
 // used as the final cascade tie-breaker).
 type Stylesheet struct {
 	Rules []Rule
+	// idx buckets Rules by their selectors' subject (see ruleIndex);
+	// built lazily, rebuilt when Rules changes.
+	idxMu sync.Mutex
+	idx   *ruleIndex
 	// HasHas is true when any selector uses :has(). Unlike ordinary supported
 	// selectors, :has makes an element's match depend on descendants, so a
 	// mutation may invalidate every ancestor up to its top-level style root.
@@ -1422,4 +1428,102 @@ func (p *cssParser) readSelector() string {
 		p.pos++
 	}
 	return p.src[start:p.pos]
+}
+
+// ruleIndex buckets a stylesheet's rules by the subject compound of their
+// selectors — its first class, else its id, else its tag, else "any" —
+// the way browsers do, so styling an element tests only the rules that
+// could match it instead of every rule in the sheet.
+type ruleIndex struct {
+	n                    int   // len(Rules) when built
+	first                *Rule // &Rules[0] when built (a replaced slice rebuilds)
+	byClass, byID, byTag map[string][]int
+	any                  []int
+}
+
+func buildRuleIndex(rules []Rule) *ruleIndex {
+	ix := &ruleIndex{n: len(rules), byClass: map[string][]int{}, byID: map[string][]int{}, byTag: map[string][]int{}}
+	if len(rules) > 0 {
+		ix.first = &rules[0]
+	}
+	add := func(m map[string][]int, k string, i int) {
+		if l := m[k]; len(l) == 0 || l[len(l)-1] != i {
+			m[k] = append(l, i)
+		}
+	}
+	for i, r := range rules {
+		for _, sel := range r.Selectors {
+			if len(sel.parts) == 0 {
+				continue
+			}
+			sub := sel.parts[len(sel.parts)-1].sel
+			switch {
+			case len(sub.classes) > 0:
+				add(ix.byClass, sub.classes[0], i)
+			case sub.id != "":
+				add(ix.byID, sub.id, i)
+			case sub.tag != "" && sub.tag != "*":
+				add(ix.byTag, strings.ToLower(sub.tag), i)
+			default:
+				if l := ix.any; len(l) == 0 || l[len(l)-1] != i {
+					ix.any = append(ix.any, i)
+				}
+			}
+		}
+	}
+	return ix
+}
+
+func (s *Stylesheet) ruleIndex() *ruleIndex {
+	s.idxMu.Lock()
+	defer s.idxMu.Unlock()
+	var first *Rule
+	if len(s.Rules) > 0 {
+		first = &s.Rules[0]
+	}
+	if s.idx == nil || s.idx.n != len(s.Rules) || s.idx.first != first {
+		s.idx = buildRuleIndex(s.Rules)
+	}
+	return s.idx
+}
+
+// candidateRules lists, in source order, the indexes of the rules that
+// may match n: those whose subject keys off one of n's classes, its id or
+// its tag, plus the rules keyed off nothing.
+func (s *Stylesheet) candidateRules(n *Node) []int {
+	ix := s.ruleIndex()
+	lists := make([][]int, 0, 4)
+	if len(ix.any) > 0 {
+		lists = append(lists, ix.any)
+	}
+	if l := ix.byTag[strings.ToLower(n.Tag)]; len(l) > 0 {
+		lists = append(lists, l)
+	}
+	if id, ok := n.Attr("id"); ok && id != "" {
+		if l := ix.byID[id]; len(l) > 0 {
+			lists = append(lists, l)
+		}
+	}
+	if c, ok := n.Attr("class"); ok && c != "" {
+		if c != n.classSrc || n.classList == nil {
+			n.classSrc, n.classList = c, strings.Fields(c)
+		}
+		for _, cl := range n.classList {
+			if l := ix.byClass[cl]; len(l) > 0 {
+				lists = append(lists, l)
+			}
+		}
+	}
+	switch len(lists) {
+	case 0:
+		return nil
+	case 1:
+		return lists[0]
+	}
+	var out []int
+	for _, l := range lists {
+		out = append(out, l...)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
