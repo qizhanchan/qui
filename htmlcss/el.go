@@ -449,6 +449,14 @@ func (e *El) setAttr(k, v string) {
 	}
 	e.storeAttr(k, v)
 	e.node.Attrs[k] = v
+	// An <input>'s control depends on its type. An input styled before its
+	// type arrived (inserted into a live tree, its id set first restyles it
+	// at once) was built as a text field: rebuild it as what it now is.
+	if k == "type" && e.tag == "input" && e.backing != nil {
+		e.backing = nil
+		e.ensureBacking()
+		e.syncChildren()
+	}
 	// The `disabled` attribute is state that both the backing control and the
 	// :disabled selector must see. markDirty (below) relinks :disabled;
 	// propagate to the widget here so the control also enables/disables.
