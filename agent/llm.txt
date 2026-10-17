@@ -91,6 +91,9 @@ GET /tree?selector=<sel>&maxDepth=N&leaves=1
                       itself, no children).
      leaves=1       → flatten output to only nodes with no children.
    Use to keep token cost down on large trees.
+   A CSS selector (tag, .class, combinators) is a 400 here — the AX
+   tree has no classes; query it with GET /dom?selector= instead
+   (the qui-agent `tree` command does that switch for you).
 
 GET /screenshot?scale=0.5
    PNG of the window at logical-pixel size × scale. scale=1 is
@@ -188,6 +191,16 @@ POST /act     Content-Type: application/json
    }
 
 Modifiers: shift, ctrl, alt (== option), cmd (== super / meta).
+
+CSS SELECTORS ON /act: a target the widget grammar can't parse — a
+tag, a .class, a combinator, :has-text(…), e.g. ".toolbar button.save"
+— is retried as a CSS selector against the DOM (exactly POST /dom/act,
+auto-wait included) for click, doubleclick, rightclick, hover, focus,
+type, scroll, sendkey and sendchord. That response is the /dom/act
+shape plus "via": "dom"; when it also fails, "widgetSelectorError"
+carries the widget parser's complaint. #id is valid widget grammar, so
+it always means a widget ID. pinch and drag take widget selectors only
+(a CSS target returns errorCode=bad_selector with a "hint").
 
 `type` picks its route from the target: a text control (or a
 <select>, whose option labels it matches) gets the string in one
@@ -415,7 +428,17 @@ GET /wait?for=overlayDisappears&pattern=modal&timeoutMs=1500
 GET /wait?for=selector&selector=<sel>&state=appears&timeoutMs=2000
    Blocks until the selector matches a visible widget (state=appears,
    the default) or matches nothing (state=gone), confirmed across
-   two consecutive observations.
+   two consecutive observations. A selector the widget grammar can't
+   parse (tag, .class, combinators) is waited on as a CSS selector
+   against the DOM instead; the response then carries "via": "dom".
+
+GET /wait?for=dom&selector=<css>&state=appears&timeoutMs=2000
+   The same wait, always against the DOM with a CSS selector:
+   appears = a VISIBLE element matches, gone = nothing matches.
+
+   Every /wait failure carries errorCode: timeout (condition never
+   held), bad_selector (the selector didn't parse — retrying won't
+   help), or error.
 
 GET /wait?for=stable&timeoutMs=2000
    Blocks until the accessibility-tree content hash is unchanged

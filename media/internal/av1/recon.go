@@ -110,10 +110,28 @@ func (t *tile) inverseTransform(tx, typ int, lossless bool) {
 	colMax := int32(1)<<(cb-1) - 1
 	colMin := -int32(1) << (cb - 1)
 	row := rs.tmp[:w]
+	rows := 0 // rows of the row pass's output that may be non-zero
 	for i := 0; i < h; i++ {
 		out := rs.res[i*w : i*w+w]
 		if i >= th || allZero(rs.dq[i*tw:i*tw+tw]) {
 			clear(out)
+			continue
+		}
+		rows = i + 1
+		if rowT == kDCT && allZero(rs.dq[i*tw+1:i*tw+tw]) {
+			// A DC-only DCT input gives round12(dc * cos(pi/4)) everywhere.
+			v := rs.dq[i*tw]
+			if rect {
+				v = round12(int64(v) * 2896)
+			}
+			v = round12(int64(min(max(v, rowMin), rowMax)) * 2896)
+			if rowShift > 0 {
+				v = (v + 1<<(rowShift-1)) >> rowShift
+			}
+			v = min(max(v, colMin), colMax)
+			for j := range out {
+				out[j] = v
+			}
 			continue
 		}
 		for j := 0; j < w; j++ {
@@ -135,6 +153,17 @@ func (t *tile) inverseTransform(tx, typ int, lossless bool) {
 			out[j] = min(max(v, colMin), colMax)
 		}
 	}
+	if rows <= 1 && colT == kDCT {
+		// Only the first row is non-zero: each column is DC-only.
+		for j := 0; j < w; j++ {
+			v := (round12(int64(rs.res[j])*2896) + 8) >> 4
+			for i := 0; i < h; i++ {
+				rs.res[i*w+j] = v
+			}
+		}
+		t.flipResidual(w, h, flipLR, flipUD)
+		return
+	}
 	col := rs.tmp[:h]
 	for j := 0; j < w; j++ {
 		for i := 0; i < h; i++ {
@@ -145,6 +174,11 @@ func (t *tile) inverseTransform(tx, typ int, lossless bool) {
 			rs.res[i*w+j] = (col[i] + 8) >> 4
 		}
 	}
+	t.flipResidual(w, h, flipLR, flipUD)
+}
+
+func (t *tile) flipResidual(w, h int, flipLR, flipUD bool) {
+	rs := t.recon
 	if flipUD {
 		for i := 0; i < h/2; i++ {
 			a, b := rs.res[i*w:i*w+w], rs.res[(h-1-i)*w:(h-1-i)*w+w]
@@ -222,7 +256,18 @@ func txKinds(typ int) (row, col int, flipLR, flipUD bool) {
 func tx1D(v []int32, n, kind int) {
 	switch kind {
 	case kDCT:
-		idct(v, n)
+		switch n {
+		case 2:
+			idct4(v)
+		case 3:
+			idct8(v)
+		case 4:
+			idct16(v)
+		case 5:
+			idct32(v)
+		default:
+			idct64(v)
+		}
 	case kADST:
 		switch n {
 		case 2:

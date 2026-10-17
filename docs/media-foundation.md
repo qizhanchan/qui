@@ -383,7 +383,7 @@ never shown, `--filmgrain 0/1` the grain-free reference and the output).
 | Transforms (A4) | `transform.go`, `recon.go` | DCT 4–64, ADST 4/8/16, flipADST, identity, WHT for lossless; quantiser matrices |
 | Loop filters (A5) | `lf.go`, `cdef.go`, `restoration.go`, `lr.go` | deblocking, CDEF, superres upscaling, loop restoration (Wiener, self-guided) |
 | Film grain (A6) | `filmgrain.go` | grain synthesis on output (8 / 10-bit, chroma from luma, overlap, clipping), never in references |
-| Performance (A7) | `mc_fast.go`, `neon_arm64.s` (from `neon_gen.go`), `parallel.go` | unscaled MC reads the reference in place with NEON 8-tap kernels (halved taps keep the 8-bit horizontal pass exact in int16); stripe-buffered loop restoration; CDEF on a per-block neighbourhood copy; **tiles decode in parallel**; deblocking (row / column bands), CDEF (64×64 rows) and LR (stripes) run on all cores; pooled frame and scratch buffers |
+| Performance (A7) | `mc_fast.go`, `neon_arm64.s` (from `neon_gen.go`), `parallel.go` | unscaled MC reads the reference in place with NEON 8-tap kernels (halved taps keep the 8-bit horizontal pass exact in int16); stripe-buffered loop restoration; CDEF on a per-block neighbourhood copy; **tiles decode in parallel**; deblocking (row / column bands), CDEF (64×64 rows) and LR (stripes) run on all cores; **single-tile frames filter in 64-row bands on their own goroutine behind the tile decoder** (`pipeline.go`); unrolled inverse DCTs (`idct_unrolled.go` from `idct_gen.go`), branch-free CDEF taps, padded coefficient contexts; pooled frame and scratch buffers |
 
 Where the specification and the reference decoders differ in detail
 (inverse-transform butterfly signs and intermediate clamps, warp-sample
@@ -417,6 +417,12 @@ Evidence:
   (one tile) / 157 fps (four tiles). NEON and `-tags purego` builds
   decode identically (`TestMcNEON` checks the kernels for every filter,
   phase and width).
+- **Speed, noisy content** (1080p `testsrc2` + noise, SVT-AV1 preset 8
+  CRF 35, one tile, M5, 2026-10-17): 40.6 ms/frame on one core (was 67.5
+  before the transform / CDEF / context work), **24.0 ms on 10 cores**
+  (was 46.3; 27.2 before filter pipelining), which is now the serial tile
+  decode. Pipelined and in-place filtering are pinned equal
+  (`TestPipelinedFilterMatchesInPlace`, race detector clean).
 
 Open items: tools no local encoder emits (chroma palettes,
 distance-weighted compound, dual filter, delta loop filter, intra-only

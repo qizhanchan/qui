@@ -57,7 +57,10 @@ func brev(numBits, x int) int {
 	return r
 }
 
-// idct is the inverse DCT of 2^n values in place (spec 7.13.2.3).
+// idct is the inverse DCT of 2^n values in place (spec 7.13.2.3), as
+// the spec writes it; idct_gen.go unrolls it into idct4 ... idct64.
+//
+//go:generate go run idct_gen.go
 func idct(t []int32, n int) {
 	var cp [64]int32
 	n0 := 1 << n

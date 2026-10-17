@@ -77,6 +77,7 @@ func (s *sliceDec) residual(x0, y0, log2, cIdx int) error {
 	n := 1 << log2
 	c := s.coeff[:n*n]
 	clear(c)
+	nz := s.nzBuf[:0]
 	bypass := s.cuTransquantBypass
 	tskip := false
 	if s.pps.TransformSkip && !bypass && log2 <= s.pps.Log2MaxTransformSkipSize {
@@ -271,9 +272,13 @@ func (s *sliceDec) residual(x0, y0, log2, cIdx int) error {
 				v = -v
 			}
 			c[yC*n+xC] = v
+			nz = append(nz, int16(yC*n+xC))
 		}
 	}
-	return s.reconstruct(x0, y0, log2, cIdx, tskip)
+	s.nz = nz
+	err := s.reconstruct(x0, y0, log2, cIdx, tskip)
+	s.nz = nil
+	return err
 }
 
 func sigCtxInc(log2, cIdx, xC, yC, scanIdx, prev int) int {
@@ -373,13 +378,13 @@ func (s *sliceDec) reconstruct(x0, y0, log2, cIdx int, tskip bool) error {
 			}
 			m = sl.factor[log2-2][id]
 		}
-		dequant(c, n, s.qpFor(cIdx), m)
+		cols, by := dequant(c, n, s.qpFor(cIdx), m, s.nz)
 		if tskip {
 			for i := range c {
 				c[i] = (c[i]<<7 + 2048) >> 12
 			}
 		} else {
-			inverseTransform(c, n, cIdx == 0 && n == 4 && s.predMode == modeIntra, s.tmp[:n*n])
+			inverseTransform(c, n, cIdx == 0 && n == 4 && s.predMode == modeIntra, s.tmp[:n*n], cols, by)
 		}
 	}
 	pic := s.pic

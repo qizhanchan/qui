@@ -232,7 +232,12 @@ func (s *Server) handleDOMAct(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	writeJSON(w, http.StatusOK, s.runDOMAct(req))
+}
 
+// runDOMAct is the body of POST /dom/act, shared with /act's fallback for
+// CSS selectors the widget grammar can't parse.
+func (s *Server) runDOMAct(req domActRequest) map[string]any {
 	preTree := s.window.AccessibilityTreeSynced()
 	preFocus := focusedPath(preTree)
 	preOverlays := overlayLayers(preTree)
@@ -248,12 +253,11 @@ func (s *Server) handleDOMAct(w http.ResponseWriter, r *http.Request) {
 	var actErr error
 
 	if err := requireTarget(action, req.Target, false); err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{
+		return map[string]any{
 			"ok":        false,
 			"error":     err.Error(),
 			"errorCode": "no_match",
-		})
-		return
+		}
 	}
 
 	// blur needs no target; everything else resolves the CSS selector.
@@ -327,9 +331,55 @@ func (s *Server) handleDOMAct(w http.ResponseWriter, r *http.Request) {
 			resp["errorCode"] = "not_visible"
 		} else if errors.Is(actErr, qui.ErrWindowClosed) {
 			resp["errorCode"] = "window_closed"
+		} else if resolved == nil && action != "blur" && !errors.Is(actErr, qui.ErrNotVisible) {
+			// Resolution failed for a reason other than "no match" / "not
+			// visible": the CSS selector itself didn't parse.
+			resp["errorCode"] = "bad_selector"
 		} else {
 			resp["errorCode"] = "error"
 		}
 	}
-	writeJSON(w, http.StatusOK, resp)
+	return resp
+}
+
+// domActions are the /act actions the DOM surface can perform, i.e. the
+// ones /act hands over to it when the widget grammar rejects the target.
+var domActions = map[string]bool{
+	"click": true, "doubleclick": true, "rightclick": true, "hover": true,
+	"focus": true, "type": true, "scroll": true, "sendkey": true, "sendchord": true,
+}
+
+// waitDOM blocks until a CSS selector matches a visible element (appear)
+// or matches nothing (gone), confirmed on two consecutive samples like
+// Window.WaitFor. A selector that doesn't parse fails at once.
+func (s *Server) waitDOM(selector string, appear bool, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	streak := 0
+	for {
+		nodes, err := htmlcss.InspectWindow(s.window).Query(selector)
+		if err != nil {
+			return err
+		}
+		met := len(nodes) == 0
+		if appear {
+			met = false
+			for _, n := range nodes {
+				if n.Visible {
+					met = true
+					break
+				}
+			}
+		}
+		if met {
+			if streak++; streak >= 2 {
+				return nil
+			}
+		} else {
+			streak = 0
+		}
+		if !time.Now().Before(deadline) {
+			return qui.ErrWaitTimeout
+		}
+		time.Sleep(16 * time.Millisecond)
+	}
 }

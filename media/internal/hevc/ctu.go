@@ -73,6 +73,10 @@ type sliceDec struct {
 
 	coeff [32 * 32]int32
 	tmp   [32 * 32]int32
+	// nz lists the positions of coeff's non-zero levels while residual
+	// hands them to reconstruct (nil: scan the whole block).
+	nz    []int16
+	nzBuf [32 * 32]int16
 	mc    mcScratch
 }
 

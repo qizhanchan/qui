@@ -95,10 +95,14 @@ type tile struct {
 	b   block
 	mvp mvPred
 
-	edges     intraEdges
-	mc        *mcScratch
-	coef      [32 * 32]int32 // Quant[] of the current transform block
-	planeType int            // PlaneTxType of the current transform block
+	edges intraEdges
+	mc    *mcScratch
+	coef  [32 * 32]int32 // Quant[] of the current transform block
+	// lvl holds min(level, 15) of the coefficients read so far, row-major
+	// with stride tw+4 and four zero rows and columns of padding, so the
+	// context neighbourhoods need no bounds tests (see lvlReset).
+	lvl       [36 * 36]uint8
+	planeType int // PlaneTxType of the current transform block
 	recon     *reconScratch
 
 	// enc, when set, supplies the coefficients of each transform block
@@ -150,6 +154,9 @@ func (t *tile) decode() error {
 			if err := t.partition(r, c, sb); err != nil {
 				return err
 			}
+		}
+		if p := f.pipe; p != nil {
+			p.publish(min(r+sb4, t.miRowEnd) * 4)
 		}
 	}
 	return nil

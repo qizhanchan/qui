@@ -284,9 +284,18 @@ func cmdTree(c *http.Client, args []string) error {
 	if len(args) > 0 && args[0] != "" {
 		path += "?selector=" + queryEscape(args[0])
 	}
-	body, err := httpGet(c, path)
+	body, status, err := httpDo(c, "GET", path, nil)
 	if err != nil {
 		return err
+	}
+	if status == http.StatusBadRequest && bytes.Contains(body, []byte("invalid selector")) {
+		// Not widget grammar (tag, .class, combinators): show the DOM
+		// matches instead, the surface CSS selectors belong to.
+		errf("%q is not a widget selector; showing DOM matches (qui-agent dom query)", args[0])
+		return cmdDOMTree(c, args[:1])
+	}
+	if status >= 400 {
+		return fmt.Errorf("GET %s: HTTP %d: %s", path, status, strings.TrimSpace(string(body)))
 	}
 
 	trimmed := bytes.TrimSpace(body)
@@ -434,12 +443,21 @@ func postActTo(c *http.Client, path string, payload map[string]any) error {
 	ok, _ := resp["ok"].(bool)
 	if !ok || status >= 400 {
 		if msg, has := resp["error"]; has {
+			if we, has := resp["widgetSelectorError"]; has {
+				msg = fmt.Sprintf("%v (tried as a CSS selector after the widget grammar rejected it: %v)", msg, we)
+			}
+			if hint, has := resp["hint"]; has {
+				msg = fmt.Sprintf("%v\nhint: %v", msg, hint)
+			}
 			return fmt.Errorf("action failed: %v", msg)
 		}
 		return fmt.Errorf("action failed (HTTP %d): %s", status, compact(resp))
 	}
 
 	parts := []string{"ok"}
+	if v, has := resp["via"]; has {
+		parts = append(parts, fmt.Sprintf("via=%v", v))
+	}
 	if v, has := resp["overlayCount"]; has {
 		parts = append(parts, fmt.Sprintf("overlayCount=%v", numStr(v)))
 	}
@@ -462,7 +480,11 @@ func postActTo(c *http.Client, path string, payload map[string]any) error {
 // wait
 // ---------------------------------------------------------------------------
 
-func cmdWait(c *http.Client, args []string) error {
+func cmdWait(c *http.Client, args []string) error { return waitFor(c, "selector", args) }
+
+// waitFor polls GET /wait. kind "selector" takes a widget selector (and
+// the server retries a CSS one against the DOM); "dom" a CSS selector.
+func waitFor(c *http.Client, kind string, args []string) error {
 	var selector string
 	state := "appears"
 	timeoutMs := 5000
@@ -490,8 +512,8 @@ func cmdWait(c *http.Client, args []string) error {
 		return fmt.Errorf("wait requires a <selector>")
 	}
 
-	path := fmt.Sprintf("/wait?for=selector&selector=%s&state=%s&timeoutMs=%d",
-		queryEscape(selector), state, timeoutMs)
+	path := fmt.Sprintf("/wait?for=%s&selector=%s&state=%s&timeoutMs=%d",
+		kind, queryEscape(selector), state, timeoutMs)
 
 	out, status, err := httpDo(c, "GET", path, nil)
 	if err != nil {
@@ -510,11 +532,27 @@ func cmdWait(c *http.Client, args []string) error {
 		timedOut = v
 	}
 
+	via := ""
+	if v, has := resp["via"].(string); has && v != "" {
+		via = " (via " + v + ")"
+	}
+	code, _ := resp["errorCode"].(string)
+	if !ok && code != "" && code != "timeout" {
+		// A selector that doesn't parse would otherwise read as a timeout.
+		msg, _ := resp["error"].(string)
+		if msg == "" {
+			msg = strings.TrimSpace(string(out))
+		}
+		return fmt.Errorf("wait failed: %s", msg)
+	}
 	if !ok || timedOut {
-		fmt.Printf("timeout: %q did not become %s within %dms\n", selector, state, timeoutMs)
+		fmt.Printf("timeout: %q did not become %s within %dms%s\n", selector, state, timeoutMs, via)
+		if we, has := resp["widgetSelectorError"].(string); has {
+			fmt.Printf("  (not a widget selector: %s; it was tried as CSS against the DOM)\n", we)
+		}
 		return fmt.Errorf("wait failed")
 	}
-	fmt.Printf("ok: %q is %s\n", selector, state)
+	fmt.Printf("ok: %q is %s%s\n", selector, state, via)
 	return nil
 }
 
@@ -643,6 +681,8 @@ func cmdDOM(c *http.Client, args []string) error {
 		return postActTo(c, "/dom/act", map[string]any{"action": sub, "target": rest[0]})
 	case "blur":
 		return postActTo(c, "/dom/act", map[string]any{"action": "blur"})
+	case "wait":
+		return waitFor(c, "dom", rest)
 	case "type":
 		if len(rest) < 2 {
 			return fmt.Errorf("dom type requires <selector> <text...>")
@@ -651,7 +691,7 @@ func cmdDOM(c *http.Client, args []string) error {
 			"action": "type", "target": rest[0], "text": strings.Join(rest[1:], " "),
 		})
 	default:
-		return fmt.Errorf("unknown dom subcommand: %s (try tree|query|styles|click|type|hover|focus|scroll|blur)", sub)
+		return fmt.Errorf("unknown dom subcommand: %s (try tree|query|styles|click|type|hover|focus|scroll|blur|wait)", sub)
 	}
 }
 
@@ -981,6 +1021,12 @@ Widget selectors (CSS-attribute style, address the rendered widget tree):
   #id  [role=button]  [name="Save"]  [name*="ave"]  [text="..."]
   [key=qui.save]  :nth(N)  :visible  :focused  :layer(modal)
 
+  A selector the widget grammar can't parse — a tag, .class or combinator,
+  e.g. '.toolbar button.save' — is resolved against the DOM instead, so
+  click/type/hover/focus/doubleclick/rightclick/wait/tree also take CSS
+  selectors (output says "via=dom"). #id stays a widget ID. pinch is
+  widget-only.
+
   In a localized app, [name=] matches the CURRENT language's caption and
   breaks on a language switch. Use #id or [key=<message key>], both of
   which are locale-independent. The tree reports each node's key as
@@ -996,6 +1042,9 @@ to debug htmlcss / reactive-html business UIs):
   dom type <selector> <text...>   type into the matching element
   dom hover|focus|scroll|doubleclick|rightclick <selector>
   dom blur               clear focus
+  dom wait <selector> [--gone] [--timeout=ms]
+                         wait until a CSS selector matches a visible element
+                         (or matches nothing)
 
 DOM CSS selectors are the full engine grammar: tag, #id, .class, [attr],
 :nth-child, and combinators (descendant, > + ~). Example: ".card > button.primary"
@@ -1014,6 +1063,8 @@ Examples:
   qui-agent dom styles '.card > button.primary'
   qui-agent dom click '.toolbar button.save'
   qui-agent dom click 'button:has-text("Save")'
+  qui-agent dom wait '.toast.success' --timeout=3000
+  qui-agent click '.toolbar button.save'      # CSS works top-level too
 `)
 }
 

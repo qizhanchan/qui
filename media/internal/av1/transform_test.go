@@ -65,3 +65,30 @@ func TestTransform1D(t *testing.T) {
 		t.Errorf("%s: %d mismatches", k, v)
 	}
 }
+
+// TestIdctUnrolled pins the generated idct4 ... idct64 to the spec's idct.
+func TestIdctUnrolled(t *testing.T) {
+	fns := []func([]int32){idct4, idct8, idct16, idct32, idct64}
+	rng := uint32(1)
+	for n := 2; n <= 6; n++ {
+		n0 := 1 << n
+		for iter := 0; iter < 2000; iter++ {
+			x := make([]int32, n0)
+			for i := range x {
+				rng = rng*1664525 + 1013904223
+				x[i] = int32(rng>>8)%(1<<16) - 1<<15
+				if iter%3 == 0 && i > iter%n0 {
+					x[i] = 0
+				}
+			}
+			want := append([]int32(nil), x...)
+			idct(want, n)
+			fns[n-2](x)
+			for i := range x {
+				if x[i] != want[i] {
+					t.Fatalf("idct%d: got %v, want %v", n0, x, want)
+				}
+			}
+		}
+	}
+}

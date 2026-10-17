@@ -117,61 +117,73 @@ func (s *lrState) loadStripe(plane, stripeStart, stripeEnd, top, bot, planeEndY 
 // restore applies loop restoration, returning the restored frame.
 // Stripes are filtered in parallel, each worker with its own buffers.
 func (d *Decoder) restore(f *frameState, cdefF, deblockF *frame) *frame {
-	h := f.hdr
 	out := d.cloneFrame(cdefF)
 	states := make([]lrState, workers())
 	for p := 0; p < cdefF.numPlanes; p++ {
-		if h.lrType[p] == restoreNone {
+		if f.hdr.lrType[p] == restoreNone {
 			continue
 		}
-		ss := min(p, 1)
-		lp := &f.lr[p]
-		unit := h.lrUnitSize[p]
-		planeEndX := (h.UpscaledWidth+ss)>>ss - 1
-		planeEndY := (h.Height+ss)>>ss - 1
-		nStripes := (planeEndY + 1 + 8>>ss + 64>>ss - 1) / (64 >> ss)
-		parallelFor(nStripes, func(wk, stripe int) {
-			s := &states[wk]
-			s.cdef, s.deblock, s.bd = cdefF, deblockF, cdefF.bitDepth
-			s.planeW = planeEndX + 1
-			s.stride = s.planeW + 6
-			if need := s.stride * (64 + 6); len(s.buf) < need {
-				s.buf = make([]int32, need)
-			}
-			stripeStart := (-8 + stripe*64) >> ss
-			stripeEnd := stripeStart + 64>>ss - 1
-			top, bot := max(stripeStart, 0), min(stripeEnd, planeEndY)
-			if top > planeEndY {
-				return
-			}
-			unitRow := min(lp.rows-1, (top+8>>ss)/unit)
-			loaded := false
-			for uc := 0; uc < lp.cols; uc++ {
-				u := &lp.units[unitRow*lp.cols+uc]
-				if u.typ != restoreWiener && u.typ != restoreSgrproj {
-					continue
-				}
-				x0, x1 := uc*unit, (uc+1)*unit
-				if uc == lp.cols-1 {
-					x1 = s.planeW
-				}
-				x1 = min(x1, s.planeW)
-				if x0 >= x1 {
-					continue
-				}
-				if !loaded {
-					s.loadStripe(p, stripeStart, stripeEnd, top, bot, planeEndY)
-					loaded = true
-				}
-				if u.typ == restoreWiener {
-					s.wiener(out, p, u, x0, x1-x0, bot-top+1)
-				} else {
-					s.selfGuided(out, p, u, x0, x1-x0, bot-top+1)
-				}
-			}
+		parallelFor(lrStripes(f, p), func(wk, stripe int) {
+			lrStripe(f, cdefF, deblockF, out, p, stripe, &states[wk])
 		})
 	}
 	return out
+}
+
+// lrStripes is the number of loop restoration stripes of plane p.
+func lrStripes(f *frameState, p int) int {
+	ss := min(p, 1)
+	planeEndY := (f.hdr.Height+ss)>>ss - 1
+	return (planeEndY + 1 + 8>>ss + 64>>ss - 1) / (64 >> ss)
+}
+
+// lrStripe restores stripe number stripe of plane p into out: the
+// stripe covers luma rows [64*stripe - 8, 64*stripe + 56). It reads only
+// those rows of cdefF and two rows on either side of deblockF.
+func lrStripe(f *frameState, cdefF, deblockF, out *frame, p, stripe int, s *lrState) {
+	h := f.hdr
+	ss := min(p, 1)
+	lp := &f.lr[p]
+	unit := h.lrUnitSize[p]
+	planeEndX := (h.UpscaledWidth+ss)>>ss - 1
+	planeEndY := (h.Height+ss)>>ss - 1
+	s.cdef, s.deblock, s.bd = cdefF, deblockF, cdefF.bitDepth
+	s.planeW = planeEndX + 1
+	s.stride = s.planeW + 6
+	if need := s.stride * (64 + 6); len(s.buf) < need {
+		s.buf = make([]int32, need)
+	}
+	stripeStart := (-8 + stripe*64) >> ss
+	stripeEnd := stripeStart + 64>>ss - 1
+	top, bot := max(stripeStart, 0), min(stripeEnd, planeEndY)
+	if top > planeEndY {
+		return
+	}
+	unitRow := min(lp.rows-1, (top+8>>ss)/unit)
+	loaded := false
+	for uc := 0; uc < lp.cols; uc++ {
+		u := &lp.units[unitRow*lp.cols+uc]
+		if u.typ != restoreWiener && u.typ != restoreSgrproj {
+			continue
+		}
+		x0, x1 := uc*unit, (uc+1)*unit
+		if uc == lp.cols-1 {
+			x1 = s.planeW
+		}
+		x1 = min(x1, s.planeW)
+		if x0 >= x1 {
+			continue
+		}
+		if !loaded {
+			s.loadStripe(p, stripeStart, stripeEnd, top, bot, planeEndY)
+			loaded = true
+		}
+		if u.typ == restoreWiener {
+			s.wiener(out, p, u, x0, x1-x0, bot-top+1)
+		} else {
+			s.selfGuided(out, p, u, x0, x1-x0, bot-top+1)
+		}
+	}
 }
 
 // storeRow writes clipped values to plane row y from column x.

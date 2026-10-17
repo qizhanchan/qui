@@ -270,6 +270,7 @@ func (t *tile) writeCoeffs(k *symSink, plane, startX, startY, tx, typ int, level
 	tw, th := txW[a], txH[a]
 	quant := t.coef[:tw*th]
 	clear(quant)
+	t.lvlReset(tw, th)
 	ctx := t.txbSkipCtx(plane, x4, y4, w4, h4, maxX4, maxY4, tx)
 	k.flag(t.cdf.txbSkip[txSzCtx][ctx][:], eob == 0)
 	culLevel, dcCategory := 0, 0
@@ -344,6 +345,7 @@ func (t *tile) writeCoeffs(k *symSink, plane, startX, startY, tx, typ int, level
 				}
 			}
 			quant[pos] = int32(level)
+			t.lvl[pos>>bwl*(tw+4)+pos&(tw-1)] = uint8(min(level, 15))
 		}
 		for c := 0; c < eob; c++ {
 			pos := int(scan[c])

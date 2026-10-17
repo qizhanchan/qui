@@ -18,6 +18,11 @@ type Decoder struct {
 	// --outputinvisible does), for testing.
 	outputInvisible bool
 
+	// noPipeline runs the in-loop filters after decoding even for
+	// single-tile frames (see pipeline.go), for testing.
+	noPipeline bool
+	pipelined  int // frames filtered by the pipeline
+
 	// noFilmGrain skips film grain synthesis on output.
 	noFilmGrain     bool
 	seenFrameHeader bool
@@ -167,6 +172,19 @@ func (d *Decoder) tileGroup(b []byte, base int) error {
 		d.scratch = append(d.scratch, new(tileScratch))
 	}
 	errs := make([]error, len(jobs))
+	if start == 0 && end == numTiles-1 {
+		d.startPipe()
+		if p := d.fs.pipe; p != nil {
+			// A frame that fails (or panics) stops its filters before
+			// the decoder lets go of it.
+			defer func() {
+				if d.fs != nil && d.fs.pipe == p {
+					d.fs.pipe = nil
+					p.abort()
+				}
+			}()
+		}
+	}
 	parallelFor(len(jobs), func(w, i int) {
 		errs[i] = d.decodeTile(jobs[i].tn, jobs[i].data, d.scratch[w])
 	})

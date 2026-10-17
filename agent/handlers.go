@@ -76,7 +76,7 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 	if selector != "" {
 		nodes, err := s.window.FindNodes(selector)
 		if err != nil {
-			http.Error(w, "bad selector: "+err.Error(), http.StatusBadRequest)
+			http.Error(w, "bad selector: "+err.Error()+" (CSS selectors — tag, .class, combinators — go to GET /dom?selector=)", http.StatusBadRequest)
 			return
 		}
 		out := make([]any, 0, len(nodes))
@@ -237,7 +237,8 @@ func (s *Server) handleWait(w http.ResponseWriter, r *http.Request) {
 	}
 	timeout := time.Duration(timeoutMs) * time.Millisecond
 	what := q.Get("for")
-	var err error
+	var err, widgetErr error
+	var via string
 	switch what {
 	case "", "idle":
 		err = s.window.WaitIdle(timeout)
@@ -245,14 +246,23 @@ func (s *Server) handleWait(w http.ResponseWriter, r *http.Request) {
 		err = s.window.WaitOverlay(q.Get("pattern"), true, timeout)
 	case "overlayDisappears":
 		err = s.window.WaitOverlay(q.Get("pattern"), false, timeout)
-	case "selector":
+	case "selector", "dom":
 		sel := q.Get("selector")
 		if sel == "" {
-			http.Error(w, "for=selector requires selector param", http.StatusBadRequest)
+			http.Error(w, "for="+what+" requires selector param", http.StatusBadRequest)
 			return
 		}
 		appear := q.Get("state") != "gone"
-		err = s.window.WaitFor(sel, appear, timeout)
+		if what == "selector" {
+			err = s.window.WaitFor(sel, appear, timeout)
+		}
+		// for=dom waits on a CSS selector; for=selector falls back to one
+		// when the widget grammar can't parse it (tag, .class, combinators).
+		if what == "dom" || errors.Is(err, qui.ErrInvalidSelector) {
+			widgetErr = err
+			err = s.waitDOM(sel, appear, timeout)
+			via = "dom"
+		}
 	case "stable":
 		err = s.window.WaitTreeStable(timeout)
 	default:
@@ -260,8 +270,25 @@ func (s *Server) handleWait(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := map[string]any{"ok": err == nil, "idleState": s.window.IdleStateSynced()}
+	if via != "" {
+		resp["via"] = via
+	}
 	if err != nil {
 		resp["error"] = err.Error()
+		if widgetErr != nil {
+			// The DOM parser is lenient (an unknown pseudo just matches
+			// nothing), so a typo in a widget selector can surface as a
+			// DOM timeout: keep the widget parser's complaint alongside.
+			resp["widgetSelectorError"] = widgetErr.Error()
+		}
+		switch {
+		case errors.Is(err, qui.ErrWaitTimeout):
+			resp["errorCode"] = "timeout"
+		case errors.Is(err, qui.ErrInvalidSelector) || via == "dom":
+			resp["errorCode"] = "bad_selector"
+		default:
+			resp["errorCode"] = "error"
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -429,6 +456,24 @@ func (s *Server) handleAct(w http.ResponseWriter, r *http.Request) {
 		actErr = errors.New("unknown action: " + req.Action)
 	}
 
+	// The widget grammar has no tag / .class / combinators. A target it
+	// can't parse never reached an event, so retry it as a CSS selector
+	// against the DOM — callers needn't know which surface a selector
+	// belongs to.
+	if errors.Is(actErr, qui.ErrInvalidSelector) && req.Target != "" && domActions[action] {
+		resp := s.runDOMAct(domActRequest{
+			Action: action, Target: req.Target, Text: req.Text, Key: req.Key,
+			Chord: req.Chord, Modifiers: req.Modifiers, DX: req.DX, DY: req.DY,
+			ScrollIntoView: req.ScrollIntoView, Raw: req.Raw,
+		})
+		resp["via"] = "dom"
+		if ok, _ := resp["ok"].(bool); !ok {
+			resp["widgetSelectorError"] = actErr.Error()
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
 	postTree := s.window.AccessibilityTreeSynced()
 	resp := map[string]any{
 		"ok":          actErr == nil,
@@ -456,6 +501,7 @@ func (s *Server) handleAct(w http.ResponseWriter, r *http.Request) {
 			resp["errorCode"] = "window_closed"
 		} else if errors.Is(actErr, qui.ErrInvalidSelector) {
 			resp["errorCode"] = "bad_selector"
+			resp["hint"] = "CSS selectors (tag, .class, combinators) work with click, doubleclick, rightclick, hover, focus, type, scroll, sendkey and sendchord; " + action + " takes widget selectors only"
 		} else {
 			resp["errorCode"] = "error"
 		}

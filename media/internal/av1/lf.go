@@ -79,6 +79,42 @@ func (d *Decoder) deblock(f *frameState) {
 	}
 }
 
+// deblockBand filters the edges of mi rows [16k, 16k+16) (luma rows
+// [64k, 64k+64)): vertical edges then horizontal ones, plane by plane.
+// Called for k = 0, 1, ... in order, it equals deblock (see pipeline.go).
+func (d *Decoder) deblockBand(f *frameState, k int) {
+	h := f.hdr
+	if h.lf.level[0] == 0 && h.lf.level[1] == 0 {
+		return
+	}
+	r0, r1 := 16*k, min(16*k+16, f.miRows)
+	for plane := 0; plane < f.cur.numPlanes; plane++ {
+		if plane > 0 && h.lf.level[plane+1] == 0 {
+			continue
+		}
+		step := 1
+		if plane > 0 {
+			step = 2
+		}
+		// Vertical edges: rows are independent.
+		parallelFor((r1-r0+3)/4, func(_, b int) {
+			for row := r0 + 4*b; row < min(r0+4*b+4, r1); row += step {
+				for col := 0; col < f.miCols; col += step {
+					d.edgeFilter(f, plane, 0, row, col)
+				}
+			}
+		})
+		// Horizontal edges: columns are independent.
+		parallelFor((f.miCols+15)/16, func(_, b int) {
+			for row := r0; row < r1; row += step {
+				for col := 16 * b; col < min(16*b+16, f.miCols); col += step {
+					d.edgeFilter(f, plane, 1, row, col)
+				}
+			}
+		})
+	}
+}
+
 func (d *Decoder) edgeFilter(f *frameState, plane, pass, row, col int) {
 	h := f.hdr
 	ss := min(plane, 1)

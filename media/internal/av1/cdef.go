@@ -31,6 +31,25 @@ func (d *Decoder) cdef(f *frameState, src, dst *frame) {
 	})
 }
 
+// cdefBand filters the 64x64 blocks of luma rows [64k, 64k+64), in
+// parallel by column.
+func (d *Decoder) cdefBand(f *frameState, src, dst *frame, k int) {
+	h := f.hdr
+	r := 16 * k
+	parallelFor((f.miCols+15)/16, func(_, fc int) {
+		c := 16 * fc
+		idx := int(f.cdefIdx[f.cdefIndex(r, c)])
+		if idx == -1 {
+			return
+		}
+		for y := r; y < min(r+16, f.miRows); y += 2 {
+			for x := c; x < min(c+16, f.miCols); x += 2 {
+				d.cdefBlock(f, src, dst, y, x, idx, h)
+			}
+		}
+	})
+}
+
 func (d *Decoder) cdefBlock(f *frameState, src, dst *frame, r, c, idx int, h *FrameHeader) {
 	m := func(rr, cc int) bool {
 		if rr >= f.miRows || cc >= f.miCols {
@@ -158,8 +177,16 @@ func constrainAdj(diff, threshold int32, adj uint) int32 {
 	return v
 }
 
-// cdefNA marks a tap outside the frame (CdefAvailable false).
-const cdefNA = int32(1) << 24
+// cdefNA marks a tap outside the frame (CdefAvailable false). As in
+// dav1d, its value makes the tap drop out with no test: it is negative,
+// so the signed max ignores it; as uint32 it is huge, so the unsigned min
+// ignores it; and its distance from any sample exceeds every
+// threshold << adjustment, so constrain gives 0.
+const cdefNA = -int32(1) << 20
+
+// cdefBS is the stride of cdefFilter's block copy: 8 samples and a
+// two-sample border on each side.
+const cdefBS = 12
 
 func cdefFilter(f *frameState, src, dst *frame, plane, r, c int, priStr, secStr int32, damping, dir int) {
 	if priStr == 0 && secStr == 0 {
@@ -172,49 +199,17 @@ func cdefFilter(f *frameState, src, dst *frame, plane, r, c int, priStr, secStr 
 	sp, dp := &src.planes[plane], &dst.planes[plane]
 	maxX, maxY := (f.miCols*4)>>ss, (f.miRows*4)>>ss
 	cs := uint(src.bitDepth - 8)
+	var blk [cdefBS * cdefBS]int32
+	cdefLoad(&blk, sp, x0, y0, w, h, maxX, maxY)
+
+	k0 := &cdefDirections[dir]
+	po0 := k0[0][0]*cdefBS + k0[0][1]
+	po1 := k0[1][0]*cdefBS + k0[1][1]
+	sa, sb := &cdefDirections[(dir+2)&7], &cdefDirections[(dir-2)&7]
+	so0, so1 := sa[0][0]*cdefBS+sa[0][1], sb[0][0]*cdefBS+sb[0][1]
+	so2, so3 := sa[1][0]*cdefBS+sa[1][1], sb[1][0]*cdefBS+sb[1][1]
 	pt := &cdefPriTaps[(priStr>>cs)&1]
-	st := &cdefSecTaps[(priStr>>cs)&1]
-	// The block with a two-sample border, stride 12.
-	const bs = 12
-	var blk [bs * bs]int32
-	for i := -2; i < h+2; i++ {
-		yy := y0 + i
-		row := blk[(i+2)*bs : (i+2)*bs+w+4]
-		if yy < 0 || yy >= maxY {
-			for j := range row {
-				row[j] = cdefNA
-			}
-			continue
-		}
-		o := yy * sp.stride
-		for j := range row {
-			xx := x0 + j - 2
-			switch {
-			case xx < 0 || xx >= maxX:
-				row[j] = cdefNA
-			case sp.pix16 != nil:
-				row[j] = int32(sp.pix16[o+xx])
-			default:
-				row[j] = int32(sp.pix8[o+xx])
-			}
-		}
-	}
-	var priOff [2][2]int
-	for k := 0; k < 2; k++ {
-		d := &cdefDirections[dir][k]
-		priOff[k] = [2]int{d[0]*bs + d[1], -(d[0]*bs + d[1])}
-	}
-	var secDirs = [2]int{(dir + 2) & 7, (dir - 2) & 7}
-	var secOffs [2][4]int
-	for k := 0; k < 2; k++ {
-		n := 0
-		for _, d2 := range secDirs {
-			d := &cdefDirections[d2][k]
-			o := d[0]*bs + d[1]
-			secOffs[k][n], secOffs[k][n+1] = o, -o
-			n += 2
-		}
-	}
+	pt0, pt1 := pt[0], pt[1]
 	var priAdj, secAdj uint
 	if priStr != 0 {
 		priAdj = uint(max(0, damping-floorLog2(int(priStr))))
@@ -223,43 +218,78 @@ func cdefFilter(f *frameState, src, dst *frame, plane, r, c int, priStr, secStr 
 		secAdj = uint(max(0, damping-floorLog2(int(secStr))))
 	}
 	for i := 0; i < h; i++ {
+		o := (y0+i)*dp.stride + x0
 		for j := 0; j < w; j++ {
-			ci := (i+2)*bs + j + 2
+			ci := (i+2)*cdefBS + j + 2
 			x := blk[ci]
-			sum := int32(0)
-			mx, mn := x, x
-			for k := 0; k < 2; k++ {
-				for _, o := range priOff[k] {
-					p := blk[ci+o]
-					if p == cdefNA {
-						continue
-					}
-					if priStr != 0 {
-						sum += pt[k] * constrainAdj(p-x, priStr, priAdj)
-					}
-					mx, mn = max(p, mx), min(p, mn)
-				}
-				for _, o := range secOffs[k] {
-					p := blk[ci+o]
-					if p == cdefNA {
-						continue
-					}
-					if secStr != 0 {
-						sum += st[k] * constrainAdj(p-x, secStr, secAdj)
-					}
-					mx, mn = max(p, mx), min(p, mn)
-				}
+			var sum int32
+			var v int32
+			switch {
+			case secStr == 0:
+				// Primary taps only (12/16 of the largest step): the
+				// result stays within the taps' range, so no clamp.
+				sum = pt0*(constrainAdj(blk[ci+po0]-x, priStr, priAdj)+constrainAdj(blk[ci-po0]-x, priStr, priAdj)) +
+					pt1*(constrainAdj(blk[ci+po1]-x, priStr, priAdj)+constrainAdj(blk[ci-po1]-x, priStr, priAdj))
+				v = x + (8+sum-(sum>>31&1))>>4
+			case priStr == 0:
+				// Secondary taps only (likewise 12/16): no clamp.
+				sum = 2*(constrainAdj(blk[ci+so0]-x, secStr, secAdj)+constrainAdj(blk[ci-so0]-x, secStr, secAdj)+
+					constrainAdj(blk[ci+so1]-x, secStr, secAdj)+constrainAdj(blk[ci-so1]-x, secStr, secAdj)) +
+					constrainAdj(blk[ci+so2]-x, secStr, secAdj) + constrainAdj(blk[ci-so2]-x, secStr, secAdj) +
+					constrainAdj(blk[ci+so3]-x, secStr, secAdj) + constrainAdj(blk[ci-so3]-x, secStr, secAdj)
+				v = x + (8+sum-(sum>>31&1))>>4
+			default:
+				p0, p1, p2, p3 := blk[ci+po0], blk[ci-po0], blk[ci+po1], blk[ci-po1]
+				s0, s1, s2, s3 := blk[ci+so0], blk[ci-so0], blk[ci+so1], blk[ci-so1]
+				s4, s5, s6, s7 := blk[ci+so2], blk[ci-so2], blk[ci+so3], blk[ci-so3]
+				sum = pt0*(constrainAdj(p0-x, priStr, priAdj)+constrainAdj(p1-x, priStr, priAdj)) +
+					pt1*(constrainAdj(p2-x, priStr, priAdj)+constrainAdj(p3-x, priStr, priAdj)) +
+					2*(constrainAdj(s0-x, secStr, secAdj)+constrainAdj(s1-x, secStr, secAdj)+
+						constrainAdj(s2-x, secStr, secAdj)+constrainAdj(s3-x, secStr, secAdj)) +
+					constrainAdj(s4-x, secStr, secAdj) + constrainAdj(s5-x, secStr, secAdj) +
+					constrainAdj(s6-x, secStr, secAdj) + constrainAdj(s7-x, secStr, secAdj)
+				mx := max(x, p0, p1, p2, p3, s0, s1, s2, s3, s4, s5, s6, s7)
+				mn := int32(min(uint32(x), uint32(p0), uint32(p1), uint32(p2), uint32(p3),
+					uint32(s0), uint32(s1), uint32(s2), uint32(s3), uint32(s4), uint32(s5), uint32(s6), uint32(s7)))
+				v = min(max(x+(8+sum-(sum>>31&1))>>4, mn), mx)
 			}
-			neg := int32(0)
-			if sum < 0 {
-				neg = 1
-			}
-			v := min(max(x+((8+sum-neg)>>4), mn), mx)
-			o := (y0+i)*dp.stride + x0 + j
 			if dp.pix16 != nil {
-				dp.pix16[o] = uint16(v)
+				dp.pix16[o+j] = uint16(v)
 			} else {
-				dp.pix8[o] = uint8(v)
+				dp.pix8[o+j] = uint8(v)
+			}
+		}
+	}
+}
+
+// cdefLoad copies the w x h block at (x0, y0) of sp with a two-sample
+// border into blk, marking samples outside the frame cdefNA.
+func cdefLoad(blk *[cdefBS * cdefBS]int32, sp *planeBuf, x0, y0, w, h, maxX, maxY int) {
+	lo, hi := max(0, x0-2), min(maxX, x0+w+2) // in-frame columns
+	for i := -2; i < h+2; i++ {
+		yy := y0 + i
+		row := blk[(i+2)*cdefBS : (i+2)*cdefBS+w+4]
+		if yy < 0 || yy >= maxY {
+			for j := range row {
+				row[j] = cdefNA
+			}
+			continue
+		}
+		for j := 0; j < lo-(x0-2); j++ {
+			row[j] = cdefNA
+		}
+		for j := hi - (x0 - 2); j < len(row); j++ {
+			row[j] = cdefNA
+		}
+		in := row[lo-(x0-2) : hi-(x0-2)]
+		o := yy*sp.stride + lo
+		if sp.pix16 != nil {
+			for j, v := range sp.pix16[o : o+len(in)] {
+				in[j] = int32(v)
+			}
+		} else {
+			for j, v := range sp.pix8[o : o+len(in)] {
+				in[j] = int32(v)
 			}
 		}
 	}

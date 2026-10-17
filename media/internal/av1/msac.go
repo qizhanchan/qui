@@ -72,8 +72,41 @@ func (m *msac) sym(cdf []uint16, n int) int {
 	return s
 }
 
-// flag reads a binary adaptive symbol.
-func (m *msac) flag(cdf []uint16) bool { return m.sym(cdf, 2) != 0 }
+// flag reads a binary adaptive symbol: sym(cdf, 2) without the loop.
+func (m *msac) flag(cdf []uint16) bool {
+	_ = cdf[2]
+	b := m.bool(uint32(cdf[0] >> 6))
+	if !m.noAdapt {
+		cnt := cdf[2]
+		rate := 4 + uint(cnt>>4&1|cnt>>5&1)
+		if cnt > 31 {
+			rate = 6
+		}
+		if b != 0 {
+			cdf[0] += (32768 - cdf[0]) >> rate
+		} else {
+			cdf[0] -= cdf[0] >> rate
+		}
+		if cnt < 32 {
+			cdf[2] = cnt + 1
+		}
+	}
+	return b != 0
+}
+
+// bool is decode for n = 2 (the second threshold is always 0), f being
+// the first CDF entry >> 6.
+func (m *msac) bool(f uint32) int {
+	c := uint32(m.dif >> 48)
+	v := ((m.rng>>8)*f)>>1 + 4
+	if c >= v {
+		m.dif -= uint64(v) << 48
+		m.normalize(m.rng - v)
+		return 0
+	}
+	m.normalize(v)
+	return 1
+}
 
 func adapt(cdf []uint16, s, n int) {
 	cnt := cdf[n]
@@ -96,7 +129,7 @@ func adapt(cdf []uint16, s, n int) {
 var literalCDF = [3]uint16{16384, 0, 0}
 
 // bit reads one equiprobable bit, L(1).
-func (m *msac) bit() int { return m.decode(literalCDF[:], 2) }
+func (m *msac) bit() int { return m.bool(16384 >> 6) }
 
 // lit reads an n-bit literal, L(n).
 func (m *msac) lit(n int) int {

@@ -392,6 +392,7 @@ func (t *tile) coeffs(plane, startX, startY, tx int) (int, error) {
 	tw, th := txW[a], txH[a]
 	quant := t.coef[:tw*th]
 	clear(quant)
+	t.lvlReset(tw, th)
 
 	ctx := t.txbSkipCtx(plane, x4, y4, w4, h4, maxX4, maxY4, tx)
 	allZero := t.ms.flag(t.cdf.txbSkip[txSzCtx][ctx][:])
@@ -477,6 +478,7 @@ func (t *tile) coeffs(plane, startX, startY, tx int) (int, error) {
 				}
 			}
 			quant[pos] = int32(level)
+			t.lvl[pos>>bwl*(tw+4)+pos&(tw-1)] = uint8(min(level, 15))
 		}
 		for c := 0; c < eob; c++ {
 			pos := int(scan[c])
@@ -598,39 +600,50 @@ func iabs32(v int32) int32 {
 	return v
 }
 
+// lvlReset clears t.lvl for a tw x th block.
+func (t *tile) lvlReset(tw, th int) {
+	clear(t.lvl[:(th+4)*(tw+4)])
+}
+
+func lvl3(v uint8) int { return int(min(v, 3)) }
+
+// coeffBaseCtx is the coeff_base context (spec 8.3.2): the magnitudes of
+// sigRefDiffOffset[class] around pos, read from the padded t.lvl.
 func (t *tile) coeffBaseCtx(tx, class, bwl, tw, th, pos int) int {
 	row := pos >> bwl
-	col := pos - row<<bwl
-	mag := 0
-	for _, o := range sigRefDiffOffset[class] {
-		r, c := row+o[0], col+o[1]
-		if r < th && c < tw {
-			mag += int(min(iabs32(t.coef[r<<bwl+c]), 3))
-		}
-	}
-	ctx := min((mag+1)>>1, 4)
-	if class == txClass2D {
+	col := pos & (tw - 1)
+	s := tw + 4
+	l := t.lvl[row*s+col : row*s+col+4*s+1]
+	var mag int
+	switch class {
+	case txClass2D:
 		if pos == 0 {
 			return 0
 		}
-		return ctx + int(nzMap[tx][pos])
+		mag = lvl3(l[1]) + lvl3(l[s]) + lvl3(l[s+1]) + lvl3(l[2]) + lvl3(l[2*s])
+		return min((mag+1)>>1, 4) + int(nzMap[tx][pos])
+	case txClassHoriz:
+		mag = lvl3(l[1]) + lvl3(l[s]) + lvl3(l[2]) + lvl3(l[3]) + lvl3(l[4])
+		return min((mag+1)>>1, 4) + sigCoefContexts2D + 5*min(col, 2)
 	}
-	idx := col
-	if class == txClassVert {
-		idx = row
-	}
-	return ctx + sigCoefContexts2D + 5*min(idx, 2)
+	mag = lvl3(l[1]) + lvl3(l[s]) + lvl3(l[2*s]) + lvl3(l[3*s]) + lvl3(l[4*s])
+	return min((mag+1)>>1, 4) + sigCoefContexts2D + 5*min(row, 2)
 }
 
+// coeffBrCtx is the coeff_br context: magRefOffset[class] around pos.
 func (t *tile) coeffBrCtx(class, bwl, tw, th, pos int) int {
 	row := pos >> bwl
-	col := pos - row<<bwl
-	mag := 0
-	for _, o := range magRefOffset[class] {
-		r, c := row+o[0], col+o[1]
-		if r < th && c < tw {
-			mag += int(min(t.coef[r*tw+c], 15))
-		}
+	col := pos & (tw - 1)
+	s := tw + 4
+	l := t.lvl[row*s+col : row*s+col+2*s+1]
+	mag := int(l[1]) + int(l[s])
+	switch class {
+	case txClass2D:
+		mag += int(l[s+1])
+	case txClassHoriz:
+		mag += int(l[2])
+	default:
+		mag += int(l[2*s])
 	}
 	mag = min((mag+1)>>1, 6)
 	switch {

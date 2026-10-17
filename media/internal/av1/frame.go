@@ -88,6 +88,7 @@ type frameState struct {
 	savedCDF    cdfContext // from tile context_update_tile_id
 	prevSeg     []uint8    // segment ids of the primary reference
 	tiles       []*tile
+	pipe        *filterPipe // filters running behind the tile decoder
 }
 
 func (f *frameState) cdefIndex(r, c int) int { return (r>>4)*f.cdefStride + c>>4 }
@@ -219,7 +220,11 @@ func (d *Decoder) finishFrame() error {
 		cur.segIDs[i] = f.mi[i].segID
 	}
 	f.saveMotionField()
-	d.postFilter(f)
+	if f.pipe != nil {
+		d.finishPipe(f)
+	} else {
+		d.postFilter(f)
+	}
 	d.updateRefs(h)
 	if h.ShowFrame || d.outputInvisible {
 		d.output(cur, h)

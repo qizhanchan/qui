@@ -301,7 +301,7 @@ ffmpeg -f rawvideo -pix_fmt yuv420p -s 320x180 -i clip.yuv -frames:v 12 \
 | 变换（A4） | `transform.go`、`recon.go` | DCT 4–64、ADST 4/8/16、flipADST、identity、无损用 WHT；量化矩阵 |
 | 环路滤波（A5） | `lf.go`、`cdef.go`、`restoration.go`、`lr.go` | 去块、CDEF、superres 上采样、loop restoration（Wiener、self-guided） |
 | 胶片颗粒（A6） | `filmgrain.go` | 在输出上合成颗粒（8 / 10 bit、色度随亮度、重叠、裁剪），不进入参考帧 |
-| 性能（A7） | `mc_fast.go`、`neon_arm64.s`（由 `neon_gen.go` 生成）、`parallel.go` | 无缩放 MC 直接读取参考帧并使用 NEON 8 抽头内核（taps 减半，使 8 bit 水平级在 int16 中精确）；按 stripe 缓冲的 loop restoration；CDEF 在每块邻域副本上计算；**tiles 并行解码**；去块（行 / 列带）、CDEF（64×64 行）与 LR（stripe）在所有核上运行；帧与临时缓冲区复用 |
+| 性能（A7） | `mc_fast.go`、`neon_arm64.s`（由 `neon_gen.go` 生成）、`parallel.go` | 无缩放 MC 直接读取参考帧并使用 NEON 8 抽头内核（taps 减半，使 8 bit 水平级在 int16 中精确）；按 stripe 缓冲的 loop restoration；CDEF 在每块邻域副本上计算；**tiles 并行解码**；去块（行 / 列带）、CDEF（64×64 行）与 LR（stripe）在所有核上运行；**单 tile 帧的环路滤波以 64 行为带、在独立 goroutine 上紧跟 tile 解码进行**（`pipeline.go`）；展开的逆 DCT（`idct_unrolled.go`，由 `idct_gen.go` 生成）、无分支 CDEF 抽头、带 padding 的系数上下文；帧与临时缓冲区复用 |
 
 规范与参考解码器在细节上有出入之处（反变换蝶形的符号与中间裁剪、warp 采样步长、interintra
 上下文、partition gather 顺序、量化矩阵只用于 `IDTX` 以下的类型、小尺寸色度的 OBMC、superres
@@ -324,6 +324,10 @@ SVT-AV1 自身的实现比对过（`AV1_TX_VECTORS`）。
   10 核 **15.1 ms/帧**，单核 21.4 ms（libdav1d 单线程：1.9 ms）；4 个 tile **6.5 ms**，8 个 tile
   5.5 ms。经后端播放 1080p MP4 为 63 fps（单 tile）/ 157 fps（4 tile）。NEON 与 `-tags purego`
   构建解码结果相同（`TestMcNEON` 对每种滤波器、相位与宽度检查内核）。
+- **速度，噪声内容**（1080p `testsrc2` + 噪声，SVT-AV1 preset 8 CRF 35，单 tile，M5，
+  2026-10-17）：单核 40.6 ms/帧（变换 / CDEF / 上下文优化前为 67.5），**10 核 24.0 ms**
+  （原 46.3；滤波流水线化前 27.2），已等于串行 tile 解码时间。流水线与原地滤波结果
+  逐位一致（`TestPipelinedFilterMatchesInPlace`，race detector 通过）。
 
 未完成项：本地编码器都不产生的工具（色度调色板、距离加权复合、双滤波器、delta 环路滤波、
 intra-only 帧）已实现但没有向量固定；12 bit 与 4:2:2 / 4:4:4（High / Professional）会被拒绝；
