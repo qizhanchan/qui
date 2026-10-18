@@ -5,6 +5,7 @@ package media
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"unsafe"
 
 	"github.com/go-gl/gl/v3.3-core/gl"
@@ -62,17 +63,26 @@ type yuvRenderer struct {
 var gYUV yuvRenderer
 
 // pendingTexDeletes holds GL textures released off the GL thread; they are
-// deleted on the next GL call.
-var pendingTexDeletes = make(chan uint32, 1024)
+// deleted on the next GL call. A mutex-protected slice rather than a bounded
+// channel: a full channel used to drop (and therefore leak) textures.
+var pendingTexDeletes struct {
+	mu    sync.Mutex
+	names []uint32
+}
+
+func queueTexDelete(name uint32) {
+	pendingTexDeletes.mu.Lock()
+	pendingTexDeletes.names = append(pendingTexDeletes.names, name)
+	pendingTexDeletes.mu.Unlock()
+}
 
 func drainTexDeletes() {
-	for {
-		select {
-		case t := <-pendingTexDeletes:
-			gl.DeleteTextures(1, &t)
-		default:
-			return
-		}
+	pendingTexDeletes.mu.Lock()
+	names := pendingTexDeletes.names
+	pendingTexDeletes.names = nil
+	pendingTexDeletes.mu.Unlock()
+	for _, name := range names {
+		gl.DeleteTextures(1, &name)
 	}
 }
 
@@ -208,8 +218,9 @@ func colorMatrix(matrix int, fullRange bool, height int) (m [9]float32, off, sca
 	return
 }
 
-// draw renders frame f into physDst of the current framebuffer.
-func (r *yuvRenderer) draw(f *golangVideoFrame, physDst qui.Rect, fb qui.Size, flipY bool) bool {
+// draw renders the src rect of frame f (frame pixels) into physDst of the
+// current framebuffer.
+func (r *yuvRenderer) draw(f *golangVideoFrame, src, physDst qui.Rect, fb qui.Size, flipY bool) bool {
 	drainTexDeletes()
 	if !r.init() || fb.W <= 0 || fb.H <= 0 || physDst.W <= 0 || physDst.H <= 0 {
 		return false
@@ -228,20 +239,32 @@ func (r *yuvRenderer) draw(f *golangVideoFrame, physDst qui.Rect, fb qui.Size, f
 	y0 := 1 - physDst.Y/fb.H*2
 	x1 := (physDst.X+physDst.W)/fb.W*2 - 1
 	y1 := 1 - (physDst.Y+physDst.H)/fb.H*2
-	vTop, vBot := float32(0), float32(1)
+	// UVs come from the source crop, normalised by the frame size. Each
+	// plane is sampled with the same normalised rect, so the half-size
+	// chroma planes line up without separate math.
+	u0, u1 := float32(0), float32(1)
+	v0, v1 := float32(0), float32(1)
+	if src.W > 0 && src.H > 0 {
+		fw, fh := float32(fr.Width), float32(fr.Height)
+		u0, u1 = src.X/fw, (src.X+src.W)/fw
+		v0, v1 = src.Y/fh, (src.Y+src.H)/fh
+	}
 	if !flipY {
-		vTop, vBot = 1, 0
+		v0, v1 = 1-v0, 1-v1
 	}
 	verts := [...]float32{
-		x0, y0, 0, vTop,
-		x0, y1, 0, vBot,
-		x1, y1, 1, vBot,
-		x0, y0, 0, vTop,
-		x1, y1, 1, vBot,
-		x1, y0, 1, vTop,
+		x0, y0, u0, v0,
+		x0, y1, u0, v1,
+		x1, y1, u1, v1,
+		x0, y0, u0, v0,
+		x1, y1, u1, v1,
+		x1, y0, u1, v0,
 	}
 	m, off, sc := colorMatrix(f.matrix, f.fullRange, fr.Height)
 
+	// GL state is left in the composite shape the renderer expects: it
+	// re-establishes viewport/blend/scissor after the deferred GL draws
+	// (GLRenderer.End), so saving and restoring here is unnecessary.
 	gl.Disable(gl.BLEND)
 	gl.Disable(gl.DEPTH_TEST)
 	gl.Disable(gl.SCISSOR_TEST)

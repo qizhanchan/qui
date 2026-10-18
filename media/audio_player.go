@@ -36,6 +36,7 @@ type AudioPlayer struct {
 	volume   float32
 	rate     float32
 	loop     bool
+	closed   bool
 
 	onEnded func()
 	onError func(error)
@@ -60,7 +61,8 @@ func NewAudioPlayer() (*AudioPlayer, error) {
 // Open closes any previously open source and loads path. The file's
 // audio track is enumerated synchronously; playback does not start.
 // Returns ErrCodecUnsupported if the file's audio codec cannot be
-// decoded, or ErrNoTrack if the file has no audio.
+// decoded, or ErrNoTrack if the file has no audio. Returns ErrClosed
+// after Close (a closed player cannot be reused).
 func (p *AudioPlayer) Open(path string) error {
 	if p == nil {
 		return ErrClosed
@@ -68,6 +70,12 @@ func (p *AudioPlayer) Open(path string) error {
 	be := activeBackend()
 	if be == nil {
 		return ErrNotSupported
+	}
+	p.mu.Lock()
+	closed := p.closed
+	p.mu.Unlock()
+	if closed {
+		return ErrClosed
 	}
 
 	src, err := be.OpenSource(path)
@@ -87,20 +95,27 @@ func (p *AudioPlayer) Open(path string) error {
 	}
 
 	p.mu.Lock()
+	if p.closed {
+		// Close raced the open: don't install a source into a dead player.
+		p.mu.Unlock()
+		_ = src.Close()
+		return ErrClosed
+	}
 	prevSrc := p.src
 	p.src = src
 	p.renderer = renderer
 	p.state = StatePaused
 	vol, rate := p.volume, p.rate
-	onEnded := p.onEnded
 	p.mu.Unlock()
 
 	renderer.SetVolume(vol)
 	renderer.SetRate(rate)
-	if onEnded != nil {
-		renderer.OnEnded(p.handleEnded)
-	} else {
-		renderer.OnEnded(p.handleEnded)
+	renderer.OnEnded(p.handleEnded)
+	// Backends that can report per-frame decode failures (the pure-Go
+	// AAC path does) feed the same OnError surface. Backends without the
+	// hook only report open-time errors.
+	if es, ok := renderer.(errorSink); ok {
+		es.SetErrorHandler(p.fireError)
 	}
 
 	if prevSrc != nil {
@@ -113,6 +128,10 @@ func (p *AudioPlayer) Open(path string) error {
 // called, or ErrNoTrack if no source is open.
 func (p *AudioPlayer) Play() error {
 	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return ErrClosed
+	}
 	r := p.renderer
 	if r == nil {
 		p.mu.Unlock()
@@ -127,6 +146,10 @@ func (p *AudioPlayer) Play() error {
 // the same spot.
 func (p *AudioPlayer) Pause() error {
 	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return ErrClosed
+	}
 	r := p.renderer
 	if r == nil {
 		p.mu.Unlock()
@@ -140,6 +163,10 @@ func (p *AudioPlayer) Pause() error {
 // Stop halts playback and rewinds to t=0.
 func (p *AudioPlayer) Stop() error {
 	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return ErrClosed
+	}
 	r := p.renderer
 	if r == nil {
 		p.mu.Unlock()
@@ -153,13 +180,22 @@ func (p *AudioPlayer) Stop() error {
 // SeekTo jumps to t (clamped to [0, Duration]).
 func (p *AudioPlayer) SeekTo(t time.Duration) error {
 	p.mu.Lock()
+	closed := p.closed
 	r := p.renderer
 	p.mu.Unlock()
+	if closed {
+		return ErrClosed
+	}
 	if r == nil {
 		return ErrNoTrack
 	}
 	if t < 0 {
 		t = 0
+	}
+	// Clamp the upper bound here too: backends differ in whether they do it,
+	// and the public contract promises [0, Duration].
+	if d := p.Duration(); d > 0 && t > d {
+		t = d
 	}
 	return r.SeekTo(t)
 }
@@ -247,18 +283,25 @@ func (p *AudioPlayer) OnEnded(fn func()) {
 	}
 }
 
-// OnError registers a callback for asynchronous errors (decode
-// failures during streaming). Replaces any previous registration.
+// OnError registers a callback for asynchronous errors (decode failures
+// during streaming). Replaces any previous registration. Backends that
+// surface per-frame failures (the pure-Go AAC decoder) report through it;
+// open-time errors are returned from Open (and reported here too) instead.
 func (p *AudioPlayer) OnError(fn func(error)) {
 	p.mu.Lock()
 	p.onError = fn
 	p.mu.Unlock()
 }
 
-// Close releases backend resources. Idempotent. After Close, all
-// other methods return ErrClosed / ErrNoTrack.
+// Close releases backend resources. Idempotent. A closed player is dead:
+// later calls (Open included) return ErrClosed.
 func (p *AudioPlayer) Close() error {
 	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return nil
+	}
+	p.closed = true
 	src := p.src
 	p.src = nil
 	p.renderer = nil

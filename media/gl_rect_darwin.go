@@ -129,20 +129,14 @@ func compileShader(src string, shaderType uint32) (uint32, error) {
 	return sh, nil
 }
 
-// drawRectTexture blits a GL_TEXTURE_RECTANGLE texture into the
-// current framebuffer. physDst is in framebuffer pixels. fb is the
-// framebuffer size. texSize is the texture's pixel dimensions
-// (needed because RECTANGLE uses non-normalized UVs). flipY=true
-// samples the texture top-down (matches CVPixelBuffer's image
-// convention so the picture renders right-side-up under qui's
-// y-down 2D coord system).
-func drawRectTexture(texName uint32, physDst qui.Rect, fb qui.Size, texSize qui.Size, flipY bool) {
-	drawRectTextureSrc(texName, qui.Rect{W: texSize.W, H: texSize.H}, physDst, fb, texSize, flipY)
-}
-
-// drawRectTextureSrc is drawRectTexture sampling only src (texel
-// coordinates, top-left origin in image space) — how FrameView crops a
-// FitCover overflow without a scissor.
+// drawRectTextureSrc blits the src rect of a GL_TEXTURE_RECTANGLE texture
+// into the current framebuffer. physDst is in framebuffer pixels, fb is the
+// framebuffer size, and src is in texture texels (top-left origin in image
+// space) — how FrameView and VideoView crop a FitCover overflow without a
+// scissor. texSize is needed because RECTANGLE uses non-normalized UVs.
+// flipY=true samples the texture top-down (matches CVPixelBuffer's image
+// convention so the picture renders right-side-up under qui's y-down 2D
+// coordinate system).
 func drawRectTextureSrc(texName uint32, src, physDst qui.Rect, fb qui.Size, texSize qui.Size, flipY bool) {
 	if !gRectDrawer.ensureInit() {
 		return

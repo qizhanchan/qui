@@ -164,6 +164,8 @@ type fakeAudioRenderer struct {
 	plays    int
 	pauses   int
 	seeks    int
+	onEnded  func()
+	onErr    func(error)
 }
 
 func (r *fakeAudioRenderer) Play() error  { r.playing = true; r.plays++; return nil }
@@ -174,11 +176,12 @@ func (r *fakeAudioRenderer) SeekTo(t time.Duration) error {
 	r.seeks++
 	return nil
 }
-func (r *fakeAudioRenderer) SetVolume(v float32)     { r.volume = v }
-func (r *fakeAudioRenderer) SetRate(rate float32)    { r.rate = rate }
-func (r *fakeAudioRenderer) HostTime() time.Duration { return r.hostTime }
-func (r *fakeAudioRenderer) OnEnded(_ func())        {}
-func (r *fakeAudioRenderer) Close() error            { return nil }
+func (r *fakeAudioRenderer) SetVolume(v float32)            { r.volume = v }
+func (r *fakeAudioRenderer) SetRate(rate float32)           { r.rate = rate }
+func (r *fakeAudioRenderer) HostTime() time.Duration        { return r.hostTime }
+func (r *fakeAudioRenderer) OnEnded(fn func())              { r.onEnded = fn }
+func (r *fakeAudioRenderer) SetErrorHandler(fn func(error)) { r.onErr = fn }
+func (r *fakeAudioRenderer) Close() error                   { return nil }
 
 func TestAudioClockDelegatesHostTime(t *testing.T) {
 	r := &fakeAudioRenderer{hostTime: 750 * time.Millisecond}

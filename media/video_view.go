@@ -50,7 +50,7 @@ func vvSample(tag string, every int) bool {
 // couldn't bind or draw the frame (e.g. texture cache create
 // failed), letting the caller log the miss.
 type framebufferDrawer interface {
-	DrawIntoFramebuffer(state qui.GLState, physDst qui.Rect, flipY bool) bool
+	DrawIntoFramebuffer(state qui.GLState, src, physDst qui.Rect, flipY bool) bool
 }
 
 // cacheFlusher is invoked after each frame draw on platforms that
@@ -79,15 +79,17 @@ var flushTextureCache func()
 type VideoView struct {
 	qui.BaseWidget
 
-	mu      sync.Mutex
-	src     Source
-	track   *VideoTrackInfo
-	clock   Clock
-	state   State
-	fitMode FitMode
-	loop    bool
-	rate    float32
-	volume  float32
+	mu        sync.Mutex
+	src       Source
+	track     *VideoTrackInfo
+	clock     Clock
+	state     State
+	lastErr   error // terminal failure that put us in StateError
+	destroyed bool
+	fitMode   FitMode
+	loop      bool
+	rate      float32
+	volume    float32
 
 	pumpCancel context.CancelFunc
 	pumpDone   chan struct{}
@@ -102,6 +104,26 @@ type VideoView struct {
 	pumpMu    sync.Mutex
 	pumpReady *sync.Cond // signaled by Tick when pumpFrame becomes nil
 	pumpFrame VideoFrame
+
+	// pumpWake wakes a pump parked at end of stream so it retries the
+	// source after a seek. The pure-Go backend reports io.EOF once its ring
+	// closes (the darwin reader blocks inside NextVideoFrame instead), so
+	// without this the pump goroutine would finish at the end of the file
+	// and replay / loop / seek-after-end would decode into a ring nobody
+	// drains. invalidatePump signals it on every seek; capacity 1 coalesces
+	// a seek's two bumps.
+	pumpWake chan struct{}
+
+	// resumeSeek / resumePTS record that a frame step moved the clock and
+	// the displayed picture through the scrub session, leaving the playback
+	// decoder at its old position. While resumeSeek is set, Tick must not
+	// promote pump frames: they belong to the pre-step position and would
+	// overwrite the stepped picture (most visibly after several forward
+	// steps, which outrun the pump). Play repositions the decoder with one
+	// precise seek before resuming, and every explicit seek clears the flag.
+	// Guarded by mu.
+	resumeSeek bool
+	resumePTS  time.Duration
 
 	// seekGen is bumped on every seek (SeekTo / Stop / loop-restart /
 	// replay-from-end). The pump goroutine snapshots it before each
@@ -126,6 +148,7 @@ type VideoView struct {
 	// without the view repainting itself. glDst is the logical
 	// destination rect that draw uses. UI thread.
 	retained bool
+	glSrc    qui.Rect
 	glDst    qui.Rect
 
 	scrub ScrubDecoder // lazy
@@ -150,6 +173,7 @@ func NewVideoView() *VideoView {
 		state:      StateIdle,
 	}
 	v.pumpReady = sync.NewCond(&v.pumpMu)
+	v.pumpWake = make(chan struct{}, 1)
 	v.SetSelf(v)
 	return v
 }
@@ -180,6 +204,12 @@ func (v *VideoView) drainPumpFrame() {
 // will see the new gen and discard before parking).
 func (v *VideoView) invalidatePump() {
 	v.seekGen.Add(1)
+	// Wake a pump parked at end of stream: the seek that follows may have
+	// restarted the decoder (see pumpLoop).
+	select {
+	case v.pumpWake <- struct{}{}:
+	default:
+	}
 	v.drainPumpFrame()
 }
 
@@ -217,14 +247,19 @@ func (v *VideoView) seekAndInvalidate(src Source, t time.Duration) error {
 // ErrNoTrack if there's no video track, or ErrNotSupported on
 // platforms without a backend.
 func (v *VideoView) Open(path string) error {
+	v.mu.Lock()
+	destroyed := v.destroyed
+	v.mu.Unlock()
+	if destroyed {
+		return ErrClosed
+	}
 	be := activeBackend()
 	if be == nil {
 		return ErrNotSupported
 	}
 	src, err := be.OpenSource(path)
 	if err != nil {
-		v.setState(StateError)
-		v.fireError(err)
+		v.fail(err)
 		return err
 	}
 	if src.VideoTrack() == nil {
@@ -233,13 +268,31 @@ func (v *VideoView) Open(path string) error {
 	}
 
 	v.mu.Lock()
+	if v.destroyed {
+		// Destroy raced the open: don't install a source (and a pump) into
+		// a dead view.
+		v.mu.Unlock()
+		_ = src.Close()
+		return ErrClosed
+	}
 	prevSrc := v.src
 	prevCancel := v.pumpCancel
 	prevDone := v.pumpDone
+	prevScrub := v.scrub
+	prevFrame := v.currentFrame
 
 	v.src = src
 	v.track = src.VideoTrack()
 	v.state = StatePaused
+	// The scrub session and the displayed frame belong to the source being
+	// replaced. Dropping the references here is what makes a second Open
+	// decode from the NEW file (a stale scrub would answer DecodeFrameAt /
+	// Step* from the closed source) and stops the old picture surviving
+	// into the new one.
+	v.scrub = nil
+	v.currentFrame = nil
+	v.resumeSeek = false
+	v.lastErr = nil
 	// Clock selection: if the source has an audio renderer, drive
 	// playback against audio host time (true A/V sync). Otherwise
 	// fall back to wall-clock pacing. Either way, apply the user's
@@ -282,6 +335,15 @@ func (v *VideoView) Open(path string) error {
 	if prevSrc != nil {
 		_ = prevSrc.Close()
 	}
+	// prevSrc.Close also releases any scrub decoder it owns; the explicit
+	// Close is a cheap idempotent guard for backends that leave that to the
+	// caller. The old frame's own reference is independent of the source.
+	if prevScrub != nil {
+		_ = prevScrub.Close()
+	}
+	if prevFrame != nil {
+		prevFrame.Release()
+	}
 
 	go v.pumpLoop(ctx, src, done)
 
@@ -292,32 +354,49 @@ func (v *VideoView) Open(path string) error {
 }
 
 // Play starts (or resumes) playback. Returns ErrNoTrack if no source
-// is open. Decoder is always running ahead; only the clock pauses.
+// is open, or the terminal error recorded by OnError once the view is in
+// StateError (only Open leaves that state). Decoder is always running
+// ahead; only the clock pauses.
 func (v *VideoView) Play() error {
 	v.mu.Lock()
+	if v.destroyed {
+		v.mu.Unlock()
+		return ErrClosed
+	}
 	if v.src == nil {
 		v.mu.Unlock()
 		return ErrNoTrack
 	}
-	// If we ended naturally and Play is called, restart from 0. Hoist
-	// the seek out of v.mu so invalidatePump (which takes pumpMu) and
-	// SeekVideo (which may block briefly on the C decoder's seekDone
-	// semaphore) don't compose locks with v.mu.
+	if err := v.terminalErrLocked(); err != nil {
+		v.mu.Unlock()
+		return err
+	}
+	// If we ended naturally and Play is called, restart from 0. A frame
+	// step also needs the decoder moved to the stepped position (the step
+	// itself only ran the scrub session). Hoist the seek out of v.mu so
+	// invalidatePump (which takes pumpMu) and SeekVideo (which may block
+	// briefly on the C decoder's seekDone semaphore) don't compose locks
+	// with v.mu.
 	replay := v.state == StateEnded
-	var src Source
-	if replay {
+	src := v.src
+	seekAt, doSeek := time.Duration(0), false
+	switch {
+	case replay:
 		v.clock.SeekTo(0)
-		src = v.src
+		seekAt, doSeek = 0, true
 		if v.currentFrame != nil {
 			v.currentFrame.Release()
 			v.currentFrame = nil
 		}
+	case v.resumeSeek:
+		seekAt, doSeek = v.resumePTS, true
 	}
+	v.resumeSeek = false
 	v.state = StatePlaying
 	v.clock.Play()
 	v.mu.Unlock()
-	if replay && src != nil {
-		_ = v.seekAndInvalidate(src, 0)
+	if doSeek && src != nil {
+		_ = v.seekAndInvalidate(src, seekAt)
 	}
 	return nil
 }
@@ -326,6 +405,10 @@ func (v *VideoView) Play() error {
 // the same spot.
 func (v *VideoView) Pause() error {
 	v.mu.Lock()
+	if v.destroyed {
+		v.mu.Unlock()
+		return ErrClosed
+	}
 	if v.src == nil {
 		v.mu.Unlock()
 		return ErrNoTrack
@@ -336,17 +419,27 @@ func (v *VideoView) Pause() error {
 	return nil
 }
 
-// Stop halts playback and rewinds to t=0.
+// Stop halts playback and rewinds to t=0. Returns the terminal error in
+// StateError.
 func (v *VideoView) Stop() error {
 	v.mu.Lock()
+	if v.destroyed {
+		v.mu.Unlock()
+		return ErrClosed
+	}
 	if v.src == nil {
 		v.mu.Unlock()
 		return ErrNoTrack
+	}
+	if err := v.terminalErrLocked(); err != nil {
+		v.mu.Unlock()
+		return err
 	}
 	src := v.src
 	v.state = StatePaused
 	v.clock.SeekTo(0)
 	v.clock.Pause()
+	v.resumeSeek = false
 	if v.currentFrame != nil {
 		v.currentFrame.Release()
 		v.currentFrame = nil
@@ -356,12 +449,20 @@ func (v *VideoView) Stop() error {
 }
 
 // SeekTo jumps to t (clamped to [0, Duration]). Continues playing if
-// previously playing.
+// previously playing. Returns the terminal error in StateError.
 func (v *VideoView) SeekTo(t time.Duration) error {
 	v.mu.Lock()
+	if v.destroyed {
+		v.mu.Unlock()
+		return ErrClosed
+	}
 	if v.src == nil {
 		v.mu.Unlock()
 		return ErrNoTrack
+	}
+	if err := v.terminalErrLocked(); err != nil {
+		v.mu.Unlock()
+		return err
 	}
 	if t < 0 {
 		t = 0
@@ -370,6 +471,7 @@ func (v *VideoView) SeekTo(t time.Duration) error {
 		t = v.track.Duration
 	}
 	src := v.src
+	v.resumeSeek = false
 	if v.currentFrame != nil {
 		v.currentFrame.Release()
 		v.currentFrame = nil
@@ -501,9 +603,17 @@ func (v *VideoView) StepBackward() error {
 
 func (v *VideoView) step(direction int) error {
 	v.mu.Lock()
+	if v.destroyed {
+		v.mu.Unlock()
+		return ErrClosed
+	}
 	if v.src == nil {
 		v.mu.Unlock()
 		return ErrNoTrack
+	}
+	if err := v.terminalErrLocked(); err != nil {
+		v.mu.Unlock()
+		return err
 	}
 	track := v.track
 	curPTS := time.Duration(0)
@@ -541,6 +651,12 @@ func (v *VideoView) step(direction int) error {
 	old := v.currentFrame
 	v.currentFrame = frame
 	v.clock.SeekTo(frame.PTS())
+	// The playback decoder is still on the old position — possibly already
+	// ahead of the stepped frame (StepForward) or far past it (StepBackward).
+	// Arm the decoder seek Play will perform, and stop Tick promoting the
+	// pump frames that belong to the pre-step position: they would overwrite
+	// the frame we just decoded.
+	v.resumeSeek, v.resumePTS = true, frame.PTS()
 	sink := v.frameSink
 	v.mu.Unlock()
 	if old != nil {
@@ -550,6 +666,9 @@ func (v *VideoView) step(direction int) error {
 		frame.Retain()
 		sink(frame)
 	}
+	// Drop whatever the pump had parked; anything already in flight is
+	// discarded by the seekGen bump at park time.
+	v.invalidatePump()
 	v.InvalidateRectBounds()
 	return nil
 }
@@ -574,6 +693,10 @@ func (v *VideoView) CurrentFrame() VideoFrame {
 // first call.
 func (v *VideoView) DecodeFrameAt(pts time.Duration) (VideoFrame, error) {
 	v.mu.Lock()
+	if v.destroyed {
+		v.mu.Unlock()
+		return nil, ErrClosed
+	}
 	if v.src == nil {
 		v.mu.Unlock()
 		return nil, ErrNoTrack
@@ -634,18 +757,22 @@ func (v *VideoView) OnEnded(fn func()) {
 	v.mu.Unlock()
 }
 
-// OnError registers a callback for asynchronous errors (decode
-// failures during streaming).
+// OnError registers a callback for asynchronous errors (decode failures
+// during streaming). The view also moves to StateError, pauses its clock
+// and reports the same error from the transport calls; only a successful
+// Open recovers it.
 func (v *VideoView) OnError(fn func(error)) {
 	v.mu.Lock()
 	v.onError = fn
 	v.mu.Unlock()
 }
 
-// Destroy releases all decoder + GL resources. Idempotent. After
-// Destroy, all other methods return ErrClosed / ErrNoTrack.
+// Destroy releases all decoder + GL resources. Idempotent and safe from any
+// goroutine. After Destroy the view is dead: Open and the transport methods
+// return ErrClosed.
 func (v *VideoView) Destroy() {
 	v.mu.Lock()
+	v.destroyed = true
 	src := v.src
 	cancel := v.pumpCancel
 	done := v.pumpDone
@@ -684,6 +811,15 @@ func (v *VideoView) Destroy() {
 	if cur != nil {
 		cur.Release()
 	}
+	// Drop the retained GL draw so the renderer stops replaying a picture
+	// that no longer exists. Posted rather than called directly because
+	// ForgetRetainedGLDraw is UI-thread-only and Destroy is not.
+	if w := v.Window(); w != nil {
+		w.PostJob(func() {
+			w.ForgetRetainedGLDraw(v)
+			v.retained = false
+		})
+	}
 }
 
 // pumpLoop runs in the background, repeatedly calling NextVideoFrame
@@ -694,8 +830,9 @@ func (v *VideoView) Destroy() {
 //
 // Synchronization: pumpMu guards pumpFrame. The pump blocks on
 // pumpReady.Wait until Tick consumes (sets pumpFrame=nil) or Destroy
-// cancels (broadcasts pumpReady). On EOF the pump exits and the
-// channel of pending frames remains drained for future seeks.
+// cancels (broadcasts pumpReady). On EOF the pump parks on pumpWake
+// instead of exiting, so the seek paths (which signal it) can resume
+// decoding after a replay / loop restart / seek past the end.
 //
 // Seek correctness: a frame popped from s.pending BEFORE the
 // backend's seek-drain may be pre-seek (stale). Without detection, a
@@ -713,12 +850,27 @@ func (v *VideoView) pumpLoop(ctx context.Context, src Source, done chan struct{}
 		gen := v.seekGen.Load()
 		frame, err := src.NextVideoFrame(ctx)
 		if err != nil {
-			if errors.Is(err, io.EOF) || ctx.Err() != nil {
+			if ctx.Err() != nil {
 				vvDebugf("pumpLoop exit: %v", err)
 				return
 			}
+			if errors.Is(err, io.EOF) {
+				// End of stream. Don't exit: a seek bumps seekGen and
+				// signals pumpWake, so a replay / loop restart / seek past
+				// the end can resume decoding without restarting this
+				// goroutine. Parking here also closes the race between
+				// "EOF decided" and "seek happened" that a restart-on-seek
+				// scheme has.
+				vvDebugf("pumpLoop parked at EOF")
+				select {
+				case <-ctx.Done():
+					return
+				case <-v.pumpWake:
+					continue
+				}
+			}
 			vvDebugf("pumpLoop error: %v", err)
-			v.fireError(err)
+			v.fail(err)
 			return
 		}
 		if vvSample("pump_next", 30) {
@@ -759,20 +911,24 @@ func (v *VideoView) Tick(_ time.Time) qui.Rect {
 		v.mu.Unlock()
 		return qui.Rect{}
 	}
-	clockNow := v.clock.HostTime()
+	c := v.clock
+	clockNow := c.HostTime()
 	sink := v.frameSink
 	track := v.track
 	loop := v.loop
 	state := v.state
 	endedCB := v.onEnded
 	timeCB := v.onTimeUpdate
+	resumeSeek := v.resumeSeek
 	v.mu.Unlock()
 
 	// Peek the parked frame; promote if due. Held under pumpMu so
-	// pumpLoop doesn't race when refilling the slot.
+	// pumpLoop doesn't race when refilling the slot. A pending step
+	// (resumeSeek) suppresses promotion: the parked frame comes from the
+	// playback decoder's old position and would replace the stepped picture.
 	promoted := false
 	v.pumpMu.Lock()
-	if pf := v.pumpFrame; pf != nil && pf.PTS() <= clockNow {
+	if pf := v.pumpFrame; pf != nil && !resumeSeek && pf.PTS() <= clockNow {
 		v.pumpFrame = nil
 		v.pumpReady.Signal()
 		v.pumpMu.Unlock()
@@ -841,7 +997,7 @@ func (v *VideoView) Tick(_ time.Time) qui.Rect {
 			wait := 5 * time.Millisecond
 			v.pumpMu.Lock()
 			if pf := v.pumpFrame; pf != nil {
-				rate := v.clock.Rate()
+				rate := c.Rate()
 				if rate <= 0 {
 					rate = 1
 				}
@@ -967,6 +1123,13 @@ func (v *VideoView) Draw(canvas qui.Canvas) {
 	}
 
 	dstRect := fitDstRect(fit, bounds, float32(track.Width), float32(track.Height))
+	// FitCover's rect is larger than the widget. Crop by sampling: take
+	// the visible part of dst and the matching source rect, so nothing
+	// spills past the bounds (the GL draw has no scissor of its own).
+	src, dst, ok := cropToVisible(dstRect, bounds, float32(track.Width), float32(track.Height))
+	if !ok {
+		return
+	}
 	// Hole-punch only the area the texture will cover, so the
 	// letterbox background remains opaque around it. Use the full
 	// bounds for the hole (not just dstRect) so any future under-
@@ -974,28 +1137,28 @@ func (v *VideoView) Draw(canvas qui.Canvas) {
 	canvas.FillRect(bounds, qui.Color{R: 0, G: 0, B: 0, A: 0})
 
 	if rk, ok := canvas.(qui.RetainedGLCanvas); ok {
-		v.glDst = dstRect
+		v.glSrc, v.glDst = src, dst
 		rk.QueueRetainedGLDraw(v, canvas.CurrentMatrix().TransformRect(bounds), v.glDraw)
 		v.retained = true
 		return
 	}
-	gpu.QueueGLDraw(func(state qui.GLState) { drawVideoFrame(state, frame, dstRect) })
+	gpu.QueueGLDraw(func(state qui.GLState) { drawVideoFrame(state, frame, src, dst) })
 }
 
 // glDraw is the retained GL draw: it shows whatever frame is current when
 // the frame is produced, so a RequestGLRedraw picks up a new one.
 func (v *VideoView) glDraw(state qui.GLState) {
 	v.mu.Lock()
-	frame, dst := v.currentFrame, v.glDst
+	frame, src, dst := v.currentFrame, v.glSrc, v.glDst
 	v.mu.Unlock()
 	if frame != nil {
-		drawVideoFrame(state, frame, dst)
+		drawVideoFrame(state, frame, src, dst)
 	}
 }
 
-// drawVideoFrame composites frame into dstRect (logical pixels) of the
-// current framebuffer.
-func drawVideoFrame(state qui.GLState, frame VideoFrame, dstRect qui.Rect) {
+// drawVideoFrame composites the src rect of frame (frame pixels) into
+// dstRect (logical pixels) of the current framebuffer.
+func drawVideoFrame(state qui.GLState, frame VideoFrame, src, dstRect qui.Rect) {
 	// HiDPI: dstRect is logical pixels; the GL framebuffer is
 	// physical. Scale by the ratio so the texture lands at the
 	// right place on Retina displays.
@@ -1022,7 +1185,7 @@ func drawVideoFrame(state qui.GLState, frame VideoFrame, dstRect qui.Rect) {
 				physDst, state.FramebufferSize, state.LogicalSize,
 				frame.Width(), frame.Height())
 		}
-		if !fbd.DrawIntoFramebuffer(state, physDst, true) {
+		if !fbd.DrawIntoFramebuffer(state, src, physDst, true) {
 			vvDebugf("QueueGLDraw: DrawIntoFramebuffer FAILED")
 		}
 		if flushTextureCache != nil {
@@ -1047,7 +1210,7 @@ func drawVideoFrame(state qui.GLState, frame VideoFrame, dstRect qui.Rect) {
 	texH := int32(frame.Height())
 	glr.DrawTexture(
 		texName,
-		qui.Rect{W: float32(texW), H: float32(texH)},
+		src,
 		physDst,
 		texW,
 		texH,
@@ -1108,17 +1271,32 @@ func fitDstRect(fit FitMode, bounds qui.Rect, frameW, frameH float32) qui.Rect {
 	}
 }
 
-func (v *VideoView) setState(s State) {
+// fail records a terminal error: the view moves to StateError, the clock
+// stops (so Position freezes and no end-of-stream callback fires), the error
+// is remembered for transport calls, and OnError is dispatched outside the
+// lock. The pump goroutine has stopped by the time this returns, so only a
+// successful Open leaves the state again.
+func (v *VideoView) fail(err error) {
 	v.mu.Lock()
-	v.state = s
-	v.mu.Unlock()
-}
-
-func (v *VideoView) fireError(err error) {
-	v.mu.Lock()
+	v.state = StateError
+	v.lastErr = err
+	v.resumeSeek = false
+	if v.clock != nil {
+		v.clock.Pause()
+	}
 	fn := v.onError
 	v.mu.Unlock()
 	if fn != nil {
 		fn(err)
 	}
+}
+
+// terminalErrLocked returns the error that put the view in StateError, if
+// any. Caller holds v.mu. Transport calls report it instead of pretending to
+// play a dead decoder.
+func (v *VideoView) terminalErrLocked() error {
+	if v.state != StateError {
+		return nil
+	}
+	return v.lastErr
 }

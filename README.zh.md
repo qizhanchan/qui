@@ -93,7 +93,7 @@ rt := h.Mount(window, css, func() h.Node {
 | `anim` | `Tween[T]` / `Spring` / `Timeline` + 缓动目录；都满足 `qui.Animator` |
 | `graphs` | 2D 图表：Line/Scatter/Bar/Area/Pie 系列、ValueAxis/CategoryAxis、Legend、平移 / 缩放 |
 | `svg` | SVG 1.1 子集：解析 / 程序化构建 / 光栅化（可染色）/ 序列化；`Document` 满足 `qui.VectorSource` |
-| `media` | `AudioPlayer`（服务）+ `VideoView`（控件），不依赖 ffmpeg；平台后端隐藏在内部接口之后（目前为 macOS，其他平台返回 `ErrNotSupported`） |
+| `media` | `AudioPlayer`（服务）+ `VideoView` / `FrameView`（控件），不依赖 ffmpeg；内部接口后有两个后端——macOS 原生 AVFoundation（`native`）与纯 Go 编解码栈（`golang`），通过 `QUI_MEDIA_BACKEND` 选择 |
 | `webview` | 基于 CEF 的内嵌浏览器控件，受 `webview_cef` build tag + 拉取的 SDK 门控；默认构建不包含 CEF。JS↔Go 桥只传 JSON。.app 打包流程见 `webview/scripts/` |
 | `physics`、`physics/p2`、`physics/p3` | 游戏物理：与维度无关的词汇在根包；2D 与 3D 引擎 API 对称（扫掠 AABB、空间哈希、接触标志、单向平台、传感器）。零依赖 —— 连根 `qui` 都不依赖 |
 | `i18n` + `cmd/qui-i18n` | 消息目录（JSON，CLDR 复数）+ 区域敏感格式化（数字 / 货币 / 日期 / 相对时间 / 列表 / 排序），通过 `qui.Translator` 接缝接入根包。CLI 可从源码提取 key、检查目录、生成用于布局测试的伪语言 |

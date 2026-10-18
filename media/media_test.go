@@ -2,6 +2,8 @@ package media
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -79,4 +81,51 @@ func TestAudioPlayerMethodsWithoutSource(t *testing.T) {
 	p.SetVolume(0.5)
 	p.SetRate(1.0)
 	p.SetLoop(true)
+}
+
+// A typo in QUI_MEDIA_BACKEND must not look like "media is unsupported on
+// this platform": resolution still yields no backend, but it says why.
+func TestBackendSelectionWarnsOnUnknownName(t *testing.T) {
+	prevWarn := backendWarnf
+	var msg string
+	backendWarnf = func(format string, args ...any) { msg = fmt.Sprintf(format, args...) }
+	t.Cleanup(func() {
+		backendWarnf = prevWarn
+		resetBackendForTest()
+	})
+
+	t.Setenv("QUI_MEDIA_BACKEND", "__no_such_backend__")
+	resetBackendForTest()
+	if got := activeBackend(); got != nil {
+		t.Fatalf("activeBackend() = %T for an unknown name, want nil", got)
+	}
+	if !strings.Contains(msg, "__no_such_backend__") {
+		t.Errorf("warning %q does not name the offending value", msg)
+	}
+	if !strings.Contains(msg, "registered") {
+		t.Errorf("warning %q does not explain that the name is unregistered", msg)
+	}
+}
+
+// Available / Supported are the public capability probe: no need to attempt
+// an Open to discover what the build can do.
+func TestAvailableAndSupported(t *testing.T) {
+	caps := Capabilities{VideoCodecs: []string{"h264"}, AudioCodecs: []string{"aac"}, Containers: []string{"mp4"}}
+	restore := swapBackend(t, &fakeBackend{caps: caps})
+	if !Available() {
+		t.Error("Available() = false with a backend installed")
+	}
+	if got := Supported(); len(got.VideoCodecs) != 1 || got.VideoCodecs[0] != "h264" {
+		t.Errorf("Supported() = %+v, want the fake backend's capabilities", got)
+	}
+	restore()
+
+	none := swapBackend(t, nil)
+	defer none()
+	if Available() {
+		t.Error("Available() = true with no backend")
+	}
+	if got := Supported(); len(got.VideoCodecs) != 0 || len(got.AudioCodecs) != 0 || len(got.Containers) != 0 {
+		t.Errorf("Supported() with no backend = %+v, want the zero value", got)
+	}
 }

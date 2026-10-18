@@ -42,8 +42,8 @@ func (f *golangVideoFrame) Width() int         { return f.w }
 func (f *golangVideoFrame) Height() int        { return f.h }
 
 // DrawIntoFramebuffer implements framebufferDrawer.
-func (f *golangVideoFrame) DrawIntoFramebuffer(state qui.GLState, physDst qui.Rect, flipY bool) bool {
-	return gYUV.draw(f, physDst, state.FramebufferSize, flipY)
+func (f *golangVideoFrame) DrawIntoFramebuffer(state qui.GLState, src, physDst qui.Rect, flipY bool) bool {
+	return gYUV.draw(f, src, physDst, state.FramebufferSize, flipY)
 }
 
 // GLTexture returns an RGBA GL_TEXTURE_2D of the frame, converting on the
@@ -91,10 +91,7 @@ func (f *golangVideoFrame) Release() {
 		return
 	}
 	if f.rgbaTex != 0 {
-		select {
-		case pendingTexDeletes <- f.rgbaTex:
-		default:
-		}
+		queueTexDelete(f.rgbaTex)
 		f.rgbaTex = 0
 	}
 	h264.Recycle(f.frame)

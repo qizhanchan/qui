@@ -25,17 +25,21 @@ type golangAudio struct {
 	rate int // output sample rate
 	chs  int
 
-	mu       sync.Mutex
-	dec      *aac.Decoder
-	base     time.Duration // content time of the sink's zero
-	next     int           // next access unit to decode
-	trim     int           // frames still to drop (seek / edit-list priming)
-	pending  []byte        // decoded PCM not yet accepted by the sink
-	eof      bool
-	playing  bool
-	ended    bool
-	endedFns []func()
-	closed   bool
+	mu      sync.Mutex
+	dec     *aac.Decoder
+	base    time.Duration // content time of the sink's zero
+	next    int           // next access unit to decode
+	trim    int           // frames still to drop (seek / edit-list priming)
+	pending []byte        // decoded PCM not yet accepted by the sink
+	eof     bool
+	playing bool
+	ended   bool
+	onEnded func() // replaces any previous registration, like the interface says
+	// onErr reports streaming decode failures (see errorSink); errReported
+	// latches so a damaged stretch does not spam one callback per frame.
+	onErr       func(error)
+	errReported bool
+	closed      bool
 	// After the last sample has been handed to the device the clock keeps
 	// running on wall time, so a video slightly longer than its audio
 	// still reaches its end.
@@ -106,6 +110,7 @@ func (a *golangAudio) seekLocked(t time.Duration) {
 	a.eof = idx >= n
 	a.ended = false
 	a.drained = false
+	a.errReported = false
 	if a.eof {
 		a.next = n
 		return
@@ -149,8 +154,9 @@ func (a *golangAudio) produce() {
 			a.pending = a.pending[n:]
 			work = n > 0
 		}
+		var decodeErr error
 		if len(a.pending) == 0 && !a.eof && a.sink.Buffered() < ahead {
-			a.decodeOneLocked()
+			decodeErr = a.decodeOneLocked()
 			work = true
 		}
 		if a.eof && len(a.pending) == 0 && !a.drained && a.sink.Buffered() == 0 {
@@ -165,15 +171,25 @@ func (a *golangAudio) produce() {
 		if !a.eof && len(a.pending) == 0 {
 			wait = min(max(a.sink.Buffered()-ahead, 10*time.Millisecond), 100*time.Millisecond)
 		}
-		var fire []func()
+		var fire func()
 		if a.eof && len(a.pending) == 0 && !a.ended && a.playing && a.sink.Buffered() == 0 &&
 			a.base+a.sink.HostTime() >= a.info.Duration-50*time.Millisecond {
 			a.ended = true
-			fire = append(fire, a.endedFns...)
+			fire = a.onEnded
+		}
+		var report func(error)
+		if decodeErr != nil && !a.errReported {
+			a.errReported = true
+			report = a.onErr
+		} else if decodeErr == nil {
+			a.errReported = false
 		}
 		a.mu.Unlock()
-		for _, fn := range fire {
-			fn()
+		if fire != nil {
+			fire()
+		}
+		if report != nil {
+			report(decodeErr)
 		}
 		if !work {
 			idle.Reset(wait)
@@ -185,20 +201,24 @@ func (a *golangAudio) produce() {
 	}
 }
 
-func (a *golangAudio) decodeOneLocked() {
+func (a *golangAudio) decodeOneLocked() error {
 	n := a.t.SampleCount()
 	if a.next >= n {
 		a.eof = true
-		return
+		return nil
 	}
 	b, err := a.r.ReadSampleInto(a.buf, a.t, a.next)
 	a.next++
 	if err != nil {
+		// A truncated/unreadable sample ends the stream (unchanged).
 		a.eof = true
-		return
+		return nil
 	}
 	a.buf = b
-	a.f32, _ = a.dec.Decode(b, a.f32[:0]) // errors are concealed as silence
+	// Decode errors are concealed as silence; they are also reported to the
+	// optional handler so callers can log or retry the file.
+	var decErr error
+	a.f32, decErr = a.dec.Decode(b, a.f32[:0])
 	frames := len(a.f32) / a.chs
 	skip := min(a.trim, frames)
 	a.trim -= skip
@@ -218,6 +238,7 @@ func (a *golangAudio) decodeOneLocked() {
 		binary.LittleEndian.PutUint16(out[2*i:], uint16(int16(x)))
 	}
 	a.pending = append(a.pending, out...)
+	return decErr
 }
 
 func (a *golangAudio) Play() error {
@@ -281,7 +302,15 @@ func (a *golangAudio) HostTime() time.Duration {
 
 func (a *golangAudio) OnEnded(fn func()) {
 	a.mu.Lock()
-	a.endedFns = append(a.endedFns, fn)
+	a.onEnded = fn
+	a.mu.Unlock()
+}
+
+// SetErrorHandler implements errorSink: the handler receives the first
+// decode failure of a run (consecutive failures are coalesced).
+func (a *golangAudio) SetErrorHandler(fn func(error)) {
+	a.mu.Lock()
+	a.onErr = fn
 	a.mu.Unlock()
 }
 

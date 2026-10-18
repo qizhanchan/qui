@@ -1,9 +1,13 @@
 package media
 
-import "github.com/qizhanchan/qui"
+import (
+	"fmt"
 
-// Accessibility hooks. VideoView is treated as an opaque leaf — the
-// agent layer surfaces its role + playback state but does not walk
+	"github.com/qizhanchan/qui"
+)
+
+// Accessibility hooks. VideoView and FrameView are opaque leaves — the
+// agent layer surfaces their role and the frame's size, but does not walk
 // into per-frame data.
 
 func (v *VideoView) Role() string { return qui.RoleVideo }
@@ -23,4 +27,19 @@ func (v *VideoView) AccessibleState() qui.AccessibleState {
 		return qui.AXStateBusy
 	}
 	return 0
+}
+
+// FrameView shows pushed frames; its value is the newest frame's size.
+
+func (v *FrameView) Role() string { return qui.RoleVideo }
+
+func (v *FrameView) AccessibleValue() string {
+	if v == nil {
+		return ""
+	}
+	w, h := v.FrameSize()
+	if w <= 0 || h <= 0 {
+		return "no frame"
+	}
+	return fmt.Sprintf("%dx%d", w, h)
 }

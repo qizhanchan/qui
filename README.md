@@ -93,7 +93,7 @@ rt := h.Mount(window, css, func() h.Node {
 | `anim` | `Tween[T]` / `Spring` / `Timeline` + easing catalog; all satisfy `qui.Animator` |
 | `graphs` | 2D charting: Line/Scatter/Bar/Area/Pie series, ValueAxis/CategoryAxis, Legend, pan/zoom |
 | `svg` | SVG 1.1 subset: parse / build programmatically / rasterize (with tint) / serialize; `Document` satisfies `qui.VectorSource` |
-| `media` | `AudioPlayer` (service) + `VideoView` (widget) without ffmpeg; platform backends behind an internal interface (macOS today, others return `ErrNotSupported`) |
+| `media` | `AudioPlayer` (service) + `VideoView` / `FrameView` (widgets) without ffmpeg; two backends behind an internal interface — native AVFoundation (`native`, macOS) and a pure-Go codec stack (`golang`), selected by `QUI_MEDIA_BACKEND` |
 | `webview` | CEF-based embedded browser widget, gated behind the `webview_cef` build tag + fetched SDK; the default build compiles without CEF. The JS↔Go bridge is JSON-only. See `webview/scripts/` for the .app packaging workflow |
 | `physics`, `physics/p2`, `physics/p3` | Game physics: dimension-independent vocabulary in root; 2D and 3D engines are API mirrors (swept AABB, spatial hash, contact flags, one-way platforms, sensors). Zero dependencies — not even root `qui` |
 | `i18n` + `cmd/qui-i18n` | Message catalogs (JSON, CLDR plurals) + locale-sensitive formatting (number / currency / date / relative time / list / collation), plugged into root through the `qui.Translator` seam. The CLI extracts keys from source, lints catalogs, and generates a pseudo-locale for layout testing |

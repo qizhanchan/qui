@@ -2,7 +2,9 @@ package media
 
 import (
 	"context"
+	"log"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -128,6 +130,14 @@ type AudioRenderer interface {
 	Close() error
 }
 
+// errorSink is an optional extension of AudioRenderer: a backend that can
+// report per-frame decode failures while streaming implements it, and
+// AudioPlayer wires the handler to its public OnError surface. Backends
+// without it only report open-time failures.
+type errorSink interface {
+	SetErrorHandler(func(error))
+}
+
 // Backends are registered by name at process init via setBackend. The one
 // that is actually used is chosen on first use from the QUI_MEDIA_BACKEND
 // environment variable:
@@ -165,6 +175,21 @@ func overrideBackendForTest(b Backend) func() {
 	return func() { backendOverride, backendHasOverride = prevB, prevH }
 }
 
+// backendWarnf reports a misconfigured QUI_MEDIA_BACKEND; a variable so
+// tests can capture the diagnostic without touching the process logger.
+var backendWarnf = log.Printf
+
+// backendNames lists the registered backend names, sorted for a stable
+// diagnostic.
+func backendNames() []string {
+	names := make([]string, 0, len(backendRegistry))
+	for name := range backendRegistry {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // resolveBackend picks the active backend once, from QUI_MEDIA_BACKEND.
 func resolveBackend() Backend {
 	if backendHasOverride {
@@ -180,6 +205,12 @@ func resolveBackend() Backend {
 			}
 		default:
 			backendChosen = backendRegistry[want]
+			if backendChosen == nil {
+				// A typo must not look like "media is unsupported on this
+				// platform": say which value matched nothing.
+				backendWarnf("media: QUI_MEDIA_BACKEND=%q matches no registered backend (have: %s); media is disabled",
+					want, strings.Join(backendNames(), ", "))
+			}
 		}
 	})
 	return backendChosen
@@ -196,3 +227,17 @@ func resetBackendForTest() {
 // consults this before calling backend methods so it can return
 // ErrNotSupported gracefully.
 func activeBackend() Backend { return resolveBackend() }
+
+// Available reports whether a media backend is active for this build and
+// platform. When false, NewAudioPlayer returns ErrNotSupported and
+// VideoView.Open fails with it.
+func Available() bool { return activeBackend() != nil }
+
+// Supported reports what the active backend can decode. It returns the
+// zero value when no backend is available (see Available).
+func Supported() Capabilities {
+	if b := activeBackend(); b != nil {
+		return b.Capabilities()
+	}
+	return Capabilities{}
+}

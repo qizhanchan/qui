@@ -122,3 +122,24 @@ func compareS16(t *testing.T, name string, got, want []int16) {
 		t.Errorf("%s: %d of %d samples differ by more than 1 LSB", name, bad, n)
 	}
 }
+
+// AudioRenderer.OnEnded replaces the previous registration. Regression: the
+// pure-Go renderer appended, so a caller that registered twice (AudioPlayer
+// forwards every OnEnded call) fired its handler twice per end of stream.
+func TestGolangAudioOnEndedReplaces(t *testing.T) {
+	var a golangAudio
+	var got []string
+	a.OnEnded(func() { got = append(got, "first") })
+	a.OnEnded(func() { got = append(got, "second") })
+
+	a.mu.Lock()
+	fn := a.onEnded
+	a.mu.Unlock()
+	if fn == nil {
+		t.Fatal("OnEnded did not register a callback")
+	}
+	fn()
+	if len(got) != 1 || got[0] != "second" {
+		t.Errorf("fired %v, want exactly [second] (registrations must replace, not accumulate)", got)
+	}
+}

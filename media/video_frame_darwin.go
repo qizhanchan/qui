@@ -96,11 +96,13 @@ func (f *darwinVideoFrame) EnsureTexture() bool {
 // video_view.go so VideoView's QueueGLDraw closure can route
 // darwin frames around GLRenderer.DrawTexture (which only handles
 // GL_TEXTURE_2D).
-func (f *darwinVideoFrame) DrawIntoFramebuffer(state qui.GLState, physDst qui.Rect, flipY bool) bool {
+func (f *darwinVideoFrame) DrawIntoFramebuffer(state qui.GLState, src, physDst qui.Rect, flipY bool) bool {
 	if !f.EnsureTexture() {
 		return false
 	}
-	drawRectTexture(f.tex, physDst, state.FramebufferSize,
+	// src is the frame-pixel rect FitCover cropping selected; sampling it
+	// (rather than scissoring) keeps the overflow out of the framebuffer.
+	drawRectTextureSrc(f.tex, src, physDst, state.FramebufferSize,
 		qui.Size{W: float32(f.w), H: float32(f.h)}, flipY)
 	return true
 }
