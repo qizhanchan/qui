@@ -92,9 +92,7 @@ type ScrollView struct {
 	BoxModel bool
 
 	// Scrollbar drag state.
-	barDragging        bool
-	barDragStartMouse  float32 // mouse position at drag start, on the main axis
-	barDragStartScroll float32
+	barDrag ScrollBarDrag
 
 	// sizeAuto: ContentSize is re-measured from Content on every layout.
 	// lastAuto is the last derived size; a ContentSize that differs was
@@ -131,7 +129,7 @@ type ScrollView struct {
 }
 
 const (
-	scrollBarThickness = 10
+	scrollBarThickness = VBarWidth
 	defaultWheelStep   = 40
 	defaultKeyStep     = 24
 )
@@ -217,8 +215,7 @@ func (s *ScrollView) ChildList() []Widget {
 
 func (s *ScrollView) Focusable() bool { return s.Enabled() && !s.FocusDelegated }
 func (s *ScrollView) CancelInteraction() {
-	if s.barDragging {
-		s.barDragging = false
+	if s.barDrag.End() {
 		s.Invalidate()
 	}
 }
@@ -458,35 +455,22 @@ func (s *ScrollView) Handle(event Event) bool {
 			if !s.Bounds().Contains(Point{X: e.X, Y: e.Y}) {
 				return false
 			}
-			if s.hasBar() && s.barThumb().Contains(Point{X: e.X, Y: e.Y}) {
-				s.barDragging = true
-				s.barDragStartMouse = s.mainCoord(e.X, e.Y)
-				s.barDragStartScroll = s.scrollOff
-				s.Invalidate()
-				return true
-			}
-			if s.hasBar() && s.barTrack().Contains(Point{X: e.X, Y: e.Y}) {
-				// Click on the track (above/below the thumb) jumps by
-				// roughly a page. Direction depends on thumb position.
-				thumb := s.barThumb()
-				thumbStart := s.mainCoord(thumb.X, thumb.Y)
-				clickPos := s.mainCoord(e.X, e.Y)
-				pageStep := s.mainExtent(s.Bounds()) * 0.9
-				if clickPos < thumbStart {
-					s.scrollBy(-pageStep)
-				} else {
-					s.scrollBy(pageStep)
+			// Thumb press starts a drag; a track press either side of it
+			// pages toward the click.
+			if s.hasBar() {
+				if off, hit := s.bar().Press(Point{X: e.X, Y: e.Y}, &s.barDrag); hit {
+					s.ScrollTo(off)
+					s.Invalidate()
+					return true
 				}
-				return true
 			}
 		case EventMouseMove:
-			if s.barDragging {
-				s.barDragMove(s.mainCoord(e.X, e.Y))
+			if s.barDrag.Active {
+				s.ScrollTo(s.barDrag.Offset(s.bar(), Point{X: e.X, Y: e.Y}))
 				return true
 			}
 		case EventMouseUp:
-			if s.barDragging {
-				s.barDragging = false
+			if s.barDrag.End() {
 				s.Invalidate()
 				return true
 			}
@@ -767,14 +751,6 @@ func (s *ScrollView) scrollDeltaFor(dx, dy float32) float32 {
 	return -dy
 }
 
-// mainCoord projects an event point onto the main axis.
-func (s *ScrollView) mainCoord(x, y float32) float32 {
-	if s.Orientation == ScrollHorizontal {
-		return x
-	}
-	return y
-}
-
 // mainExtent returns the main-axis size of rect.
 func (s *ScrollView) mainExtent(r Rect) float32 {
 	if s.Orientation == ScrollHorizontal {
@@ -794,81 +770,26 @@ func (s *ScrollView) contentMainSize() float32 {
 // of the cross axis (right edge for vertical, bottom edge for
 // horizontal).
 func (s *ScrollView) barTrack() Rect {
-	b := s.innerBounds()
 	if s.Orientation == ScrollHorizontal {
-		return Rect{
-			X: b.X,
-			Y: b.Y + b.H - scrollBarThickness,
-			W: b.W,
-			H: scrollBarThickness,
-		}
+		return HBarTrackRect(s.innerBounds())
 	}
-	return Rect{
-		X: b.X + b.W - scrollBarThickness,
-		Y: b.Y,
-		W: scrollBarThickness,
-		H: b.H,
+	return VBarTrackRect(s.innerBounds())
+}
+
+// bar is the scrollbar geometry for the current scroll state.
+func (s *ScrollView) bar() ScrollBar {
+	return ScrollBar{
+		Track:      s.barTrack(),
+		Horizontal: s.Orientation == ScrollHorizontal,
+		Content:    s.contentMainSize(),
+		Viewport:   s.mainExtent(s.innerBounds()),
+		Offset:     s.scrollOff,
 	}
 }
 
-// barThumb returns the scrollbar thumb rectangle. The thumb fills a
-// fraction of the track equal to viewport/content, with a 24 px floor
-// so it stays draggable even at extreme content lengths.
-func (s *ScrollView) barThumb() Rect {
-	track := s.barTrack()
-	contentMain := s.contentMainSize()
-	if contentMain <= 0 {
-		return track
-	}
-	trackMain := s.mainExtent(track)
-	thumbMain := trackMain * trackMain / contentMain
-	const minThumb float32 = 24
-	if thumbMain < minThumb {
-		thumbMain = minThumb
-	}
-	if thumbMain > trackMain {
-		thumbMain = trackMain
-	}
-	travel := trackMain - thumbMain
-	progress := float32(0)
-	if max := s.maxScroll(); max > 0 {
-		progress = s.scrollOff / max
-	}
-	if s.Orientation == ScrollHorizontal {
-		return Rect{
-			X: track.X + travel*progress,
-			Y: track.Y,
-			W: thumbMain,
-			H: track.H,
-		}
-	}
-	return Rect{
-		X: track.X,
-		Y: track.Y + travel*progress,
-		W: track.W,
-		H: thumbMain,
-	}
-}
-
-// barDragMove maps a mouse position during drag (on the main axis) to
-// a scrollOff via the thumb's travel range — preserves the grab offset
-// so the thumb doesn't snap.
-func (s *ScrollView) barDragMove(mousePos float32) {
-	track := s.barTrack()
-	thumb := s.barThumb()
-	travel := s.mainExtent(track) - s.mainExtent(thumb)
-	if travel <= 0 {
-		return
-	}
-	// How far the thumb should travel equals how far the mouse moved.
-	// Convert back to scroll offset via the maxScroll/travel ratio.
-	d := mousePos - s.barDragStartMouse
-	scrollPerPixel := s.maxScroll() / travel
-	s.ScrollTo(s.barDragStartScroll + d*scrollPerPixel)
-}
+// barThumb returns the scrollbar thumb rectangle.
+func (s *ScrollView) barThumb() Rect { return s.bar().Thumb() }
 
 func (s *ScrollView) drawBar(canvas Canvas) {
-	track := s.barTrack()
-	thumb := s.barThumb()
-	VBarDrawColors(canvas, track, thumb, s.barDragging, s.BarColors)
+	s.bar().Draw(canvas, s.barDrag.Active, s.BarColors)
 }

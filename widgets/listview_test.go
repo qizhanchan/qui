@@ -185,7 +185,7 @@ func TestListViewClickOnScrollbarDoesNotSelectRow(t *testing.T) {
 	if lv.SelectedIdx != -1 {
 		t.Errorf("clicking scrollbar should not select a row; got %d", lv.SelectedIdx)
 	}
-	if !lv.barDragging {
+	if !lv.barDrag.Active {
 		t.Error("scrollbar click should start drag")
 	}
 }

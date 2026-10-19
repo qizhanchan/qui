@@ -51,6 +51,7 @@ import (
 // should be wrapped in a ScrollView by the caller.
 type Dialog struct {
 	BaseWidget
+	overlayHost
 	// Title is the literal headline; SetTitleKey localizes it. Ignored
 	// when Header is set.
 	Title string
@@ -106,7 +107,6 @@ type Dialog struct {
 	ContainerElevation int
 
 	titleKey      messageKey
-	window        *Window
 	contentBounds Rect
 	// addedButtons are the AddButton buttons, which the dialog styles
 	// itself (text buttons; the DefaultAction one filled). addedStyles
@@ -239,11 +239,8 @@ func (d *Dialog) Modal() bool { return true }
 // OnClose(DialogCloseRemoved). Mirrors Popup.SetWindow.
 func (d *Dialog) SetWindow(w *Window) {
 	d.BaseWidget.SetWindow(w)
-	if w == nil && d.window != nil {
-		d.window = nil
-		if d.OnClose != nil {
-			d.OnClose(DialogCloseRemoved)
-		}
+	if d.removedExternally(w) && d.OnClose != nil {
+		d.OnClose(DialogCloseRemoved)
 	}
 }
 
@@ -401,10 +398,11 @@ func (d *Dialog) Show(w *Window) {
 	if w == nil || d.window != nil {
 		return
 	}
+	// Layout centers the box against the window only once one is set.
 	d.window = w
 	// Full-window rect = the backdrop dims the whole view.
 	d.Layout(Rect{X: 0, Y: 0, W: w.Size().W, H: w.Size().H})
-	w.PushOverlay(d)
+	d.pushOverlay(w, d, nil)
 	if d.InitialFocus != nil {
 		w.SetFocus(d.InitialFocus)
 		if w.Focused() == d.InitialFocus {
@@ -452,21 +450,10 @@ func (d *Dialog) CloseWith(reason DialogCloseReason) {
 }
 
 func (d *Dialog) close(reason DialogCloseReason) {
-	w := d.window
-	if w == nil {
-		return
-	}
-	// Clear the shown state before RemoveOverlay so its SetWindow(nil) is
-	// not mistaken for an external removal (which would fire OnClose twice).
-	d.window = nil
-	w.RemoveOverlay(d)
-	if d.OnClose != nil {
+	if d.popOverlay(d, nil) && d.OnClose != nil {
 		d.OnClose(reason)
 	}
 }
-
-// IsShown reports whether the dialog is on a window's overlay stack.
-func (d *Dialog) IsShown() bool { return d.window != nil }
 
 // activateDefault presses DefaultAction. Reports whether it fired.
 func (d *Dialog) activateDefault() bool {

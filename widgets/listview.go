@@ -75,16 +75,12 @@ type ListView struct {
 	hoverIdx int
 	focused  bool
 
-	// Scrollbar drag state — mirrors ScrollView.
-	barDragging        bool
-	barDragStartY      float32
-	barDragStartScroll float32
+	// Scrollbar drag state.
+	barDrag ScrollBarDrag
 }
 
 const (
 	listRowDefaultH  = 26
-	listBarW         = 10
-	listMinThumbH    = 24
 	listRowPaddingX  = 10
 	listKeyScrollPad = 4 // rows of margin when auto-scrolling to selection
 )
@@ -247,8 +243,7 @@ func (lv *ListView) builtRow(i int) Widget {
 	return lv.rowWidgets[i]
 }
 func (lv *ListView) CancelInteraction() {
-	changed := lv.barDragging || lv.hoverIdx != -1
-	lv.barDragging = false
+	changed := lv.barDrag.End() || lv.hoverIdx != -1
 	lv.hoverIdx = -1
 	if changed {
 		lv.Invalidate()
@@ -536,7 +531,7 @@ func (lv *ListView) hasScrollbar() bool { return lv.maxScroll() > 0 }
 func (lv *ListView) contentWidth() float32 {
 	contentW := lv.Bounds().W
 	if lv.hasScrollbar() {
-		contentW -= listBarW
+		contentW -= VBarWidth
 	}
 	return contentW
 }
@@ -714,8 +709,8 @@ func (lv *ListView) Handle(event Event) bool {
 				lv.hoverIdx = idx
 				lv.Invalidate()
 			}
-			if lv.barDragging {
-				lv.barDragMove(e.Y)
+			if lv.barDrag.Active {
+				lv.scrollBy(lv.barDrag.Offset(lv.bar(), Point{X: e.X, Y: e.Y}) - lv.scrollY)
 				return true
 			}
 		case EventScroll:
@@ -737,20 +732,9 @@ func (lv *ListView) Handle(event Event) bool {
 			}
 			// Scrollbar first.
 			if lv.hasScrollbar() {
-				thumb := lv.barThumb()
-				if thumb.Contains(Point{X: e.X, Y: e.Y}) {
-					lv.barDragging = true
-					lv.barDragStartY = e.Y
-					lv.barDragStartScroll = lv.scrollY
+				if off, hit := lv.bar().Press(Point{X: e.X, Y: e.Y}, &lv.barDrag); hit {
+					lv.scrollBy(off - lv.scrollY)
 					lv.Invalidate()
-					return true
-				}
-				if lv.barTrack().Contains(Point{X: e.X, Y: e.Y}) {
-					if e.Y < thumb.Y {
-						lv.scrollBy(-lv.Bounds().H * 0.9)
-					} else {
-						lv.scrollBy(lv.Bounds().H * 0.9)
-					}
 					return true
 				}
 			}
@@ -781,8 +765,7 @@ func (lv *ListView) Handle(event Event) bool {
 				return true
 			}
 		case EventMouseUp:
-			if lv.barDragging {
-				lv.barDragging = false
+			if lv.barDrag.End() {
 				lv.Invalidate()
 				return true
 			}
@@ -870,54 +853,21 @@ func (lv *ListView) ScrollTo(y float32) {
 }
 
 // ----------------------------------------------------------------------
-// Scrollbar (mirrors ScrollView's logic — candidate for extraction
-// once we have a third consumer).
+// Scrollbar — geometry and drag math are the shared ScrollBar.
 
-func (lv *ListView) barTrack() Rect {
-	b := lv.Bounds()
-	return Rect{X: b.X + b.W - listBarW, Y: b.Y, W: listBarW, H: b.H}
+func (lv *ListView) bar() ScrollBar {
+	return ScrollBar{
+		Track:    VBarTrackRect(lv.Bounds()),
+		Content:  lv.contentHeight(),
+		Viewport: lv.Bounds().H,
+		Offset:   lv.scrollY,
+	}
 }
 
-func (lv *ListView) barThumb() Rect {
-	track := lv.barTrack()
-	content := lv.contentHeight()
-	if content <= 0 {
-		return track
-	}
-	thumbH := track.H * track.H / content
-	if thumbH < listMinThumbH {
-		thumbH = listMinThumbH
-	}
-	if thumbH > track.H {
-		thumbH = track.H
-	}
-	travel := track.H - thumbH
-	progress := float32(0)
-	if max := lv.maxScroll(); max > 0 {
-		progress = lv.scrollY / max
-	}
-	return Rect{X: track.X, Y: track.Y + travel*progress, W: track.W, H: thumbH}
-}
-
-func (lv *ListView) barDragMove(y float32) {
-	track := lv.barTrack()
-	thumb := lv.barThumb()
-	travel := track.H - thumb.H
-	if travel <= 0 {
-		return
-	}
-	dy := y - lv.barDragStartY
-	scrollPerPixel := lv.maxScroll() / travel
-	old := lv.scrollY
-	lv.scrollY = lv.barDragStartScroll + dy*scrollPerPixel
-	lv.ClampScroll()
-	if lv.scrollY != old {
-		lv.Invalidate()
-	}
-}
+func (lv *ListView) barThumb() Rect { return lv.bar().Thumb() }
 
 func (lv *ListView) drawScrollbar(canvas Canvas, c RowColors) {
-	VBarDrawColors(canvas, lv.barTrack(), lv.barThumb(), lv.barDragging, c.Scrollbar)
+	lv.bar().Draw(canvas, lv.barDrag.Active, c.Scrollbar)
 }
 
 // AccessibleChildren publishes the visible text-model rows as list items,

@@ -48,10 +48,10 @@ func TestSelectDropdownWidth(t *testing.T) {
 	native := NewSelect(w, []string{"Times New Roman", "Arial"}, nil)
 	native.Layout(Rect{X: 10, Y: 10, W: 72, H: 36})
 	native.openDropdown()
-	if native.popup == nil {
+	if native.open == nil {
 		t.Fatal("native dropdown should open")
 	}
-	if got := native.popup.Bounds().W; got <= native.Bounds().W {
+	if got := native.open.Bounds().W; got <= native.Bounds().W {
 		t.Errorf("native dropdown width = %v, want > anchor %v (should widen to fit options)", got, native.Bounds().W)
 	}
 	native.closeDropdown()
@@ -61,10 +61,10 @@ func TestSelectDropdownWidth(t *testing.T) {
 	labelled.Label = "Zoom"
 	labelled.Layout(Rect{X: 10, Y: 10, W: 200, H: 56})
 	labelled.openDropdown()
-	if labelled.popup == nil {
+	if labelled.open == nil {
 		t.Fatal("labelled dropdown should open")
 	}
-	if got := labelled.popup.Bounds().W; got != labelled.Bounds().W {
+	if got := labelled.open.Bounds().W; got != labelled.Bounds().W {
 		t.Errorf("labelled dropdown width = %v, want anchor width %v", got, labelled.Bounds().W)
 	}
 }
@@ -94,7 +94,7 @@ func TestSelectItemSelectionFiresOnChange(t *testing.T) {
 	cb.openDropdown()
 	// Find the second item's button in the dropdown popup and click it.
 	// The popup's Content is a menuListView wrapping the real item container.
-	content := cb.popup.Content.(*menuListView).content
+	content := cb.open.Content.(*menuListView).content
 	secondItem := content.ChildAt(1).(MenuActivatable)
 	secondItem.ActivateMenuRow()
 
@@ -112,13 +112,13 @@ func TestSelectItemSelectionClosesDropdown(t *testing.T) {
 	cb.Layout(Rect{X: 0, Y: 0, W: 100, H: 30})
 
 	cb.openDropdown()
-	content := cb.popup.Content.(*menuListView).content
+	content := cb.open.Content.(*menuListView).content
 	content.ChildAt(0).(MenuActivatable).ActivateMenuRow()
 
 	if cb.isOpen {
 		t.Error("selecting item should close dropdown")
 	}
-	if cb.popup != nil {
+	if cb.open != nil {
 		t.Error("popup ref should be cleared after selection")
 	}
 	if len(w.Overlays()) != 0 {
@@ -135,10 +135,10 @@ func TestSelectItemColorsTintRows(t *testing.T) {
 	cb.Layout(Rect{X: 0, Y: 0, W: 120, H: 30})
 
 	cb.openDropdown()
-	if cb.popup == nil {
+	if cb.open == nil {
 		t.Fatal("dropdown did not open")
 	}
-	content := cb.popup.Content.(*menuListView).content
+	content := cb.open.Content.(*menuListView).content
 	for i, want := range cb.ItemColors {
 		v, ok := content.ChildAt(i).(*menuItemView)
 		if !ok {
@@ -309,10 +309,10 @@ func TestSelectDropdownUsesMenuLabelInset(t *testing.T) {
 	cb.Layout(Rect{X: 10, Y: 20, W: 220, H: 64})
 
 	cb.openDropdown()
-	if cb.popup == nil {
+	if cb.open == nil {
 		t.Fatal("dropdown should open")
 	}
-	content := cb.popup.Content.(*menuListView).content
+	content := cb.open.Content.(*menuListView).content
 	for i := 0; i < 2; i++ {
 		row := content.ChildAt(i).(*menuItemView)
 		var rowCanvas RecordingCanvas

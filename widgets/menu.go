@@ -2156,10 +2156,9 @@ type MenuBar struct {
 	DropdownColors    MenuColors
 	DropdownElevation int
 
-	window  *Window
+	overlayOwner
 	menus   []menuEntry
 	openIdx int
-	open    *Popup
 
 	// accelReg is the registry BindAccelerators feeds; accelRemove removes
 	// the bindings it added, so a menu change can re-register them.
@@ -2181,7 +2180,7 @@ type menuEntry struct {
 // mb.TriggerStyle. The dropdown it opens follows the current theme (see
 // ShowContextMenu) unless DropdownColors is set.
 func NewMenuBar(window *Window) *MenuBar {
-	mb := &MenuBar{window: window, openIdx: -1}
+	mb := &MenuBar{overlayOwner: overlayOwner{window: window}, openIdx: -1}
 	mb.BaseWidget = NewBaseWidget()
 	mb.LayoutEngine = FlexLayout{Direction: Horizontal, Gap: 2}
 	mb.SetSelf(mb)
@@ -2204,12 +2203,7 @@ func (mb *MenuBar) win() *Window {
 // dropdown anchored to an unmounted bar has nothing left to belong to.
 func (mb *MenuBar) SetWindow(w *Window) {
 	mb.BaseWidget.SetWindow(w)
-	if w == nil {
-		mb.window = nil
-		mb.CloseMenu()
-		return
-	}
-	mb.window = w
+	mb.ownerSetWindow(w)
 }
 
 // AddMenu appends a top-level menu. The caller-supplied items drive the
@@ -2375,7 +2369,12 @@ func (mb *MenuBar) OpenMenu(idx int) {
 	if popup == nil {
 		return
 	}
-	mb.open, mb.openIdx = popup, idx
+	mb.openIdx = idx
+	mb.holdPopup(popup, func() {
+		mb.openIdx = -1
+		mb.InvalidateLayout()
+		trigger.Invalidate()
+	})
 	mb.InvalidateLayout()
 	trigger.Invalidate()
 	MenuBarHoverSwitch(popup, func(p Point) func() {
@@ -2386,17 +2385,6 @@ func (mb *MenuBar) OpenMenu(idx int) {
 		}
 		return nil
 	})
-	prev := popup.OnClose
-	popup.OnClose = func() {
-		if prev != nil {
-			prev()
-		}
-		if mb.open == popup {
-			mb.open, mb.openIdx = nil, -1
-			mb.InvalidateLayout()
-		}
-		trigger.Invalidate()
-	}
 }
 
 // MenuBarHoverSwitch makes an open menu-bar dropdown follow the pointer
@@ -2450,14 +2438,7 @@ func overlayRootIsPopup(w Widget) bool {
 }
 
 // CloseMenu closes the open dropdown, if any.
-func (mb *MenuBar) CloseMenu() {
-	if mb.open != nil {
-		p := mb.open
-		mb.open, mb.openIdx = nil, -1
-		mb.InvalidateLayout()
-		p.Close()
-	}
-}
+func (mb *MenuBar) CloseMenu() { mb.closePopup() }
 
 // OpenIndex reports which top-level menu is open (-1 for none).
 func (mb *MenuBar) OpenIndex() int { return mb.openIdx }

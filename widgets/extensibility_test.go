@@ -50,7 +50,7 @@ func TestSelectUsesAttachedWindowAndGroups(t *testing.T) {
 	if !cb.IsOpen() || len(w.Overlays()) != 1 || opened != 1 {
 		t.Fatalf("a Select built with a nil window should open in its attached window")
 	}
-	list := cb.popup.Content.(*menuListView)
+	list := cb.open.Content.(*menuListView)
 	// Two headings + three options.
 	if len(list.items) != 5 || list.items[0].Label != "G1" || !list.items[0].Disabled {
 		t.Fatalf("group headings not inserted: %d items", len(list.items))

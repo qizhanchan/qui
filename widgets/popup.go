@@ -34,6 +34,7 @@ const (
 //	// later: popup.Close(), or let outside-click auto-dismiss
 type Popup struct {
 	BaseWidget
+	overlayHost
 	Content               Widget
 	DismissOnOutsideClick bool
 	// ClickThrough lets the press that dismisses the popup also reach
@@ -68,9 +69,6 @@ type Popup struct {
 	// content change re-measures instead of keeping the show-time size.
 	natural bool
 
-	window       *Window
-	removeFilter func()
-
 	// passThrough, when set, resolves points OUTSIDE the popup before the
 	// catch-all outside-click capture: a submenu routes the pointer to the
 	// menus it was opened from, so hovering (or clicking) a parent row
@@ -94,9 +92,6 @@ func NewPopup(content Widget) *Popup {
 	p.SetSelf(p)
 	return p
 }
-
-// IsShown reports whether the popup is on a window's overlay stack.
-func (p *Popup) IsShown() bool { return p.window != nil }
 
 // SetContent replaces the popup content. A shown popup adopts the new tree
 // and re-lays it immediately; assigning the Content field directly leaves
@@ -167,20 +162,9 @@ func (p *Popup) showAtSize(w *Window, x, y float32, size Size) {
 		return
 	}
 	p.Content.Layout(contentRect)
-	p.window = w
-	w.PushOverlay(p)
-	// Window.PushOverlay invalidates only widget.Bounds(). Overlay
-	// content that paints an elevation halo past Bounds (menu surface
-	// level-2 shadow, dialog level-3 shadow) needs the halo region to
-	// be in the first frame's dirty union too, otherwise clipCanvas
-	// clips the halo's outer pixels and the show frame renders without
-	// the full shadow. Union the inflated rect here so both Show and
-	// Close see the same dirty area.
-	if r, ok := overlayHaloRect(p.Content); ok {
-		w.InvalidateRect(r)
-	}
+	p.pushOverlay(w, p, p.Content)
 	if p.ClickThrough && p.DismissOnOutsideClick {
-		p.removeFilter = w.AddEventFilter(p.clickThroughFilter)
+		p.onLeave(w.AddEventFilter(p.clickThroughFilter))
 	}
 	if p.AutoFocus {
 		if target := firstFocusable(p.Content); target != nil {
@@ -232,8 +216,8 @@ func (p *Popup) overlayAtOrAbove(w Widget) bool {
 // fire, and ShowAt works again.
 func (p *Popup) SetWindow(w *Window) {
 	p.BaseWidget.SetWindow(w)
-	if w == nil && p.window != nil {
-		p.finishClose(PopupCloseRemoved)
+	if p.removedExternally(w) {
+		p.fireClose(PopupCloseRemoved)
 	}
 }
 
@@ -268,41 +252,8 @@ func (p *Popup) closeFor(reason PopupCloseReason) bool {
 }
 
 func (p *Popup) close(reason PopupCloseReason) {
-	w := p.window
-	if w == nil {
-		return
-	}
-	// Invalidate the inflated content halo BEFORE RemoveOverlay so the
-	// area covered by the elevation shadow gets repainted with whatever
-	// is underneath. Without this, Window.RemoveOverlay only marks
-	// Bounds dirty and the shadow halo pixels (painted into adjacent
-	// regions when the overlay was up) stay on the framebuffer until
-	// some other event redirties that area. The bug is most visible
-	// when a menu opens upward — the bottom shadow halo extends into
-	// the trigger button area, and on close the trigger button keeps
-	// the gray halo overlay until next hover.
-	if r, ok := overlayHaloRect(p.Content); ok {
-		w.InvalidateRect(r)
-	}
-	// Mark closed before RemoveOverlay: detaching calls SetWindow(nil),
-	// which must not read as an external removal. The callbacks run after
-	// it, so one that reopens the popup isn't undone.
-	p.markClosed()
-	w.RemoveOverlay(p)
-	p.fireClose(reason)
-}
-
-// finishClose clears the shown state and fires the close callbacks.
-func (p *Popup) finishClose(reason PopupCloseReason) {
-	p.markClosed()
-	p.fireClose(reason)
-}
-
-func (p *Popup) markClosed() {
-	p.window = nil
-	if p.removeFilter != nil {
-		p.removeFilter()
-		p.removeFilter = nil
+	if p.popOverlay(p, p.Content) {
+		p.fireClose(reason)
 	}
 }
 
@@ -313,27 +264,6 @@ func (p *Popup) fireClose(reason PopupCloseReason) {
 	if p.OnCloseReason != nil {
 		p.OnCloseReason(reason)
 	}
-}
-
-// overlayHalo is the optional interface an overlay's content can
-// implement to declare visible pixels beyond its layout bounds — i.e.
-// elevation shadows. Popup checks for it at show + close time so the
-// extra region participates in the dirty union and the shadow halo
-// repaints cleanly on both edges of the overlay's lifetime.
-//
-// Returned rect is in window coordinates (same as Bounds).
-type overlayHalo interface {
-	OverlayHaloRect() Rect
-}
-
-func overlayHaloRect(content Widget) (Rect, bool) {
-	if content == nil {
-		return Rect{}, false
-	}
-	if h, ok := content.(overlayHalo); ok {
-		return h.OverlayHaloRect(), true
-	}
-	return Rect{}, false
 }
 
 // OnWindowResize reacts to a window resize (satisfies OverlayResizer).

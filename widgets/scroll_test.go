@@ -123,7 +123,7 @@ func TestScrollViewScrollbarDrag(t *testing.T) {
 	mouseX := thumb.X + thumb.W/2
 
 	sv.Handle(newMouseEventForHandle(EventMouseDown, mouseX, mouseY))
-	if !sv.barDragging {
+	if !sv.barDrag.Active {
 		t.Fatal("MouseDown on thumb should start drag")
 	}
 	// Move mouse down 40 pixels.
@@ -134,7 +134,7 @@ func TestScrollViewScrollbarDrag(t *testing.T) {
 		t.Errorf("scrollbar drag: scrollY=%v, want ~%v", sv.ScrollY(), expected)
 	}
 	sv.Handle(newMouseEventForHandle(EventMouseUp, mouseX, mouseY+40))
-	if sv.barDragging {
+	if sv.barDrag.Active {
 		t.Error("MouseUp should end drag")
 	}
 }

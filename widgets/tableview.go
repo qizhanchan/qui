@@ -151,9 +151,7 @@ type TableView struct {
 	hoverIdx int
 	focused  bool
 
-	barDragging        bool
-	barDragStartY      float32
-	barDragStartScroll float32
+	barDrag ScrollBarDrag
 }
 
 // NewTableView constructs a TableView with the given columns and model.
@@ -290,8 +288,7 @@ func (tv *TableView) builtRow(i int) Widget {
 	return tv.rowWidgets[i]
 }
 func (tv *TableView) CancelInteraction() {
-	changed := tv.barDragging || tv.hoverIdx != -1
-	tv.barDragging = false
+	changed := tv.barDrag.End() || tv.hoverIdx != -1
 	tv.hoverIdx = -1
 	if changed {
 		tv.Invalidate()
@@ -598,6 +595,18 @@ func (tv *TableView) hasScrollbar() bool {
 	return tv.contentHeight() > tv.bodyRect().H
 }
 
+// bar is the scrollbar geometry: the body area only — it doesn't extend
+// into the header strip, matching most native tables.
+func (tv *TableView) bar() ScrollBar {
+	body := tv.bodyRect()
+	return ScrollBar{
+		Track:    VBarTrackRect(body),
+		Content:  tv.contentHeight(),
+		Viewport: body.H,
+		Offset:   tv.scrollY,
+	}
+}
+
 // columnWidths resolves the final per-column width array. Fixed widths
 // are kept; zero-width columns split whatever remains.
 func (tv *TableView) columnWidths() []float32 {
@@ -693,9 +702,7 @@ func (tv *TableView) Draw(canvas Canvas) {
 	// Scrollbar on the body area only — doesn't extend into header
 	// strip, matching most native tables.
 	if tv.hasScrollbar() {
-		track := VBarTrackRect(body)
-		thumb := VBarThumbRect(track, tv.contentHeight(), tv.scrollY)
-		VBarDrawColors(canvas, track, thumb, tv.barDragging, c.Scrollbar)
+		tv.bar().Draw(canvas, tv.barDrag.Active, c.Scrollbar)
 	}
 	if tv.Style().BorderSize > 0 {
 		canvas.StrokeRect(b, c.Border, tv.Style().BorderSize)
@@ -943,12 +950,9 @@ func (tv *TableView) Handle(event Event) bool {
 				tv.hoverIdx = idx
 				tv.Invalidate()
 			}
-			if tv.barDragging {
-				track := VBarTrackRect(body)
+			if tv.barDrag.Active {
 				old := tv.scrollY
-				tv.scrollY = VBarScrollFromDrag(track, tv.contentHeight(),
-					tv.barDragStartScroll, tv.barDragStartY, e.Y)
-				tv.scrollY = ClampScroll(tv.scrollY, tv.contentHeight(), body.H)
+				tv.scrollY = tv.barDrag.Offset(tv.bar(), Point{X: e.X, Y: e.Y})
 				if tv.scrollY != old {
 					tv.Invalidate()
 				}
@@ -991,25 +995,9 @@ func (tv *TableView) Handle(event Event) bool {
 			}
 			// Scrollbar.
 			if tv.hasScrollbar() {
-				track := VBarTrackRect(body)
-				thumb := VBarThumbRect(track, tv.contentHeight(), tv.scrollY)
-				if thumb.Contains(p) {
-					tv.barDragging = true
-					tv.barDragStartY = e.Y
-					tv.barDragStartScroll = tv.scrollY
+				if off, hit := tv.bar().Press(p, &tv.barDrag); hit {
+					tv.scrollY = off
 					tv.Invalidate()
-					return true
-				}
-				if track.Contains(p) {
-					old := tv.scrollY
-					if e.Y < thumb.Y {
-						tv.scrollY = ClampScroll(tv.scrollY-body.H*0.9, tv.contentHeight(), body.H)
-					} else {
-						tv.scrollY = ClampScroll(tv.scrollY+body.H*0.9, tv.contentHeight(), body.H)
-					}
-					if tv.scrollY != old {
-						tv.Invalidate()
-					}
 					return true
 				}
 			}
@@ -1030,8 +1018,7 @@ func (tv *TableView) Handle(event Event) bool {
 				return !(tv.useWidgetRows && e.Phase() == PhaseCapture)
 			}
 		case EventMouseUp:
-			if tv.barDragging {
-				tv.barDragging = false
+			if tv.barDrag.End() {
 				tv.Invalidate()
 				return true
 			}

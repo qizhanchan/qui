@@ -115,12 +115,11 @@ type Select struct {
 	// itemsLocale is the LocaleGeneration Items was last resolved under,
 	// so a language switch re-resolves LabelKey options on next use.
 	itemsLocale uint64
-	window      *Window
-	hovering    bool
-	focused     bool
-	isOpen      bool
-	popup       *Popup
-	list        Widget // the open dropdown's list, which gets forwarded keys
+	overlayOwner
+	hovering bool
+	focused  bool
+	isOpen   bool
+	list     Widget // the open dropdown's list, which gets forwarded keys
 
 	// Type-ahead state (see typeAhead): the letters typed so far and when
 	// the last one arrived, so a pause starts a fresh search.
@@ -282,14 +281,7 @@ func (cb *Select) win() *Window {
 // it cannot keep firing OnChange as an overlay from an unmounted control.
 func (cb *Select) SetWindow(w *Window) {
 	cb.BaseWidget.SetWindow(w)
-	if w == nil {
-		cb.window = nil
-		if cb.isOpen {
-			cb.closeDropdown()
-		}
-		return
-	}
-	cb.window = w
+	cb.ownerSetWindow(w)
 }
 
 // IsOpen reports whether the dropdown is showing.
@@ -311,12 +303,12 @@ func (cb *Select) ConsumesTab(shift bool) bool {
 // render a <select> on the htmlcss layer and style it with CSS.
 func NewSelect(window *Window, items []string, onChange func(int, string)) *Select {
 	cb := &Select{
-		BaseWidget:  NewBaseWidget(),
-		Items:       items,
-		SelectedIdx: -1,
-		Variant:     SelectOutlined,
-		OnChange:    onChange,
-		window:      window,
+		BaseWidget:   NewBaseWidget(),
+		Items:        items,
+		SelectedIdx:  -1,
+		Variant:      SelectOutlined,
+		OnChange:     onChange,
+		overlayOwner: overlayOwner{window: window},
 	}
 	cb.SetSelf(cb)
 	cb.States = defaultSelectStates()
@@ -1139,7 +1131,6 @@ func (cb *Select) openDropdown() {
 	if popup == nil {
 		return
 	}
-	cb.popup = popup
 	// Clicking another control while the dropdown is open should both
 	// dismiss it and act on that control (browser behavior), not require a
 	// second click.
@@ -1169,24 +1160,18 @@ func (cb *Select) openDropdown() {
 	// The select keeps keyboard focus while its list is open (as in a
 	// browser: document.activeElement stays the <select>) and forwards the
 	// list's navigation keys from Handle.
-	cb.popup = showAnchoredPopupGap(w, cb.popup, list, func() Rect { return InteractionBoundsOf(cb) }, size, 2, false, false)
-	cb.list = list
-	if cb.popup == nil {
+	if showAnchoredPopupGap(w, popup, list, func() Rect { return InteractionBoundsOf(cb) }, size, 2, false, false) == nil {
 		return
 	}
-	prevOnClose := cb.popup.OnClose
-	cb.popup.OnClose = func() {
-		if prevOnClose != nil {
-			prevOnClose()
-		}
+	cb.list = list
+	cb.holdPopup(popup, func() {
 		cb.isOpen = false
-		cb.popup = nil
 		cb.list = nil
 		cb.Invalidate()
 		if cb.OnClose != nil {
 			cb.OnClose()
 		}
-	}
+	})
 	cb.isOpen = true
 	cb.Invalidate()
 	if cb.OnOpen != nil {
@@ -1195,9 +1180,7 @@ func (cb *Select) openDropdown() {
 }
 
 func (cb *Select) closeDropdown() {
-	if cb.popup != nil {
-		cb.popup.Close()
-	}
+	cb.closePopup()
 	cb.isOpen = false
 }
 
