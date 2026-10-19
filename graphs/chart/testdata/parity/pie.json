@@ -1,0 +1,22 @@
+{
+  "width": 900,
+  "height": 460,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {"fontFamily": "Arial"},
+    "title": {"text": "Channel Split", "subtext": "share", "left": 10, "top": 10},
+    "legend": {"bottom": 10},
+    "color": ["#5470c6", "#91cc75", "#fac858", "#ee6666"],
+    "series": [{
+      "type": "pie",
+      "name": "Channels",
+      "radius": "70%",
+      "data": [
+        {"name": "Mobile", "value": 55},
+        {"name": "Web", "value": 30},
+        {"name": "API", "value": 10},
+        {"name": "Kiosk", "value": 5}
+      ]
+    }]
+  }
+}

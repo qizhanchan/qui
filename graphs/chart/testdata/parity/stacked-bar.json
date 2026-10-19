@@ -1,0 +1,19 @@
+{
+  "width": 900,
+  "height": 460,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {"fontFamily": "Arial"},
+    "title": {"text": "Traffic", "subtext": "stacked bars", "left": 10, "top": 10},
+    "legend": {"bottom": 10},
+    "grid": {"left": 70, "right": 30, "top": 70, "bottom": 70},
+    "xAxis": {"type": "category", "data": ["Mon", "Tue", "Wed", "Thu", "Fri"]},
+    "yAxis": {"type": "value"},
+    "color": ["#5470c6", "#91cc75", "#fac858"],
+    "series": [
+      {"type": "bar", "name": "Read", "stack": "total", "data": [20, 32, 28, 44, 36]},
+      {"type": "bar", "name": "Write", "stack": "total", "data": [12, 18, 15, 22, 19]},
+      {"type": "bar", "name": "Cache", "stack": "total", "data": [8, 9, 7, 11, 12]}
+    ]
+  }
+}

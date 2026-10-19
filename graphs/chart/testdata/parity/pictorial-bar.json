@@ -1,0 +1,23 @@
+{
+  "width": 720,
+  "height": 440,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {"fontFamily": "Arial"},
+    "title": {"text": "Pictorial Bar", "subtext": "symbol columns", "left": 10, "top": 10},
+    "grid": {"left": 60, "right": 30, "top": 70, "bottom": 55},
+    "xAxis": {"type": "category", "data": ["A", "B", "C", "D"]},
+    "yAxis": {"type": "value", "min": 0, "max": 20},
+    "color": ["#5470c6", "#91cc75", "#fac858", "#ee6666"],
+    "series": [{
+      "type": "pictorialBar",
+      "name": "Units",
+      "symbol": "roundRect",
+      "symbolSize": [24, 12],
+      "symbolRepeat": true,
+      "symbolMargin": 2,
+      "symbolClip": true,
+      "data": [8, 12, 16, 10]
+    }]
+  }
+}

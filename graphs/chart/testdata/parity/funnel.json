@@ -1,0 +1,35 @@
+{
+  "width": 900,
+  "height": 460,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {
+      "fontFamily": "Arial"
+    },
+    "title": {
+      "text": "Funnel",
+      "subtext": "sales",
+      "left": 10,
+      "top": 10
+    },
+    "color": [
+      "#5470c6",
+      "#91cc75",
+      "#fac858",
+      "#ee6666",
+      "#73c0de"
+    ],
+    "series": [
+      {
+        "type": "funnel",
+        "name": "Funnel",
+        "data": [
+          {"name": "A", "value": 40},
+          {"name": "B", "value": 30},
+          {"name": "C", "value": 20},
+          {"name": "D", "value": 10}
+        ]
+      }
+    ]
+  }
+}

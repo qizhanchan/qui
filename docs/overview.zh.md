@@ -60,7 +60,7 @@ qui 选择保留模式的立场 —— 声明一棵稳定的树，让框架负�
        GLFW 后端                 Cocoa 后端
 ```
 
-可选包 —— `scene3d`、`graphs`、`svg`、`media`、`webview`、`physics`、`anim`、`i18n`、`icons`、`fonts` —— 通过根包接口接入，引擎永远不会反过来依赖它们。
+可选包 —— `scene3d`、`graphs`、`svg`、`media`、`webview`、`physics`、`anim`、`i18n`、`icons`、`fonts` —— 通过根包接口接入，引擎永远不会反过来依赖它们。`graphs` 负责稳定的 scale/data 基础能力，原生声明式图表方案位于 `graphs/chart`。
 
 ## 平台支持与状态
 

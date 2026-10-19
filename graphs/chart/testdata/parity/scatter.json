@@ -1,0 +1,18 @@
+{
+  "width": 900,
+  "height": 460,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {"fontFamily": "Arial"},
+    "title": {"text": "Scatter", "subtext": "latency vs throughput", "left": 10, "top": 10},
+    "legend": {"bottom": 10},
+    "grid": {"left": 70, "right": 30, "top": 70, "bottom": 70},
+    "xAxis": {"type": "value", "name": "latency"},
+    "yAxis": {"type": "value", "name": "throughput"},
+    "color": ["#5470c6", "#91cc75"],
+    "series": [
+      {"type": "scatter", "name": "A", "symbolSize": 12, "data": [[10, 22], [16, 35], [22, 28], [30, 48], [38, 44], [45, 61]]},
+      {"type": "scatter", "name": "B", "symbolSize": 12, "data": [[12, 55], [20, 62], [28, 70], [36, 66], [42, 78]]}
+    ]
+  }
+}

@@ -139,7 +139,7 @@
 | 包 | 亮点 |
 |---|---|
 | `anim` | `Tween[T]`、`Spring`、`Timeline`；缓动目录；满足 `qui.Animator` |
-| `graphs` | Line / Scatter / Bar / Area / Pie 系列，数值 + 类别轴，图例、tooltip、平移 / 缩放、主题调色板 |
+| `graphs` / `graphs/chart` | 稳定的 scale/data 基础能力，以及原生声明式图表层：ECharts 形状的 Go `Option`；笛卡尔、极坐标、层级、网络和流向图；数值/类别轴、图例、tooltip、visualMap 颜色映射、grid gutters、平移 / 缩放和主题调色板 |
 | `svg` | SVG 1.1 子集：解析 / 构建 / 光栅化（可染色）/ 序列化；`Document` 满足 `qui.VectorSource` |
 | `scene3d` | 场景图（节点、mesh、材质、灯光、相机）、`Viewport` FBO 控件、轨道控制、拾取、`Vec3Field` |
 | `media` | 不依赖 ffmpeg 的 `AudioPlayer`（服务）与 `VideoView`（控件）；macOS 使用 AVFoundation 后端。`FrameView` 显示从任意 goroutine 推送的帧 —— `PushCVPixelBuffer`（macOS，IOSurface → CVOpenGLTextureCache 零拷贝）或 `PushRGBA` —— 只保留最新帧、空闲零开销，支持适配模式、`MapToFrame` 输入映射、`Stats` / `OnPresent` 延迟统计与原始键盘 |

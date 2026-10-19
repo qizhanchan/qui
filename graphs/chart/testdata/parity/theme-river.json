@@ -1,0 +1,21 @@
+{
+  "width": 820,
+  "height": 460,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {"fontFamily": "Arial"},
+    "title": {"text": "Theme River", "subtext": "composition", "left": 10, "top": 10},
+    "color": ["#5470c6", "#91cc75", "#fac858", "#ee6666"],
+    "singleAxis": {"type": "value", "min": 0, "max": 6, "splitNumber": 6},
+    "series": [{
+      "type": "themeRiver",
+      "name": "Flow",
+      "data": [
+        [0, 10, "A"], [1, 15, "A"], [2, 20, "A"], [3, 18, "A"], [4, 25, "A"], [5, 20, "A"], [6, 15, "A"],
+        [0, 20, "B"], [1, 18, "B"], [2, 25, "B"], [3, 30, "B"], [4, 24, "B"], [5, 28, "B"], [6, 32, "B"],
+        [0, 15, "C"], [1, 20, "C"], [2, 18, "C"], [3, 22, "C"], [4, 20, "C"], [5, 15, "C"], [6, 18, "C"],
+        [0, 8, "D"], [1, 12, "D"], [2, 10, "D"], [3, 15, "D"], [4, 18, "D"], [5, 22, "D"], [6, 20, "D"]
+      ]
+    }]
+  }
+}

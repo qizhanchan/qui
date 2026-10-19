@@ -1,0 +1,18 @@
+{
+  "width": 900,
+  "height": 460,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {"fontFamily": "Arial"},
+    "title": {"text": "Profit", "subtext": "positive and negative", "left": 10, "top": 10},
+    "legend": {"bottom": 10},
+    "grid": {"left": 70, "right": 30, "top": 70, "bottom": 70},
+    "xAxis": {"type": "category", "data": ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]},
+    "yAxis": {"type": "value"},
+    "color": ["#5470c6", "#ee6666"],
+    "series": [
+      {"type": "bar", "name": "Revenue", "data": [20, 32, 18, 44, 30, 38]},
+      {"type": "bar", "name": "Cost", "data": [-12, -18, -10, -24, -16, -20]}
+    ]
+  }
+}

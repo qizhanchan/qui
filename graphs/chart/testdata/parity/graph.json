@@ -1,0 +1,31 @@
+{
+  "width": 700,
+  "height": 460,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {"fontFamily": "Arial"},
+    "title": {"text": "Graph", "subtext": "network", "left": 10, "top": 10},
+    "color": ["#5470c6", "#91cc75", "#fac858", "#ee6666", "#73c0de", "#3ba272", "#fc8452", "#9a60b4"],
+    "series": [{
+      "type": "graph",
+      "name": "Network",
+      "layout": "circular",
+      "data": [
+        {"name": "A"}, {"name": "B"}, {"name": "C"}, {"name": "D"},
+        {"name": "E"}, {"name": "F"}, {"name": "G"}, {"name": "H"}
+      ],
+      "links": [
+        {"source": "A", "target": "B"},
+        {"source": "B", "target": "C"},
+        {"source": "C", "target": "D"},
+        {"source": "D", "target": "E"},
+        {"source": "E", "target": "F"},
+        {"source": "F", "target": "G"},
+        {"source": "G", "target": "H"},
+        {"source": "H", "target": "A"},
+        {"source": "A", "target": "D"},
+        {"source": "B", "target": "F"}
+      ]
+    }]
+  }
+}

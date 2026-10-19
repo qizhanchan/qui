@@ -1,0 +1,26 @@
+{
+  "width": 760,
+  "height": 460,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {"fontFamily": "Arial"},
+    "title": {"text": "Sankey", "subtext": "flow", "left": 10, "top": 10},
+    "color": ["#5470c6", "#91cc75", "#fac858", "#ee6666"],
+    "series": [{
+      "type": "sankey",
+      "name": "Flow",
+      "data": [
+        {"name": "A"},
+        {"name": "B"},
+        {"name": "C"},
+        {"name": "D"}
+      ],
+      "links": [
+        {"source": "A", "target": "B", "value": 30},
+        {"source": "A", "target": "C", "value": 20},
+        {"source": "B", "target": "D", "value": 20},
+        {"source": "C", "target": "D", "value": 10}
+      ]
+    }]
+  }
+}

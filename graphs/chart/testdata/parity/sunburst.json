@@ -1,0 +1,23 @@
+{
+  "width": 640,
+  "height": 460,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {"fontFamily": "Arial"},
+    "title": {"text": "Sunburst", "subtext": "hierarchy", "left": 10, "top": 10},
+    "color": ["#5470c6", "#91cc75", "#fac858", "#ee6666"],
+    "series": [{
+      "type": "sunburst",
+      "name": "Sunburst",
+      "data": [{
+        "name": "Root",
+        "children": [
+          {"name": "A", "value": 40},
+          {"name": "B", "value": 30},
+          {"name": "C", "value": 20},
+          {"name": "D", "value": 10}
+        ]
+      }]
+    }]
+  }
+}

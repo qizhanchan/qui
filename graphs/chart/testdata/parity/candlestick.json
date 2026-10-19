@@ -1,0 +1,25 @@
+{
+  "width": 900,
+  "height": 460,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {"fontFamily": "Arial"},
+    "title": {"text": "AAPL", "subtext": "daily OHLC", "left": 10, "top": 10},
+    "grid": {"left": 70, "right": 30, "top": 70, "bottom": 70},
+    "xAxis": {"type": "category", "data": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]},
+    "yAxis": {"type": "value", "scale": true},
+    "series": [{
+      "type": "candlestick",
+      "name": "AAPL",
+      "data": [
+        [20, 34, 10, 38],
+        [40, 35, 30, 50],
+        [31, 38, 28, 44],
+        [38, 15, 5, 42],
+        [18, 28, 14, 32],
+        [28, 24, 16, 30],
+        [24, 30, 20, 36]
+      ]
+    }]
+  }
+}

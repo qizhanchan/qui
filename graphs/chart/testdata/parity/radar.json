@@ -1,0 +1,81 @@
+{
+  "width": 900,
+  "height": 460,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {
+      "fontFamily": "Arial"
+    },
+    "title": {
+      "text": "Radar",
+      "subtext": "skills",
+      "left": 10,
+      "top": 10
+    },
+    "legend": {
+      "bottom": 10
+    },
+    "color": [
+      "#5470c6",
+      "#91cc75"
+    ],
+    "radar": {
+      "indicator": [
+        {
+          "name": "Sales",
+          "max": 100
+        },
+        {
+          "name": "Support",
+          "max": 100
+        },
+        {
+          "name": "Tech",
+          "max": 100
+        },
+        {
+          "name": "Market",
+          "max": 100
+        },
+        {
+          "name": "Admin",
+          "max": 100
+        }
+      ]
+    },
+    "series": [
+      {
+        "type": "radar",
+        "name": "Team A",
+        "data": [
+          {
+            "name": "Team A",
+            "value": [
+              80,
+              90,
+              70,
+              85,
+              75
+            ]
+          }
+        ]
+      },
+      {
+        "type": "radar",
+        "name": "Team B",
+        "data": [
+          {
+            "name": "Team B",
+            "value": [
+              60,
+              75,
+              95,
+              55,
+              90
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

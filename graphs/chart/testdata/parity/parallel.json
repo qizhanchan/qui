@@ -1,0 +1,77 @@
+{
+  "width": 820,
+  "height": 460,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {
+      "fontFamily": "Arial"
+    },
+    "title": {
+      "text": "Parallel",
+      "subtext": "profiles",
+      "left": 10,
+      "top": 10
+    },
+    "color": [
+      "#5470c6"
+    ],
+    "parallelAxis": [
+      {
+        "name": "Price",
+        "min": 0,
+        "max": 100,
+        "dim": 0
+      },
+      {
+        "name": "Power",
+        "min": 0,
+        "max": 100,
+        "dim": 1
+      },
+      {
+        "name": "Speed",
+        "min": 0,
+        "max": 100,
+        "dim": 2
+      },
+      {
+        "name": "Range",
+        "min": 0,
+        "max": 100,
+        "dim": 3
+      }
+    ],
+    "series": [
+      {
+        "type": "parallel",
+        "name": "Cars",
+        "data": [
+          [
+            20,
+            35,
+            60,
+            45
+          ],
+          [
+            50,
+            70,
+            40,
+            80
+          ],
+          [
+            80,
+            55,
+            75,
+            30
+          ]
+        ]
+      }
+    ],
+    "parallel": {
+      "left": 80,
+      "right": 80,
+      "top": 60,
+      "bottom": 60
+    }
+  }
+}

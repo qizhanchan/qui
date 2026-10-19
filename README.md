@@ -91,7 +91,7 @@ rt := h.Mount(window, css, func() h.Node {
 | `agent` + `cmd/qui-agent` | HTTP/SSE wire layer over root's introspection primitives (UDS by default, TCP + bearer opt-in) and a CLI client for it. Keep `agent` thin — every primitive lives in root |
 | `scene3d` | 3D math + scene graph + `Viewport` widget (offscreen FBO composited via `QueueGLDraw`); `Vec3Field` integrates with widgets, so `scene3d` may import `widgets` |
 | `anim` | `Tween[T]` / `Spring` / `Timeline` + easing catalog; all satisfy `qui.Animator` |
-| `graphs` | 2D charting: Line/Scatter/Bar/Area/Pie series, ValueAxis/CategoryAxis, Legend, pan/zoom |
+| `graphs` / `graphs/chart` | Stable scale/data primitives plus the native declarative chart solution: cartesian, radial, hierarchical, network and flow charts (line/area/bar/pictorialBar/scatter/effectScatter/pie/candlestick/radar/gauge/funnel/heatmap/boxplot/graph/tree/treemap/sunburst/sankey/parallel/themeRiver), axes, legend, tooltip, palettes, pan/zoom and an ECharts-shaped Go `Option` |
 | `svg` | SVG 1.1 subset: parse / build programmatically / rasterize (with tint) / serialize; `Document` satisfies `qui.VectorSource` |
 | `media` | `AudioPlayer` (service) + `VideoView` / `FrameView` (widgets) without ffmpeg; two backends behind an internal interface — native AVFoundation (`native`, macOS) and a pure-Go codec stack (`golang`), selected by `QUI_MEDIA_BACKEND` |
 | `webview` | CEF-based embedded browser widget, gated behind the `webview_cef` build tag + fetched SDK; the default build compiles without CEF. The JS↔Go bridge is JSON-only. See `webview/scripts/` for the .app packaging workflow |
@@ -108,6 +108,7 @@ GLFW needs native headers (`brew install glfw` on macOS; X11/Wayland dev package
 ```bash
 go build ./...                              # compile everything
 go test ./...                               # all tests
+go test ./graphs/...                        # chart core + chart solution
 go test ./htmlcss ./reactive/...            # single packages
 go test -run TestName ./widgets             # single test
 go vet ./...

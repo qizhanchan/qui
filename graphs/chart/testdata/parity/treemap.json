@@ -1,0 +1,21 @@
+{
+  "width": 760,
+  "height": 460,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {"fontFamily": "Arial"},
+    "title": {"text": "Treemap", "subtext": "storage", "left": 10, "top": 10},
+    "color": ["#5470c6", "#91cc75", "#fac858", "#ee6666", "#73c0de"],
+    "series": [{
+      "type": "treemap",
+      "name": "Storage",
+      "breadcrumb": {"show": false},
+      "data": [
+        {"name": "Alpha", "value": 40},
+        {"name": "Beta", "value": 30},
+        {"name": "Gamma", "value": 20},
+        {"name": "Delta", "value": 10}
+      ]
+    }]
+  }
+}

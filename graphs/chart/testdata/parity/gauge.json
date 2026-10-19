@@ -1,0 +1,25 @@
+{
+  "width": 600,
+  "height": 400,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {
+      "fontFamily": "Arial"
+    },
+    "title": {
+      "text": "Gauge",
+      "subtext": "speed",
+      "left": 10,
+      "top": 10
+    },
+    "series": [
+      {
+        "type": "gauge",
+        "name": "Speed",
+        "data": [
+          {"name": "Speed", "value": 72}
+        ]
+      }
+    ]
+  }
+}

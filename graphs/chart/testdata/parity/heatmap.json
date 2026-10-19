@@ -1,0 +1,42 @@
+{
+  "width": 720,
+  "height": 440,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {"fontFamily": "Arial"},
+    "title": {"text": "Heatmap", "subtext": "weekly activity", "left": 10, "top": 10},
+    "tooltip": {"position": "top"},
+    "grid": {"left": 70, "right": 30, "top": 70, "bottom": 55},
+    "xAxis": {
+      "type": "category",
+      "data": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+      "splitArea": {"show": true}
+    },
+    "yAxis": {
+      "type": "category",
+      "data": ["Morning", "Noon", "Afternoon", "Evening", "Night"],
+      "splitArea": {"show": true}
+    },
+    "visualMap": {
+      "min": 0,
+      "max": 100,
+      "show": false,
+      "calculable": true,
+      "orient": "horizontal",
+      "left": "center",
+      "bottom": 10,
+      "inRange": {"color": ["#313695", "#4575b4", "#74add1", "#abd9e9", "#e0f3f8", "#ffffbf", "#fee090", "#fdae61", "#f46d43", "#d73027", "#a50026"]}
+    },
+    "series": [{
+      "type": "heatmap",
+      "name": "Activity",
+      "data": [
+        [0,0,10], [1,0,25], [2,0,45], [3,0,65], [4,0,80], [5,0,55], [6,0,35],
+        [0,1,20], [1,1,35], [2,1,58], [3,1,72], [4,1,92], [5,1,70], [6,1,48],
+        [0,2,30], [1,2,48], [2,2,68], [3,2,84], [4,2,100], [5,2,82], [6,2,60],
+        [0,3,42], [1,3,58], [2,3,76], [3,3,90], [4,3,78], [5,3,66], [6,3,52],
+        [0,4,18], [1,4,28], [2,4,40], [3,4,50], [4,4,44], [5,4,32], [6,4,24]
+      ]
+    }]
+  }
+}

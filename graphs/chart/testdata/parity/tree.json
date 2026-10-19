@@ -1,0 +1,21 @@
+{
+  "width": 760,
+  "height": 460,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {"fontFamily": "Arial"},
+    "title": {"text": "Tree", "subtext": "hierarchy", "left": 10, "top": 10},
+    "series": [{
+      "type": "tree",
+      "name": "Tree",
+      "data": [{
+        "name": "root",
+        "children": [
+          {"name": "A", "children": [{"name": "A1"}, {"name": "A2"}]},
+          {"name": "B", "children": [{"name": "B1"}, {"name": "B2"}]},
+          {"name": "C", "children": [{"name": "C1"}, {"name": "C2"}]}
+        ]
+      }]
+    }]
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "width": 900,
+  "height": 460,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "title": {
+      "text": "Weekly Orders",
+      "subtext": "declarative native chart",
+      "left": 10,
+      "top": 10
+    },
+    "legend": {
+      "bottom": 10,
+      "data": [
+        "Online",
+        "Retail",
+        "Forecast"
+      ]
+    },
+    "grid": {
+      "left": 70,
+      "right": 30,
+      "top": 70,
+      "bottom": 70
+    },
+    "xAxis": {
+      "type": "category",
+      "data": [
+        "Mon",
+        "Tue",
+        "Wed",
+        "Thu",
+        "Fri",
+        "Sat",
+        "Sun"
+      ]
+    },
+    "yAxis": {
+      "type": "value"
+    },
+    "color": [
+      "#5470c6",
+      "#91cc75",
+      "#fac858"
+    ],
+    "series": [
+      {
+        "type": "bar",
+        "name": "Online",
+        "data": [
+          45,
+          52,
+          38,
+          61,
+          72,
+          55,
+          48
+        ]
+      },
+      {
+        "type": "bar",
+        "name": "Retail",
+        "data": [
+          22,
+          28,
+          20,
+          35,
+          40,
+          62,
+          58
+        ]
+      },
+      {
+        "type": "line",
+        "name": "Forecast",
+        "smooth": true,
+        "showSymbol": false,
+        "data": [
+          28,
+          36,
+          31,
+          45,
+          52,
+          57,
+          52
+        ]
+      }
+    ],
+    "textStyle": {
+      "fontFamily": "Arial"
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "width": 760,
+  "height": 440,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {"fontFamily": "Arial"},
+    "title": {"text": "Boxplot", "subtext": "distribution", "left": 10, "top": 10},
+    "grid": {"left": 60, "right": 30, "top": 70, "bottom": 55},
+    "xAxis": {
+      "type": "category",
+      "data": ["A", "B", "C", "D", "E", "F", "G"]
+    },
+    "yAxis": {
+      "type": "value",
+      "min": 0,
+      "max": 100
+    },
+    "color": ["#5470c6"],
+    "series": [{
+      "type": "boxplot",
+      "name": "Score",
+      "data": [
+        [10, 25, 40, 60, 78],
+        [18, 32, 48, 68, 88],
+        [5, 22, 38, 55, 72],
+        [22, 40, 58, 76, 95],
+        [12, 30, 50, 64, 82],
+        [8, 24, 42, 59, 80],
+        [20, 36, 54, 70, 90]
+      ]
+    }]
+  }
+}

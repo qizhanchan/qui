@@ -60,7 +60,7 @@ qui takes the retained-mode position — declare a stable tree, and let the fram
        GLFW backend             Cocoa backend
 ```
 
-Optional packages — `scene3d`, `graphs`, `svg`, `media`, `webview`, `physics`, `anim`, `i18n`, `icons`, `fonts` — plug in through root interfaces without the engine ever depending on them.
+Optional packages — `scene3d`, `graphs`, `svg`, `media`, `webview`, `physics`, `anim`, `i18n`, `icons`, `fonts` — plug in through root interfaces without the engine ever depending on them. `graphs` owns stable scale/data primitives; the native declarative charting solution lives in `graphs/chart`.
 
 ## Platform support and status
 
