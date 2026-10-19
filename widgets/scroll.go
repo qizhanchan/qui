@@ -83,6 +83,14 @@ type ScrollView struct {
 	// math doesn't fork by axis at every step.
 	scrollOff float32
 
+	// BoxModel lays the viewport out like a CSS box: Style().Padding and
+	// Border move the content inward and the scrollbar sits on the padding
+	// edge. Off by default for compatibility with the historical
+	// bounds-as-viewport behavior; opt in when you style the ScrollView
+	// itself. htmlcss applies padding to an inner wrapper, so it leaves
+	// this off to avoid double-inset.
+	BoxModel bool
+
 	// Scrollbar drag state.
 	barDragging        bool
 	barDragStartMouse  float32 // mouse position at drag start, on the main axis
@@ -93,6 +101,9 @@ type ScrollView struct {
 	// written by the app, which turns auto sizing off.
 	sizeAuto bool
 	lastAuto Size
+	// explicitW/H record that the caller supplied that axis via SetContent.
+	// The auto axis is re-measured; the other stays authoritative.
+	explicitW, explicitH bool
 
 	// BarColors overrides the scrollbar palette (zero fields = theme).
 	BarColors ScrollbarColors
@@ -148,24 +159,33 @@ func (s *ScrollView) SetContent(widget Widget, contentSize Size) {
 	if s.Orientation == ScrollHorizontal {
 		main = contentSize.W
 	}
-	s.sizeAuto = main <= 0
-	s.lastAuto = contentSize
+	auto := main <= 0
+	explicitW, explicitH := contentSize.W > 0, contentSize.H > 0
 	if s.Content == widget {
+		s.sizeAuto = auto
+		s.lastAuto = contentSize
+		s.explicitW, s.explicitH = explicitW, explicitH
 		s.ContentSize = contentSize
 		s.ClampScroll()
 		s.InvalidateLayout()
 		return
 	}
-	if old := s.Content; old != nil {
+	// Adopt the replacement first. If it is owned by a parent that cannot
+	// release it, the old content stays mounted instead of leaving the
+	// ScrollView empty.
+	if widget != nil && !AdoptWidgetTree(widget, s, s.Window()) {
+		s.InvalidateLayout()
+		return
+	}
+	if old := s.Content; old != nil && old != widget {
 		s.ReleaseChildForTransfer(old)
 		DetachWidgetTree(old)
 	}
+	s.sizeAuto = auto
+	s.lastAuto = contentSize
+	s.explicitW, s.explicitH = explicitW, explicitH
 	s.ContentSize = contentSize
-	if widget != nil {
-		if AdoptWidgetTree(widget, s, s.Window()) {
-			s.Content = widget
-		}
-	}
+	s.Content = widget
 	s.ClampScroll()
 	s.InvalidateLayout()
 }
@@ -244,7 +264,7 @@ func (s *ScrollView) Measure(available Size) Size {
 
 func (s *ScrollView) Layout(rect Rect) {
 	s.BaseWidget.Layout(rect)
-	s.ensureContentSize(rect)
+	s.ensureContentSize(s.innerBounds())
 	s.ClampScroll()
 	if s.Content == nil {
 		return
@@ -262,8 +282,24 @@ func (s *ScrollView) Layout(rect Rect) {
 // contentRect is the rect the content is laid out at: the viewport
 // origin, the full content extent on the main axis, and the viewport
 // extent minus the scrollbar slot on the cross axis.
-func (s *ScrollView) contentRect() Rect {
+// innerBounds is the padding+border box the viewport lives in.
+func (s *ScrollView) innerBounds() Rect {
 	b := s.Bounds()
+	if !s.BoxModel {
+		return b
+	}
+	b = b.Inset(s.Style().ContentInsets())
+	if b.W < 0 {
+		b.W = 0
+	}
+	if b.H < 0 {
+		b.H = 0
+	}
+	return b
+}
+
+func (s *ScrollView) contentRect() Rect {
+	b := s.innerBounds()
 	if s.Orientation == ScrollHorizontal {
 		return Rect{X: b.X, Y: b.Y, W: s.ContentSize.W, H: b.H - s.barSlot()}
 	}
@@ -273,7 +309,7 @@ func (s *ScrollView) contentRect() Rect {
 // viewportRect is the on-screen area the content is visible through:
 // our bounds minus the scrollbar slot.
 func (s *ScrollView) viewportRect() Rect {
-	b := s.Bounds()
+	b := s.innerBounds()
 	if s.Orientation == ScrollHorizontal {
 		b.H -= s.barSlot()
 	} else {
@@ -346,7 +382,18 @@ func (s *ScrollView) Draw(canvas Canvas) {
 	// behavior) repainted an opaque card over the ancestor background, which
 	// broke light UIs running on a dark theme.
 	if bg, ok := s.viewportFill(); ok {
-		canvas.FillRect(b, bg)
+		if st := s.Style(); st.Radius > 0 {
+			canvas.FillRoundedRect(b, st.Radius, bg)
+		} else {
+			canvas.FillRect(b, bg)
+		}
+	}
+	if st := s.Style(); s.BoxModel && st.BorderSize > 0 && st.Border.A > 0 {
+		if st.Radius > 0 {
+			canvas.StrokeRoundedRect(b, st.Radius, st.Border, st.BorderSize)
+		} else {
+			canvas.StrokeRect(b, st.Border, st.BorderSize)
+		}
 	}
 
 	// Clip content drawing to the viewport (minus the bar slot, so the
@@ -374,7 +421,9 @@ func (s *ScrollView) Draw(canvas Canvas) {
 			// content's own dirty-region culling keeps working unchanged.
 			dx, dy := s.contentTranslation()
 			canvas.Translate(dx, dy)
-			s.Content.Draw(canvas)
+			if !boxChildHidden(s.Content) {
+				s.Content.Draw(canvas)
+			}
 			canvas.RestoreTo(depth)
 		}
 	}
@@ -480,9 +529,17 @@ func (s *ScrollView) HitTest(p Point) Widget {
 	if !s.Bounds().Contains(p) {
 		return nil
 	}
-	// Scrollbar wins over content when the pointer is on the bar.
-	if s.hasBar() && (s.barTrack().Contains(p) || s.barThumb().Contains(p)) {
-		return s
+	// The thumb always wins. A classic (in-slot) bar's track does too, but
+	// an overlay bar is painted OVER the content: claiming its whole 10 px
+	// strip would make that strip of the page unclickable, so content gets
+	// first refusal and the bar is only the fallback.
+	if s.hasBar() {
+		if s.barThumb().Contains(p) {
+			return s
+		}
+		if !s.OverlayBar && s.barTrack().Contains(p) {
+			return s
+		}
 	}
 	if s.Content != nil {
 		dx, dy := s.contentTranslation()
@@ -512,14 +569,7 @@ func (s *ScrollView) ScrollOffset() float32 { return s.scrollOff }
 func (s *ScrollView) ScrollTo(off float32) {
 	old := s.scrollOff
 	s.scrollOff = off
-	s.ClampScroll()
-	if s.scrollOff == old {
-		return
-	}
-	s.Invalidate()
-	if s.OnScroll != nil {
-		s.OnScroll()
-	}
+	s.clampFrom(old)
 }
 
 // MaxScroll is the largest valid scroll offset on the main axis (0 when
@@ -533,12 +583,27 @@ func (s *ScrollView) scrollBy(d float32) {
 
 // clampScroll keeps scrollOff within [0, maxScroll].
 func (s *ScrollView) ClampScroll() {
+	old := s.scrollOff
+	s.clampFrom(old)
+}
+
+func (s *ScrollView) clampFrom(old float32) {
 	max := s.maxScroll()
 	if s.scrollOff < 0 {
 		s.scrollOff = 0
 	}
 	if s.scrollOff > max {
 		s.scrollOff = max
+	}
+	if s.scrollOff == old {
+		return
+	}
+	// A content shrink / resize can clamp the offset without going through
+	// ScrollTo; hosts mirroring the position via OnScroll must still hear
+	// about it.
+	s.Invalidate()
+	if s.OnScroll != nil {
+		s.OnScroll()
 	}
 }
 
@@ -555,10 +620,21 @@ func (s *ScrollView) ensureContentSize(rect Rect) {
 		return
 	}
 	if s.sizeAuto {
-		if s.ContentSize != s.lastAuto {
-			s.sizeAuto = false
+		// Only the auto (main) axis is reset. Zeroing the whole Size
+		// discarded an explicit cross-axis extent such as
+		// SetContent(w, Size{W: 100, H: 0}).
+		if s.Orientation == ScrollHorizontal {
+			if s.ContentSize.W != s.lastAuto.W {
+				s.sizeAuto = false
+			} else {
+				s.ContentSize.W = 0
+			}
 		} else {
-			s.ContentSize = Size{}
+			if s.ContentSize.H != s.lastAuto.H {
+				s.sizeAuto = false
+			} else {
+				s.ContentSize.H = 0
+			}
 		}
 	}
 	defer func() {
@@ -566,35 +642,55 @@ func (s *ScrollView) ensureContentSize(rect Rect) {
 			s.lastAuto = s.ContentSize
 		}
 	}()
+	slot := float32(0)
+	if !s.HideBar && !s.OverlayBar {
+		slot = scrollBarThickness
+	}
 	if s.Orientation == ScrollHorizontal {
 		if s.ContentSize.W > 0 {
 			return
 		}
 		s.sizeAuto = true
-		nat := MeasureChild(s.Content, Size{W: 0, H: rect.H})
+		availH := rect.H
+		nat := MeasureChild(s.Content, Size{W: 0, H: availH})
+		if nat.W > rect.W && slot > 0 {
+			// The bar shrinks the cross axis; wrapped content measured at
+			// the wider height can hide overflow. Measure again at the
+			// width/height the content will actually be laid out with.
+			availH = rect.H - slot
+			nat = MeasureChild(s.Content, Size{W: 0, H: availH})
+		}
 		s.ContentSize.W = nat.W
-		if s.ContentSize.H <= 0 {
-			s.ContentSize.H = rect.H
+		if !s.explicitH {
+			s.ContentSize.H = availH
 		}
 	} else {
 		if s.ContentSize.H > 0 {
 			return
 		}
 		s.sizeAuto = true
-		nat := MeasureChild(s.Content, Size{W: rect.W, H: 0})
+		availW := rect.W
+		nat := MeasureChild(s.Content, Size{W: availW, H: 0})
+		if nat.H > rect.H && slot > 0 {
+			// Same ordering bug as horizontal: contentRect reserves the
+			// scrollbar slot, so measure again at that narrower width.
+			availW = rect.W - slot
+			nat = MeasureChild(s.Content, Size{W: availW, H: 0})
+		}
 		s.ContentSize.H = nat.H
-		if s.ContentSize.W <= 0 {
-			s.ContentSize.W = rect.W
+		if !s.explicitW {
+			s.ContentSize.W = availW
 		}
 	}
 }
 
 func (s *ScrollView) maxScroll() float32 {
 	var over float32
+	inner := s.innerBounds()
 	if s.Orientation == ScrollHorizontal {
-		over = s.ContentSize.W - s.Bounds().W
+		over = s.ContentSize.W - inner.W
 	} else {
-		over = s.ContentSize.H - s.Bounds().H
+		over = s.ContentSize.H - inner.H
 	}
 	if over <= 0 {
 		return 0
@@ -698,7 +794,7 @@ func (s *ScrollView) contentMainSize() float32 {
 // of the cross axis (right edge for vertical, bottom edge for
 // horizontal).
 func (s *ScrollView) barTrack() Rect {
-	b := s.Bounds()
+	b := s.innerBounds()
 	if s.Orientation == ScrollHorizontal {
 		return Rect{
 			X: b.X,

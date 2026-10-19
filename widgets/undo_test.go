@@ -133,7 +133,7 @@ func TestInputUndoReversesType(t *testing.T) {
 	tf.Handle(newCharEvent('h'))
 	tf.Handle(newCharEvent('i'))
 
-	tf.undo()
+	tf.ed.undo(tf)
 
 	// All typing within the coalesce window collapses to one entry —
 	// one undo unwinds the entire "hi".
@@ -145,13 +145,13 @@ func TestInputUndoReversesType(t *testing.T) {
 func TestInputUndoReversesBackspace(t *testing.T) {
 	withFixedTime(t, time.Unix(0, 0))
 	tf := focusedInput("hello")
-	tf.cursorPos = 5
+	tf.ed.cursor = 5
 	tf.Handle(newKeyDown(KeyBackspace)) // deletes 'o'
 	if tf.Text != "hell" {
 		t.Fatalf("precondition: expected hell, got %q", tf.Text)
 	}
 
-	tf.undo()
+	tf.ed.undo(tf)
 
 	if tf.Text != "hello" {
 		t.Errorf("undo after backspace: got %q, want hello", tf.Text)
@@ -163,11 +163,11 @@ func TestInputRedoReappliesUndo(t *testing.T) {
 	tf := focusedInput("")
 	tf.Handle(newCharEvent('a'))
 
-	tf.undo()
+	tf.ed.undo(tf)
 	if tf.Text != "" {
 		t.Fatal("undo failed")
 	}
-	tf.redo()
+	tf.ed.redo(tf)
 	if tf.Text != "a" {
 		t.Errorf("redo should restore %q, got %q", "a", tf.Text)
 	}
@@ -177,10 +177,10 @@ func TestInputNewEditClearsRedo(t *testing.T) {
 	withFixedTime(t, time.Unix(0, 0))
 	tf := focusedInput("")
 	tf.Handle(newCharEvent('a'))
-	tf.undo()
+	tf.ed.undo(tf)
 	// Fresh input should invalidate redo history.
 	tf.Handle(newCharEvent('b'))
-	if !tf.redo() {
+	if !tf.ed.redo(tf) {
 		// redo should return false — stack was cleared by the 'b' push.
 		// Text should stay as-is.
 	} else {
@@ -193,13 +193,13 @@ func TestInputUndoReversesPaste(t *testing.T) {
 	fc := withFakeClipboard(t)
 	fc.buf = "XYZ"
 	tf := focusedInput("ab")
-	tf.cursorPos = 2
+	tf.ed.cursor = 2
 	tf.Handle(newCmdKeyDown(KeyV))
 	if tf.Text != "abXYZ" {
 		t.Fatalf("precondition: expected abXYZ, got %q", tf.Text)
 	}
 
-	tf.undo()
+	tf.ed.undo(tf)
 
 	if tf.Text != "ab" {
 		t.Errorf("undo after paste: got %q, want ab", tf.Text)
@@ -210,13 +210,13 @@ func TestInputUndoReversesCut(t *testing.T) {
 	withFixedTime(t, time.Unix(0, 0))
 	withFakeClipboard(t)
 	tf := focusedInput("hello")
-	tf.selStart, tf.selEnd, tf.cursorPos = 0, 5, 5
+	tf.ed.selStart, tf.ed.selEnd, tf.ed.cursor = 0, 5, 5
 	tf.Handle(newCmdKeyDown(KeyX))
 	if tf.Text != "" {
 		t.Fatalf("precondition: cut should empty; got %q", tf.Text)
 	}
 
-	tf.undo()
+	tf.ed.undo(tf)
 
 	if tf.Text != "hello" {
 		t.Errorf("undo after cut: got %q, want hello", tf.Text)
@@ -235,11 +235,11 @@ func TestInputTypingBreaksOnSpace(t *testing.T) {
 	tf.Handle(newCharEvent('o'))
 
 	// Two groups: "hi " and "yo" — one undo drops "yo".
-	tf.undo()
+	tf.ed.undo(tf)
 	if tf.Text != "hi " {
 		t.Errorf("undo after word boundary: got %q, want 'hi '", tf.Text)
 	}
-	tf.undo()
+	tf.ed.undo(tf)
 	if tf.Text != "" {
 		t.Errorf("second undo: got %q, want empty", tf.Text)
 	}
@@ -289,7 +289,7 @@ func TestInputCursorMoveBreaksCoalesce(t *testing.T) {
 	tf.Handle(newCharEvent('b'))
 
 	// Two undo groups separated by arrow move.
-	tf.undo()
+	tf.ed.undo(tf)
 	if tf.Text != "a" {
 		t.Errorf("after first undo: %q, want a", tf.Text)
 	}
@@ -299,7 +299,7 @@ func TestInputSetTextIsUndoable(t *testing.T) {
 	withFixedTime(t, time.Unix(0, 0))
 	tf := focusedInput("hello")
 	tf.SetText("world")
-	tf.undo()
+	tf.ed.undo(tf)
 	if tf.Text != "hello" {
 		t.Errorf("SetText should be undoable; got %q", tf.Text)
 	}
@@ -313,7 +313,7 @@ func TestInputIMECommitIsUndoable(t *testing.T) {
 	if tf.Text != "你好" {
 		t.Fatalf("precondition: CommitIME should insert")
 	}
-	tf.undo()
+	tf.ed.undo(tf)
 	if tf.Text != "" {
 		t.Errorf("undo after IME commit: got %q, want empty", tf.Text)
 	}
@@ -323,13 +323,13 @@ func TestInputUndoClearsStalePreedit(t *testing.T) {
 	withFixedTime(t, time.Unix(0, 0))
 	tf := focusedInput("a")
 	tf.Handle(newCharEvent('b'))
-	tf.preeditText = "??"
-	tf.preeditCursor = 1
+	tf.ed.preedit = "??"
+	tf.ed.preeditCursor = 1
 
-	tf.undo()
+	tf.ed.undo(tf)
 
-	if tf.preeditText != "" || tf.preeditCursor != 0 {
-		t.Errorf("undo should drop preedit; got %q/%d", tf.preeditText, tf.preeditCursor)
+	if tf.ed.preedit != "" || tf.ed.preeditCursor != 0 {
+		t.Errorf("undo should drop preedit; got %q/%d", tf.ed.preedit, tf.ed.preeditCursor)
 	}
 }
 
@@ -338,12 +338,12 @@ func TestInputUndoClearsStalePreedit(t *testing.T) {
 func TestTextAreaUndoReversesEnter(t *testing.T) {
 	withFixedTime(t, time.Unix(0, 0))
 	ta := focusedTextArea("abc")
-	ta.cursorPos = 2
+	ta.ed.cursor = 2
 	ta.Handle(newKeyDown(KeyEnter))
 	if ta.Text != "ab\nc" {
 		t.Fatalf("precondition: expected ab\\nc, got %q", ta.Text)
 	}
-	ta.undo()
+	ta.ed.undo(ta)
 	if ta.Text != "abc" {
 		t.Errorf("undo after enter: got %q, want abc", ta.Text)
 	}
@@ -354,9 +354,9 @@ func TestTextAreaUndoAfterMultilinePaste(t *testing.T) {
 	fc := withFakeClipboard(t)
 	fc.buf = "X\nY"
 	ta := focusedTextArea("ab")
-	ta.cursorPos = 1
+	ta.ed.cursor = 1
 	ta.Handle(newCmdKeyDown(KeyV))
-	ta.undo()
+	ta.ed.undo(ta)
 	if ta.Text != "ab" {
 		t.Errorf("undo multi-line paste: got %q, want ab", ta.Text)
 	}
@@ -366,8 +366,8 @@ func TestTextAreaRedoAfterUndo(t *testing.T) {
 	withFixedTime(t, time.Unix(0, 0))
 	ta := focusedTextArea("")
 	ta.Handle(NewCharEvent('q', 0))
-	ta.undo()
-	ta.redo()
+	ta.ed.undo(ta)
+	ta.ed.redo(ta)
 	if ta.Text != "q" {
 		t.Errorf("redo after undo: got %q, want q", ta.Text)
 	}

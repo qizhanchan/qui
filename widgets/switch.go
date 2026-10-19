@@ -7,8 +7,9 @@ import (
 )
 
 // Switch is a toggle: a 52×32 pill-shaped track with a circular handle
-// that slides between off (left) and on (right). Tap / Space / Enter
-// flips On; the handle, track, and state layer each have their own
+// that slides between off (left) and on (right). Tap / Space flips On
+// (Enter is deliberately not an activator, matching a browser checkbox);
+// the handle, track, and state layer each have their own
 // on/off color field, so the whole cascade is caller-controlled.
 //
 // Geometry:
@@ -76,6 +77,15 @@ const (
 	switchLabelGap     float32 = 16 // gap between track and trailing label
 )
 
+// SetLabel replaces the literal label and re-measures.
+func (s *Switch) SetLabel(label string) {
+	if s.Label == label {
+		return
+	}
+	s.Label = label
+	s.InvalidateLayout()
+}
+
 // NewSwitch constructs a plain Switch with an optional trailing label.
 // Look: gray track when off, blue track + white handle when on — a
 // utilitarian toggle. For a designed look, render <input type=checkbox
@@ -92,6 +102,7 @@ func NewSwitch(label string, onChange func(bool)) *Switch {
 		OffHandleColor:      baselineOffBorder,
 		LabelColor:          baselineBarText,
 	}
+	s.SetSelf(s)
 	s.hoverTrans.Duration = toDuration(CurrentTheme().TransitionShort)
 	// Switch is fixed at its pill size — flex shrink would deform it.
 	s.UpdateFlexItem(func(item *FlexItem) { item.NoShrink = true })
@@ -99,9 +110,15 @@ func NewSwitch(label string, onChange func(bool)) *Switch {
 }
 
 func (s *Switch) Focusable() bool { return s.Enabled() && !s.disabled }
+
+// PaintBounds includes the state-layer / focus-ring halo.
+func (s *Switch) PaintBounds() Rect { return expandRect(s.Bounds(), 8) }
 func (s *Switch) CancelInteraction() {
-	if s.pressed {
-		s.pressed = false
+	changed := s.pressed || s.hovering || s.spaceArmed
+	s.pressed = false
+	s.hovering = false
+	s.spaceArmed = false
+	if changed {
 		s.Invalidate()
 	}
 }
@@ -244,7 +261,11 @@ func (s *Switch) Draw(canvas Canvas) {
 			t := s.hoverTrans.Value(time.Now())
 			DrawStateLayer(canvas, stateRect, stateSize/2, layerColor, theme.HoverOpacity*t)
 		case s.focusVisible:
-			DrawStateLayer(canvas, stateRect, stateSize/2, layerColor, theme.FocusOpacity)
+			if layerColor.A > 0 {
+				DrawStateLayer(canvas, stateRect, stateSize/2, layerColor, theme.FocusOpacity)
+			} else {
+				canvas.StrokeRoundedRect(stateRect, stateSize/2, theme.Accent, 2)
+			}
 		}
 	}
 
@@ -282,10 +303,13 @@ func (s *Switch) Draw(canvas Canvas) {
 // than surfaced as another set of fields.
 func (s *Switch) resolveColors() (trackFill, trackBorder, handle, layer Color) {
 	if s.disabled {
+		// Resolve theme provenance BEFORE mixing: mixAlpha builds a fresh
+		// Color and drops the ThemeDefault marker, so doing it the other way
+		// left disabled switches on the light-theme palette on dark themes.
 		if s.On {
-			return mixAlpha(s.OnTrackColor, 0.4), ColorTransparent, mixAlpha(s.OnHandleColor, 0.6), ColorTransparent
+			return mixAlpha(themed(s.OnTrackColor), 0.4), ColorTransparent, mixAlpha(themed(s.OnHandleColor), 0.6), ColorTransparent
 		}
-		return mixAlpha(s.OffTrackColor, 0.4), mixAlpha(s.OffTrackBorderColor, 0.4), mixAlpha(s.OffHandleColor, 0.6), ColorTransparent
+		return mixAlpha(themed(s.OffTrackColor), 0.4), mixAlpha(themed(s.OffTrackBorderColor), 0.4), mixAlpha(themed(s.OffHandleColor), 0.6), ColorTransparent
 	}
 	if s.On {
 		h := s.OnHandleColor
@@ -354,13 +378,6 @@ func (s *Switch) Handle(event Event) bool {
 		}
 	}
 	return false
-}
-
-func (s *Switch) HitTest(p Point) Widget {
-	if s.Bounds().Contains(p) {
-		return s
-	}
-	return nil
 }
 
 // handleCenter returns the current handle center (used as the ripple

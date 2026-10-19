@@ -1,6 +1,8 @@
 package widgets
 
 import (
+	"reflect"
+
 	. "github.com/qizhanchan/qui"
 )
 
@@ -88,9 +90,11 @@ func pairsToMap(pairs []any) map[string]any {
 	return out
 }
 
-// sameArgs compares placeholder maps by value. Only comparable values
-// are compared with ==; anything else counts as changed, which is the
-// safe direction (an extra relayout, never a stale caption).
+// sameArgs compares placeholder maps by value with reflect.DeepEqual. Plain
+// == is not safe here: SetTextKey accepts ...any, and interface comparison
+// panics on an uncomparable dynamic type — not only a slice or map, but also
+// a "comparable" struct whose interface field holds one, which a
+// Type.Comparable() pre-check cannot see.
 func sameArgs(a, b map[string]any) bool {
 	if len(a) != len(b) {
 		return false
@@ -100,7 +104,7 @@ func sameArgs(a, b map[string]any) bool {
 		if !ok {
 			return false
 		}
-		if av != bv {
+		if !reflect.DeepEqual(av, bv) {
 			return false
 		}
 	}

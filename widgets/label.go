@@ -64,6 +64,7 @@ func NewLabel(text string) *Label {
 		Selectable: true,
 		selStart:   -1,
 	}
+	l.SetSelf(l)
 	return l
 }
 
@@ -86,6 +87,11 @@ func (l *Label) Spans() []TextSpan { return l.spans }
 // paint re-measures with the new string. Clears any rich-text spans.
 // Public-field mutation (`l.Text = ...`) is not possible by design —
 // see the type comment for why.
+//
+// Like every text-bearing widget (see i18n.go), a message key set with
+// SetTextKey still wins over the literal: SetText only replaces the
+// fallback shown when the key is missing from the catalog. Call
+// SetTextKey("") first to show a plain literal again.
 func (l *Label) SetText(text string) {
 	if l.text == text && len(l.spans) == 0 {
 		return
@@ -518,13 +524,6 @@ func (l *Label) LinkAt(p Point) (string, bool) {
 	opts := l.Paragraph.LayoutOptions(content.W)
 	layout := l.richTextLayout(opts, l.resolveForeground())
 	return layout.LinkAt(content, p)
-}
-
-func (l *Label) HitTest(p Point) Widget {
-	if l.Bounds().Contains(p) {
-		return l
-	}
-	return nil
 }
 
 type labelVisualLine struct {

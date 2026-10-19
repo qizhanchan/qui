@@ -239,6 +239,10 @@ type Window struct {
 	// animQuietSince starts a stretch of Steps that ticked animators but
 	// painted nothing; zero while the window paints or has no animators.
 	animQuietSince time.Time
+	// inPaint marks the widget Draw pass (see paint_debug.go). The paint
+	// pass must be read-only; QUI_DEBUG_DRAW=1 enforces it.
+	inPaint bool
+
 	// inStep guards against synchronous redraws requested from platform
 	// event callbacks while a frame is already being produced. Resizing on
 	// macOS re-enters Step from inside a callback, so this is load-bearing.
@@ -1844,6 +1848,7 @@ func (w *Window) Step() {
 		} else {
 			drawCanvas.Clear(CurrentTheme().Surface)
 		}
+		w.inPaint = true
 		if w.root != nil {
 			w.root.Draw(drawCanvas)
 		}
@@ -1869,6 +1874,7 @@ func (w *Window) Step() {
 		if w.debugOverlayEnabled {
 			w.drawDebugOverlay(drawCanvas)
 		}
+		w.inPaint = false
 		drawCanvas.RestoreTo(dprID)
 	}
 	w.renderer.End()

@@ -180,9 +180,120 @@ func NewTableView(columns []TableColumn, model TableModel) *TableView {
 }
 
 func (tv *TableView) Focusable() bool { return tv.Enabled() }
+
+// SetColumns replaces the column model and re-lays the table.
+func (tv *TableView) SetColumns(cols []TableColumn) {
+	tv.Columns = cols
+	tv.InvalidateLayout()
+}
+
+// SetRowHeight changes the fixed row height and re-lays the table.
+func (tv *TableView) SetRowHeight(h float32) {
+	if h <= 0 || h == tv.RowHeight {
+		return
+	}
+	tv.RowHeight = h
+	tv.scrollY = ClampScroll(tv.scrollY, tv.contentHeight(), tv.bodyRect().H)
+	tv.InvalidateLayout()
+}
+
+// SetHeaderHeight changes the header strip height and re-lays the table.
+func (tv *TableView) SetHeaderHeight(h float32) {
+	if h < 0 || h == tv.HeaderHeight {
+		return
+	}
+	tv.HeaderHeight = h
+	tv.scrollY = ClampScroll(tv.scrollY, tv.contentHeight(), tv.bodyRect().H)
+	tv.InvalidateLayout()
+}
+
+// Refresh re-reads the model after the caller mutated it. Rows/cells are
+// not observable, so a model change has to be announced.
+func (tv *TableView) Refresh() {
+	tv.scrollY = ClampScroll(tv.scrollY, tv.contentHeight(), tv.bodyRect().H)
+	tv.InvalidateLayout()
+}
+
+// Layout assigns the viewport, clamps scroll and prepares visible widget
+// rows. Draw only paints: no factory build or subtree detach happens in
+// the paint pass (that could steal focus / move widgets after clipping).
+func (tv *TableView) Layout(rect Rect) {
+	tv.BaseWidget.Layout(rect)
+	tv.scrollY = ClampScroll(tv.scrollY, tv.contentHeight(), tv.bodyRect().H)
+	tv.prepareRows()
+}
+
+func (tv *TableView) prepareRows() {
+	if !tv.useWidgetRows {
+		return
+	}
+	start, end := tv.visibleRange()
+	contentW := tv.bodyContentWidth()
+	for i := start; i < end; i++ {
+		row := tv.widgetRow(i)
+		if row == nil {
+			continue
+		}
+		row.Layout(tv.rowRect(i, contentW))
+	}
+	if tv.lazy != nil {
+		tv.lazy.prune(start, end, tv.focusedRow())
+	}
+}
+
+// focusedRow is the built row that holds (or contains) keyboard focus.
+func (tv *TableView) focusedRow() Widget {
+	w := tv.Window()
+	if w == nil {
+		return nil
+	}
+	if i := tv.rowIndexOf(w.Focused()); i >= 0 {
+		return tv.builtRow(i)
+	}
+	return nil
+}
+
+// rowsReady reports whether every visible row exists and sits at its
+// current viewport rect.
+func (tv *TableView) rowsReady() bool {
+	start, end := tv.visibleRange()
+	if start == end {
+		return true
+	}
+	contentW := tv.bodyContentWidth()
+	for i := start; i < end; i++ {
+		row := tv.builtRow(i)
+		if row == nil || row.Bounds() != tv.rowRect(i, contentW) {
+			return false
+		}
+	}
+	return true
+}
+
+// requestRowsIfStale runs in Draw; see ListView.requestRowsIfStale.
+func (tv *TableView) requestRowsIfStale() {
+	if !tv.useWidgetRows || tv.rowsReady() {
+		return
+	}
+	if w := tv.Window(); w != nil {
+		w.RequestTickAt(time.Now())
+	}
+}
+
+func (tv *TableView) builtRow(i int) Widget {
+	if tv.lazy != nil {
+		return tv.lazy.live[i]
+	}
+	if i < 0 || i >= len(tv.rowWidgets) {
+		return nil
+	}
+	return tv.rowWidgets[i]
+}
 func (tv *TableView) CancelInteraction() {
-	if tv.barDragging {
-		tv.barDragging = false
+	changed := tv.barDragging || tv.hoverIdx != -1
+	tv.barDragging = false
+	tv.hoverIdx = -1
+	if changed {
 		tv.Invalidate()
 	}
 }
@@ -201,6 +312,11 @@ func (tv *TableView) ChildList() []Widget {
 	if tv.lazy != nil {
 		return tv.lazy.children()
 	}
+	// Every row, laid out or not: window attach/detach, interaction
+	// cancellation and locale/theme refresh all walk ChildList, so hiding
+	// off-screen rows here would leave them on a stale (or nil) window.
+	// Tab reaching an off-screen row is handled by ScrollChildIntoView,
+	// which FocusNext/FocusPrev call on the newly focused widget.
 	return tv.rowWidgets
 }
 
@@ -228,10 +344,12 @@ func (tv *TableView) SetRowFactory(count int, build func(row int) Widget) {
 	tv.Model = nil
 	tv.useWidgetRows = true
 	tv.lazy = &lazyRows{count: maxInt(count, 0), build: build}
+	tv.hoverIdx = -1
 	tv.selection.Sync(tv.SelectedIdx)
 	tv.selection.Clamp(tv.lazy.count)
 	tv.SelectedIdx = tv.selection.Index()
 	tv.scrollY = ClampScroll(tv.scrollY, tv.contentHeight(), tv.bodyRect().H)
+	tv.prepareRows() // build/lay the visible rows now, never in Draw
 	tv.InvalidateLayout()
 }
 
@@ -241,11 +359,12 @@ func (tv *TableView) SetRowCount(count int) {
 		return
 	}
 	tv.lazy.count = maxInt(count, 0)
-	tv.lazy.prune(0, tv.lazy.count)
+	tv.lazy.prune(0, tv.lazy.count, nil)
 	tv.selection.Sync(tv.SelectedIdx)
 	tv.selection.Clamp(tv.lazy.count)
 	tv.SelectedIdx = tv.selection.Index()
 	tv.scrollY = ClampScroll(tv.scrollY, tv.contentHeight(), tv.bodyRect().H)
+	tv.prepareRows() // build/lay the visible rows now, never in Draw
 	tv.InvalidateLayout()
 }
 
@@ -253,6 +372,7 @@ func (tv *TableView) SetRowCount(count int) {
 func (tv *TableView) RefreshRows() {
 	if tv.lazy != nil {
 		tv.lazy.releaseAll()
+		tv.prepareRows() // build/lay the visible rows now, never in Draw
 		tv.Invalidate()
 	}
 }
@@ -308,6 +428,7 @@ func (tv *TableView) SetRowWidgets(rows []Widget) {
 		tv.hoverIdx = -1
 	}
 	tv.scrollY = ClampScroll(tv.scrollY, tv.contentHeight(), tv.bodyRect().H)
+	tv.prepareRows() // build/lay the visible rows now, never in Draw
 	tv.InvalidateLayout()
 }
 
@@ -362,6 +483,78 @@ func (tv *TableView) RowCount() int {
 // SelectedRow returns the currently-selected row index, or -1.
 func (tv *TableView) SelectedRow() int { return tv.SelectedIdx }
 
+// ScrollTo sets the vertical scroll offset, clamped to the body's range.
+func (tv *TableView) ScrollTo(y float32) {
+	old := tv.scrollY
+	body := tv.bodyRect()
+	tv.scrollY = ClampScroll(y, tv.contentHeight(), body.H)
+	if tv.scrollY != old {
+		tv.prepareRows()
+		tv.Invalidate()
+	}
+}
+
+// ScrollChildIntoView satisfies qui.ScrollIntoViewable for widget-row
+// tables (agent actions scroll a target into view before clicking it).
+func (tv *TableView) ScrollChildIntoView(child Widget) {
+	if tv == nil || child == nil {
+		return
+	}
+	cb := child.Bounds()
+	body := tv.bodyRect()
+	if body.IsEmpty() {
+		return
+	}
+	// Scroll by row index (an off-screen row's bounds are missing or
+	// stale), then lay the rows out so the target is hit-testable now.
+	if idx := tv.rowIndexOf(child); idx >= 0 {
+		tv.ensureVisible(idx)
+		tv.prepareRows()
+		return
+	}
+	if cb.IsEmpty() {
+		return
+	}
+	contentY := cb.Y - body.Y + tv.scrollY
+	if contentY < tv.scrollY {
+		tv.ScrollTo(contentY)
+	} else if contentY+cb.H > tv.scrollY+body.H {
+		tv.ScrollTo(contentY + cb.H - body.H)
+	}
+}
+
+// rowIndexOf returns the index of the row that is child or contains it,
+// or -1 when child is not inside one of this table's widget rows.
+func (tv *TableView) rowIndexOf(child Widget) int {
+	if !tv.useWidgetRows {
+		return -1
+	}
+	var self Widget = tv
+	if s := tv.Self(); s != nil {
+		self = s
+	}
+	row := child
+	for row != nil && row.Parent() != self {
+		row = row.Parent()
+	}
+	if row == nil {
+		return -1
+	}
+	for i, r := range tv.rowWidgets {
+		if r == row {
+			return i
+		}
+	}
+	if tv.lazy != nil {
+		for i, r := range tv.lazy.live {
+			if r == row {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
 // Select updates SelectedIdx and auto-scrolls to keep it visible.
 func (tv *TableView) Select(row int) {
 	n := tv.RowCount()
@@ -394,7 +587,11 @@ func (tv *TableView) contentHeight() float32 {
 // are drawn.
 func (tv *TableView) bodyRect() Rect {
 	b := tv.Bounds()
-	return Rect{X: b.X, Y: b.Y + tv.HeaderHeight, W: b.W, H: b.H - tv.HeaderHeight}
+	h := b.H - tv.HeaderHeight
+	if h < 0 {
+		h = 0
+	}
+	return Rect{X: b.X, Y: b.Y + tv.HeaderHeight, W: b.W, H: h}
 }
 
 func (tv *TableView) hasScrollbar() bool {
@@ -447,12 +644,18 @@ func (tv *TableView) visibleRange() (int, int) {
 }
 
 func (tv *TableView) ensureVisible(row int) {
+	old := tv.scrollY
 	tv.scrollY = fixedRowEnsureVisible(tv.scrollY, row, tv.RowCount(), tv.RowHeight, tv.bodyRect())
+	if tv.scrollY != old {
+		tv.prepareRows()
+		tv.Invalidate()
+	}
 }
 
 func (tv *TableView) colors() RowColors { return tv.Colors.resolve(tv.Style()) }
 
 func (tv *TableView) Draw(canvas Canvas) {
+	tv.requestRowsIfStale()
 	b := tv.Bounds()
 	c := tv.colors()
 	if c.Background.A > 0 {
@@ -487,11 +690,6 @@ func (tv *TableView) Draw(canvas Canvas) {
 		}
 		canvas.RestoreTo(id)
 	}
-	if tv.lazy != nil {
-		start, end := tv.visibleRange()
-		tv.lazy.prune(start, end)
-	}
-
 	// Scrollbar on the body area only — doesn't extend into header
 	// strip, matching most native tables.
 	if tv.hasScrollbar() {
@@ -617,8 +815,8 @@ func (tv *TableView) drawRows(canvas Canvas, widths []float32, body Rect, conten
 func (tv *TableView) drawWidgetRows(canvas Canvas, body Rect, contentW float32, c RowColors) {
 	start, end := tv.visibleRange()
 	for i := start; i < end; i++ {
-		row := tv.widgetRow(i)
-		if row == nil {
+		row := tv.builtRow(i)
+		if row == nil || boxChildHidden(row) {
 			continue
 		}
 		rowRect := tv.rowRect(i, contentW)
@@ -629,7 +827,6 @@ func (tv *TableView) drawWidgetRows(canvas Canvas, body Rect, contentW float32, 
 		} else if i%2 == 1 && c.Stripe.A > 0 {
 			canvas.FillRect(rowRect, c.Stripe)
 		}
-		row.Layout(rowRect)
 		WithClipRect(canvas, rowRect, row.Draw)
 	}
 }
@@ -695,7 +892,7 @@ func (tv *TableView) AccessibleChildren() []AXChild {
 	var out []AXChild
 	x := b.X
 	for i, col := range tv.Columns {
-		out = append(out, AXChild{Role: RoleColumnHeader, Name: col.DisplayTitle(),
+		out = append(out, AXChild{Role: RoleColumnHeader, Name: col.DisplayTitle(), NameKey: col.TitleKey,
 			Bounds: Rect{X: x, Y: b.Y, W: widths[i], H: tv.HeaderHeight}})
 		x += widths[i]
 	}
@@ -724,6 +921,14 @@ func (tv *TableView) Handle(event Event) bool {
 	if !tv.Enabled() {
 		return false
 	}
+	// Wheel, keyboard and scrollbar drags move scrollY here; prepare the
+	// newly exposed rows now, outside the paint pass.
+	prevScroll := tv.scrollY
+	defer func() {
+		if tv.scrollY != prevScroll {
+			tv.prepareRows()
+		}
+	}()
 	body := tv.bodyRect()
 	switch e := event.(type) {
 	case MouseEvent:
@@ -750,9 +955,13 @@ func (tv *TableView) Handle(event Event) bool {
 				return true
 			}
 		case EventScroll:
+			if e.Phase() == PhaseCapture {
+				return false
+			}
 			if body.Contains(Point{X: e.X, Y: e.Y}) {
 				old := tv.scrollY
-				tv.scrollY = ClampScroll(tv.scrollY-e.DeltaY*tv.RowHeight,
+				_, dy := e.WheelPixels()
+				tv.scrollY = ClampScroll(tv.scrollY-dy,
 					tv.contentHeight(), body.H)
 				if tv.scrollY != old {
 					tv.Invalidate()
@@ -864,7 +1073,7 @@ func (tv *TableView) HitTest(p Point) Widget {
 		if p.Y >= body.Y && p.X <= body.X+contentW {
 			start, end := tv.visibleRange()
 			for i := end - 1; i >= start; i-- {
-				row := tv.widgetRow(i)
+				row := tv.builtRow(i)
 				if row == nil {
 					continue
 				}
@@ -887,18 +1096,20 @@ func (tv *TableView) Tick(now time.Time) Rect {
 	if !tv.useWidgetRows {
 		return Rect{}
 	}
+	var dirty Rect
+	if !tv.rowsReady() {
+		tv.prepareRows()
+		dirty = PaintBoundsInWindow(tv)
+	}
 	start, end := tv.visibleRange()
 	if start == end {
-		return Rect{}
+		return dirty
 	}
-	contentW := tv.bodyContentWidth()
-	var dirty Rect
 	for i := start; i < end; i++ {
-		row := tv.widgetRow(i)
+		row := tv.builtRow(i)
 		if row == nil {
 			continue
 		}
-		row.Layout(tv.rowRect(i, contentW))
 		dirty = dirty.Union(TickWidget(row, now))
 	}
 	return dirty

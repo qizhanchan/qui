@@ -70,7 +70,7 @@ type El struct {
 	// a <label>'s checkbox are boxes in that run, so this element must not
 	// adopt them into a run of its own.
 	folded bool
-	node       *Node // mirror used for selector matching / cascade
+	node   *Node // mirror used for selector matching / cascade
 
 	// elParent is the adopting parent element (set by the parent's
 	// SetElementChildren, cleared on Unmount). It is the ELEMENT-tree
@@ -961,9 +961,9 @@ func (e *El) SetOnDragOver(fn func(sourceKey string, after bool)) { e.onDragOver
 // (dropped or cancelled) — the place to clear any drop indicator.
 func (e *El) SetOnDragEnd(fn func()) { e.onDragEnd = fn }
 
-// SetOnSubmit installs the Enter handler for an <input>.
-// The backing input's own OnSubmit wrapper calls it (then submits the
-// enclosing <form>), so it is only stored here.
+// SetOnSubmit installs the Enter handler for an <input>, or the
+// Cmd/Ctrl+Enter handler for a <textarea> (plain Enter stays a newline
+// in a multi-line control).
 func (e *El) SetOnSubmit(fn func(string)) { e.onSubmit = fn }
 
 // SetOnCommit installs the "value finished" handler for an <input>: Enter, or
@@ -972,8 +972,11 @@ func (e *El) SetOnSubmit(fn func(string)) { e.onSubmit = fn }
 // keystroke — a size in cm, a count, anything that pushes an undo step.
 func (e *El) SetOnCommit(fn func(string)) {
 	e.onCommit = fn
-	if in, ok := e.backing.(*widgets.Input); ok {
-		in.OnCommit = fn
+	switch w := e.backing.(type) {
+	case *widgets.Input:
+		w.OnCommit = fn
+	case *widgets.TextArea:
+		w.OnCommit = fn
 	}
 }
 
@@ -1507,7 +1510,9 @@ func (e *El) stepNumber(dir int) {
 	if text == in.Text {
 		return
 	}
-	in.SetText(text) // fires OnChange → e.onInput
+	in.SetText(text)
+	// A stepper click is a user edit; SetText itself is silent.
+	in.NotifyTextChanged()
 }
 
 // parseFloatAttr parses an optional numeric attribute, reporting whether it
@@ -1629,8 +1634,22 @@ func (e *El) ensureBacking() {
 		ta.BoxModel = true // CSS padding sits inside the border
 		ta.Cols = intAttr(e.attrs["cols"], 20)
 		ta.OnChange = e.onInput
+		ta.OnCommit = func(s string) {
+			if e.onCommit != nil {
+				e.onCommit(s)
+			}
+		}
+		ta.OnSubmit = func(s string) {
+			if e.onSubmit != nil {
+				e.onSubmit(s)
+			}
+		}
 		if v, ok := e.attrs["value"]; ok {
 			ta.SetText(v)
+			// A <textarea>'s initial content is its default value, which
+			// leaves the caret at the start (unlike assigning .value later,
+			// which SetText models by moving it to the end).
+			ta.SetCursorPos(0)
 		}
 		e.backing = ta
 	case "select":
@@ -3556,8 +3575,11 @@ func (e *El) ensureScroll() {
 	}
 	e.scrollInner = widgets.NewBox(qui.FlowLayout{})
 	sv := widgets.NewScrollView()
-	sv.OverlayBar = true // a browser's (macOS) overlay scrollbar: no gutter
-	sv.FitContent = true // auto height = content height, capped by max-height
+	// Padding lives on scrollInner below (the CSS content box), so the
+	// ScrollView itself must not inset by its own style.
+	sv.BoxModel = false
+	sv.OverlayBar = true                // a browser's (macOS) overlay scrollbar: no gutter
+	sv.FitContent = true                // auto height = content height, capped by max-height
 	sv.Style().Background = qui.Color{} // transparent viewport
 	st := sv.Style()
 	st.Grow = 1

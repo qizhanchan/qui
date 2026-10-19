@@ -141,8 +141,18 @@ type SelectOption struct {
 	Icon VectorSource
 	// Group is a heading: consecutive options with the same non-empty Group
 	// are listed under one non-selectable heading row (an <optgroup>).
+	// GroupKey, when set, resolves Group through the catalog.
 	Group    string
+	GroupKey string
 	Disabled bool
+}
+
+// DisplayGroup is the optgroup heading shown to the user.
+func (o SelectOption) DisplayGroup() string {
+	if o.GroupKey == "" {
+		return o.Group
+	}
+	return TOr(o.GroupKey, o.Group)
 }
 
 // DisplayLabel is the option's shown label.
@@ -167,6 +177,7 @@ func (o SelectOption) ValueOrLabel() string {
 func (cb *Select) SetOptions(opts []SelectOption) {
 	prev := cb.SelectedOptionValue()
 	cb.options = append([]SelectOption(nil), opts...)
+	cb.ItemColors = nil // indexed the previous option list
 	cb.syncItemsFromOptions()
 	cb.SelectedIdx = cb.indexForValue(prev)
 	if cb.isOpen {
@@ -258,16 +269,41 @@ func (cb *Select) indexForValue(value string) int {
 	return -1
 }
 
-// win is the window the dropdown opens in.
+// win is the window the dropdown opens in: the one this select is
+// currently attached to, else the constructor's (before mounting).
 func (cb *Select) win() *Window {
-	if cb.window != nil {
-		return cb.window
+	if w := cb.Window(); w != nil {
+		return w
 	}
-	return cb.Window()
+	return cb.window
+}
+
+// SetWindow closes an open dropdown when the select leaves its window, so
+// it cannot keep firing OnChange as an overlay from an unmounted control.
+func (cb *Select) SetWindow(w *Window) {
+	cb.BaseWidget.SetWindow(w)
+	if w == nil {
+		cb.window = nil
+		if cb.isOpen {
+			cb.closeDropdown()
+		}
+		return
+	}
+	cb.window = w
 }
 
 // IsOpen reports whether the dropdown is showing.
 func (cb *Select) IsOpen() bool { return cb.isOpen }
+
+// ConsumesTab commits the field value and closes the open dropdown, then
+// lets Tab advance focus. Without it Tab moved into the page while the
+// dropdown stayed open and keyboard-dead.
+func (cb *Select) ConsumesTab(shift bool) bool {
+	if cb.isOpen {
+		cb.closeDropdown()
+	}
+	return false
+}
 
 // NewSelect creates a plain, unstyled Select — Outlined variant
 // with thin gray border, dark text, transparent container. For a
@@ -282,6 +318,7 @@ func NewSelect(window *Window, items []string, onChange func(int, string)) *Sele
 		OnChange:    onChange,
 		window:      window,
 	}
+	cb.SetSelf(cb)
 	cb.States = defaultSelectStates()
 	return cb
 }
@@ -315,7 +352,15 @@ func defaultSelectStates() StateStyle {
 func (cb *Select) Style() *Style { return &cb.States.Base }
 
 func (cb *Select) SetStyle(style Style) {
-	cb.States.Base = style.Clone()
+	old := cb.States.Base
+	next := style.Clone()
+	cb.States.Base = next
+	// Focused/Disabled are full copies; carry the caller's base changes
+	// into the variants that still held the old value.
+	rebaseStateStyle(cb.States.Focused, old, next)
+	rebaseStateStyle(cb.States.Disabled, old, next)
+	rebaseStateStyle(cb.States.Hover, old, next)
+	rebaseStateStyle(cb.States.Errored, old, next)
 	cb.InvalidateLayout()
 }
 
@@ -419,13 +464,18 @@ func (cb *Select) SetItems(items []string) bool {
 	}
 	cb.options = nil
 	cb.Items = items
+	// Parallel arrays indexed the OLD list; leaving them attached re-labels
+	// or re-disables new rows by coincidence.
+	cb.ItemDisabled = nil
+	cb.ItemColors = nil
+	cb.itemsLocale = LocaleGeneration()
 	if cb.SelectedIdx >= len(items) {
 		cb.SelectedIdx = -1
 	}
 	if cb.isOpen {
 		cb.closeDropdown()
 	}
-	cb.Invalidate()
+	cb.InvalidateLayout()
 	return true
 }
 
@@ -453,6 +503,11 @@ const typeaheadReset = time.Second
 func (cb *Select) typeAhead(r rune, when time.Time) bool {
 	if !unicode.IsPrint(r) || r == ' ' {
 		return false // Space toggles the dropdown; control chars are not text
+	}
+	if cb.isOpen {
+		// Type-ahead commits immediately, so an open list's checkmarks and
+		// highlight would be stale after the first character.
+		cb.closeDropdown()
 	}
 	if !cb.typeAt.IsZero() && when.Sub(cb.typeAt) > typeaheadReset {
 		cb.typeBuf = ""
@@ -780,7 +835,6 @@ func (cb *Select) Measure(available Size) Size {
 }
 
 func (cb *Select) Draw(canvas Canvas) {
-	cb.refreshItems()
 	theme := CurrentTheme()
 	b := cb.fieldBounds()
 	state := cb.currentState()
@@ -1028,13 +1082,6 @@ func (cb *Select) Handle(event Event) bool {
 	return false
 }
 
-func (cb *Select) HitTest(p Point) Widget {
-	if cb.Bounds().Contains(p) {
-		return cb
-	}
-	return nil
-}
-
 func (cb *Select) toggleDropdown() {
 	if cb.isOpen {
 		cb.closeDropdown()
@@ -1062,8 +1109,8 @@ func (cb *Select) openDropdown() {
 	for i, val := range cb.Items {
 		idx := i
 		opt := cb.option(idx)
-		if opt.Group != group {
-			group = opt.Group
+		if g := opt.DisplayGroup(); g != group {
+			group = g
 			if group != "" {
 				items = append(items, &MenuItem{Label: group, Disabled: true})
 			}
@@ -1093,6 +1140,10 @@ func (cb *Select) openDropdown() {
 		return
 	}
 	cb.popup = popup
+	// Clicking another control while the dropdown is open should both
+	// dismiss it and act on that control (browser behavior), not require a
+	// second click.
+	popup.ClickThrough = true
 	// Measure against the window width so rows report their intrinsic text
 	// width (rather than being constrained — and clipped — to the trigger).
 	winW := w.Size().W
@@ -1216,7 +1267,14 @@ func (cb *Select) selectIndex(idx int) {
 	cb.SelectedIdx = idx
 	cb.Invalidate()
 	if cb.OnChange != nil && idx >= 0 {
-		cb.OnChange(idx, cb.Items[idx])
+		// Hate to surprise callers: plain Items still report the label.
+		// With the rich option model the stable Value is the useful second
+		// argument (htmlcss/reactive document it as the option value).
+		value := cb.Items[idx]
+		if opt := cb.option(idx); opt.Value != "" {
+			value = opt.Value
+		}
+		cb.OnChange(idx, value)
 	}
 	if cb.OnOptionChange != nil && idx >= 0 {
 		cb.OnOptionChange(idx, cb.option(idx))

@@ -19,7 +19,7 @@ func focusedTFWithIME(s string) (*Window, *Input) {
 	tf := NewInput("placeholder")
 	tf.Layout(Rect{X: 0, Y: 0, W: 200, H: 30})
 	tf.Text = s
-	tf.cursorPos = len([]rune(s))
+	tf.ed.cursor = len([]rune(s))
 	w.SetRoot(tf)
 	w.SetFocus(tf)
 	tf.SetFocused(true)
@@ -29,36 +29,36 @@ func focusedTFWithIME(s string) (*Window, *Input) {
 func TestInputSetPreeditStoresComposition(t *testing.T) {
 	_, tf := focusedTFWithIME("ab")
 	tf.SetPreedit("你", 1)
-	if tf.preeditText != "你" {
-		t.Errorf("preeditText = %q, want 你", tf.preeditText)
+	if tf.ed.preedit != "你" {
+		t.Errorf("preeditText = %q, want 你", tf.ed.preedit)
 	}
-	if tf.preeditCursor != 1 {
-		t.Errorf("preeditCursor = %d, want 1", tf.preeditCursor)
+	if tf.ed.preeditCursor != 1 {
+		t.Errorf("preeditCursor = %d, want 1", tf.ed.preeditCursor)
 	}
 }
 
 func TestInputCommitIMEInsertsAtCaret(t *testing.T) {
 	_, tf := focusedTFWithIME("ab")
-	tf.cursorPos = 1
+	tf.ed.cursor = 1
 	tf.SetPreedit("你好", 2)
 	tf.CommitIME("你好")
 
 	if tf.Text != "a你好b" {
 		t.Errorf("Text after commit = %q, want a你好b", tf.Text)
 	}
-	if tf.cursorPos != 3 {
-		t.Errorf("cursorPos after commit = %d, want 3", tf.cursorPos)
+	if tf.ed.cursor != 3 {
+		t.Errorf("cursorPos after commit = %d, want 3", tf.ed.cursor)
 	}
-	if tf.preeditText != "" {
+	if tf.ed.preedit != "" {
 		t.Error("preeditText should clear after commit")
 	}
 }
 
 func TestInputCommitIMEReplacesSelection(t *testing.T) {
 	_, tf := focusedTFWithIME("abcde")
-	tf.selStart = 1
-	tf.selEnd = 4
-	tf.cursorPos = 4
+	tf.ed.selStart = 1
+	tf.ed.selEnd = 4
+	tf.ed.cursor = 4
 	tf.CommitIME("X")
 	if tf.Text != "aXe" {
 		t.Errorf("Text = %q, want aXe (selection replaced)", tf.Text)
@@ -74,14 +74,14 @@ func TestInputCommitEmptyIsNoop(t *testing.T) {
 		t.Errorf("empty commit mutated text; got %q", tf.Text)
 	}
 	// But preedit is cleared.
-	if tf.preeditText != "" {
+	if tf.ed.preedit != "" {
 		t.Error("empty commit should still clear preedit")
 	}
 }
 
 func TestInputCaretRectShiftsForPreedit(t *testing.T) {
 	_, tf := focusedTFWithIME("")
-	tf.cursorPos = 0
+	tf.ed.cursor = 0
 
 	noPreedit := tf.CaretRect()
 	tf.SetPreedit("你好", 2)
@@ -108,7 +108,7 @@ func TestInputTypicalIMESequence(t *testing.T) {
 	//          types "hao" → preedit "你好",
 	//          selects from candidate → commit "你好".
 	_, tf := focusedTFWithIME("hello ")
-	tf.cursorPos = 6
+	tf.ed.cursor = 6
 
 	tf.SetPreedit("你", 1)
 	if tf.Text != "hello " { // Text not mutated during composition
@@ -124,7 +124,7 @@ func TestInputTypicalIMESequence(t *testing.T) {
 	if tf.Text != "hello 你好" {
 		t.Errorf("after commit: got %q, want hello 你好", tf.Text)
 	}
-	if tf.preeditText != "" {
+	if tf.ed.preedit != "" {
 		t.Error("preedit should clear after commit")
 	}
 }
@@ -136,7 +136,7 @@ func focusedTAWithIME(s string) (*Window, *TextArea) {
 	ta := NewTextArea("")
 	ta.Layout(Rect{X: 0, Y: 0, W: 300, H: 120})
 	ta.Text = s
-	ta.cursorPos = len([]rune(s))
+	ta.ed.cursor = len([]rune(s))
 	w.SetRoot(ta)
 	w.SetFocus(ta)
 	ta.SetFocused(true)
@@ -146,32 +146,32 @@ func focusedTAWithIME(s string) (*Window, *TextArea) {
 func TestTextAreaSetPreeditStores(t *testing.T) {
 	_, ta := focusedTAWithIME("abc")
 	ta.SetPreedit("日本語", 3)
-	if ta.preeditText != "日本語" {
-		t.Errorf("preedit = %q", ta.preeditText)
+	if ta.ed.preedit != "日本語" {
+		t.Errorf("preedit = %q", ta.ed.preedit)
 	}
-	if ta.preeditCursor != 3 {
-		t.Errorf("preeditCursor = %d", ta.preeditCursor)
+	if ta.ed.preeditCursor != 3 {
+		t.Errorf("preeditCursor = %d", ta.ed.preeditCursor)
 	}
 }
 
 func TestTextAreaCommitInsertsMulti(t *testing.T) {
 	_, ta := focusedTAWithIME("start ")
-	ta.cursorPos = 6
+	ta.ed.cursor = 6
 	ta.CommitIME("こんにちは")
 	if ta.Text != "start こんにちは" {
 		t.Errorf("after commit: %q", ta.Text)
 	}
 	// Cursor advanced by rune count, not byte count.
-	if ta.cursorPos != 6+5 {
-		t.Errorf("cursorPos = %d, want 11", ta.cursorPos)
+	if ta.ed.cursor != 6+5 {
+		t.Errorf("cursorPos = %d, want 11", ta.ed.cursor)
 	}
 }
 
 func TestTextAreaCommitReplacesSelection(t *testing.T) {
 	_, ta := focusedTAWithIME("hello world")
-	ta.selStart = 6
-	ta.selEnd = 11
-	ta.cursorPos = 11
+	ta.ed.selStart = 6
+	ta.ed.selEnd = 11
+	ta.ed.cursor = 11
 	ta.CommitIME("世界")
 	if ta.Text != "hello 世界" {
 		t.Errorf("selection commit: %q", ta.Text)
@@ -193,14 +193,14 @@ func TestTextAreaCommitFiresOnChange(t *testing.T) {
 func TestWindowSetPreeditRoutesToFocused(t *testing.T) {
 	w, tf := focusedTFWithIME("")
 	w.SetPreedit("好", 1)
-	if tf.preeditText != "好" {
-		t.Errorf("Window.SetPreedit did not route; preeditText = %q", tf.preeditText)
+	if tf.ed.preedit != "好" {
+		t.Errorf("Window.SetPreedit did not route; preeditText = %q", tf.ed.preedit)
 	}
 }
 
 func TestWindowCommitIMERoutesToFocused(t *testing.T) {
 	w, tf := focusedTFWithIME("ab")
-	tf.cursorPos = 2
+	tf.ed.cursor = 2
 	w.CommitIME("你")
 	if tf.Text != "ab你" {
 		t.Errorf("Window.CommitIME did not route; Text = %q", tf.Text)
@@ -216,7 +216,7 @@ func TestWindowSetPreeditNoFocusIsSafe(t *testing.T) {
 
 func TestWindowCaretRectFromFocusedIMEClient(t *testing.T) {
 	w, tf := focusedTFWithIME("abc")
-	tf.cursorPos = 3
+	tf.ed.cursor = 3
 	r := w.CaretRect()
 	if r.W <= 0 || r.H <= 0 {
 		t.Errorf("CaretRect should have non-zero W/H; got %+v", r)
@@ -245,13 +245,13 @@ func TestInputCharCommitClearsStalePreedit(t *testing.T) {
 	_, tf := focusedTFWithIME("")
 	// Simulate: IME mid-composition then commit via insertText.
 	tf.SetPreedit("zhong'wen", 9)
-	if tf.preeditText == "" {
+	if tf.ed.preedit == "" {
 		t.Fatal("precondition: preedit should be set")
 	}
 	// CharEvent (as GLFW's CharCallback would fire) on commit.
 	tf.Handle(newCharEvent('z'))
-	if tf.preeditText != "" {
-		t.Errorf("preedit should clear on CharEvent; got %q", tf.preeditText)
+	if tf.ed.preedit != "" {
+		t.Errorf("preedit should clear on CharEvent; got %q", tf.ed.preedit)
 	}
 	if tf.Text != "z" {
 		t.Errorf("Text after first char: %q, want z", tf.Text)
@@ -261,14 +261,14 @@ func TestInputCharCommitClearsStalePreedit(t *testing.T) {
 func TestTextAreaCharCommitClearsStalePreedit(t *testing.T) {
 	_, ta := focusedTAWithIME("")
 	ta.SetPreedit("konnichiwa", 10)
-	if ta.preeditText == "" {
+	if ta.ed.preedit == "" {
 		t.Fatal("precondition: preedit should be set")
 	}
 	// Feed the first commit char through Handle — TextArea dispatches
 	// CharEvent via Handle switch statement.
 	ta.Handle(newCharEvent('k'))
-	if ta.preeditText != "" {
-		t.Errorf("TextArea preedit should clear on CharEvent; got %q", ta.preeditText)
+	if ta.ed.preedit != "" {
+		t.Errorf("TextArea preedit should clear on CharEvent; got %q", ta.ed.preedit)
 	}
 }
 
@@ -284,7 +284,7 @@ func TestTextAreaCharCommitClearsStalePreedit(t *testing.T) {
 
 func TestInputBackspaceDuringIMEDoesNotTouchText(t *testing.T) {
 	_, tf := focusedTFWithIME("你好🫲")
-	tf.cursorPos = 3 // after 🫲
+	tf.ed.cursor = 3 // after 🫲
 	tf.SetPreedit("ni", 2)
 
 	// Simulate backspace while composing.
@@ -295,19 +295,19 @@ func TestInputBackspaceDuringIMEDoesNotTouchText(t *testing.T) {
 	if tf.Text != "你好🫲" {
 		t.Errorf("Text mutated during IME backspace: got %q, want 你好🫲", tf.Text)
 	}
-	if tf.cursorPos != 3 {
-		t.Errorf("cursorPos moved: got %d, want 3", tf.cursorPos)
+	if tf.ed.cursor != 3 {
+		t.Errorf("cursorPos moved: got %d, want 3", tf.ed.cursor)
 	}
 }
 
 func TestInputArrowDuringIMESwallowed(t *testing.T) {
 	_, tf := focusedTFWithIME("abc")
-	tf.cursorPos = 3
+	tf.ed.cursor = 3
 	tf.SetPreedit("x", 1)
 
 	tf.Handle(newKeyDown(KeyLeft))
-	if tf.cursorPos != 3 {
-		t.Errorf("Left arrow during composition moved cursor; got %d", tf.cursorPos)
+	if tf.ed.cursor != 3 {
+		t.Errorf("Left arrow during composition moved cursor; got %d", tf.ed.cursor)
 	}
 }
 
@@ -325,7 +325,7 @@ func TestInputEnterDuringIMEDoesNotSubmit(t *testing.T) {
 
 func TestTextAreaBackspaceDuringIMEDoesNotTouchText(t *testing.T) {
 	_, ta := focusedTAWithIME("你好🫲")
-	ta.cursorPos = 3
+	ta.ed.cursor = 3
 	ta.SetPreedit("ni", 2)
 
 	ta.Handle(newKeyDown(KeyBackspace))
@@ -337,7 +337,7 @@ func TestTextAreaBackspaceDuringIMEDoesNotTouchText(t *testing.T) {
 
 func TestTextAreaEnterDuringIMEDoesNotInsertNewline(t *testing.T) {
 	_, ta := focusedTAWithIME("a")
-	ta.cursorPos = 1
+	ta.ed.cursor = 1
 	ta.SetPreedit("ni", 2)
 
 	ta.Handle(newKeyDown(KeyEnter))
@@ -349,7 +349,7 @@ func TestTextAreaEnterDuringIMEDoesNotInsertNewline(t *testing.T) {
 // Once composition ends (preedit cleared), keys resume normal handling.
 func TestInputKeysWorkAfterPreeditCleared(t *testing.T) {
 	_, tf := focusedTFWithIME("abc")
-	tf.cursorPos = 3
+	tf.ed.cursor = 3
 	tf.SetPreedit("x", 1)
 	// IME commits + unmarks → preedit cleared.
 	tf.SetPreedit("", 0)

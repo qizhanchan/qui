@@ -1,7 +1,7 @@
 package widgets
 
 import (
-	"strings"
+	"reflect"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -120,51 +120,16 @@ type Input struct {
 	OnSelectionChange func(start, end int)
 	OnCursorChange    func(pos int)
 
-	// commitBaseline is the text as of the last focus-in / commit; OnCommit
-	// fires only when the value actually moved, so clicking through a field
-	// without editing it does not push an undo step.
-	commitBaseline string
+	// ed is the shared editing model: caret, selection, undo, IME
+	// composition, blink, change/commit notification (see text_editor.go).
+	ed textEditor
 
-	cursorPos int // rune index of cursor (0..runeCount)
-	selStart  int // rune indices of selection; -1 = none
-	selEnd    int
-
-	focused   bool
-	hovering  bool
-	selecting bool // mouse-drag selection in progress
+	focused  bool
+	hovering bool
 
 	// scrollX offsets the visible text so the cursor stays within the
 	// content area when Text is wider than the field.
 	scrollX float32
-
-	cursorVisible bool
-	cursorBlinkMS int64
-
-	// IME composition state. preeditText is the in-flight (not yet
-	// committed) string from an input method; preeditCursor is the
-	// rune index within it where the composition caret sits. Rendered
-	// with a distinct visual cue (underline) at the main cursor
-	// position while composing.
-	preeditText   string
-	preeditCursor int
-
-	// Undo / redo history. Snapshots are taken on every mutation via
-	// snapshot() and pushed through pushUndo(); consecutive "type" or
-	// "delete" entries within a ~500ms window coalesce so Cmd+Z
-	// reverses a word of typing instead of one character at a time.
-	history undoHistory
-
-	// lastChangeUser records whether the most recent value change came from
-	// the user (a keystroke / paste / IME commit) rather than a
-	// programmatic SetText. A programmatic SetText that then replaces a
-	// user-set value is a controlled-value overwrite (see fireChange /
-	// SetText), which the debug surface flags.
-	lastChangeUser bool
-
-	clickCount  int
-	lastClickMS int64
-	lastClickX  float32
-	lastClickY  float32
 }
 
 // NewInput creates a plain, unstyled text field — thin gray border
@@ -175,12 +140,12 @@ type Input struct {
 // render a field on the htmlcss layer and style it with CSS.
 func NewInput(placeholder string) *Input {
 	t := &Input{
-		BaseWidget:    NewBaseWidget(),
-		Variant:       InputOutlined,
-		Placeholder:   placeholder,
-		selStart:      -1,
-		cursorVisible: true,
+		BaseWidget:  NewBaseWidget(),
+		Variant:     InputOutlined,
+		Placeholder: placeholder,
+		ed:          newTextEditor(),
 	}
+	t.SetSelf(t)
 	t.States = defaultInputStates()
 	return t
 }
@@ -215,9 +180,87 @@ func defaultInputStates() StateStyle {
 // Deprecated: use qui.StyleValue and qui.UpdateStyle.
 func (t *Input) Style() *Style { return &t.States.Base }
 
-func (t *Input) SetStyle(style Style) {
-	t.States.Base = style.Clone()
+// SetLabel replaces the floating label and re-measures.
+func (t *Input) SetLabel(label string) {
+	if t.Label == label {
+		return
+	}
+	t.Label = label
 	t.InvalidateLayout()
+}
+
+// SetDense switches compact geometry and re-measures.
+func (t *Input) SetDense(v bool) {
+	if t.Dense == v {
+		return
+	}
+	t.Dense = v
+	t.InvalidateLayout()
+}
+
+// SetChars sets the native field's character width.
+func (t *Input) SetChars(n int) {
+	if t.Chars == n {
+		return
+	}
+	t.Chars = n
+	t.InvalidateLayout()
+}
+
+// SetVariant switches filled/outlined presentation.
+func (t *Input) SetVariant(v InputVariant) {
+	if t.Variant == v {
+		return
+	}
+	t.Variant = v
+	t.InvalidateLayout()
+}
+
+// SetError toggles the error state.
+func (t *Input) SetError(v bool) {
+	if t.Error == v {
+		return
+	}
+	t.Error = v
+	t.Invalidate()
+}
+
+func (t *Input) SetStyle(style Style) {
+	old := t.States.Base
+	next := style.Clone()
+	t.States.Base = next
+	// Focused/Disabled are full copies, not layered patches. Without rebasing
+	// them a plain SetStyle(Background: …) was ignored whenever the field
+	// was focused or disabled. Fields the app already customized on a
+	// variant are left alone.
+	rebaseStateStyle(t.States.Focused, old, next)
+	rebaseStateStyle(t.States.Disabled, old, next)
+	rebaseStateStyle(t.States.Hover, old, next)
+	rebaseStateStyle(t.States.Errored, old, next)
+	t.InvalidateLayout()
+}
+
+// rebaseStateStyle carries fields the caller changed on the base into a
+// state variant that still held the old base value.
+func rebaseStateStyle(v *Style, old, next Style) {
+	if v == nil {
+		return
+	}
+	ov := reflect.ValueOf(old)
+	nv := reflect.ValueOf(next)
+	vv := reflect.ValueOf(v).Elem()
+	for i := 0; i < ov.NumField(); i++ {
+		f := ov.Type().Field(i)
+		if f.PkgPath != "" {
+			continue
+		}
+		if reflect.DeepEqual(ov.Field(i).Interface(), nv.Field(i).Interface()) {
+			continue
+		}
+		if reflect.DeepEqual(vv.Field(i).Interface(), ov.Field(i).Interface()) {
+			vv.Field(i).Set(nv.Field(i))
+		}
+	}
 }
 
 // currentState compiles the field's booleans into a State bitmask
@@ -487,8 +530,10 @@ func (t *Input) clickTrailingButton(p Point) bool {
 		return true
 	}
 	if t.TrailingButton == InputTrailingClear {
-		t.SetText("") // fires OnChange itself
-		t.cursorPos, t.selStart, t.selEnd = 0, -1, -1
+		// A user action, not a programmatic set: SetText is silent, so
+		// publish the change explicitly.
+		t.SetText("")
+		t.ed.fireChange(t)
 		t.Invalidate()
 	}
 	return true
@@ -604,66 +649,42 @@ func (t *Input) hasLabel() bool {
 // position (top of field, body-small) vs the resting position
 // (centered, body-large). It floats when focused OR populated.
 func (t *Input) isLabelFloating() bool {
-	return t.hasLabel() && (t.focused || t.Text != "" || t.preeditText != "")
+	return t.hasLabel() && (t.focused || t.Text != "" || t.ed.preedit != "")
 }
 
-func (t *Input) Focusable() bool    { return t.Enabled() }
-func (t *Input) CancelInteraction() { t.selecting = false }
+func (t *Input) Focusable() bool { return t.Enabled() }
+func (t *Input) CancelInteraction() {
+	t.ed.selecting = false
+	t.hovering = false
+	t.Invalidate()
+}
 
 // Focused reports whether the field currently holds keyboard focus.
 func (t *Input) Focused() bool { return t.focused }
 
-func (t *Input) SetFocused(f bool) {
-	prevCursor, prevSelStart, prevSelEnd := t.cursorPos, t.selStart, t.selEnd
-	if f {
-		t.commitBaseline = t.Text
-	} else if t.focused {
-		t.fireCommit()
-	}
-	t.focused = f
-	// Focus transitions seal the current coalescing group — a
-	// later re-focus + typing starts fresh rather than merging
-	// with whatever was happening before blur.
-	t.history.breakCoalesce()
-	if f {
-		t.cursorVisible = true
-		t.cursorBlinkMS = time.Now().UnixMilli()
-	}
-	t.emitStateChange(prevCursor, prevSelStart, prevSelEnd)
+func (t *Input) SetFocused(focused bool) {
+	prev := t.ed.caretState()
+	was := t.focused
+	t.focused = focused
+	t.ed.focusChanged(t, was, focused)
+	t.ed.emitStateChange(t, prev)
 	t.Invalidate()
 }
 
-// SetText programmatically replaces the content and resets cursor/selection.
-// Fires OnChange if the text actually changed. Pushes an undo entry so
-// callers (e.g. a "Reset" button) remain reversible.
+// SetText programmatically replaces the content and parks the caret at the
+// end. Silent by design (see qui.TextChangeNotifier): a programmatic set must
+// not re-enter the app's own change handler, or binding a value back from
+// state would loop. Call NotifyTextChanged to publish a user-equivalent
+// change. Pushes an undo entry so callers (e.g. a "Reset" button) remain
+// reversible.
 func (t *Input) SetText(s string) {
-	if t.Text == s {
+	prev := t.ed.caretState()
+	if !t.ed.setText(t, s) {
 		return
 	}
-	prevCursor, prevSelStart, prevSelEnd := t.cursorPos, t.selStart, t.selEnd
-	before := t.snapshot()
-	t.Text = s
-	t.cursorPos = utf8.RuneCountInString(s)
-	t.selStart = -1
-	t.selEnd = 0
 	t.scrollX = 0
-	t.pushUndo("set", before)
-	// SetText only runs when the value actually changes (early return
-	// above), so if the last change was the user's own edit, this
-	// programmatic replacement is overwriting it — the controlled-value
-	// fight signal.
-	source := "program"
-	if t.lastChangeUser {
-		source = "program-overwrite"
-	}
-	t.lastChangeUser = false
-	if t.OnChange != nil {
-		t.OnChange(s)
-	}
-	if w := t.Window(); w != nil {
-		w.RecordInputChange(t, before.text, s, source)
-	}
-	t.emitStateChange(prevCursor, prevSelStart, prevSelEnd)
+	t.ensureCursorVisible()
+	t.ed.emitStateChange(t, prev)
 	t.Invalidate()
 }
 
@@ -808,8 +829,10 @@ func (t *Input) Draw(canvas Canvas) {
 	defer canvas.RestoreTo(contentID)
 
 	// Selection highlight (drawn under the text).
-	if t.hasSelection() {
-		a, c := t.orderedSelection()
+	// Only a focused field shows its selection; it is kept across a blur so
+	// a refocus restores it, as in a browser.
+	if t.focused && t.ed.hasSelection() {
+		a, c := t.ed.ordered()
 		bandY, bandH := TextCaretBand(content, t.font())
 		fill := func(offsetX, width float32) {
 			x0 := content.X - t.scrollX + offsetX
@@ -846,26 +869,26 @@ func (t *Input) Draw(canvas Canvas) {
 	// CJK input).
 	textColor := style.Foreground
 	text := t.Text
-	if text == "" && t.preeditText == "" {
+	if text == "" && t.ed.preedit == "" {
 		if !t.hasLabel() || t.focused {
 			text = t.DisplayPlaceholder()
 			textColor = theme.TextMuted
 		}
 	}
-	if t.preeditText != "" {
+	if t.ed.preedit != "" {
 		// Composition in flight: split the committed text at the cursor and
 		// render [before][preedit][after], so the in-flight text is INSERTED
 		// at the caret (pushing the following text right) instead of being
 		// painted on top of it. The preedit carries an underline. Everything
 		// is clipped to `content` (ClipRect above), so widths can be generous.
 		runes := []rune(t.Text)
-		cp := t.cursorPos
+		cp := t.ed.cursor
 		if cp > len(runes) {
 			cp = len(runes)
 		}
 		baseX := content.X - t.scrollX
 		beforeW := t.widthUpToRune(cp)
-		preeditW, _ := TextMetrics(t.preeditText, t.font())
+		preeditW, _ := TextMetrics(t.ed.preedit, t.font())
 		fullW := content.W + t.scrollX + preeditW
 		if before := string(runes[:cp]); before != "" {
 			if t.Password {
@@ -875,7 +898,15 @@ func (t *Input) Draw(canvas Canvas) {
 			}
 		}
 		preeditX := baseX + beforeW
-		canvas.DrawText(t.preeditText, Rect{X: preeditX, Y: content.Y, W: fullW, H: content.H}, style.Foreground, t.font())
+		if t.Password {
+			// A password field masks the in-flight composition too; drawing
+			// the raw glyphs leaked the secret while the user was typing.
+			count := utf8.RuneCountInString(t.ed.preedit)
+			preeditW = float32(count) * t.maskPitch()
+			t.drawMaskRun(canvas, content, preeditX, count, style.Foreground)
+		} else {
+			canvas.DrawText(t.ed.preedit, Rect{X: preeditX, Y: content.Y, W: fullW, H: content.H}, style.Foreground, t.font())
+		}
 		canvas.FillRect(Rect{X: preeditX, Y: content.Y + content.H - 2, W: preeditW, H: 1}, style.Foreground)
 		if after := string(runes[cp:]); after != "" {
 			if t.Password {
@@ -895,16 +926,16 @@ func (t *Input) Draw(canvas Canvas) {
 	}
 
 	// Cursor.
-	showCursor := t.focused && (t.cursorVisible || t.preeditText != "")
+	showCursor := t.focused && (t.ed.caretVisible || t.ed.preedit != "")
 	if showCursor {
-		caretX := content.X - t.scrollX + t.widthUpToRune(t.cursorPos)
-		if t.preeditText != "" {
-			runes := []rune(t.preeditText)
-			cur := t.preeditCursor
+		caretX := content.X - t.scrollX + t.widthUpToRune(t.ed.cursor)
+		if t.ed.preedit != "" {
+			runes := []rune(t.ed.preedit)
+			cur := t.ed.preeditCursor
 			if cur > len(runes) {
 				cur = len(runes)
 			}
-			caretX += TextXForOffset(t.preeditText, t.font(), TextDirectionAuto, cur)
+			caretX += TextXForOffset(t.ed.preedit, t.font(), TextDirectionAuto, cur)
 		}
 		if caretX >= content.X-0.5 && caretX <= content.X+content.W+0.5 {
 			y, h := TextCaretBand(content, t.font())
@@ -917,21 +948,14 @@ func (t *Input) Handle(event Event) bool {
 	if !t.Enabled() {
 		return false
 	}
-	prevCursor, prevSelStart, prevSelEnd := t.cursorPos, t.selStart, t.selEnd
-	prevText, prevScrollX := t.Text, t.scrollX
-	prevPreedit, prevPreeditCursor := t.preeditText, t.preeditCursor
-	prevSelecting, prevCursorVisible := t.selecting, t.cursorVisible
+	// Text is exported; a direct assignment can leave the caret/selection
+	// outside the buffer. Clamp before any edit path indexes into it.
+	t.ed.normalize(t.Text)
+	prev := t.ed.view()
+	prevText, prevScrollX, prevHovering := t.Text, t.scrollX, t.hovering
 	defer func() {
-		t.emitStateChange(prevCursor, prevSelStart, prevSelEnd)
-		if t.Text != prevText ||
-			t.cursorPos != prevCursor ||
-			t.selStart != prevSelStart ||
-			t.selEnd != prevSelEnd ||
-			t.scrollX != prevScrollX ||
-			t.preeditText != prevPreedit ||
-			t.preeditCursor != prevPreeditCursor ||
-			t.selecting != prevSelecting ||
-			t.cursorVisible != prevCursorVisible {
+		t.ed.emitStateChange(t, prev.caret)
+		if t.ed.view() != prev || t.Text != prevText || t.scrollX != prevScrollX || t.hovering != prevHovering {
 			t.Invalidate()
 		}
 	}()
@@ -952,31 +976,11 @@ func (t *Input) Handle(event Event) bool {
 				return true
 			}
 			if t.Bounds().Contains(Point{X: e.X, Y: e.Y}) {
-				pos := t.runeIndexAt(e.X)
-				clicks := t.registerClick(e)
-				switch clicks {
-				case 2:
-					a, b := t.wordBoundsAt(pos)
-					t.selStart = a
-					t.selEnd = b
-					t.cursorPos = b
-				case 3:
-					n := t.runeCount()
-					t.selStart = 0
-					t.selEnd = n
-					t.cursorPos = n
-				default:
-					t.cursorPos = pos
-					t.selStart = pos
-					t.selEnd = pos
-				}
-				t.selecting = true
-				t.history.breakCoalesce()
-				t.resetBlink()
+				t.ed.pressAt(t, t.runeIndexAt(e.X), e)
 				return true
 			}
 		case EventMouseMove:
-			if t.selecting {
+			if t.ed.selecting {
 				content := t.inputBounds()
 				if e.X < content.X {
 					t.scrollX -= min(16, content.X-e.X)
@@ -986,18 +990,13 @@ func (t *Input) Handle(event Event) bool {
 				if t.scrollX < 0 {
 					t.scrollX = 0
 				}
-				t.selEnd = t.runeIndexAt(e.X)
-				t.cursorPos = t.selEnd
+				t.ed.dragTo(t.runeIndexAt(e.X))
 				t.ensureCursorVisible()
-				t.resetBlink()
 				return true
 			}
 		case EventMouseUp:
-			if t.selecting {
-				t.selecting = false
-				if t.selStart == t.selEnd {
-					t.selStart = -1
-				}
+			if t.ed.selecting {
+				t.ed.release()
 				return true
 			}
 		}
@@ -1013,7 +1012,7 @@ func (t *Input) Handle(event Event) bool {
 		// → setMarkedText) and delete a rune from Text. Same concern
 		// for Enter (IME commits), Escape (IME cancels), arrows (some
 		// IMEs navigate candidates).
-		if t.preeditText != "" {
+		if t.ed.preedit != "" {
 			return true
 		}
 		return t.handleKey(e)
@@ -1021,16 +1020,21 @@ func (t *Input) Handle(event Event) bool {
 		if !t.focused {
 			return false
 		}
-		return t.handleChar(e.Rune)
+		return t.ed.typeRune(t, e.Rune)
 	}
 	return false
 }
 
-func (t *Input) HitTest(p Point) Widget {
-	if t.Bounds().Contains(p) {
-		return t
+// PaintBounds covers the focus ring / shadow halo painted just outside the
+// field rect, so partial repaints do not strand stale pixels.
+func (t *Input) PaintBounds() Rect {
+	b := t.Bounds()
+	st := t.States.Resolve(t.currentState())
+	r := b.Union(shadowPaintBounds(b, st.Shadow))
+	for _, sh := range st.ExtraShadows {
+		r = r.Union(shadowPaintBounds(b, sh))
 	}
-	return nil
+	return expandRect(r, st.BorderSize/2+2)
 }
 
 // WidgetCursor shows the text I-beam over an editable field. A disabled
@@ -1040,392 +1044,44 @@ func (t *Input) WidgetCursor() (CursorShape, bool) {
 	return CursorText, t.Enabled()
 }
 
-// Tick drives cursor blink. Matches TextArea's 500ms interval.
-// Returns widget Bounds as dirty region when visibility flips so the
-// window repaints only this field, and asks an idle window to wake for
-// the next flip.
-func (t *Input) Tick(now time.Time) Rect {
-	if !t.focused {
-		return Rect{}
-	}
-	nowMS := now.UnixMilli()
-	var dirty Rect
-	if nowMS-t.cursorBlinkMS > 500 {
-		t.cursorVisible = !t.cursorVisible
-		t.cursorBlinkMS = nowMS
-		dirty = PaintBoundsInWindow(t)
-	}
-	t.Window().RequestTickAt(time.UnixMilli(t.cursorBlinkMS + 501))
-	return dirty
-}
+// Tick drives cursor blink (see textEditor.tick).
+func (t *Input) Tick(now time.Time) Rect { return t.ed.tick(t, t.focused, now) }
 
 // ----------------------------------------------------------------------
 // Keyboard handling
 
+// handleKey adds the single-line field's Enter (submit / commit) to the
+// shared editing keys.
 func (t *Input) handleKey(e KeyEvent) bool {
-	if IsCommandMod(e.Mods) {
-		// Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z = redo, Cmd/Ctrl+Y = redo
-		// (Windows-style alias). Checked before clipboard so Z/Y don't
-		// get misrouted through handleClipboardShortcut.
-		if e.Key == KeyZ {
-			if e.Mods&ModShift != 0 {
-				t.redo()
-			} else {
-				t.undo()
-			}
-			return true
-		}
-		if e.Key == KeyY {
-			t.redo()
-			return true
-		}
-		if handled := t.handleClipboardShortcut(e.Key); handled {
-			return true
-		}
+	if e.Key != KeyEnter {
+		return t.ed.handleKey(t, e)
 	}
-	shift := e.Mods&ModShift != 0
-	switch e.Key {
-	case KeyLeft:
-		if len(t.Text) > 0 {
-			target := t.visualNeighbor(-1)
-			if shift {
-				t.extendSelection(target)
-			} else {
-				t.clearSelection()
-				t.cursorPos = target
-			}
-		}
-		t.history.breakCoalesce()
-		t.ensureCursorVisible()
-		t.resetBlink()
-		return true
-	case KeyRight:
-		runes := []rune(t.Text)
-		if len(runes) > 0 {
-			target := t.visualNeighbor(1)
-			if shift {
-				t.extendSelection(target)
-			} else {
-				t.clearSelection()
-				t.cursorPos = target
-			}
-		}
-		t.history.breakCoalesce()
-		t.ensureCursorVisible()
-		t.resetBlink()
-		return true
-	case KeyHome:
-		if shift {
-			t.extendSelection(0)
-		} else {
-			t.clearSelection()
-			t.cursorPos = 0
-		}
-		t.history.breakCoalesce()
-		t.ensureCursorVisible()
-		t.resetBlink()
-		return true
-	case KeyEnd:
-		end := t.runeCount()
-		if shift {
-			t.extendSelection(end)
-		} else {
-			t.clearSelection()
-			t.cursorPos = end
-		}
-		t.history.breakCoalesce()
-		t.ensureCursorVisible()
-		t.resetBlink()
-		return true
-	case KeyBackspace:
-		if !t.beforeInput("delete", "") {
-			return true
-		}
-		before := t.snapshot()
-		if t.hasSelection() {
-			t.deleteSelection()
-			t.pushUndo("delete", before)
-			t.fireChange()
-		} else if t.cursorPos > 0 {
-			// Delete one grapheme cluster, not one rune: backspacing a
-			// 👌🏻 should remove the whole emoji in one keystroke (and
-			// leave nothing behind), not strip the skin-tone modifier
-			// and leave a bare 👌.
-			runes := []rune(t.Text)
-			target := PrevClusterBoundary(runes, t.cursorPos)
-			t.Text = string(runes[:target]) + string(runes[t.cursorPos:])
-			t.cursorPos = target
-			t.pushUndo("delete", before)
-			t.fireChange()
-		}
-		t.ensureCursorVisible()
-		t.resetBlink()
-		return true
-	case KeyEnter:
-		if t.OnSubmit != nil {
-			t.OnSubmit(t.Text)
-		}
-		t.fireCommit()
-		if w := t.Window(); w != nil {
-			w.RecordInputSubmit(t, t.Text)
-		}
-		// Without a submit handler Enter keeps bubbling — the HTML
-		// "implicit submission": a dialog's default action presses on
-		// Enter while its text field has focus.
-		if t.SubmitBubbles != nil && t.SubmitBubbles() {
-			return false
-		}
-		return t.OnSubmit != nil
-	case KeyEscape:
-		// Esc first drops a selection. With none, it is not the field's
-		// key: it bubbles to whatever dismisses (a dialog, a popup).
-		if !t.hasSelection() {
-			return false
-		}
-		t.clearSelection()
-		t.history.breakCoalesce()
-		t.resetBlink()
-		return true
+	if t.OnSubmit != nil {
+		t.OnSubmit(t.Text)
 	}
-	return false
-}
-
-func (t *Input) handleChar(r rune) bool {
-	if r < 0x20 && r != 0x7F {
-		return false // ignore control chars
+	t.ed.fireCommit(t)
+	if w := t.Window(); w != nil {
+		w.RecordInputSubmit(t, t.Text)
 	}
-	if !t.beforeInput("type", string(r)) {
-		return true
+	// Without a submit handler Enter keeps bubbling — the HTML
+	// "implicit submission": a dialog's default action presses on
+	// Enter while its text field has focus.
+	if t.SubmitBubbles != nil && t.SubmitBubbles() {
+		return false
 	}
-	// CharEvents only reach the widget when the IME is NOT actively
-	// composing — during composition the OS input method intercepts
-	// every key. So a CharEvent with non-empty preedit means the IME
-	// just committed: clear the preedit state so the committed text
-	// doesn't get visually overlaid by the previous marked text.
-	// (Some IMEs — notably macOS 拼音 — do not always call
-	// unmarkText after commit, making this defensive clear essential.)
-	if t.preeditText != "" {
-		t.preeditText = ""
-		t.preeditCursor = 0
-	}
-	before := t.snapshot()
-	if t.hasSelection() {
-		t.deleteSelection()
-	}
-	t.insertRune(t.cursorPos, r)
-	t.cursorPos++
-	// Whitespace breaks the coalescing group so Cmd+Z undoes one word
-	// at a time, not the entire typing session.
-	kind := "type"
-	if r == ' ' || r == '\t' {
-		t.pushUndo(kind, before)
-		t.history.breakCoalesce()
-	} else {
-		t.pushUndo(kind, before)
-	}
-	t.fireChange()
-	t.ensureCursorVisible()
-	t.resetBlink()
-	return true
-}
-
-// handleClipboardShortcut processes Cmd/Ctrl + A/C/V/X. Returns true
-// if the key was a recognized shortcut (even when it was a no-op, e.g.
-// Cmd+C with no selection) so the outer switch doesn't also fire its
-// default bindings for KeyA / KeyC / etc.
-func (t *Input) handleClipboardShortcut(k Key) bool {
-	switch k {
-	case KeyA:
-		n := t.runeCount()
-		if n == 0 {
-			return true
-		}
-		t.selStart = 0
-		t.selEnd = n
-		t.cursorPos = n
-		t.ensureCursorVisible()
-		t.resetBlink()
-		return true
-	case KeyC:
-		if t.hasSelection() {
-			a, b := t.orderedSelection()
-			runes := []rune(t.Text)
-			SetClipboardText(string(runes[a:b]))
-		}
-		return true
-	case KeyX:
-		if t.hasSelection() {
-			if !t.beforeInput("cut", "") {
-				return true
-			}
-			a, b := t.orderedSelection()
-			runes := []rune(t.Text)
-			SetClipboardText(string(runes[a:b]))
-			before := t.snapshot()
-			t.deleteSelection()
-			t.pushUndo("cut", before)
-			t.fireChange()
-			t.ensureCursorVisible()
-			t.resetBlink()
-		}
-		return true
-	case KeyV:
-		text := GetClipboardText()
-		if text == "" {
-			return true
-		}
-		// Input is single-line: collapse newlines so pasting from
-		// a rich source doesn't smuggle in \n that the widget can't
-		// represent without layout artifacts.
-		text = strings.ReplaceAll(text, "\r\n", " ")
-		text = strings.NewReplacer("\n", " ", "\r", " ").Replace(text)
-		if !t.beforeInput("paste", text) {
-			return true
-		}
-		before := t.snapshot()
-		if t.hasSelection() {
-			t.deleteSelection()
-		}
-		for _, r := range text {
-			t.insertRune(t.cursorPos, r)
-			t.cursorPos++
-		}
-		t.pushUndo("paste", before)
-		t.fireChange()
-		t.ensureCursorVisible()
-		t.resetBlink()
-		return true
-	}
-	return false
+	return t.OnSubmit != nil
 }
 
 // ----------------------------------------------------------------------
 // Undo / redo
-
-func (t *Input) snapshot() undoEntry {
-	return undoEntry{
-		text:      t.Text,
-		cursorPos: t.cursorPos,
-		selStart:  t.selStart,
-		selEnd:    t.selEnd,
-	}
-}
-
-func (t *Input) applyUndoEntry(e undoEntry) {
-	t.Text = e.text
-	t.cursorPos = e.cursorPos
-	t.selStart = e.selStart
-	t.selEnd = e.selEnd
-	// Undo/redo must not leave a stale IME preedit pinned to the old
-	// caret — the restored text may have different length/offsets.
-	t.preeditText = ""
-	t.preeditCursor = 0
-	t.ensureCursorVisible()
-	t.resetBlink()
-}
-
-func (t *Input) pushUndo(kind string, before undoEntry) {
-	t.history.push(kind, before, t.snapshot())
-}
-
-// undo restores the previous snapshot. Returns true if a snapshot
-// was consumed. Fires OnChange when text actually changes.
-func (t *Input) undo() bool {
-	current := t.snapshot()
-	prev := t.history.popUndo(current)
-	if prev == nil {
-		return false
-	}
-	changed := prev.text != t.Text
-	t.applyUndoEntry(*prev)
-	if changed {
-		t.fireChange()
-	}
-	return true
-}
-
-func (t *Input) redo() bool {
-	current := t.snapshot()
-	next := t.history.popRedo(current)
-	if next == nil {
-		return false
-	}
-	changed := next.text != t.Text
-	t.applyUndoEntry(*next)
-	if changed {
-		t.fireChange()
-	}
-	return true
-}
 
 // ----------------------------------------------------------------------
 // Text manipulation
 
 func (t *Input) runeCount() int { return utf8.RuneCountInString(t.Text) }
 
-func (t *Input) insertRune(pos int, r rune) {
-	runes := []rune(t.Text)
-	if pos < 0 {
-		pos = 0
-	}
-	if pos > len(runes) {
-		pos = len(runes)
-	}
-	out := make([]rune, 0, len(runes)+1)
-	out = append(out, runes[:pos]...)
-	out = append(out, r)
-	out = append(out, runes[pos:]...)
-	t.Text = string(out)
-}
-
-func (t *Input) removeRune(pos int) {
-	runes := []rune(t.Text)
-	if pos < 0 || pos >= len(runes) {
-		return
-	}
-	t.Text = string(append(runes[:pos], runes[pos+1:]...))
-}
-
-func (t *Input) deleteSelection() {
-	a, b := t.orderedSelection()
-	runes := []rune(t.Text)
-	if a < 0 || b > len(runes) || a >= b {
-		t.clearSelection()
-		return
-	}
-	t.Text = string(append(runes[:a], runes[b:]...))
-	t.cursorPos = a
-	t.clearSelection()
-}
-
 // ----------------------------------------------------------------------
 // Selection helpers
-
-func (t *Input) hasSelection() bool {
-	return t.selStart >= 0 && t.selStart != t.selEnd
-}
-
-func (t *Input) orderedSelection() (int, int) {
-	if t.selStart < t.selEnd {
-		return t.selStart, t.selEnd
-	}
-	return t.selEnd, t.selStart
-}
-
-func (t *Input) clearSelection() {
-	t.selStart = -1
-	t.selEnd = 0
-}
-
-// extendSelection moves cursor to pos and extends the current selection.
-// If no selection exists yet, anchor at the old cursorPos.
-func (t *Input) extendSelection(pos int) {
-	if t.selStart < 0 {
-		t.selStart = t.cursorPos
-	}
-	t.cursorPos = pos
-	t.selEnd = pos
-}
 
 // ----------------------------------------------------------------------
 // Layout + scroll arithmetic
@@ -1518,9 +1174,9 @@ func (t *Input) drawMaskRun(canvas Canvas, content Rect, startX float32, n int, 
 // shaper about a string the user never sees.
 func (t *Input) visualNeighbor(dir int) int {
 	if !t.Password {
-		return TextVisualNeighbor(t.Text, t.font(), TextDirectionAuto, t.cursorPos, dir)
+		return TextVisualNeighbor(t.Text, t.font(), TextDirectionAuto, t.ed.cursor, dir)
 	}
-	pos := t.cursorPos + dir
+	pos := t.ed.cursor + dir
 	if pos < 0 {
 		pos = 0
 	}
@@ -1561,7 +1217,7 @@ func (t *Input) ensureCursorVisible() {
 	if content.W <= 0 {
 		return
 	}
-	cursorAbsX := t.widthUpToRune(t.cursorPos)
+	cursorAbsX := t.widthUpToRune(t.ed.cursor)
 	// cursorAbsX is the cursor position within the text (0-based).
 	// The visible window is [scrollX, scrollX + content.W].
 	if cursorAbsX < t.scrollX+4 {
@@ -1575,41 +1231,16 @@ func (t *Input) ensureCursorVisible() {
 	}
 }
 
-func (t *Input) resetBlink() {
-	t.cursorVisible = true
-	t.cursorBlinkMS = time.Now().UnixMilli()
-}
-
 // NotifyTextChanged implements qui.TextChangeNotifier: publish the current
 // text as a user-equivalent change. SetText itself stays silent (a
 // programmatic set must not re-enter the app's handler), so the agent's Type
 // action calls this after its bulk set to make the two paths behave alike.
-func (t *Input) NotifyTextChanged() { t.fireChange() }
-
-func (t *Input) fireChange() {
-	t.lastChangeUser = true
-	if t.OnChange != nil {
-		t.OnChange(t.Text)
-	}
-	if w := t.Window(); w != nil {
-		w.RecordInputChange(t, "", t.Text, "user")
-	}
-}
+func (t *Input) NotifyTextChanged() { t.ed.fireChange(t) }
 
 // TextState reports the input's editing state for the AX / agent debug
 // surface (qui.TextEditable): caret, selection, in-flight IME preedit and
 // undo availability.
-func (t *Input) TextState() TextState {
-	return TextState{
-		Value:    t.Text,
-		Caret:    t.cursorPos,
-		SelStart: t.selStart,
-		SelEnd:   t.selEnd,
-		Preedit:  t.preeditText,
-		CanUndo:  len(t.history.undo) > 0,
-		CanRedo:  len(t.history.redo) > 0,
-	}
-}
+func (t *Input) TextState() TextState { return t.ed.textState(t.Text) }
 
 // ----------------------------------------------------------------------
 // IMEClient implementation — the widget side of IME support.
@@ -1617,10 +1248,7 @@ func (t *Input) TextState() TextState {
 // SetPreedit stores in-flight composition text. Draw renders it with
 // underline at the caret. Call with ("", 0) to clear.
 func (t *Input) SetPreedit(text string, cursor int) {
-	t.preeditText = text
-	t.preeditCursor = cursor
-	t.ensureCursorVisible()
-	t.resetBlink()
+	t.ed.setPreedit(t, text, cursor)
 	t.Invalidate()
 }
 
@@ -1628,50 +1256,21 @@ func (t *Input) SetPreedit(text string, cursor int) {
 // the committed text at the caret, same path as normal char entry
 // (honors selection replacement, fires OnChange, advances cursor).
 func (t *Input) CommitIME(text string) {
-	t.preeditText = ""
-	t.preeditCursor = 0
-	if text == "" {
-		return
-	}
-	if !t.beforeInput("ime", text) {
-		return
-	}
-	prevCursor, prevSelStart, prevSelEnd := t.cursorPos, t.selStart, t.selEnd
-	before := t.snapshot()
-	if t.hasSelection() {
-		t.deleteSelection()
-	}
-	for _, r := range text {
-		t.insertRune(t.cursorPos, r)
-		t.cursorPos++
-	}
-	t.pushUndo("ime", before)
-	t.fireChange()
-	t.ensureCursorVisible()
-	t.resetBlink()
-	t.emitStateChange(prevCursor, prevSelStart, prevSelEnd)
+	prev := t.ed.caretState()
+	t.ed.commitIME(t, text)
+	t.ed.emitStateChange(t, prev)
 	t.Invalidate()
 }
 
 // CursorPos returns the caret position as a rune index into the text.
-func (t *Input) CursorPos() int { return t.cursorPos }
+func (t *Input) CursorPos() int { return t.ed.cursor }
 
 // SetCursorPos moves the caret to a rune index (clamped) and collapses
 // any selection. Fires the cursor-change callback.
 func (t *Input) SetCursorPos(pos int) {
-	n := len([]rune(t.Text))
-	if pos < 0 {
-		pos = 0
-	}
-	if pos > n {
-		pos = n
-	}
-	prevCursor, prevSelStart, prevSelEnd := t.cursorPos, t.selStart, t.selEnd
-	t.cursorPos = pos
-	t.clearSelection()
-	t.ensureCursorVisible()
-	t.resetBlink()
-	t.emitStateChange(prevCursor, prevSelStart, prevSelEnd)
+	prev := t.ed.caretState()
+	t.ed.setCursor(t, pos)
+	t.ed.emitStateChange(t, prev)
 	t.Invalidate()
 }
 
@@ -1682,28 +1281,9 @@ func (t *Input) TabFocused() { t.SelectRange(0, len([]rune(t.Text))) }
 // SelectRange selects [start, end) (rune indices, clamped) and parks the
 // caret at end. start==end collapses to a caret with no selection.
 func (t *Input) SelectRange(start, end int) {
-	n := len([]rune(t.Text))
-	clamp := func(v int) int {
-		if v < 0 {
-			return 0
-		}
-		if v > n {
-			return n
-		}
-		return v
-	}
-	start, end = clamp(start), clamp(end)
-	prevCursor, prevSelStart, prevSelEnd := t.cursorPos, t.selStart, t.selEnd
-	if start == end {
-		t.selStart = -1
-	} else {
-		t.selStart = start
-	}
-	t.selEnd = end
-	t.cursorPos = end
-	t.ensureCursorVisible()
-	t.resetBlink()
-	t.emitStateChange(prevCursor, prevSelStart, prevSelEnd)
+	prev := t.ed.caretState()
+	t.ed.selectRange(t, start, end)
+	t.ed.emitStateChange(t, prev)
 	t.Invalidate()
 }
 
@@ -1711,94 +1291,10 @@ func (t *Input) SelectRange(start, end int) {
 // and fires OnChange. Undoable as a single step. The programmatic edit
 // path used by autocomplete and point-mode reference insertion.
 func (t *Input) InsertText(text string) {
-	if text == "" {
-		return
-	}
-	if !t.beforeInput("insert", text) {
-		return
-	}
-	prevCursor, prevSelStart, prevSelEnd := t.cursorPos, t.selStart, t.selEnd
-	before := t.snapshot()
-	if t.hasSelection() {
-		t.deleteSelection()
-	}
-	for _, r := range text {
-		t.insertRune(t.cursorPos, r)
-		t.cursorPos++
-	}
-	t.pushUndo("insert", before)
-	t.fireChange()
-	t.ensureCursorVisible()
-	t.resetBlink()
-	t.emitStateChange(prevCursor, prevSelStart, prevSelEnd)
+	prev := t.ed.caretState()
+	t.ed.insert(t, "insert", text)
+	t.ed.emitStateChange(t, prev)
 	t.Invalidate()
-}
-
-func (t *Input) beforeInput(kind, text string) bool {
-	if t.BeforeInput == nil {
-		return true
-	}
-	return t.BeforeInput(BeforeInputEvent{
-		Kind:      kind,
-		Text:      text,
-		CursorPos: t.cursorPos,
-		SelStart:  t.selStart,
-		SelEnd:    t.selEnd,
-		Value:     t.Text,
-	})
-}
-
-func (t *Input) emitStateChange(prevCursor, prevSelStart, prevSelEnd int) {
-	if t.cursorPos != prevCursor && t.OnCursorChange != nil {
-		t.OnCursorChange(t.cursorPos)
-	}
-	if (t.selStart != prevSelStart || t.selEnd != prevSelEnd) && t.OnSelectionChange != nil {
-		t.OnSelectionChange(t.selStart, t.selEnd)
-	}
-}
-
-func (t *Input) registerClick(e MouseEvent) int {
-	now := e.When.UnixMilli()
-	if now == 0 {
-		now = time.Now().UnixMilli()
-	}
-	if now-t.lastClickMS <= 400 &&
-		absf(e.X-t.lastClickX) <= 4 &&
-		absf(e.Y-t.lastClickY) <= 4 {
-		t.clickCount++
-	} else {
-		t.clickCount = 1
-	}
-	if t.clickCount > 3 {
-		t.clickCount = 1
-	}
-	t.lastClickMS = now
-	t.lastClickX = e.X
-	t.lastClickY = e.Y
-	return t.clickCount
-}
-
-func (t *Input) wordBoundsAt(pos int) (int, int) {
-	runes := []rune(t.Text)
-	if len(runes) == 0 {
-		return 0, 0
-	}
-	if pos >= len(runes) {
-		pos = len(runes) - 1
-	}
-	if pos < 0 {
-		pos = 0
-	}
-	isWord := textWordRune(runes[pos])
-	start := pos
-	for start > 0 && textWordRune(runes[start-1]) == isWord {
-		start--
-	}
-	end := pos + 1
-	for end < len(runes) && textWordRune(runes[end]) == isWord {
-		end++
-	}
-	return start, end
 }
 
 func textWordRune(r rune) bool {
@@ -1820,26 +1316,49 @@ func absf(v float32) float32 {
 // where the user is typing.
 func (t *Input) CaretRect() Rect {
 	content := t.inputBounds()
-	cx := content.X - t.scrollX + t.widthUpToRune(t.cursorPos)
+	cx := content.X - t.scrollX + t.widthUpToRune(t.ed.cursor)
 	// If composing, the effective caret is after the preedit cursor.
-	if t.preeditText != "" {
-		runes := []rune(t.preeditText)
-		if t.preeditCursor > len(runes) {
-			t.preeditCursor = len(runes)
+	if t.ed.preedit != "" {
+		runes := []rune(t.ed.preedit)
+		if t.ed.preeditCursor > len(runes) {
+			t.ed.preeditCursor = len(runes)
 		}
-		cx += TextXForOffset(t.preeditText, t.font(), TextDirectionAuto, t.preeditCursor)
+		cx += TextXForOffset(t.ed.preedit, t.font(), TextDirectionAuto, t.ed.preeditCursor)
 	}
 	y, h := TextCaretBand(content, t.font())
 	return Rect{X: cx, Y: y, W: 1, H: h}
 }
 
-// fireCommit reports a finished value (see OnCommit) and rebases the
-// baseline, so Enter followed by a blur commits once, not twice.
-func (t *Input) fireCommit() {
-	if t.OnCommit == nil || t.Text == t.commitBaseline {
-		t.commitBaseline = t.Text
-		return
+// ----------------------------------------------------------------------
+// textEditorHost: the single-line answers to the shared editor's questions.
+
+func (t *Input) editorText() *string { return &t.Text }
+
+func (t *Input) editorHooks() editorHooks {
+	return editorHooks{
+		beforeInput: t.BeforeInput,
+		onChange:    t.OnChange,
+		onCommit:    t.OnCommit,
+		onCursor:    t.OnCursorChange,
+		onSelection: t.OnSelectionChange,
 	}
-	t.commitBaseline = t.Text
-	t.OnCommit(t.Text)
 }
+
+func (t *Input) editorMultiline() bool { return false }
+
+func (t *Input) editorHorizontal(dir int) int {
+	if t.Text == "" {
+		return 0
+	}
+	return t.visualNeighbor(dir)
+}
+
+func (t *Input) editorLineBounds() (int, int) { return 0, t.runeCount() }
+
+// editorVertical: a single-line field has no lines to move between, so
+// Up/Down stay unhandled and reach an ancestor (a list, a stepper).
+func (t *Input) editorVertical(int) (int, bool) { return 0, false }
+
+func (t *Input) editorTextChanged() {}
+
+func (t *Input) editorRevealCaret() { t.ensureCursorVisible() }

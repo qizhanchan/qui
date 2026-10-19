@@ -92,19 +92,25 @@ func (c *Container) SetSelf(widget Widget) {
 // dirty flag is cleared because it's no longer its own root (the flag
 // only matters on the topmost widget of a tree; mid-tree nodes never
 // consulted it).
-func (c *Container) AddChild(child Widget) {
+// AddChild appends child and reports whether it was accepted. A child
+// already owned by an incompatible parent (or one that would create a
+// cycle) is refused, which matters to callers that also keep a parallel
+// index of the children (InlineBox.AddBox).
+func (c *Container) AddChild(child Widget) bool {
 	if child == nil {
-		return
+		return false
 	}
 	c.assertUIThread("Container.AddChild")
+	c.window.assertNotPainting("AddChild")
 	if containsWidget(c.children, child) {
-		return
+		return false
 	}
 	if !c.attachChild(child) {
-		return
+		return false
 	}
 	c.children = append(c.children, child)
 	c.InvalidateLayout()
+	return true
 }
 
 // InsertChild inserts child at index, clamping index to the valid range.
@@ -613,6 +619,14 @@ func (c *Container) HitTest(p Point) Widget {
 	}
 	children := ChildrenInPaintOrder(c.children)
 	for i := len(children) - 1; i >= 0; i-- {
+		// Hidden/collapsed children are not painted and must not intercept
+		// pointer input. Leaf widgets override HitTest with a plain bounds
+		// check, so filtering here (rather than relying on each override)
+		// is what keeps a display:none Button from eating clicks at its
+		// stale rect.
+		if isWidgetHidden(children[i]) {
+			continue
+		}
 		// A pointer-transparent target is discarded so the search continues
 		// with the next sibling below in z-order and then with us — CSS
 		// `pointer-events: none` letting the click through. Each nesting

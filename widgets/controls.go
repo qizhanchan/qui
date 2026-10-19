@@ -69,6 +69,15 @@ type CheckBox struct {
 	hovering     bool
 }
 
+// SetLabel replaces the literal label and re-measures.
+func (c *CheckBox) SetLabel(label string) {
+	if c.Label == label {
+		return
+	}
+	c.Label = label
+	c.InvalidateLayout()
+}
+
 func NewCheckBox(label string, onChange func(bool)) *CheckBox {
 	c := &CheckBox{
 		BaseWidget:       NewBaseWidget(),
@@ -81,6 +90,7 @@ func NewCheckBox(label string, onChange func(bool)) *CheckBox {
 		BoxSize:          htmlCheckSize,
 		BorderWidth:      1,
 	}
+	c.SetSelf(c)
 	// Fix at density-scaled 18-in-40 layout so flex overflow can't
 	// collapse the box into a rectangle.
 	c.UpdateFlexItem(func(item *FlexItem) { item.NoShrink = true })
@@ -88,6 +98,18 @@ func NewCheckBox(label string, onChange func(bool)) *CheckBox {
 }
 
 func (c *CheckBox) Focusable() bool { return c.Enabled() }
+
+// PaintBounds includes the focus ring / state-layer halo.
+func (c *CheckBox) PaintBounds() Rect { return expandRect(c.Bounds(), 8) }
+
+// CancelInteraction drops transient pointer/keyboard state. Called when a
+// control is disabled or detached mid-gesture.
+func (c *CheckBox) CancelInteraction() {
+	c.spaceArmed = false
+	c.hovering = false
+	c.focusVisible = false
+}
+
 func (c *CheckBox) SetFocused(f bool) {
 	if c.focused == f {
 		return
@@ -166,8 +188,9 @@ func (c *CheckBox) Draw(canvas Canvas) {
 	}
 
 	// State layer overlay (opt-in via StateLayerColor + StateLayerSize).
-	// Skipped for raw-HTML checkboxes.
-	if themed(c.StateLayerColor).A > 0 && c.StateLayerSize > 0 {
+	// Skipped for raw-HTML checkboxes and while disabled.
+	hasLayer := themed(c.StateLayerColor).A > 0 && c.StateLayerSize > 0
+	if c.Enabled() && hasLayer {
 		stateRect := Rect{X: b.X, Y: b.Y + (b.H-slot)/2, W: slot, H: slot}
 		switch {
 		case c.hovering:
@@ -175,6 +198,13 @@ func (c *CheckBox) Draw(canvas Canvas) {
 		case c.focusVisible:
 			DrawStateLayer(canvas, stateRect, slot/2, themed(c.StateLayerColor), theme.FocusOpacity)
 		}
+	} else if c.focusVisible {
+		r := c.BoxRadius
+		if r <= 0 {
+			r = htmlControlRadius
+		}
+		ring := Rect{X: box.X - 3, Y: box.Y - 3, W: box.W + 6, H: box.H + 6}
+		canvas.StrokeRoundedRect(ring, r+3, theme.Accent, 2)
 	}
 
 	borderW := c.BorderWidth
@@ -185,8 +215,19 @@ func (c *CheckBox) Draw(canvas Canvas) {
 	if radius <= 0 {
 		radius = htmlControlRadius
 	}
+	disabledAlpha := float32(1)
+	if !c.Enabled() {
+		disabledAlpha = 0.4
+	}
+	dim := func(col Color) Color {
+		col = themed(col)
+		if disabledAlpha == 1 {
+			return col
+		}
+		return mixAlpha(col, disabledAlpha)
+	}
 	if c.Checked {
-		canvas.FillRoundedRect(box, radius, themed(c.CheckedFillColor))
+		canvas.FillRoundedRect(box, radius, dim(c.CheckedFillColor))
 		// Checkmark — three-point polyline within an 18-unit box, same
 		// anchors at any scale.
 		ssx := boxSize / 18
@@ -196,20 +237,20 @@ func (c *CheckBox) Draw(canvas Canvas) {
 			{X: box.X + 7.5*ssx, Y: box.Y + 13.5*ssy},
 			{X: box.X + 14.5*ssx, Y: box.Y + 6.0*ssy},
 		}
-		canvas.DrawPolyline(pts, themed(c.CheckMarkColor), 2)
+		canvas.DrawPolyline(pts, dim(c.CheckMarkColor), 2)
 		if c.CheckedOutlineColor.A > 0 {
-			canvas.StrokeRoundedRect(box, radius, themed(c.CheckedOutlineColor), borderW)
+			canvas.StrokeRoundedRect(box, radius, dim(c.CheckedOutlineColor), borderW)
 		}
 	} else {
 		if c.FillColor.A > 0 {
-			canvas.FillRoundedRect(box, radius, themed(c.FillColor))
+			canvas.FillRoundedRect(box, radius, dim(c.FillColor))
 		}
-		canvas.StrokeRoundedRect(box, radius, themed(c.OutlineColor), borderW)
+		canvas.StrokeRoundedRect(box, radius, dim(c.OutlineColor), borderW)
 	}
 
 	if label := c.DisplayLabel(); label != "" {
 		labelRect := Rect{X: b.X + slot + 4, Y: b.Y, W: b.W - slot - 4, H: b.H}
-		canvas.DrawText(label, labelRect, themed(c.LabelColor), c.labelFont())
+		canvas.DrawText(label, labelRect, dim(c.LabelColor), c.labelFont())
 	}
 }
 
@@ -245,13 +286,6 @@ func (c *CheckBox) Handle(event Event) bool {
 		}
 	}
 	return false
-}
-
-func (c *CheckBox) HitTest(p Point) Widget {
-	if c.Bounds().Contains(p) {
-		return c
-	}
-	return nil
 }
 
 func (c *CheckBox) toggle() {
@@ -293,7 +327,7 @@ type Progress struct {
 // Light-gray track, blue fill. Set TrackColor / FillColor (e.g. from
 // CurrentTheme) for a themed look.
 func NewProgress(min, max float32) *Progress {
-	return &Progress{
+	p := &Progress{
 		BaseWidget: NewBaseWidget(),
 		Min:        min,
 		Max:        max,
@@ -301,6 +335,8 @@ func NewProgress(min, max float32) *Progress {
 		FillColor:  baselineBlue,
 		Radius:     4,
 	}
+	p.SetSelf(p)
+	return p
 }
 
 func (p *Progress) Measure(available Size) Size {
@@ -328,13 +364,6 @@ func (p *Progress) Draw(canvas Canvas) {
 		r = fillW / 2
 	}
 	canvas.FillRoundedRect(fill, r, themed(p.FillColor))
-}
-
-func (p *Progress) HitTest(pt Point) Widget {
-	if p.Bounds().Contains(pt) {
-		return p
-	}
-	return nil
 }
 
 // fraction returns the clamped [0,1] progress.

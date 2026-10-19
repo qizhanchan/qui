@@ -67,8 +67,9 @@ type Tab struct {
 	// Icon is drawn before the caption, tinted like it.
 	Icon VectorSource
 	// Badge is a short count or marker shown after the caption ("3",
-	// "•"); empty for none.
-	Badge string
+	// "•"); empty for none. BadgeKey, when set, resolves it.
+	Badge    string
+	BadgeKey string
 	// Closable shows a × that fires TabView.OnCloseTab.
 	Closable bool
 	// Disabled tabs can't be selected and are dimmed.
@@ -84,6 +85,14 @@ func (t Tab) DisplayTitle() string {
 		return t.Title
 	}
 	return TranslateOr("", t.TitleKey, t.Title, nil)
+}
+
+// DisplayBadge is the localized badge text.
+func (t Tab) DisplayBadge() string {
+	if t.BadgeKey == "" {
+		return t.Badge
+	}
+	return TOr(t.BadgeKey, t.Badge)
 }
 
 // tabStripH is the default tab strip height: 48 px.
@@ -102,15 +111,16 @@ const (
 // dispatch walks into them correctly.
 func NewTabView(tabs ...Tab) *TabView {
 	t := &TabView{
-		BaseWidget:     NewBaseWidget(),
-		Tabs:           tabs,
-		SelectedIdx:    0,
-		hoverIdx:       -1,
-		hoverClose:     -1,
-		StripColor:     htmlControlBg,
-		IndicatorColor: baselineBlue,
-		SelectedColor:  baselineBlue,
-		InactiveColor:  baselineTextGray,
+		BaseWidget:      NewBaseWidget(),
+		Tabs:            tabs,
+		SelectedIdx:     0,
+		hoverIdx:        -1,
+		hoverClose:      -1,
+		StripColor:      htmlControlBg,
+		IndicatorColor:  baselineBlue,
+		SelectedColor:   baselineBlue,
+		InactiveColor:   baselineTextGray,
+		StateLayerColor: htmlAccent,
 	}
 	t.SetSelf(t)
 	t.Style().Font = Font{Size: 14}
@@ -123,6 +133,24 @@ func NewTabView(tabs ...Tab) *TabView {
 }
 
 func (t *TabView) Focusable() bool { return t.Enabled() }
+
+// SetFitTabs switches equal-width vs content-width tabs.
+func (t *TabView) SetFitTabs(v bool) {
+	if t.FitTabs == v {
+		return
+	}
+	t.FitTabs = v
+	t.InvalidateLayout()
+}
+
+// SetStripHeight changes the tab strip height (0 restores the default).
+func (t *TabView) SetStripHeight(h float32) {
+	if h < 0 || t.StripHeight == h {
+		return
+	}
+	t.StripHeight = h
+	t.InvalidateLayout()
+}
 func (t *TabView) SetFocused(f bool) {
 	if t.focused == f {
 		return
@@ -189,9 +217,20 @@ func (t *TabView) RemoveTab(idx int) {
 	case idx < t.SelectedIdx:
 		t.SelectedIdx--
 	case wasSelected:
-		next := minInt(idx, len(t.Tabs)-1)
+		// Prefer the tab that slid into this slot, but never auto-select a
+		// disabled one (Select refuses it; RemoveTab used to bypass that).
+		next := idx
+		for next < len(t.Tabs) && t.Tabs[next].Disabled {
+			next++
+		}
+		if next >= len(t.Tabs) {
+			for next = idx - 1; next >= 0 && t.Tabs[next].Disabled; next-- {
+			}
+		}
 		t.SelectedIdx = -1
-		t.setSelected(next)
+		if next >= 0 && next < len(t.Tabs) {
+			t.setSelected(next)
+		}
 	}
 	t.hoverIdx, t.hoverClose = -1, -1
 	t.clampStripScroll()
@@ -217,7 +256,12 @@ func (t *TabView) Layout(rect Rect) {
 	t.clampStripScroll()
 }
 
-func (t *TabView) labelFont() Font { return ThemeFont(TextLabel) }
+func (t *TabView) labelFont() Font {
+	if f := t.Style().Font; f.Size > 0 {
+		return f
+	}
+	return ThemeFont(TextLabel)
+}
 
 // naturalTabWidth is a tab's content width (FitTabs).
 func (t *TabView) naturalTabWidth(tab Tab) float32 {
@@ -226,8 +270,8 @@ func (t *TabView) naturalTabWidth(tab Tab) float32 {
 	if tab.Icon != nil {
 		w += tabIconSize + tabIconGap
 	}
-	if tab.Badge != "" {
-		bw, _ := TextMetrics(tab.Badge, ThemeFont(TextLabelSmall))
+	if tab.DisplayBadge() != "" {
+		bw, _ := TextMetrics(tab.DisplayBadge(), ThemeFont(TextLabelSmall))
 		w += tabBadgeGap + max(bw+10, 18)
 	}
 	if tab.Closable {
@@ -345,8 +389,9 @@ func (t *TabView) Draw(canvas Canvas) {
 		if !tabRect.Intersects(strip) {
 			continue
 		}
-		if i == t.hoverIdx && i != t.SelectedIdx && !tab.Disabled && t.StateLayerColor.A > 0 {
-			DrawStateLayer(canvas, tabRect, 0, t.StateLayerColor, theme.HoverOpacity)
+		if layer := themed(t.StateLayerColor); layer.A > 0 &&
+			i == t.hoverIdx && i != t.SelectedIdx && !tab.Disabled {
+			DrawStateLayer(canvas, tabRect, 0, layer, theme.HoverOpacity)
 		}
 		labelColor := inactiveColor
 		if i == t.SelectedIdx {
@@ -365,8 +410,8 @@ func (t *TabView) Draw(canvas Canvas) {
 			runW += tabIconSize + tabIconGap
 		}
 		var badgeW float32
-		if tab.Badge != "" {
-			bw, _ := TextMetrics(tab.Badge, ThemeFont(TextLabelSmall))
+		if tab.DisplayBadge() != "" {
+			bw, _ := TextMetrics(tab.DisplayBadge(), ThemeFont(TextLabelSmall))
 			badgeW = max(bw+10, 18)
 			runW += tabBadgeGap + badgeW
 		}
@@ -388,13 +433,13 @@ func (t *TabView) Draw(canvas Canvas) {
 		labelX := x
 		canvas.DrawText(title, Rect{X: x, Y: tabRect.Y, W: labelW, H: h}, labelColor, labelFont)
 		x += labelW
-		if tab.Badge != "" {
+		if badge := tab.DisplayBadge(); badge != "" {
 			x += tabBadgeGap
 			pill := Rect{X: x, Y: tabRect.Y + (h-18)/2, W: badgeW, H: 18}
 			canvas.FillRoundedRect(pill, 9, badgeColor)
 			sf := ThemeFont(TextLabelSmall)
-			bw, _ := TextMetrics(tab.Badge, sf)
-			canvas.DrawText(tab.Badge, Rect{X: pill.X + (pill.W-bw)/2, Y: pill.Y, W: bw, H: pill.H}, theme.AccentText, sf)
+			bw, _ := TextMetrics(badge, sf)
+			canvas.DrawText(badge, Rect{X: pill.X + (pill.W-bw)/2, Y: pill.Y, W: bw, H: pill.H}, theme.AccentText, sf)
 		}
 		if tab.Closable {
 			cr := closeRect(tabRect)
@@ -415,6 +460,12 @@ func (t *TabView) Draw(canvas Canvas) {
 				W: labelW,
 				H: indicatorHeight,
 			}, indicatorHeight/2, indicatorColor)
+			if t.focused {
+				// Keyboard focus must be visible; the underline alone is
+				// also present for a mouse-selected tab.
+				ring := Rect{X: tabRect.X + 2, Y: tabRect.Y + 2, W: tabRect.W - 4, H: tabRect.H - 4}
+				canvas.StrokeRoundedRect(ring, 4, theme.Accent, 2)
+			}
 		}
 	}
 	canvas.RestoreTo(clip)
@@ -424,7 +475,7 @@ func (t *TabView) Draw(canvas Canvas) {
 		contentArea := Rect{X: b.X, Y: b.Y + h, W: b.W, H: b.H - h}
 		canvas.FillRect(contentArea, stripColor)
 	}
-	if c := t.SelectedContent(); c != nil {
+	if c := t.SelectedContent(); c != nil && !boxChildHidden(c) {
 		c.Draw(canvas)
 	}
 }
@@ -455,12 +506,16 @@ func (t *TabView) Handle(event Event) bool {
 				t.Invalidate()
 			}
 		case EventScroll:
+			if e.Phase() == PhaseCapture {
+				return false
+			}
 			if t.FitTabs && t.pointOnStrip(p) && t.stripContentWidth() > t.Bounds().W {
-				d := e.DeltaX
+				dx, dy := e.WheelPixels()
+				d := dx
 				if d == 0 {
-					d = e.DeltaY
+					d = dy
 				}
-				t.stripScroll -= d * 40
+				t.stripScroll -= d
 				t.clampStripScroll()
 				t.Invalidate()
 				return true
@@ -620,7 +675,7 @@ func (t *TabView) AccessibleChildren() []AXChild {
 		if tab.Disabled {
 			st |= AXStateDisabled
 		}
-		out = append(out, AXChild{ID: tab.ID, Role: RoleTab, Name: tab.DisplayTitle(), Value: tab.Badge, State: st, Bounds: r})
+		out = append(out, AXChild{ID: tab.ID, Role: RoleTab, Name: tab.DisplayTitle(), Value: tab.DisplayBadge(), State: st, Bounds: r})
 		if tab.Closable {
 			out = append(out, AXChild{Role: RoleButton, Name: TOr("qui.tab.close", "Close") + " " + tab.DisplayTitle(), Bounds: closeRect(rects[i])})
 		}

@@ -1,6 +1,9 @@
 package widgets
 
 import (
+	"encoding/binary"
+	"hash/fnv"
+	"math"
 	"strings"
 
 	. "github.com/qizhanchan/qui"
@@ -122,9 +125,16 @@ func (b *InlineBox) AddBox(w Widget, valign InlineVAlign) {
 	if w == nil {
 		return
 	}
+	if !b.AddChild(w) { // appends to the Container child list in box order
+		// Keep parts and children aligned: a refused child (cycle / foreign
+		// owner) must not leave a phantom item that later indexes the wrong
+		// child during Layout.
+		b.InvalidateLayout()
+		return
+	}
 	b.parts = append(b.parts, inlinePart{isBox: true, child: w, valign: valign})
-	b.AddChild(w) // appends to the Container child list in box order
 	b.haveLay = false
+	b.InvalidateLayout()
 }
 
 // AddBreak appends a forced line break (CSS <br>).
@@ -209,7 +219,13 @@ type inlineLayoutKey struct {
 	maxW float32
 	// fontGen invalidates the cache when the font REGISTRY changes (see
 	// qui.FontRegistryGeneration): same font spec, different faces behind it.
-	fontGen            uint64
+	fontGen   uint64
+	localeGen uint64
+	// childSig fingerprints the measured atomic children. Their sizes are
+	// inputs to the inline layout too: an inline image finishing its async
+	// load, or a badge changing text, invalidates the child's measure but
+	// leaves this box's text/font key untouched.
+	childSig           uint64
 	wrap               bool
 	align              TextAlign
 	lineHeightScale    float32
@@ -228,6 +244,7 @@ func (b *InlineBox) layoutKeyFor(maxW float32) inlineLayoutKey {
 	f := b.Style().Font
 	return inlineLayoutKey{
 		maxW: maxW, fontGen: FontRegistryGeneration(),
+		localeGen: LocaleGeneration(), childSig: b.childLayoutSig(maxW),
 		wrap: b.Wrap, align: b.Align,
 		lineHeightScale:    b.LineHeightScale,
 		preserveWhitespace: b.PreserveWhitespace,
@@ -236,6 +253,27 @@ func (b *InlineBox) layoutKeyFor(maxW float32) inlineLayoutKey {
 		bold: f.Bold, italic: f.Italic, smallCaps: f.SmallCaps,
 		letterSpacing: f.LetterSpacing, wordSpacing: f.WordSpacing,
 	}
+}
+
+// childLayoutSig hashes the measured size of every atomic child. Measuring
+// through MeasureChild keeps this cheap when the child subtree is clean and
+// re-measures it when it is not, so the key changes exactly when the inline
+// layout's inputs do.
+func (b *InlineBox) childLayoutSig(maxW float32) uint64 {
+	h := fnv.New64a()
+	var buf [8]byte
+	for _, p := range b.parts {
+		if !p.isBox || p.child == nil {
+			continue
+		}
+		m := boxMargin(p.child)
+		sz := inlineChildSize(p.child, Size{W: maxW - m.Horizontal()})
+		for _, v := range [2]float32{sz.W, sz.H} {
+			binary.LittleEndian.PutUint32(buf[:4], math.Float32bits(v))
+			_, _ = h.Write(buf[:4])
+		}
+	}
+	return h.Sum64()
 }
 
 // buildLayout shapes the paragraph, reusing the previous result when nothing
@@ -310,6 +348,9 @@ func (b *InlineBox) Draw(canvas Canvas) {
 	b.drawSelection(canvas, origin)
 	DrawInlineText(canvas, b.layout, origin)
 	for _, child := range b.ChildList() {
+		if boxChildHidden(child) {
+			continue
+		}
 		child.Draw(canvas)
 	}
 }
@@ -456,6 +497,29 @@ func (b *InlineBox) walkSelFrags(fn func(sf selFrag)) int {
 	return off
 }
 
+// lineStartOffset returns the selection offset at the start of visual line
+// li, including the one-rune boundary per preceding line. Unlike a frag
+// walk it also works for an empty line.
+func (b *InlineBox) lineStartOffset(li int) int {
+	if li <= 0 || !b.haveLay {
+		return 0
+	}
+	off := 0
+	for i := 0; i < len(b.layout.Lines) && i < li; i++ {
+		for fi := range b.layout.Lines[i].Frags {
+			f := &b.layout.Lines[i].Frags[fi]
+			if f.Box {
+				plain, _ := b.atomContent(f.BoxIndex)
+				off += len([]rune(plain))
+				continue
+			}
+			off += len([]rune(f.Text))
+		}
+		off++ // line boundary
+	}
+	return off
+}
+
 // SelectableLength returns the rune count of the laid-out selectable
 // content (text runs + atomic box content).
 func (b *InlineBox) SelectableLength() int {
@@ -483,7 +547,9 @@ func (b *InlineBox) SelectionOffsetAt(p Point) int {
 	}
 	x := p.X - origin.X
 	result := -1
-	lineStart, lineEnd := 0, 0
+	// Start from the line's real offset, not 0: clicking a blank line used
+	// to jump the selection anchor to the top of the document.
+	lineStart, lineEnd := b.lineStartOffset(li), b.lineStartOffset(li)
 	first := true
 	b.walkSelFrags(func(sf selFrag) {
 		if sf.li != li {

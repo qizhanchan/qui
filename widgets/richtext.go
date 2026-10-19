@@ -1,6 +1,10 @@
 package widgets
 
-import . "github.com/qizhanchan/qui"
+import (
+	"strings"
+
+	. "github.com/qizhanchan/qui"
+)
 
 // RichText is a selectable, link-aware rich-text widget: a span-first
 // wrapper over Label. It renders a sequence of styled TextSpans with
@@ -32,14 +36,18 @@ func NewRichText(spans ...TextSpan) *RichText {
 	return rt
 }
 
-// HitTest returns the RichText itself (not the embedded Label) so event
-// dispatch and the parent chain see the outer pointer registered via
-// SetSelf.
-func (rt *RichText) HitTest(p Point) Widget {
-	if rt.Bounds().Contains(p) {
-		return rt
+// Role keeps rich text semantic in the AX tree; the fallback role would
+// be the lowercased concrete type name ("richtext"), not "label".
+func (rt *RichText) Role() string { return RoleLabel }
+
+// AccessibleName flattens the spans. Label.Text is empty by design in
+// rich-text mode, so the promoted Label method would report no name.
+func (rt *RichText) AccessibleName() string {
+	var b strings.Builder
+	for _, span := range rt.Spans() {
+		b.WriteString(span.Text)
 	}
-	return nil
+	return b.String()
 }
 
 // Wrap toggles word wrapping and returns the widget for chaining.

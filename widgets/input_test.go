@@ -15,7 +15,7 @@ func focusedInput(text string) *Input {
 	tf := NewInput("placeholder")
 	tf.Layout(Rect{X: 0, Y: 0, W: 200, H: 30})
 	tf.Text = text
-	tf.cursorPos = len([]rune(text))
+	tf.ed.cursor = len([]rune(text))
 	tf.SetFocused(true)
 	return tf
 }
@@ -29,14 +29,14 @@ func TestInputCharInputInserts(t *testing.T) {
 	if tf.Text != "Hi" {
 		t.Errorf("Text = %q, want Hi", tf.Text)
 	}
-	if tf.cursorPos != 2 {
-		t.Errorf("cursorPos = %d, want 2", tf.cursorPos)
+	if tf.ed.cursor != 2 {
+		t.Errorf("cursorPos = %d, want 2", tf.ed.cursor)
 	}
 }
 
 func TestInputInsertMidText(t *testing.T) {
 	tf := focusedInput("abcd")
-	tf.cursorPos = 2
+	tf.ed.cursor = 2
 	tf.Handle(newCharEvent('X'))
 	if tf.Text != "abXcd" {
 		t.Errorf("Text = %q, want abXcd", tf.Text)
@@ -61,14 +61,14 @@ func TestInputBackspaceDeletesChar(t *testing.T) {
 	if tf.Text != "ab" {
 		t.Errorf("after backspace: %q, want ab", tf.Text)
 	}
-	if tf.cursorPos != 2 {
-		t.Errorf("cursorPos = %d, want 2", tf.cursorPos)
+	if tf.ed.cursor != 2 {
+		t.Errorf("cursorPos = %d, want 2", tf.ed.cursor)
 	}
 }
 
 func TestInputBackspaceAtStartNoop(t *testing.T) {
 	tf := focusedInput("abc")
-	tf.cursorPos = 0
+	tf.ed.cursor = 0
 	tf.Handle(newKeyDown(KeyBackspace))
 	if tf.Text != "abc" {
 		t.Errorf("backspace at start should be no-op; got %q", tf.Text)
@@ -79,58 +79,58 @@ func TestInputBackspaceAtStartNoop(t *testing.T) {
 
 func TestInputArrowNavigation(t *testing.T) {
 	tf := focusedInput("abc")
-	tf.cursorPos = 3
+	tf.ed.cursor = 3
 
 	tf.Handle(newKeyDown(KeyLeft))
-	if tf.cursorPos != 2 {
-		t.Errorf("KeyLeft: cursorPos = %d, want 2", tf.cursorPos)
+	if tf.ed.cursor != 2 {
+		t.Errorf("KeyLeft: cursorPos = %d, want 2", tf.ed.cursor)
 	}
 	tf.Handle(newKeyDown(KeyRight))
-	if tf.cursorPos != 3 {
-		t.Errorf("KeyRight: cursorPos = %d, want 3", tf.cursorPos)
+	if tf.ed.cursor != 3 {
+		t.Errorf("KeyRight: cursorPos = %d, want 3", tf.ed.cursor)
 	}
 }
 
 func TestInputArrowBoundaryClamps(t *testing.T) {
 	tf := focusedInput("x")
-	tf.cursorPos = 0
+	tf.ed.cursor = 0
 	tf.Handle(newKeyDown(KeyLeft))
-	if tf.cursorPos != 0 {
+	if tf.ed.cursor != 0 {
 		t.Error("KeyLeft at start should not move below 0")
 	}
-	tf.cursorPos = 1
+	tf.ed.cursor = 1
 	tf.Handle(newKeyDown(KeyRight))
-	if tf.cursorPos != 1 {
+	if tf.ed.cursor != 1 {
 		t.Error("KeyRight at end should not move beyond len")
 	}
 }
 
 func TestInputHomeEndNavigation(t *testing.T) {
 	tf := focusedInput("hello")
-	tf.cursorPos = 3
+	tf.ed.cursor = 3
 
 	tf.Handle(newKeyDown(KeyHome))
-	if tf.cursorPos != 0 {
-		t.Fatalf("KeyHome: cursorPos = %d, want 0", tf.cursorPos)
+	if tf.ed.cursor != 0 {
+		t.Fatalf("KeyHome: cursorPos = %d, want 0", tf.ed.cursor)
 	}
 	tf.Handle(newKeyDown(KeyEnd))
-	if tf.cursorPos != 5 {
-		t.Fatalf("KeyEnd: cursorPos = %d, want 5", tf.cursorPos)
+	if tf.ed.cursor != 5 {
+		t.Fatalf("KeyEnd: cursorPos = %d, want 5", tf.ed.cursor)
 	}
 }
 
 func TestInputShiftHomeEndExtendsSelection(t *testing.T) {
 	tf := focusedInput("hello")
-	tf.cursorPos = 2
+	tf.ed.cursor = 2
 
 	tf.Handle(NewKeyEvent(EventKeyDown, KeyEnd, ModShift))
-	if tf.selStart != 2 || tf.selEnd != 5 || tf.cursorPos != 5 {
-		t.Fatalf("Shift+End: selStart=%d selEnd=%d cursor=%d, want 2/5/5", tf.selStart, tf.selEnd, tf.cursorPos)
+	if tf.ed.selStart != 2 || tf.ed.selEnd != 5 || tf.ed.cursor != 5 {
+		t.Fatalf("Shift+End: selStart=%d selEnd=%d cursor=%d, want 2/5/5", tf.ed.selStart, tf.ed.selEnd, tf.ed.cursor)
 	}
 
 	tf.Handle(NewKeyEvent(EventKeyDown, KeyHome, ModShift))
-	if tf.selStart != 2 || tf.selEnd != 0 || tf.cursorPos != 0 {
-		t.Fatalf("Shift+Home: selStart=%d selEnd=%d cursor=%d, want 2/0/0", tf.selStart, tf.selEnd, tf.cursorPos)
+	if tf.ed.selStart != 2 || tf.ed.selEnd != 0 || tf.ed.cursor != 0 {
+		t.Fatalf("Shift+Home: selStart=%d selEnd=%d cursor=%d, want 2/0/0", tf.ed.selStart, tf.ed.selEnd, tf.ed.cursor)
 	}
 }
 
@@ -138,12 +138,12 @@ func TestInputShiftHomeEndExtendsSelection(t *testing.T) {
 
 func TestInputShiftArrowExtendsSelection(t *testing.T) {
 	tf := focusedInput("hello")
-	tf.cursorPos = 2
+	tf.ed.cursor = 2
 	tf.Handle(NewKeyEvent(EventKeyDown, KeyRight, ModShift))
-	if !tf.hasSelection() {
+	if !tf.ed.hasSelection() {
 		t.Fatal("Shift+Right should start selection")
 	}
-	a, b := tf.orderedSelection()
+	a, b := tf.ed.ordered()
 	if a != 2 || b != 3 {
 		t.Errorf("selection = [%d, %d), want [2, 3)", a, b)
 	}
@@ -155,7 +155,7 @@ func TestInputDoubleClickSelectsWord(t *testing.T) {
 	tf.Handle(newMouseEventForHandle(EventMouseUp, 24, 10))
 	tf.Handle(newMouseEventForHandle(EventMouseDown, 24, 10))
 
-	a, b := tf.orderedSelection()
+	a, b := tf.ed.ordered()
 	if a != 0 || b != 5 {
 		t.Fatalf("double click selection = [%d,%d), want [0,5)", a, b)
 	}
@@ -169,7 +169,7 @@ func TestInputTripleClickSelectsLine(t *testing.T) {
 	tf.Handle(newMouseEventForHandle(EventMouseUp, 24, 10))
 	tf.Handle(newMouseEventForHandle(EventMouseDown, 24, 10))
 
-	a, b := tf.orderedSelection()
+	a, b := tf.ed.ordered()
 	if a != 0 || b != len([]rune(tf.Text)) {
 		t.Fatalf("triple click selection = [%d,%d), want full line", a, b)
 	}
@@ -205,23 +205,23 @@ func TestInputCursorAndSelectionCallbacks(t *testing.T) {
 
 func TestInputBackspaceRemovesSelection(t *testing.T) {
 	tf := focusedInput("hello")
-	tf.cursorPos = 5
-	tf.selStart = 1
-	tf.selEnd = 4
+	tf.ed.cursor = 5
+	tf.ed.selStart = 1
+	tf.ed.selEnd = 4
 	tf.Handle(newKeyDown(KeyBackspace))
 	if tf.Text != "ho" {
 		t.Errorf("deleting selection: got %q, want ho", tf.Text)
 	}
-	if tf.cursorPos != 1 {
-		t.Errorf("cursor after selection delete: %d, want 1", tf.cursorPos)
+	if tf.ed.cursor != 1 {
+		t.Errorf("cursor after selection delete: %d, want 1", tf.ed.cursor)
 	}
 }
 
 func TestInputCharReplacesSelection(t *testing.T) {
 	tf := focusedInput("abcde")
-	tf.selStart = 1
-	tf.selEnd = 4
-	tf.cursorPos = 4
+	tf.ed.selStart = 1
+	tf.ed.selEnd = 4
+	tf.ed.cursor = 4
 	tf.Handle(newCharEvent('Z'))
 	if tf.Text != "aZe" {
 		t.Errorf("char with selection: got %q, want aZe", tf.Text)
@@ -242,10 +242,10 @@ func TestInputEnterFiresOnSubmit(t *testing.T) {
 
 func TestInputEscapeClearsSelection(t *testing.T) {
 	tf := focusedInput("abcde")
-	tf.selStart = 0
-	tf.selEnd = 3
+	tf.ed.selStart = 0
+	tf.ed.selEnd = 3
 	tf.Handle(newKeyDown(KeyEscape))
-	if tf.hasSelection() {
+	if tf.ed.hasSelection() {
 		t.Error("Esc should clear selection")
 	}
 }
@@ -254,13 +254,13 @@ func TestInputEscapeClearsSelection(t *testing.T) {
 
 func TestInputSetTextResetsCursor(t *testing.T) {
 	tf := focusedInput("old")
-	tf.cursorPos = 2
+	tf.ed.cursor = 2
 	tf.SetText("replacement")
 	if tf.Text != "replacement" {
 		t.Errorf("Text = %q", tf.Text)
 	}
-	if tf.cursorPos != len([]rune("replacement")) {
-		t.Errorf("cursor after SetText: %d, want %d", tf.cursorPos, len([]rune("replacement")))
+	if tf.ed.cursor != len([]rune("replacement")) {
+		t.Errorf("cursor after SetText: %d, want %d", tf.ed.cursor, len([]rune("replacement")))
 	}
 }
 

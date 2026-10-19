@@ -81,7 +81,8 @@ func TestDatalistPopupOpensWhileTyping(t *testing.T) {
 	if el.suggestOpen() {
 		t.Fatal("popup should start closed")
 	}
-	in.SetText("por") // fires OnChange → refreshSuggestions
+	in.SetText("por")
+	in.NotifyTextChanged() // what typing does; SetText is silent
 	if !el.suggestOpen() {
 		t.Fatal("popup did not open while typing a matching prefix")
 	}
@@ -89,6 +90,7 @@ func TestDatalistPopupOpensWhileTyping(t *testing.T) {
 		t.Errorf("matches = %v, want [Portland]", el.suggestMatches)
 	}
 	in.SetText("zzz")
+	in.NotifyTextChanged()
 	if el.suggestOpen() {
 		t.Error("popup should close when nothing matches")
 	}
@@ -150,7 +152,8 @@ func TestDatalistKeyboardNavigation(t *testing.T) {
 func TestDatalistEnterWithoutHighlightFallsThrough(t *testing.T) {
 	el, in, _ := datalistField(t)
 	in.SetFocused(true)
-	in.SetText("p") // opens, nothing highlighted
+	in.SetText("p")
+	in.NotifyTextChanged() // opens, nothing highlighted
 	if !el.suggestOpen() {
 		t.Fatal("popup should be open")
 	}
@@ -170,6 +173,7 @@ func TestDatalistApplyFiresOnInputOnce(t *testing.T) {
 	el.SetOnInput(func(s string) { seen = append(seen, s) })
 	in.SetFocused(true)
 	in.SetText("berl")
+	in.NotifyTextChanged()
 	seen = nil // ignore the typing itself
 	el.handleSuggestKey(qui.NewKeyEvent(qui.EventKeyDown, qui.KeyDown, 0))
 	el.handleSuggestKey(qui.NewKeyEvent(qui.EventKeyDown, qui.KeyEnter, 0))
@@ -217,6 +221,7 @@ func TestNoDatalistNoSuggestions(t *testing.T) {
 	el := res.ByID["plain"].(*El)
 	in := backingInput(t, el)
 	in.SetText("anything")
+	in.NotifyTextChanged()
 	if len(el.suggestions) != 0 || el.suggestOpen() {
 		t.Error("a field without `list` must not autocomplete")
 	}

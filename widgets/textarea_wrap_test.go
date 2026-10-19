@@ -18,7 +18,8 @@ func TestTextAreaDefaultAutoWrapOff(t *testing.T) {
 func TestTextAreaVisualLinesNoWrapByDefault(t *testing.T) {
 	ta := NewTextArea("")
 	runes := []rune("abcdefghij")
-	lines := ta.visualLines(runes, 10) // very narrow width
+	ta.Text = string(runes)
+	lines := ta.visualLines(10) // very narrow width
 	if len(lines) != 1 {
 		t.Fatalf("no-wrap lines = %d, want 1", len(lines))
 	}
@@ -31,7 +32,8 @@ func TestTextAreaVisualLinesWrapWhenEnabled(t *testing.T) {
 	ta := NewTextArea("")
 	ta.AutoWrap = true
 	runes := []rune("abcdefghij")
-	lines := ta.visualLines(runes, 10) // narrow width should force wrap
+	ta.Text = string(runes)
+	lines := ta.visualLines(10) // narrow width should force wrap
 	if len(lines) <= 1 {
 		t.Fatalf("auto-wrap lines = %d, want > 1", len(lines))
 	}
@@ -42,7 +44,7 @@ func TestTextAreaNoWrapScrollsHorizontallyToCursor(t *testing.T) {
 	ta.Layout(Rect{X: 0, Y: 0, W: 120, H: 80})
 	ta.Style().Padding = Insets{Top: 8, Right: 8, Bottom: 8, Left: 8}
 	ta.Text = "111111111111111111111111111111"
-	ta.cursorPos = len([]rune(ta.Text))
+	ta.ed.cursor = len([]rune(ta.Text))
 
 	ta.scrollToCursor()
 
@@ -56,7 +58,7 @@ func TestTextAreaNoWrapKeepsCaretRightMargin(t *testing.T) {
 	ta.Layout(Rect{X: 0, Y: 0, W: 120, H: 80})
 	ta.Style().Padding = Insets{Top: 8, Right: 8, Bottom: 8, Left: 8}
 	ta.Text = "111111111111111111111111111111"
-	ta.cursorPos = len([]rune(ta.Text))
+	ta.ed.cursor = len([]rune(ta.Text))
 
 	content := ta.Bounds().Inset(ta.Style().Padding)
 	cx, _ := ta.getCursorPosition(content)
@@ -118,7 +120,7 @@ func TestTextAreaAutoSizeNoOverflowDoesNotScrollHorizontally(t *testing.T) {
 	ta.MinWidth = 0
 	ta.Style().Padding = Insets{Top: 0, Right: 4, Bottom: 0, Left: 4}
 	ta.Text = "123123123123"
-	ta.cursorPos = len([]rune(ta.Text))
+	ta.ed.cursor = len([]rune(ta.Text))
 
 	w := ta.naturalContentWidth() + ta.Style().Padding.Horizontal()
 	ta.Layout(Rect{X: 0, Y: 0, W: w, H: ta.lineHeight()})
@@ -131,7 +133,7 @@ func TestTextAreaAutoSizeNoOverflowDoesNotScrollHorizontally(t *testing.T) {
 
 func TestTextAreaEnterAddsNewlineCanBeCustomized(t *testing.T) {
 	ta := focusedTextArea("ab")
-	ta.cursorPos = 1
+	ta.ed.cursor = 1
 	ta.EnterAddsNewline = func(e KeyEvent) bool {
 		return e.Mods&ModAlt != 0
 	}
@@ -194,31 +196,31 @@ func TestTextAreaVerticalScrollbarDrag(t *testing.T) {
 
 func TestTextAreaHomeEndMovesWithinCurrentLine(t *testing.T) {
 	ta := focusedTextArea("abc\ndef")
-	ta.cursorPos = 5 // on second line after 'd'
+	ta.ed.cursor = 5 // on second line after 'd'
 
 	ta.Handle(newKeyDown(KeyHome))
-	if ta.cursorPos != 4 {
-		t.Fatalf("KeyHome cursorPos=%d, want 4", ta.cursorPos)
+	if ta.ed.cursor != 4 {
+		t.Fatalf("KeyHome cursorPos=%d, want 4", ta.ed.cursor)
 	}
 
 	ta.Handle(newKeyDown(KeyEnd))
-	if ta.cursorPos != 7 {
-		t.Fatalf("KeyEnd cursorPos=%d, want 7", ta.cursorPos)
+	if ta.ed.cursor != 7 {
+		t.Fatalf("KeyEnd cursorPos=%d, want 7", ta.ed.cursor)
 	}
 }
 
 func TestTextAreaShiftHomeEndExtendsSelection(t *testing.T) {
 	ta := focusedTextArea("abc\ndef")
-	ta.cursorPos = 5
+	ta.ed.cursor = 5
 
 	ta.Handle(NewKeyEvent(EventKeyDown, KeyEnd, ModShift))
-	if ta.selStart != 5 || ta.selEnd != 7 || ta.cursorPos != 7 {
-		t.Fatalf("Shift+End selStart=%d selEnd=%d cursor=%d, want 5/7/7", ta.selStart, ta.selEnd, ta.cursorPos)
+	if ta.ed.selStart != 5 || ta.ed.selEnd != 7 || ta.ed.cursor != 7 {
+		t.Fatalf("Shift+End selStart=%d selEnd=%d cursor=%d, want 5/7/7", ta.ed.selStart, ta.ed.selEnd, ta.ed.cursor)
 	}
 
 	ta.Handle(NewKeyEvent(EventKeyDown, KeyHome, ModShift))
-	if ta.selStart != 5 || ta.selEnd != 4 || ta.cursorPos != 4 {
-		t.Fatalf("Shift+Home selStart=%d selEnd=%d cursor=%d, want 5/4/4", ta.selStart, ta.selEnd, ta.cursorPos)
+	if ta.ed.selStart != 5 || ta.ed.selEnd != 4 || ta.ed.cursor != 4 {
+		t.Fatalf("Shift+Home selStart=%d selEnd=%d cursor=%d, want 5/4/4", ta.ed.selStart, ta.ed.selEnd, ta.ed.cursor)
 	}
 }
 
@@ -228,10 +230,10 @@ func TestTextAreaDoubleClickSelectsWord(t *testing.T) {
 	e2 := MouseEvent{When: e1.When.Add(100 * time.Millisecond), X: 24, Y: 10, Button: MouseButtonLeft}
 
 	ta.handleMouseDown(e1)
-	ta.handleMouseUp()
+	ta.ed.release()
 	ta.handleMouseDown(e2)
 
-	start, end := ta.selStart, ta.selEnd
+	start, end := ta.ed.selStart, ta.ed.selEnd
 	if start > end {
 		start, end = end, start
 	}
@@ -247,12 +249,12 @@ func TestTextAreaTripleClickSelectsLogicalLine(t *testing.T) {
 	e3 := MouseEvent{When: e1.When.Add(160 * time.Millisecond), X: 24, Y: 10, Button: MouseButtonLeft}
 
 	ta.handleMouseDown(e1)
-	ta.handleMouseUp()
+	ta.ed.release()
 	ta.handleMouseDown(e2)
-	ta.handleMouseUp()
+	ta.ed.release()
 	ta.handleMouseDown(e3)
 
-	start, end := ta.selStart, ta.selEnd
+	start, end := ta.ed.selStart, ta.ed.selEnd
 	if start > end {
 		start, end = end, start
 	}

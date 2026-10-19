@@ -295,12 +295,13 @@ func WidgetOptions(w Widget) []AXOption {
 // renders itself, so it can be published to the AX tree as a node of its own.
 // Bounds are in the same window coordinate space as Widget.Bounds().
 type AXChild struct {
-	ID     string          // optional stable id, addressable as #id
-	Role   string          // see the Role* constants
-	Name   string          // accessible name
-	Value  string          // accessible value
-	State  AccessibleState // checked / selected / disabled / …
-	Bounds Rect
+	ID      string          // optional stable id, addressable as #id
+	Role    string          // see the Role* constants
+	Name    string          // accessible name
+	NameKey string          // message key Name was translated from (addressable as [key=…])
+	Value   string          // accessible value
+	State   AccessibleState // checked / selected / disabled / …
+	Bounds  Rect
 }
 
 // AccessibleChildProvider is implemented by widgets that paint their own

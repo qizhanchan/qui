@@ -117,9 +117,15 @@ func (l *lazyRows) get(i int, parent Widget, w *Window) Widget {
 	return row
 }
 
-// prune releases rows outside [start-overscan, end+overscan).
-func (l *lazyRows) prune(start, end int) {
+// prune releases rows outside [start-overscan, end+overscan). keep (may be
+// nil) survives while it is still in range of the model: it is the row
+// holding keyboard focus, and detaching it would drop focus as soon as the
+// user scrolled it away.
+func (l *lazyRows) prune(start, end int, keep Widget) {
 	for i, row := range l.live {
+		if keep != nil && row == keep && i < l.count {
+			continue
+		}
 		if i < start-lazyRowOverscan || i >= end+lazyRowOverscan || i >= l.count {
 			delete(l.live, i)
 			DetachWidgetTree(row)

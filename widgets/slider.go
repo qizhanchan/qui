@@ -76,6 +76,7 @@ func NewSlider(min, max, initial float32, onChange func(float32)) *Slider {
 		InactiveTrackColor: baselineTrack,
 		HandleColor:        baselineBlue,
 	}
+	s.SetSelf(s)
 	s.hoverTrans.Duration = toDuration(CurrentTheme().TransitionShort)
 	// Block-size stays fixed at 40 px so flex overflow doesn't collapse
 	// the handle geometry vertically.
@@ -85,8 +86,10 @@ func NewSlider(min, max, initial float32, onChange func(float32)) *Slider {
 
 func (s *Slider) Focusable() bool { return s.Enabled() }
 func (s *Slider) CancelInteraction() {
-	if s.dragging {
-		s.dragging = false
+	changed := s.dragging || s.hovering
+	s.dragging = false
+	s.hovering = false
+	if changed {
 		s.Invalidate()
 	}
 }
@@ -134,8 +137,12 @@ func (s *Slider) Draw(canvas Canvas) {
 
 	// Track geometry: visible track inset trackPad on each side. Handle
 	// center moves linearly along [trackX, trackX+trackW].
-	trackX := b.X + trackPad
-	trackW := b.W - 2*trackPad
+	pad := trackPad
+	if pad*2 > b.W {
+		pad = b.W / 2
+	}
+	trackX := b.X + pad
+	trackW := b.W - 2*pad
 	if trackW < 0 {
 		trackW = 0
 	}
@@ -189,6 +196,12 @@ func (s *Slider) Draw(canvas Canvas) {
 		case s.focusVisible:
 			DrawStateLayer(canvas, stateRect, stateSize/2, themed(s.StateLayerColor), theme.FocusOpacity)
 		}
+	} else if s.focusVisible {
+		ring := Rect{
+			X: handleCX - stateSize/2, Y: handleCY - stateSize/2,
+			W: stateSize, H: stateSize,
+		}
+		canvas.StrokeRoundedRect(ring, stateSize/2, theme.Accent, 2)
 	}
 
 	// Handle.
@@ -270,11 +283,12 @@ func (s *Slider) Handle(event Event) bool {
 	return false
 }
 
-func (s *Slider) HitTest(p Point) Widget {
-	if s.Bounds().Contains(p) {
-		return s
-	}
-	return nil
+// PaintBounds covers the state-layer halo / handle elevation that can
+// extend past the layout box (and past a very narrow Bounds).
+func (s *Slider) PaintBounds() Rect {
+	b := s.Bounds()
+	const m = sliderStateSize/2 + 4
+	return Rect{X: b.X - m, Y: b.Y - m, W: b.W + 2*m, H: b.H + 2*m}
 }
 
 // handleCenter returns the current pixel position of the handle's center.

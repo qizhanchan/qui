@@ -2,6 +2,7 @@ package widgets
 
 import (
 	"strconv"
+	"strings"
 
 	. "github.com/qizhanchan/qui"
 )
@@ -45,7 +46,16 @@ func (b *Button) AccessibleState() AccessibleState {
 // -------------------------------------------------------------------
 // Label
 
-func (l *Label) AccessibleName() string    { return l.Text() }
+func (l *Label) AccessibleName() string {
+	if len(l.spans) > 0 {
+		var b strings.Builder
+		for _, span := range l.spans {
+			b.WriteString(span.Text)
+		}
+		return b.String()
+	}
+	return l.Text()
+}
 func (l *Label) AccessibleNameKey() string { return l.TextKey() }
 
 // -------------------------------------------------------------------
@@ -182,7 +192,7 @@ func (c *Select) AccessibleOptions() []AXOption {
 	opts := make([]AXOption, len(c.Items))
 	for i, it := range c.Items {
 		o := c.option(i)
-		ax := AXOption{Label: it, Selected: i == c.SelectedIdx, Disabled: !c.itemEnabled(i), Group: o.Group}
+		ax := AXOption{Label: it, Selected: i == c.SelectedIdx, Disabled: !c.itemEnabled(i), Group: o.DisplayGroup()}
 		if o.Value != "" && o.Value != it {
 			ax.Value = o.Value
 		}
@@ -198,7 +208,9 @@ func (r *RadioButton) Role() string              { return RoleRadio }
 func (r *RadioButton) AccessibleName() string    { return r.DisplayLabel() }
 func (r *RadioButton) AccessibleNameKey() string { return r.LabelKey() }
 func (r *RadioButton) AccessibleState() AccessibleState {
-	if r.group != nil && r.group.selected == r {
+	// Checked is what Draw uses. group.selected can lag behind a caller
+	// that initializes a button with `rb.Checked = true` directly.
+	if r.Checked {
 		return AXStateChecked
 	}
 	return 0
@@ -250,7 +262,17 @@ func (g *FieldSet) AccessibleNameKey() string { return g.TitleKey() }
 
 // Popup's default role ("popup") matches the constant. No override.
 
-func (d *Dialog) AccessibleName() string    { return d.DisplayTitle() }
+func (d *Dialog) AccessibleName() string {
+	if title := d.DisplayTitle(); title != "" {
+		return title
+	}
+	// A custom header replaces the title row; fall back to its name so the
+	// dialog is not anonymous.
+	if d.Header != nil {
+		return WidgetName(d.Header)
+	}
+	return ""
+}
 func (d *Dialog) AccessibleNameKey() string { return d.TitleKey() }
 
 // -------------------------------------------------------------------
@@ -265,8 +287,19 @@ func (v *menuItemView) Role() string              { return RoleMenuitem }
 func (v *menuItemView) AccessibleName() string    { return v.item.DisplayLabel() }
 func (v *menuItemView) AccessibleNameKey() string { return v.item.LabelKey }
 
-func (r *menuContentRow) Role() string           { return RoleMenuitem }
-func (r *menuContentRow) AccessibleName() string { return r.item.DisplayLabel() }
+func (r *menuContentRow) Role() string              { return RoleMenuitem }
+func (r *menuContentRow) AccessibleName() string    { return r.item.DisplayLabel() }
+func (r *menuContentRow) AccessibleNameKey() string { return r.item.LabelKey }
+func (r *menuContentRow) AccessibleState() AccessibleState {
+	var s AccessibleState
+	if r.item.Checked {
+		s |= AXStateChecked
+	}
+	if r.item.Selected {
+		s |= AXStateSelected
+	}
+	return s
+}
 
 // AccessibleState publishes the tick / radio selection. Disabled comes
 // from the framework (newMenuItemView mirrors item.Disabled into
@@ -363,7 +396,19 @@ func (lv *ListView) ScrollChildIntoView(child Widget) {
 	}
 	cb := child.Bounds()
 	vb := lv.Bounds()
-	if vb.IsEmpty() || cb.IsEmpty() {
+	if vb.IsEmpty() {
+		return
+	}
+	// A widget inside a row (or the row itself) scrolls by row index: an
+	// off-screen row has no bounds, or stale ones from an earlier scroll
+	// offset, so its rect cannot be trusted. Lay the rows out right away
+	// so the target is hit-testable before the next frame.
+	if idx := lv.rowIndexFor(child); idx >= 0 {
+		lv.ensureVisible(idx)
+		lv.prepareRows()
+		return
+	}
+	if cb.IsEmpty() {
 		return
 	}
 	// Same math as ScrollView.

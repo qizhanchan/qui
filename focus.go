@@ -173,10 +173,14 @@ func (w *Window) CollectFocusables() []Widget {
 			}
 		}
 	}
-	// Walk top-down looking for a modal. If found, walk only that
-	// overlay and return — focus is trapped within it.
+	// Walk top-down looking for the topmost modal. If found, walk it and
+	// every overlay ABOVE it (a menu opened over a dialog is reachable),
+	// then stop: the main tree and overlays beneath the modal stay out of
+	// the tab order.
 	if m := w.topModalIndex(); m >= 0 {
-		walk(w.overlays[m])
+		for i := m; i < len(w.overlays); i++ {
+			walk(w.overlays[i])
+		}
 		return sortTabOrder(result)
 	}
 	// No modal: main tree then all overlays in stack order.

@@ -62,8 +62,8 @@ func TestInputClearButtonClick(t *testing.T) {
 	if len(changes) != 1 || changes[0] != "" {
 		t.Errorf("OnChange calls = %v, want one empty-string call", changes)
 	}
-	if in.cursorPos != 0 {
-		t.Errorf("caret = %d, want 0", in.cursorPos)
+	if in.ed.cursor != 0 {
+		t.Errorf("caret = %d, want 0", in.ed.cursor)
 	}
 }
 

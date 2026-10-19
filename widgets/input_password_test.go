@@ -73,25 +73,25 @@ func TestInputPasswordHitTestSnapsToDots(t *testing.T) {
 
 func TestInputPasswordArrowKeysStepOneRune(t *testing.T) {
 	tf := passwordInput("héllo") // non-ASCII: step runes, not bytes
-	tf.cursorPos = 5
+	tf.ed.cursor = 5
 	tf.Handle(NewKeyEvent(EventKeyDown, KeyLeft, 0))
-	if tf.cursorPos != 4 {
-		t.Errorf("after Left cursorPos = %d, want 4", tf.cursorPos)
+	if tf.ed.cursor != 4 {
+		t.Errorf("after Left cursorPos = %d, want 4", tf.ed.cursor)
 	}
 	tf.Handle(NewKeyEvent(EventKeyDown, KeyRight, 0))
-	if tf.cursorPos != 5 {
-		t.Errorf("after Right cursorPos = %d, want 5", tf.cursorPos)
+	if tf.ed.cursor != 5 {
+		t.Errorf("after Right cursorPos = %d, want 5", tf.ed.cursor)
 	}
 	// Clamped at both ends.
-	tf.cursorPos = 0
+	tf.ed.cursor = 0
 	tf.Handle(NewKeyEvent(EventKeyDown, KeyLeft, 0))
-	if tf.cursorPos != 0 {
-		t.Errorf("Left at start = %d, want 0", tf.cursorPos)
+	if tf.ed.cursor != 0 {
+		t.Errorf("Left at start = %d, want 0", tf.ed.cursor)
 	}
-	tf.cursorPos = 5
+	tf.ed.cursor = 5
 	tf.Handle(NewKeyEvent(EventKeyDown, KeyRight, 0))
-	if tf.cursorPos != 5 {
-		t.Errorf("Right at end = %d, want 5", tf.cursorPos)
+	if tf.ed.cursor != 5 {
+		t.Errorf("Right at end = %d, want 5", tf.ed.cursor)
 	}
 }
 

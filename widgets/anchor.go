@@ -36,11 +36,25 @@ func NewAnchor(text, href string) *Anchor {
 	return a
 }
 
-func (a *Anchor) HitTest(p Point) Widget {
-	if a.Bounds().Contains(p) {
-		return a
+// Draw adds a focus underline under the label's box so keyboard focus is
+// visible (Anchor is a Tab stop now).
+func (a *Anchor) Draw(canvas Canvas) {
+	a.Label.Draw(canvas)
+	if a.focused {
+		b := a.Bounds()
+		canvas.FillRect(Rect{X: b.X, Y: b.Y + b.H - 2, W: b.W, H: 2}, CurrentTheme().Accent)
 	}
-	return nil
+}
+
+// Focusable/TabStop make a link keyboard reachable (Space/Enter activates).
+func (a *Anchor) Focusable() bool { return a.Enabled() }
+func (a *Anchor) TabStop() bool   { return true }
+
+func (a *Anchor) CancelInteraction() {
+	if a.pressed {
+		a.pressed = false
+		a.Invalidate()
+	}
 }
 
 // WidgetCursor puts a hand over the whole link. A disabled anchor declines
@@ -53,25 +67,30 @@ func (a *Anchor) Handle(event Event) bool {
 	if !a.Enabled() {
 		return false
 	}
-	e, ok := event.(MouseEvent)
-	if !ok {
-		return false
-	}
-	switch e.Type() {
-	case EventMouseLeave:
-		a.pressed = false
-	case EventMouseDown:
-		if e.Button == MouseButtonLeft && a.Bounds().Contains(Point{X: e.X, Y: e.Y}) {
-			a.pressed = true
-			return true
-		}
-	case EventMouseUp:
-		if a.pressed && e.Button == MouseButtonLeft {
+	switch e := event.(type) {
+	case MouseEvent:
+		switch e.Type() {
+		case EventMouseLeave:
 			a.pressed = false
-			if a.Bounds().Contains(Point{X: e.X, Y: e.Y}) {
-				a.navigate()
+		case EventMouseDown:
+			if e.Button == MouseButtonLeft && a.Bounds().Contains(Point{X: e.X, Y: e.Y}) {
+				a.pressed = true
 				return true
 			}
+		case EventMouseUp:
+			if a.pressed && e.Button == MouseButtonLeft {
+				a.pressed = false
+				if a.Bounds().Contains(Point{X: e.X, Y: e.Y}) {
+					a.navigate()
+					return true
+				}
+			}
+		}
+	case KeyEvent:
+		if a.focused && e.Type() == EventKeyDown && !e.Repeat &&
+			(e.Key == KeyEnter || e.Key == KeySpace) {
+			a.navigate()
+			return true
 		}
 	}
 	return false

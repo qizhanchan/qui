@@ -15,6 +15,7 @@ type Rule struct {
 // NewRule constructs a default 1px horizontal rule.
 func NewRule() *Rule {
 	r := &Rule{BaseWidget: NewBaseWidget()}
+	r.SetSelf(r)
 	r.Style().BorderSize = 1
 	return r
 }
@@ -45,11 +46,4 @@ func (r *Rule) Draw(canvas Canvas) {
 	// that give the rule extra vertical room get a centered divider.
 	y := b.Y + (b.H-t)/2
 	canvas.FillRect(Rect{X: b.X, Y: y, W: b.W, H: t}, color)
-}
-
-func (r *Rule) HitTest(p Point) Widget {
-	if r.Bounds().Contains(p) {
-		return r
-	}
-	return nil
 }

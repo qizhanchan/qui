@@ -39,23 +39,34 @@ type TextArea struct {
 	BeforeInput       func(BeforeInputEvent) bool
 	OnSelectionChange func(start, end int)
 	OnCursorChange    func(pos int)
-	cursorPos         int // cursor position in runes
-	selStart          int // selection start (-1 if no selection)
-	selEnd            int // selection end
-	focused           bool
-	hovering          bool
-	selecting         bool
-	scrollX           float32 // horizontal scroll offset in pixels (AutoWrap=false only)
-	scrollY           float32 // vertical scroll offset in pixels
-	barDraggingX      bool
-	barDraggingY      bool
-	barDragStartX     float32
-	barDragStartY     float32
-	barDragScrollX    float32
-	barDragScrollY    float32
-	cursorBlinkTime   int64 // timestamp for cursor blink animation (milliseconds)
-	cursorVisible     bool  // current cursor visibility state
-	OnChange          func(text string)
+	// caretNextLine disambiguates a caret exactly on a soft-wrap boundary:
+	// the offset is both the end of line N and the start of N+1, so the
+	// affinity decides which visual line the caret/Home use.
+	caretNextLine  bool
+	focused        bool
+	hovering       bool
+	scrollX        float32 // horizontal scroll offset in pixels (AutoWrap=false only)
+	scrollY        float32 // vertical scroll offset in pixels
+	barDraggingX   bool
+	barDraggingY   bool
+	barDragStartX  float32
+	barDragStartY  float32
+	barDragScrollX float32
+	barDragScrollY float32
+	OnChange       func(text string)
+	// OnSubmit fires on Cmd/Ctrl+Enter (the conventional "finish editing"
+	// shortcut for a multi-line field), and OnCommit fires when the field
+	// loses focus after the value changed, plus on that same shortcut.
+	OnSubmit func(text string)
+	OnCommit func(text string)
+
+	// ed is the shared editing model: caret, selection, undo, IME
+	// composition, blink, change/commit notification (see text_editor.go).
+	ed textEditor
+
+	// layoutCache keeps per-document derived data so paint, hit testing and
+	// scrolling cost what the visible lines cost, not the document.
+	layoutCache textAreaLayoutCache
 
 	// DrawOverlay, when set, paints app decoration over the text (spelling
 	// squiggles): it runs in Draw after the text and the preedit underline
@@ -84,46 +95,27 @@ type TextArea struct {
 	// DisabledStyle, when non-nil, replaces the chrome while the field is
 	// disabled. Nil dims the baseline text and border colors.
 	DisabledStyle *Style
-
-	// IME composition state. preeditText is the in-flight
-	// composed string; preeditCursor is the rune position inside it.
-	// Rendered near the caret with an underline while composing.
-	preeditText   string
-	preeditCursor int
-
-	// Undo / redo history — same coalescing model as Input.
-	history undoHistory
-
-	// lastChangeUser: see Input.lastChangeUser — drives the
-	// controlled-value overwrite diagnostic.
-	lastChangeUser bool
-
-	clickCount  int
-	lastClickMS int64
-	lastClickX  float32
-	lastClickY  float32
 }
 
 type visualLine struct {
-	start int
-	end   int
+	start  int
+	end    int
+	offset float32 // per-line alignment offset (center / end / justify)
 }
 
 func NewTextArea(placeholder string) *TextArea {
 	t := &TextArea{
-		BaseWidget:      NewBaseWidget(),
-		Placeholder:     placeholder,
-		AutoWrap:        false,
-		Paragraph:       DefaultParagraphStyle(),
-		ShowScrollBarX:  true,
-		ShowScrollBarY:  true,
-		MinWidth:        htmlInputWidth,
-		MinHeight:       40,
-		cursorPos:       0,
-		selStart:        -1,
-		cursorVisible:   true,
-		cursorBlinkTime: 0,
+		BaseWidget:     NewBaseWidget(),
+		Placeholder:    placeholder,
+		AutoWrap:       false,
+		Paragraph:      DefaultParagraphStyle(),
+		ShowScrollBarX: true,
+		ShowScrollBarY: true,
+		MinWidth:       htmlInputWidth,
+		MinHeight:      40,
+		ed:             newTextEditor(),
 	}
+	t.SetSelf(t)
 	// Raw HTML <textarea>: white box, thin #767676 border, black text,
 	// 2 px corner, tight UA padding. For a designed look, style a
 	// <textarea> on the htmlcss layer; CSS overrides these per-instance.
@@ -135,6 +127,30 @@ func NewTextArea(placeholder string) *TextArea {
 	t.Style().Padding = Insets{Top: htmlControlPadY, Right: htmlControlPadX, Bottom: htmlControlPadY, Left: htmlControlPadX}
 	t.Style().Font = Font{Size: htmlControlFontSize}
 	return t
+}
+
+// SetAutoSize toggles width/height sizing from the document and re-measures.
+func (t *TextArea) SetAutoSize(width, height bool) {
+	if t.AutoSizeWidth == width && t.AutoSizeHeight == height {
+		return
+	}
+	t.AutoSizeWidth, t.AutoSizeHeight = width, height
+	t.InvalidateLayout()
+}
+
+// SetCols sets the raw-HTML `cols` width hint.
+func (t *TextArea) SetCols(n int) {
+	if t.Cols == n {
+		return
+	}
+	t.Cols = n
+	t.InvalidateLayout()
+}
+
+// SetParagraph replaces the paragraph layout options.
+func (t *TextArea) SetParagraph(p ParagraphStyle) {
+	t.Paragraph = p
+	t.InvalidateLayout()
 }
 
 // font returns the textarea's font. All measurement / draw paths funnel
@@ -321,7 +337,7 @@ func (t *TextArea) Draw(canvas Canvas) {
 	textColor := st.Foreground
 	if displayText == "" && !t.focused {
 		displayText = t.DisplayPlaceholder()
-		textColor = Color{R: 0.5, G: 0.5, B: 0.5, A: 1}
+		textColor = CurrentTheme().TextMuted
 	}
 
 	// While composing, INSERT the in-flight preedit into the displayed text
@@ -330,19 +346,21 @@ func (t *TextArea) Draw(canvas Canvas) {
 	// characters. The caret/underline are positioned from the pre-insertion
 	// cursor (getCursorPosition reads t.Text), which is exactly where the
 	// preedit begins.
-	composing := t.preeditText != "" && t.focused
+	composing := t.ed.preedit != "" && t.focused
 	if composing {
-		runes := []rune(t.Text)
-		cp := t.cursorPos
+		runes := t.textRunes()
+		cp := t.ed.cursor
 		if cp > len(runes) {
 			cp = len(runes)
 		}
-		displayText = string(runes[:cp]) + t.preeditText + string(runes[cp:])
+		displayText = string(runes[:cp]) + t.ed.preedit + string(runes[cp:])
 		textColor = st.Foreground
 	}
 
 	// Draw selection beneath text
-	if t.Text != "" && t.selStart >= 0 && t.selStart != t.selEnd {
+	// Only a focused field shows its selection; it is kept across a blur so
+	// a refocus restores it, as in a browser.
+	if t.focused && t.Text != "" && t.ed.hasSelection() {
 		t.drawSelection(canvas, content)
 	}
 
@@ -358,7 +376,7 @@ func (t *TextArea) Draw(canvas Canvas) {
 			cursorX -= t.scrollX
 		}
 		cursorY -= t.scrollY
-		preeditW, _ := TextMetrics(t.preeditText, t.font())
+		preeditW, _ := TextMetrics(t.ed.preedit, t.font())
 		canvas.FillRect(
 			Rect{X: cursorX, Y: cursorY + t.lineHeight() - 2, W: preeditW, H: 1},
 			textColor)
@@ -372,7 +390,7 @@ func (t *TextArea) Draw(canvas Canvas) {
 	// this path only reads cursorVisible without side effects. While
 	// composing, ignore blink so the IME anchor stays visible.
 	if t.focused {
-		if t.cursorVisible || t.preeditText != "" {
+		if t.ed.caretVisible || t.ed.preedit != "" {
 			cursorX, cursorY := t.getCursorPosition(content)
 			if !t.wrapEnabled() {
 				cursorX -= t.scrollX
@@ -382,13 +400,13 @@ func (t *TextArea) Draw(canvas Canvas) {
 			cursorHeight := t.lineHeight()
 
 			// While composing, shift cursor past the preedit cursor offset.
-			if t.preeditText != "" {
-				runes := []rune(t.preeditText)
-				cur := t.preeditCursor
+			if t.ed.preedit != "" {
+				runes := []rune(t.ed.preedit)
+				cur := t.ed.preeditCursor
 				if cur > len(runes) {
 					cur = len(runes)
 				}
-				cursorX += TextXForOffset(t.preeditText, t.font(), TextDirectionAuto, cur)
+				cursorX += TextXForOffset(t.ed.preedit, t.font(), TextDirectionAuto, cur)
 			}
 
 			// Only draw cursor if visible in content area
@@ -407,33 +425,39 @@ func (t *TextArea) Draw(canvas Canvas) {
 	t.drawScrollbars(canvas, content, showScrollX, showScrollY)
 }
 
+// cursorLineIndex maps the caret offset to a visual line. A soft-wrapped
+// boundary belongs to two lines with the same rune offset; caretNextLine
+// picks the lower one after a Right-arrow / click on the continuation.
+func (t *TextArea) cursorLineIndex(lines []visualLine) int {
+	if len(lines) == 0 {
+		return 0
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := lines[i]
+		if t.ed.cursor < line.start || t.ed.cursor > line.end {
+			continue
+		}
+		if !t.caretNextLine && i > 0 && t.ed.cursor == line.start && lines[i-1].end == t.ed.cursor {
+			continue // boundary without "next line" affinity -> previous line
+		}
+		return i
+	}
+	return 0
+}
+
 func (t *TextArea) getCursorPosition(content Rect) (x, y float32) {
-	runes := []rune(t.Text)
+	runes := t.textRunes()
 	lineHeight := t.lineHeight()
-	lines := t.visualLines(runes, content.W)
+	lines := t.visualLines(content.W)
 	if len(lines) == 0 {
 		return content.X, content.Y
 	}
-	if t.cursorPos < 0 {
-		t.cursorPos = 0
-	}
-
 	y = content.Y
 
-	lineIdx := 0
-	for i, line := range lines {
-		if t.cursorPos >= line.start && t.cursorPos <= line.end {
-			lineIdx = i
-			break
-		}
-		if i == len(lines)-1 {
-			lineIdx = i
-		}
-	}
-
+	lineIdx := t.cursorLineIndex(lines)
 	line := lines[lineIdx]
 	y += float32(lineIdx) * lineHeight
-	end := t.cursorPos
+	end := t.ed.cursor
 	if end < line.start {
 		end = line.start
 	}
@@ -441,22 +465,12 @@ func (t *TextArea) getCursorPosition(content Rect) (x, y float32) {
 		end = line.end
 	}
 	lineText := string(runes[line.start:line.end])
-	x = content.X + TextXForOffset(lineText, t.font(), t.Paragraph.Direction, end-line.start)
+	x = content.X + line.offset + TextXForOffset(lineText, t.font(), t.Paragraph.Direction, end-line.start)
 	return x, y
 }
 
 func (t *TextArea) drawVisibleText(canvas Canvas, text string, content Rect, color Color) {
-	opts := t.layoutOptions()
-	opts.MaxLines = 0
-	opts.Ellipsis = false
-	if t.wrapEnabled() {
-		opts.Wrap = true
-		opts.MaxWidth = content.W
-	} else {
-		opts.Wrap = false
-		opts.MaxWidth = 0
-	}
-	layout := BuildTextLayout(text, t.font(), opts)
+	layout := t.layoutFor(text, content.W)
 	drawRect := Rect{X: content.X, Y: content.Y - t.scrollY, W: content.W, H: layout.Height}
 	if !t.wrapEnabled() {
 		drawRect.X -= t.scrollX
@@ -465,11 +479,11 @@ func (t *TextArea) drawVisibleText(canvas Canvas, text string, content Rect, col
 }
 
 func (t *TextArea) drawSelection(canvas Canvas, content Rect) {
-	if t.selStart < 0 || t.selStart == t.selEnd {
+	if t.ed.selStart < 0 || t.ed.selStart == t.ed.selEnd {
 		return
 	}
 	selColor := SelectionHighlight(t)
-	for _, r := range t.rangeRects(content, t.selStart, t.selEnd) {
+	for _, r := range t.rangeRects(content, t.ed.selStart, t.ed.selEnd) {
 		canvas.FillRect(r, selColor)
 	}
 }
@@ -494,9 +508,9 @@ func (t *TextArea) rangeRects(content Rect, start, end int) []Rect {
 	if start == end {
 		return nil
 	}
-	runes := []rune(t.Text)
+	runes := t.textRunes()
 	lineHeight := t.lineHeight()
-	lines := t.visualLines(runes, content.W)
+	lines := t.visualLines(content.W)
 	var out []Rect
 	for i, line := range lines {
 		y := content.Y - t.scrollY + float32(i)*lineHeight
@@ -516,7 +530,7 @@ func (t *TextArea) rangeRects(content Rect, start, end int) []Rect {
 		lineText := string(runes[line.start:line.end])
 		for _, segment := range TextSelectionSegments(lineText, t.font(), t.Paragraph.Direction,
 			lineSelStart-line.start, lineSelEnd-line.start) {
-			startX := content.X + segment.X
+			startX := content.X + line.offset + segment.X
 			if !t.wrapEnabled() {
 				startX -= t.scrollX
 			}
@@ -534,8 +548,9 @@ func (t *TextArea) drawScrollbars(canvas Canvas, content Rect, showX, showY bool
 		t.drawBoxScrollbars(canvas, content, showX, showY)
 		return
 	}
-	trackColor := Color{R: 0.15, G: 0.15, B: 0.15, A: 1}
-	thumbColor := Color{R: 0.5, G: 0.5, B: 0.5, A: 1}
+	theme := CurrentTheme()
+	trackColor := theme.SurfaceRaised
+	thumbColor := theme.TextMuted
 
 	if showY {
 		trackRect := t.verticalBarTrack(content)
@@ -643,26 +658,22 @@ func (t *TextArea) Handle(event Event) bool {
 	if !t.Enabled() {
 		return false
 	}
-	prevCursor, prevSelStart, prevSelEnd := t.cursorPos, t.selStart, t.selEnd
+	// Text is an exported field, so a caller can replace it without going
+	// through SetText. Clamp the caret/selection before any edit path
+	// slices the rune buffer.
+	t.ed.normalize(t.Text)
+	prev := t.ed.view()
 	prevText, prevScrollX, prevScrollY := t.Text, t.scrollX, t.scrollY
-	prevPreedit, prevPreeditCursor := t.preeditText, t.preeditCursor
-	prevSelecting := t.selecting
-	prevDragX, prevDragY := t.barDraggingX, t.barDraggingY
-	prevCursorVisible := t.cursorVisible
+	prevDragX, prevDragY, prevHovering := t.barDraggingX, t.barDraggingY, t.hovering
 	defer func() {
-		t.emitStateChange(prevCursor, prevSelStart, prevSelEnd)
-		if t.Text != prevText ||
-			t.cursorPos != prevCursor ||
-			t.selStart != prevSelStart ||
-			t.selEnd != prevSelEnd ||
+		t.ed.emitStateChange(t, prev.caret)
+		if t.ed.view() != prev ||
+			t.Text != prevText ||
 			t.scrollX != prevScrollX ||
 			t.scrollY != prevScrollY ||
-			t.preeditText != prevPreedit ||
-			t.preeditCursor != prevPreeditCursor ||
-			t.selecting != prevSelecting ||
 			t.barDraggingX != prevDragX ||
 			t.barDraggingY != prevDragY ||
-			t.cursorVisible != prevCursorVisible {
+			t.hovering != prevHovering {
 			t.Invalidate()
 		}
 	}()
@@ -687,7 +698,7 @@ func (t *TextArea) Handle(event Event) bool {
 				t.handleBarDrag(e)
 				return true
 			}
-			if t.selecting {
+			if t.ed.selecting {
 				t.handleMouseDrag(e)
 				return true
 			}
@@ -697,8 +708,8 @@ func (t *TextArea) Handle(event Event) bool {
 				t.barDraggingY = false
 				return true
 			}
-			if t.selecting {
-				t.handleMouseUp()
+			if t.ed.selecting {
+				t.ed.release()
 				return true
 			}
 		case EventScroll:
@@ -715,14 +726,14 @@ func (t *TextArea) Handle(event Event) bool {
 			// interpretKeyEvents reaches the IME, so without this
 			// guard Backspace would hit both paths and delete from
 			// Text AND from preedit.
-			if t.preeditText != "" {
+			if t.ed.preedit != "" {
 				return true
 			}
 			return t.handleKeyDown(e)
 		}
 	case CharEvent:
 		if t.focused {
-			return t.handleChar(e)
+			return t.ed.typeRune(t, e.Rune)
 		}
 	}
 
@@ -742,30 +753,8 @@ func (t *TextArea) handleMouseDown(e MouseEvent) {
 	if e.Button != MouseButtonLeft {
 		return
 	}
-	pos := t.positionFromPoint(Point{X: e.X, Y: e.Y})
-	switch t.registerClick(e) {
-	case 2:
-		a, b := t.wordBoundsAt(pos)
-		t.selStart = a
-		t.selEnd = b
-		t.cursorPos = b
-	case 3:
-		a, b := t.logicalLineBoundsAt(pos)
-		t.selStart = a
-		t.selEnd = b
-		t.cursorPos = b
-	default:
-		t.cursorPos = pos
-		t.selStart = pos
-		t.selEnd = pos
-	}
-	t.selecting = true
+	t.ed.pressAt(t, t.positionFromPoint(Point{X: e.X, Y: e.Y}), e)
 	t.hovering = true
-	t.history.breakCoalesce()
-
-	// Reset cursor blink on click
-	t.cursorVisible = true
-	t.cursorBlinkTime = time.Now().UnixMilli()
 }
 
 func (t *TextArea) handleMouseDrag(e MouseEvent) {
@@ -783,20 +772,8 @@ func (t *TextArea) handleMouseDrag(e MouseEvent) {
 		}
 	}
 	t.clampScroll(content)
-	pos := t.positionFromPoint(Point{X: e.X, Y: e.Y})
-	t.cursorPos = pos
-	if t.selStart < 0 {
-		t.selStart = pos
-	}
-	t.selEnd = pos
+	t.ed.dragTo(t.positionFromPoint(Point{X: e.X, Y: e.Y}))
 	t.scrollToCursor()
-}
-
-func (t *TextArea) handleMouseUp() {
-	t.selecting = false
-	if t.selStart == t.selEnd {
-		t.selStart = -1
-	}
 }
 
 func (t *TextArea) handleBarMouseDown(e MouseEvent) bool {
@@ -877,9 +854,9 @@ func (t *TextArea) OffsetAt(p Point) int { return t.positionFromPoint(p) }
 
 func (t *TextArea) positionFromPoint(p Point) int {
 	content, _, _ := t.visibleContentRect(t.Bounds())
-	runes := []rune(t.Text)
+	runes := t.textRunes()
 	lineHeight := t.lineHeight()
-	lines := t.visualLines(runes, content.W)
+	lines := t.visualLines(content.W)
 	if len(lines) == 0 {
 		return 0
 	}
@@ -902,7 +879,8 @@ func (t *TextArea) positionFromPoint(p Point) int {
 	}
 
 	line := lines[lineIndex]
-	return t.closestPosInLine(runes, line.start, line.end, clickX)
+	t.caretNextLine = lineIndex > 0 && line.start == lines[lineIndex-1].end && clickX <= line.offset
+	return t.closestPosInLine(runes, line.start, line.end, clickX-line.offset)
 }
 
 func (t *TextArea) runesWidth(runes []rune) float32 {
@@ -921,338 +899,78 @@ func (t *TextArea) closestPosInLine(runes []rune, lineStart, lineEnd int, target
 	return lineStart + TextOffsetAtX(lineText, t.font(), t.Paragraph.Direction, targetX)
 }
 
+// handleKeyDown adds the multi-line Enter to the shared editing keys: a
+// plain Enter inserts a newline (unless EnterAddsNewline declines it), and
+// Cmd/Ctrl+Enter is the conventional "submit / finish" chord.
 func (t *TextArea) handleKeyDown(e KeyEvent) bool {
-	runes := []rune(t.Text)
-	shift := e.Mods&ModShift != 0
-
-	// Reset cursor blink on any key press
-	t.cursorVisible = true
-	t.cursorBlinkTime = time.Now().UnixMilli()
-
+	if e.Key != KeyEnter {
+		return t.ed.handleKey(t, e)
+	}
 	if IsCommandMod(e.Mods) {
-		if e.Key == KeyZ {
-			if e.Mods&ModShift != 0 {
-				t.redo()
-			} else {
-				t.undo()
-			}
-			return true
+		if t.OnSubmit != nil {
+			t.OnSubmit(t.Text)
 		}
-		if e.Key == KeyY {
-			t.redo()
-			return true
+		t.ed.fireCommit(t)
+		if w := t.Window(); w != nil {
+			w.RecordInputSubmit(t, t.Text)
 		}
-		if handled := t.handleClipboardShortcut(e.Key, runes); handled {
-			return true
-		}
-	}
-
-	switch e.Key {
-	case KeyBackspace:
-		if !t.beforeInput("delete", "") {
-			return true
-		}
-		before := t.snapshot()
-		if t.selStart >= 0 && t.selStart != t.selEnd {
-			// Delete selection
-			start := int(min(float32(t.selStart), float32(t.selEnd)))
-			end := int(max(float32(t.selStart), float32(t.selEnd)))
-			t.Text = string(runes[:start]) + string(runes[end:])
-			t.cursorPos = start
-			t.selStart = -1
-		} else if t.cursorPos > 0 {
-			// Delete one grapheme cluster — backspacing 👌🏻 removes
-			// the whole emoji in one keystroke instead of leaving a
-			// stranded base after stripping the skin-tone modifier.
-			target := PrevClusterBoundary(runes, t.cursorPos)
-			t.Text = string(runes[:target]) + string(runes[t.cursorPos:])
-			t.cursorPos = target
-		}
-		t.pushUndo("delete", before)
-		t.invalidateLayoutIfAutoSize()
-		if t.OnChange != nil {
-			t.fireChange()
-		}
-		t.scrollToCursor()
-		return true
-
-	case KeyLeft:
-		t.moveCursorWithSelection(t.visualHorizontalTarget(-1), shift)
-		t.history.breakCoalesce()
-		t.scrollToCursor()
-		return true
-
-	case KeyRight:
-		t.moveCursorWithSelection(t.visualHorizontalTarget(1), shift)
-		t.history.breakCoalesce()
-		t.scrollToCursor()
-		return true
-
-	case KeyUp:
-		t.moveCursorVertically(-1)
-		t.history.breakCoalesce()
-		t.scrollToCursor()
-		return true
-
-	case KeyDown:
-		t.moveCursorVertically(1)
-		t.history.breakCoalesce()
-		t.scrollToCursor()
-		return true
-	case KeyHome:
-		lineStart, _ := t.currentLineBounds()
-		t.moveCursorWithSelection(lineStart, shift)
-		t.history.breakCoalesce()
-		t.scrollToCursor()
-		return true
-	case KeyEnd:
-		_, lineEnd := t.currentLineBounds()
-		t.moveCursorWithSelection(lineEnd, shift)
-		t.history.breakCoalesce()
-		t.scrollToCursor()
-		return true
-
-	case KeyEnter:
-		if !t.EnterWouldInsertNewline(e) {
-			return false
-		}
-		if !t.beforeInput("enter", "\n") {
-			return true
-		}
-		before := t.snapshot()
-		if t.selStart >= 0 && t.selStart != t.selEnd {
-			start := int(min(float32(t.selStart), float32(t.selEnd)))
-			end := int(max(float32(t.selStart), float32(t.selEnd)))
-			t.Text = string(runes[:start]) + "\n" + string(runes[end:])
-			t.cursorPos = start + 1
-			t.selStart = -1
-		} else {
-			t.Text = string(runes[:t.cursorPos]) + "\n" + string(runes[t.cursorPos:])
-			t.cursorPos++
-		}
-		t.pushUndo("enter", before)
-		// Newline splits coalescing groups — next typing starts fresh.
-		t.history.breakCoalesce()
-		t.invalidateLayoutIfAutoSize()
-		if t.OnChange != nil {
-			t.fireChange()
-		}
-		t.scrollToCursor()
 		return true
 	}
-
-	return false
-}
-
-// handleClipboardShortcut processes Cmd/Ctrl + A/C/V/X. `runes` is the
-// caller's already-computed rune slice of Text (handleKeyDown takes it
-// once and reuses it across cases). Returns true if the key matched a
-// clipboard shortcut, so the outer switch doesn't fire its default
-// binding for KeyA etc.
-func (t *TextArea) handleClipboardShortcut(k Key, runes []rune) bool {
-	switch k {
-	case KeyA:
-		if len(runes) == 0 {
-			return true
-		}
-		t.selStart = 0
-		t.selEnd = len(runes)
-		t.cursorPos = len(runes)
-		t.scrollToCursor()
-		return true
-	case KeyC:
-		if t.selStart >= 0 && t.selStart != t.selEnd {
-			start := t.selStart
-			end := t.selEnd
-			if start > end {
-				start, end = end, start
-			}
-			SetClipboardText(string(runes[start:end]))
-		}
-		return true
-	case KeyX:
-		if t.selStart >= 0 && t.selStart != t.selEnd {
-			if !t.beforeInput("cut", "") {
-				return true
-			}
-			start := t.selStart
-			end := t.selEnd
-			if start > end {
-				start, end = end, start
-			}
-			SetClipboardText(string(runes[start:end]))
-			before := t.snapshot()
-			t.Text = string(runes[:start]) + string(runes[end:])
-			t.cursorPos = start
-			t.selStart = -1
-			t.pushUndo("cut", before)
-			t.invalidateLayoutIfAutoSize()
-			if t.OnChange != nil {
-				t.fireChange()
-			}
-			t.scrollToCursor()
-		}
-		return true
-	case KeyV:
-		text := GetClipboardText()
-		if text == "" {
-			return true
-		}
-		if !t.beforeInput("paste", text) {
-			return true
-		}
-		insert := []rune(text)
-		before := t.snapshot()
-		if t.selStart >= 0 && t.selStart != t.selEnd {
-			start := t.selStart
-			end := t.selEnd
-			if start > end {
-				start, end = end, start
-			}
-			t.Text = string(runes[:start]) + text + string(runes[end:])
-			t.cursorPos = start + len(insert)
-			t.selStart = -1
-		} else {
-			t.Text = string(runes[:t.cursorPos]) + text + string(runes[t.cursorPos:])
-			t.cursorPos += len(insert)
-		}
-		t.pushUndo("paste", before)
-		t.invalidateLayoutIfAutoSize()
-		if t.OnChange != nil {
-			t.fireChange()
-		}
-		t.scrollToCursor()
-		return true
-	}
-	return false
-}
-
-func (t *TextArea) handleChar(e CharEvent) bool {
-	// Ignore control characters
-	if e.Rune < 32 && e.Rune != '\n' {
+	if !t.EnterWouldInsertNewline(e) {
 		return false
 	}
-	if !t.beforeInput("type", string(e.Rune)) {
-		return true
-	}
-	// IME commit: the only time a CharEvent reaches us with non-empty
-	// preedit is right after the OS input method committed. The OS
-	// may or may not fire unmarkText; clearing preedit here ensures
-	// the committed characters aren't visually doubled by a stale
-	// preedit being drawn on top.
-	if t.preeditText != "" {
-		t.preeditText = ""
-		t.preeditCursor = 0
-	}
-
-	runes := []rune(t.Text)
-
-	before := t.snapshot()
-	if t.selStart >= 0 && t.selStart != t.selEnd {
-		// Replace selection
-		start := int(min(float32(t.selStart), float32(t.selEnd)))
-		end := int(max(float32(t.selStart), float32(t.selEnd)))
-		t.Text = string(runes[:start]) + string(e.Rune) + string(runes[end:])
-		t.cursorPos = start + 1
-		t.selStart = -1
-	} else {
-		t.Text = string(runes[:t.cursorPos]) + string(e.Rune) + string(runes[t.cursorPos:])
-		t.cursorPos++
-	}
-	t.pushUndo("type", before)
-	// Word-boundary typing breaks the coalescing group so undo
-	// unwinds one word at a time, matching macOS/Cocoa conventions.
-	if e.Rune == ' ' || e.Rune == '\t' {
-		t.history.breakCoalesce()
-	}
-
-	t.invalidateLayoutIfAutoSize()
-	if t.OnChange != nil {
-		t.fireChange()
-	}
-
-	// Reset cursor blink when typing
-	t.cursorVisible = true
-	t.cursorBlinkTime = time.Now().UnixMilli()
-
-	// Auto-scroll to cursor
-	t.scrollToCursor()
-
+	t.ed.newline(t)
 	return true
 }
 
 func (t *TextArea) handleScroll(e MouseEvent) {
 	content, _, _ := t.visibleContentRect(t.Bounds())
-	// Scroll speed: 20 logical pixels per wheel unit.
-	t.scrollY -= e.DeltaY * 20.0
+	dx, dy := e.WheelPixels()
+	t.scrollY -= dy
 	if !t.wrapEnabled() {
-		hStep := e.DeltaX
-		if e.Mods&ModShift != 0 && hStep == 0 {
-			hStep = e.DeltaY
+		if e.Mods&ModShift != 0 && dx == 0 {
+			dx = dy
 		}
-		t.scrollX -= hStep * 20.0
+		t.scrollX -= dx
 	}
 	t.clampScroll(content)
 }
 
-func (t *TextArea) moveCursorVertically(direction int) {
-	runes := []rune(t.Text)
+// editorVertical maps Up/Down to the nearest offset on the visual line
+// above/below, keeping the caret's x.
+func (t *TextArea) editorVertical(direction int) (int, bool) {
+	runes := t.textRunes()
 	content, _, _ := t.visibleContentRect(t.Bounds())
-	lines := t.visualLines(runes, content.W)
+	lines := t.visualLines(content.W)
 	if len(lines) == 0 {
-		return
+		return t.ed.cursor, true
 	}
-
-	// Find current visual line and x position
-	lineIdx := 0
-	for i, line := range lines {
-		if t.cursorPos >= line.start && t.cursorPos <= line.end {
-			lineIdx = i
-			break
-		}
-		if i == len(lines)-1 {
-			lineIdx = i
-		}
-	}
+	lineIdx := t.cursorLineIndex(lines)
 	currentLine := lines[lineIdx]
-	end := t.cursorPos
+	end := t.ed.cursor
 	if end > currentLine.end {
 		end = currentLine.end
 	}
 	currentText := string(runes[currentLine.start:currentLine.end])
 	targetX := TextXForOffset(currentText, t.font(), t.Paragraph.Direction, end-currentLine.start)
-
-	targetIdx := lineIdx + direction
-	if targetIdx < 0 {
-		targetIdx = 0
-	}
-	if targetIdx >= len(lines) {
-		targetIdx = len(lines) - 1
-	}
+	targetIdx := clampInt(lineIdx+direction, 0, len(lines)-1)
 	targetLine := lines[targetIdx]
-	t.cursorPos = t.closestPosInLine(runes, targetLine.start, targetLine.end, targetX)
-	t.selStart = -1
+	return t.closestPosInLine(runes, targetLine.start, targetLine.end, targetX), true
 }
 
 func (t *TextArea) visualHorizontalTarget(delta int) int {
-	runes := []rune(t.Text)
+	runes := t.textRunes()
 	content, _, _ := t.visibleContentRect(t.Bounds())
-	lines := t.visualLines(runes, content.W)
+	lines := t.visualLines(content.W)
 	if len(lines) == 0 {
 		return 0
 	}
-	lineIndex := len(lines) - 1
-	for i, line := range lines {
-		if t.cursorPos >= line.start && t.cursorPos <= line.end {
-			lineIndex = i
-			break
-		}
-	}
+	lineIndex := t.cursorLineIndex(lines)
 	line := lines[lineIndex]
 	text := string(runes[line.start:line.end])
-	local := t.cursorPos - line.start
+	local := t.ed.cursor - line.start
 	target := line.start + TextVisualNeighbor(text, t.font(), t.Paragraph.Direction, local, delta)
-	if target != t.cursorPos {
+	if target != t.ed.cursor {
 		return target
 	}
 	if delta < 0 && lineIndex > 0 {
@@ -1264,136 +982,28 @@ func (t *TextArea) visualHorizontalTarget(delta int) int {
 	return target
 }
 
-func (t *TextArea) moveCursorWithSelection(pos int, extend bool) {
-	if !extend {
-		t.cursorPos = pos
-		t.selStart = -1
-		t.selEnd = 0
-		return
-	}
-	if t.selStart < 0 {
-		t.selStart = t.cursorPos
-	}
-	t.cursorPos = pos
-	t.selEnd = pos
-}
-
-func (t *TextArea) currentLineBounds() (start, end int) {
+// editorLineBounds is the visual line holding the caret (Home / End).
+func (t *TextArea) editorLineBounds() (start, end int) {
 	content, _, _ := t.visibleContentRect(t.Bounds())
-	runes := []rune(t.Text)
-	lines := t.visualLines(runes, content.W)
+	lines := t.visualLines(content.W)
 	if len(lines) == 0 {
 		return 0, 0
 	}
-	for _, line := range lines {
-		if t.cursorPos >= line.start && t.cursorPos <= line.end {
-			return line.start, line.end
-		}
-	}
-	last := lines[len(lines)-1]
-	return last.start, last.end
+	line := lines[t.cursorLineIndex(lines)]
+	return line.start, line.end
 }
 
-func (t *TextArea) beforeInput(kind, text string) bool {
-	if t.BeforeInput == nil {
-		return true
+// PaintBounds covers the shadow / focus-border halo painted outside the
+// layout rect. Without it a neighbor's partial repaint can clear the halo
+// and leave a stale fringe.
+func (t *TextArea) PaintBounds() Rect {
+	b := t.Bounds()
+	st := t.Style()
+	r := b.Union(shadowPaintBounds(b, st.Shadow))
+	for _, sh := range st.ExtraShadows {
+		r = r.Union(shadowPaintBounds(b, sh))
 	}
-	return t.BeforeInput(BeforeInputEvent{
-		Kind:      kind,
-		Text:      text,
-		CursorPos: t.cursorPos,
-		SelStart:  t.selStart,
-		SelEnd:    t.selEnd,
-		Value:     t.Text,
-	})
-}
-
-func (t *TextArea) emitStateChange(prevCursor, prevSelStart, prevSelEnd int) {
-	if t.cursorPos != prevCursor && t.OnCursorChange != nil {
-		t.OnCursorChange(t.cursorPos)
-	}
-	if (t.selStart != prevSelStart || t.selEnd != prevSelEnd) && t.OnSelectionChange != nil {
-		t.OnSelectionChange(t.selStart, t.selEnd)
-	}
-}
-
-func (t *TextArea) registerClick(e MouseEvent) int {
-	now := e.When.UnixMilli()
-	if now == 0 {
-		now = time.Now().UnixMilli()
-	}
-	if now-t.lastClickMS <= 400 &&
-		absf(e.X-t.lastClickX) <= 4 &&
-		absf(e.Y-t.lastClickY) <= 4 {
-		t.clickCount++
-	} else {
-		t.clickCount = 1
-	}
-	if t.clickCount > 3 {
-		t.clickCount = 1
-	}
-	t.lastClickMS = now
-	t.lastClickX = e.X
-	t.lastClickY = e.Y
-	return t.clickCount
-}
-
-func (t *TextArea) wordBoundsAt(pos int) (int, int) {
-	runes := []rune(t.Text)
-	if len(runes) == 0 {
-		return 0, 0
-	}
-	if pos >= len(runes) {
-		pos = len(runes) - 1
-	}
-	if pos < 0 {
-		pos = 0
-	}
-	isWord := textWordRune(runes[pos])
-	start := pos
-	for start > 0 && runes[start-1] != '\n' && textWordRune(runes[start-1]) == isWord {
-		start--
-	}
-	end := pos + 1
-	for end < len(runes) && runes[end] != '\n' && textWordRune(runes[end]) == isWord {
-		end++
-	}
-	return start, end
-}
-
-func (t *TextArea) logicalLineBoundsAt(pos int) (int, int) {
-	runes := []rune(t.Text)
-	if len(runes) == 0 {
-		return 0, 0
-	}
-	if pos > len(runes) {
-		pos = len(runes)
-	}
-	if pos < 0 {
-		pos = 0
-	}
-	start := pos
-	if start == len(runes) && start > 0 {
-		start--
-	}
-	for start > 0 && runes[start-1] != '\n' {
-		start--
-	}
-	end := pos
-	if end < start {
-		end = start
-	}
-	for end < len(runes) && runes[end] != '\n' {
-		end++
-	}
-	return start, end
-}
-
-func (t *TextArea) HitTest(p Point) Widget {
-	if t.Bounds().Contains(p) {
-		return t
-	}
-	return nil
+	return expandRect(r, st.BorderSize/2+2)
 }
 
 // WidgetCursor shows the text I-beam over an editable area; a disabled area
@@ -1403,32 +1013,29 @@ func (t *TextArea) WidgetCursor() (CursorShape, bool) {
 }
 
 func (t *TextArea) Focusable() bool {
-	return true
+	return t.Enabled()
 }
 
 func (t *TextArea) CancelInteraction() {
-	t.selecting = false
+	t.ed.selecting = false
+	t.hovering = false
 	t.barDraggingX = false
 	t.barDraggingY = false
+	t.Invalidate()
 }
 
 func (t *TextArea) SetFocused(focused bool) {
-	prevCursor, prevSelStart, prevSelEnd := t.cursorPos, t.selStart, t.selEnd
+	prev := t.ed.caretState()
+	was := t.focused
 	t.focused = focused
-	// Focus transitions seal the current coalescing group so a
-	// later re-focus + typing starts a new undo entry.
-	t.history.breakCoalesce()
-	if focused {
-		// Reset cursor blink when gaining focus
-		t.cursorVisible = true
-		t.cursorBlinkTime = time.Now().UnixMilli()
-	} else {
-		t.selStart = -1
-		t.hovering = false
+	t.ed.focusChanged(t, was, focused)
+	if !focused {
+		// Do not clear hovering here: the pointer may still be over the
+		// field, and no new Enter event will arrive to restore it.
 		t.barDraggingX = false
 		t.barDraggingY = false
 	}
-	t.emitStateChange(prevCursor, prevSelStart, prevSelEnd)
+	t.ed.emitStateChange(t, prev)
 	t.Invalidate()
 }
 
@@ -1436,64 +1043,28 @@ func (t *TextArea) GetText() string {
 	return t.Text
 }
 
-// fireChange invokes OnChange (if wired) and publishes a semantic "Input"
-// record for the debug surface. Single choke point for every text
-// mutation.
 // NotifyTextChanged implements qui.TextChangeNotifier: publish the current
 // text as a user-equivalent change. SetText itself stays silent (a
 // programmatic set must not re-enter the app's handler), so the agent's Type
 // action calls this after its bulk set to make the two paths behave alike.
-func (t *TextArea) NotifyTextChanged() { t.fireChange() }
-
-func (t *TextArea) fireChange() {
-	t.lastChangeUser = true
-	if t.OnChange != nil {
-		t.OnChange(t.Text)
-	}
-	if w := t.Window(); w != nil {
-		w.RecordInputChange(t, "", t.Text, "user")
-	}
-}
+func (t *TextArea) NotifyTextChanged() { t.ed.fireChange(t) }
 
 // TextState reports the textarea's editing state for the AX / agent debug
 // surface (qui.TextEditable).
-func (t *TextArea) TextState() TextState {
-	return TextState{
-		Value:    t.Text,
-		Caret:    t.cursorPos,
-		SelStart: t.selStart,
-		SelEnd:   t.selEnd,
-		Preedit:  t.preeditText,
-		CanUndo:  len(t.history.undo) > 0,
-		CanRedo:  len(t.history.redo) > 0,
-	}
-}
+func (t *TextArea) TextState() TextState { return t.ed.textState(t.Text) }
 
+// SetText programmatically replaces the content and parks the caret at the
+// end. Silent by design (see qui.TextChangeNotifier); call
+// NotifyTextChanged to publish a user-equivalent change. Undoable.
 func (t *TextArea) SetText(text string) {
-	if t.Text == text {
+	prev := t.ed.caretState()
+	if !t.ed.setText(t, text) {
 		return
-	}
-	prevCursor, prevSelStart, prevSelEnd := t.cursorPos, t.selStart, t.selEnd
-	before := t.snapshot()
-	t.Text = text
-	runes := []rune(text)
-	if t.cursorPos > len(runes) {
-		t.cursorPos = len(runes)
 	}
 	t.scrollX = 0
 	t.scrollY = 0
-	t.selStart = -1
-	t.pushUndo("set", before)
-	source := "program"
-	if t.lastChangeUser {
-		source = "program-overwrite"
-	}
-	t.lastChangeUser = false
-	if w := t.Window(); w != nil {
-		w.RecordInputChange(t, before.text, text, source)
-	}
-	t.invalidateLayoutIfAutoSize()
-	t.emitStateChange(prevCursor, prevSelStart, prevSelEnd)
+	t.scrollToCursor()
+	t.ed.emitStateChange(t, prev)
 	t.Invalidate()
 }
 
@@ -1501,19 +1072,12 @@ func (t *TextArea) SetText(text string) {
 // any selection. Useful after programmatically seeding text (e.g. an
 // inline cell editor preloading the existing cell value) so subsequent
 // keystrokes append instead of inserting at the start.
-func (t *TextArea) MoveCursorToEnd() {
-	prevCursor, prevSelStart, prevSelEnd := t.cursorPos, t.selStart, t.selEnd
-	t.cursorPos = len([]rune(t.Text))
-	t.selStart = -1
-	t.selEnd = 0
-	t.emitStateChange(prevCursor, prevSelStart, prevSelEnd)
-}
+func (t *TextArea) MoveCursorToEnd() { t.SetCursorPos(len(t.textRunes())) }
 
 // getContentHeight calculates the total height of the text content
 func (t *TextArea) getContentHeight(content Rect) float32 {
-	runes := []rune(t.Text)
 	lineHeight := t.lineHeight()
-	lines := t.visualLines(runes, content.W)
+	lines := t.visualLines(content.W)
 	if len(lines) == 0 {
 		return lineHeight
 	}
@@ -1591,7 +1155,11 @@ func (t *TextArea) wrapEnabled() bool {
 	return t.AutoWrap || t.Paragraph.Wrap
 }
 
-func (t *TextArea) visualLines(runes []rune, contentWidth float32) []visualLine {
+// layoutFor lays text out for the content width (unbounded when the field
+// does not wrap). BuildTextLayout memoizes whole texts and, below that,
+// single paragraphs, so an unchanged document is a lookup and an edit
+// re-shapes only the paragraph it touched.
+func (t *TextArea) layoutFor(text string, contentWidth float32) TextLayout {
 	opts := t.layoutOptions()
 	opts.MaxLines = 0
 	opts.Ellipsis = false
@@ -1602,47 +1170,39 @@ func (t *TextArea) visualLines(runes []rune, contentWidth float32) []visualLine 
 		opts.Wrap = false
 		opts.MaxWidth = 0
 	}
-	layout := BuildTextLayout(string(runes), t.font(), opts)
-	lines := make([]visualLine, 0, len(layout.Lines))
-	for _, line := range layout.Lines {
-		lines = append(lines, visualLine{start: line.Start, end: line.End})
-	}
-	return lines
+	return BuildTextLayout(text, t.font(), opts)
 }
 
+// visualLines returns the document's visual lines at contentWidth. The
+// conversion from the shared layout is cached per layout result: the memo
+// hands back the same Lines array while nothing changed, so repeated calls
+// within a frame (and across frames) do not reallocate it.
+func (t *TextArea) visualLines(contentWidth float32) []visualLine {
+	layout := t.layoutFor(t.Text, contentWidth)
+	return t.layoutCache.linesFor(layout)
+}
+
+// getContentWidth is the widest visual line, read from the layout instead of
+// re-measuring every line.
 func (t *TextArea) getContentWidth(content Rect) float32 {
-	runes := []rune(t.Text)
-	lines := t.visualLines(runes, content.W)
-	if len(lines) == 0 {
+	if t.Text == "" {
 		return 0
 	}
-	maxW := float32(0)
-	for _, line := range lines {
-		w := t.runesWidth(runes[line.start:line.end])
-		if w > maxW {
-			maxW = w
-		}
-	}
-	return maxW
+	return t.layoutFor(t.Text, content.W).Width
 }
 
 func (t *TextArea) logicalLineCount() int {
-	if t.Text == "" {
-		return 1
-	}
-	return len(strings.Split(strings.ReplaceAll(t.Text, "\r\n", "\n"), "\n"))
+	return strings.Count(t.Text, "\n") + 1
 }
 
+// naturalContentWidth is the longest logical line's width (AutoSizeWidth).
 func (t *TextArea) naturalContentWidth() float32 {
-	lines := strings.Split(strings.ReplaceAll(t.Text, "\r\n", "\n"), "\n")
-	maxW := float32(0)
-	for _, line := range lines {
-		w := t.runesWidth([]rune(line))
-		if w > maxW {
-			maxW = w
-		}
+	if t.Text == "" {
+		return 0
 	}
-	return maxW
+	opts := t.layoutOptions()
+	opts.Wrap, opts.MaxWidth, opts.MaxLines, opts.Ellipsis = false, 0, 0, false
+	return BuildTextLayout(t.Text, t.font(), opts).Width
 }
 
 func (t *TextArea) invalidateLayoutIfAutoSize() {
@@ -1729,99 +1289,39 @@ func (t *TextArea) visibleContentRect(rect Rect) (Rect, bool, bool) {
 // SetPreedit stores in-flight composition text. Drawn at the caret
 // with an underline while composing. Call with ("", 0) to clear.
 func (t *TextArea) SetPreedit(text string, cursor int) {
-	t.preeditText = text
-	t.preeditCursor = cursor
-	t.cursorVisible = true
-	t.cursorBlinkTime = time.Now().UnixMilli()
+	t.ed.setPreedit(t, text, cursor)
 	t.Invalidate()
 }
 
 // CommitIME finalizes composition by inserting `text` at the caret,
 // replacing any active selection, and clearing preedit state.
 func (t *TextArea) CommitIME(text string) {
-	t.preeditText = ""
-	t.preeditCursor = 0
-	if text == "" {
-		return
-	}
-	if !t.beforeInput("ime", text) {
-		return
-	}
-	prevCursor, prevSelStart, prevSelEnd := t.cursorPos, t.selStart, t.selEnd
-	runes := []rune(t.Text)
-	before := t.snapshot()
-	if t.selStart >= 0 && t.selStart != t.selEnd {
-		start := int(min(float32(t.selStart), float32(t.selEnd)))
-		end := int(max(float32(t.selStart), float32(t.selEnd)))
-		t.Text = string(runes[:start]) + text + string(runes[end:])
-		t.cursorPos = start + len([]rune(text))
-		t.selStart = -1
-	} else {
-		t.Text = string(runes[:t.cursorPos]) + text + string(runes[t.cursorPos:])
-		t.cursorPos += len([]rune(text))
-	}
-	t.pushUndo("ime", before)
-	t.invalidateLayoutIfAutoSize()
-	if t.OnChange != nil {
-		t.fireChange()
-	}
-	t.scrollToCursor()
-	t.cursorVisible = true
-	t.cursorBlinkTime = time.Now().UnixMilli()
-	t.emitStateChange(prevCursor, prevSelStart, prevSelEnd)
+	prev := t.ed.caretState()
+	t.ed.commitIME(t, text)
+	t.ed.emitStateChange(t, prev)
 	t.Invalidate()
 }
 
 // CursorPos returns the caret position as a rune index into the text.
-func (t *TextArea) CursorPos() int { return t.cursorPos }
+func (t *TextArea) CursorPos() int { return t.ed.cursor }
 
 // SetCursorPos moves the caret to a rune index (clamped to the text)
 // and collapses any selection. Fires the cursor-change callback.
 func (t *TextArea) SetCursorPos(pos int) {
-	n := len([]rune(t.Text))
-	if pos < 0 {
-		pos = 0
-	}
-	if pos > n {
-		pos = n
-	}
-	prevCursor, prevSelStart, prevSelEnd := t.cursorPos, t.selStart, t.selEnd
-	t.cursorPos = pos
-	t.selStart = -1
-	t.selEnd = pos
-	t.scrollToCursor()
-	t.cursorVisible = true
-	t.cursorBlinkTime = time.Now().UnixMilli()
-	t.emitStateChange(prevCursor, prevSelStart, prevSelEnd)
+	prev := t.ed.caretState()
+	t.caretNextLine = false
+	t.ed.setCursor(t, pos)
+	t.ed.emitStateChange(t, prev)
 	t.Invalidate()
 }
 
 // SelectRange selects [start, end) (rune indices, clamped) and parks the
 // caret at end. start==end collapses to a caret with no selection.
 func (t *TextArea) SelectRange(start, end int) {
-	n := len([]rune(t.Text))
-	clamp := func(v int) int {
-		if v < 0 {
-			return 0
-		}
-		if v > n {
-			return n
-		}
-		return v
-	}
-	start, end = clamp(start), clamp(end)
-	prevCursor, prevSelStart, prevSelEnd := t.cursorPos, t.selStart, t.selEnd
-	if start == end {
-		t.selStart = -1
-	} else {
-		t.selStart = start
-	}
-	t.selEnd = end
-	t.cursorPos = end
-	t.scrollToCursor()
-	t.cursorVisible = true
-	t.cursorBlinkTime = time.Now().UnixMilli()
-	t.emitStateChange(prevCursor, prevSelStart, prevSelEnd)
+	prev := t.ed.caretState()
+	t.caretNextLine = false
+	t.ed.selectRange(t, start, end)
+	t.ed.emitStateChange(t, prev)
 	t.Invalidate()
 }
 
@@ -1830,38 +1330,9 @@ func (t *TextArea) SelectRange(start, end int) {
 // programmatic edit path used by autocomplete and point-mode reference
 // insertion (CommitIME is the same operation, tagged as IME input).
 func (t *TextArea) InsertText(text string) {
-	if text == "" {
-		return
-	}
-	if !t.beforeInput("insert", text) {
-		return
-	}
-	prevCursor, prevSelStart, prevSelEnd := t.cursorPos, t.selStart, t.selEnd
-	runes := []rune(t.Text)
-	before := t.snapshot()
-	if t.selStart >= 0 && t.selStart != t.selEnd {
-		start := t.selStart
-		end := t.selEnd
-		if start > end {
-			start, end = end, start
-		}
-		t.Text = string(runes[:start]) + text + string(runes[end:])
-		t.cursorPos = start + len([]rune(text))
-	} else {
-		t.Text = string(runes[:t.cursorPos]) + text + string(runes[t.cursorPos:])
-		t.cursorPos += len([]rune(text))
-	}
-	t.selStart = -1
-	t.selEnd = t.cursorPos
-	t.pushUndo("insert", before)
-	t.invalidateLayoutIfAutoSize()
-	if t.OnChange != nil {
-		t.fireChange()
-	}
-	t.scrollToCursor()
-	t.cursorVisible = true
-	t.cursorBlinkTime = time.Now().UnixMilli()
-	t.emitStateChange(prevCursor, prevSelStart, prevSelEnd)
+	prev := t.ed.caretState()
+	t.ed.insert(t, "insert", text)
+	t.ed.emitStateChange(t, prev)
 	t.Invalidate()
 }
 
@@ -1874,96 +1345,104 @@ func (t *TextArea) CaretRect() Rect {
 	if !t.wrapEnabled() {
 		cx -= t.scrollX
 	}
-	if t.preeditText != "" {
-		runes := []rune(t.preeditText)
-		cur := t.preeditCursor
+	if t.ed.preedit != "" {
+		runes := []rune(t.ed.preedit)
+		cur := t.ed.preeditCursor
 		if cur > len(runes) {
 			cur = len(runes)
 		}
-		cx += TextXForOffset(t.preeditText, t.font(), TextDirectionAuto, cur)
+		cx += TextXForOffset(t.ed.preedit, t.font(), TextDirectionAuto, cur)
 	}
 	return Rect{X: cx, Y: cy - t.scrollY, W: 1, H: t.lineHeight()}
 }
 
-// Tick advances cursor-blink state. Returns the widget's bounds as the
-// dirty region when visibility toggles; an empty Rect otherwise.
-//
-// Returning the full widget bounds (vs. just the cursor stripe) is
-// imprecise but correct — the cursor rect is expensive to compute outside
-// Draw. It's cheap: a ~1KB scissor upload and a partial buffer re-paint.
-func (t *TextArea) Tick(now time.Time) Rect {
-	if !t.focused || !t.hovering {
-		return Rect{}
-	}
-	currentTime := now.UnixMilli()
-	var dirty Rect
-	if currentTime-t.cursorBlinkTime > 500 {
-		t.cursorVisible = !t.cursorVisible
-		t.cursorBlinkTime = currentTime
-		dirty = PaintBoundsInWindow(t)
-	}
-	// Wake an idle window for the next flip.
-	t.Window().RequestTickAt(time.UnixMilli(t.cursorBlinkTime + 501))
-	return dirty
-}
+// Tick drives cursor blink (see textEditor.tick). The dirty region is the
+// whole field: the caret rect is expensive to compute outside Draw, and a
+// partial repaint of one field is cheap.
+func (t *TextArea) Tick(now time.Time) Rect { return t.ed.tick(t, t.focused, now) }
 
 // ----------------------------------------------------------------------
 // Undo / redo
 
-func (t *TextArea) snapshot() undoEntry {
-	return undoEntry{
-		text:      t.Text,
-		cursorPos: t.cursorPos,
-		selStart:  t.selStart,
-		selEnd:    t.selEnd,
+// ----------------------------------------------------------------------
+// textEditorHost: the multi-line answers to the shared editor's questions.
+
+func (t *TextArea) editorText() *string { return &t.Text }
+
+func (t *TextArea) editorHooks() editorHooks {
+	return editorHooks{
+		beforeInput: t.BeforeInput,
+		onChange:    t.OnChange,
+		onCommit:    t.OnCommit,
+		onCursor:    t.OnCursorChange,
+		onSelection: t.OnSelectionChange,
 	}
 }
 
-func (t *TextArea) applyUndoEntry(e undoEntry) {
-	t.Text = e.text
-	t.cursorPos = e.cursorPos
-	t.selStart = e.selStart
-	t.selEnd = e.selEnd
-	// Clear IME preedit on restore — a stale preedit pinned to the
-	// old caret would mis-render after the text swap.
-	t.preeditText = ""
-	t.preeditCursor = 0
+func (t *TextArea) editorMultiline() bool { return true }
+
+// editorHorizontal steps one glyph along the visual line, crossing to the
+// neighbouring line at its end. At a soft-wrap boundary the offset does not
+// change (end of line N == start of N+1), so the step only flips the caret's
+// line affinity.
+func (t *TextArea) editorHorizontal(dir int) int {
+	target := t.visualHorizontalTarget(dir)
+	if target == t.ed.cursor {
+		t.caretNextLine = dir > 0
+	}
+	return target
+}
+
+func (t *TextArea) editorTextChanged() {
+	t.caretNextLine = false
 	t.invalidateLayoutIfAutoSize()
-	t.scrollToCursor()
-	t.cursorVisible = true
-	t.cursorBlinkTime = time.Now().UnixMilli()
 }
 
-func (t *TextArea) pushUndo(kind string, before undoEntry) {
-	t.history.push(kind, before, t.snapshot())
+func (t *TextArea) editorRevealCaret() { t.scrollToCursor() }
+
+// textRunes returns Text as runes, converted once per document change.
+// Callers must not modify the slice.
+func (t *TextArea) textRunes() []rune {
+	c := &t.layoutCache
+	// Comparing an unchanged string to itself is O(1) (same data pointer).
+	if c.runes == nil || c.runesText != t.Text {
+		c.runesText = t.Text
+		c.runes = []rune(t.Text)
+	}
+	return c.runes
 }
 
-// undo restores the previous snapshot, if any. Fires OnChange when
-// the text actually changes.
-func (t *TextArea) undo() bool {
-	current := t.snapshot()
-	prev := t.history.popUndo(current)
-	if prev == nil {
-		return false
-	}
-	changed := prev.text != t.Text
-	t.applyUndoEntry(*prev)
-	if changed && t.OnChange != nil {
-		t.fireChange()
-	}
-	return true
+// textAreaLayoutCache holds data derived from the shared text layout.
+type textAreaLayoutCache struct {
+	runesText string
+	runes     []rune
+	// Two slots: a wrapping field is laid out at two widths while it decides
+	// whether the vertical scrollbar takes a gutter.
+	lines [2]cachedVisualLines
+	next  int
 }
 
-func (t *TextArea) redo() bool {
-	current := t.snapshot()
-	next := t.history.popRedo(current)
-	if next == nil {
-		return false
+type cachedVisualLines struct {
+	src   *TextLayoutLine // identity of the layout's Lines array
+	n     int
+	lines []visualLine
+}
+
+func (c *textAreaLayoutCache) linesFor(layout TextLayout) []visualLine {
+	if len(layout.Lines) == 0 {
+		return nil
 	}
-	changed := next.text != t.Text
-	t.applyUndoEntry(*next)
-	if changed && t.OnChange != nil {
-		t.fireChange()
+	src := &layout.Lines[0]
+	for i := range c.lines {
+		if e := &c.lines[i]; e.src == src && e.n == len(layout.Lines) {
+			return e.lines
+		}
 	}
-	return true
+	lines := make([]visualLine, 0, len(layout.Lines))
+	for _, line := range layout.Lines {
+		lines = append(lines, visualLine{start: line.Start, end: line.End, offset: line.Offset})
+	}
+	c.lines[c.next] = cachedVisualLines{src: src, n: len(layout.Lines), lines: lines}
+	c.next = (c.next + 1) % len(c.lines)
+	return lines
 }

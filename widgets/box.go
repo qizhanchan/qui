@@ -312,7 +312,11 @@ func (b *Box) drawContent(canvas Canvas, bounds Rect) {
 	if ca, ok := canvas.(ClipAware); ok {
 		clip = ca.ClipBoundsLogical()
 	}
-	if clip.IsEmpty() || bounds.Intersects(clip) {
+	// Use the decoration/shadow extent, not the layout rect: when a
+	// neighbor dirties only our shadow halo, Container still calls Draw
+	// (PaintBounds intersects), and culling on Bounds would clear the halo
+	// without repainting it.
+	if clip.IsEmpty() || b.PaintBounds().Intersects(clip) {
 		b.paintDecorations(canvas, bounds)
 	}
 	// overflow: hidden — clip descendants to the box's bounds. A per-corner

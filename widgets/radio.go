@@ -98,6 +98,15 @@ type RadioButton struct {
 	hovering     bool
 }
 
+// SetLabel replaces the literal label and re-measures.
+func (r *RadioButton) SetLabel(label string) {
+	if r.Label == label {
+		return
+	}
+	r.Label = label
+	r.InvalidateLayout()
+}
+
 // NewRadioButton constructs a plain radio button belonging to the
 // given group. The group must be non-nil — grouping is what
 // distinguishes radio buttons from checkboxes. Look is HTML-plain
@@ -117,12 +126,31 @@ func NewRadioButton(group *RadioGroup, label string) *RadioButton {
 		RingSize:      htmlCheckSize,
 		RingWidth:     1,
 	}
+	r.SetSelf(r)
 	r.UpdateFlexItem(func(item *FlexItem) { item.NoShrink = true })
 	group.add(r)
 	return r
 }
 
 func (r *RadioButton) Focusable() bool { return r.Enabled() }
+
+// PaintBounds includes the focus ring / state-layer halo.
+func (r *RadioButton) PaintBounds() Rect { return expandRect(r.Bounds(), 8) }
+
+// CancelInteraction drops transient pointer/keyboard state.
+func (r *RadioButton) CancelInteraction() {
+	r.spaceArmed = false
+	r.hovering = false
+	r.focusVisible = false
+}
+
+// labelFont mirrors CheckBox: an explicit Style().Font wins, else body.
+func (r *RadioButton) labelFont() Font {
+	if f := r.Style().Font; f.Size > 0 {
+		return f
+	}
+	return ThemeFont(TextBody)
+}
 func (r *RadioButton) SetFocused(f bool) {
 	if r.focused == f {
 		return
@@ -163,7 +191,7 @@ func (r *RadioButton) Measure(available Size) Size {
 	h := slot
 	w := slot
 	if r.Label != "" || r.labelKey.key != "" {
-		textW, textH := TextMetrics(r.DisplayLabel(), ThemeFont(TextBody))
+		textW, textH := TextMetrics(r.DisplayLabel(), r.labelFont())
 		if textH > h {
 			h = textH
 		}
@@ -187,7 +215,8 @@ func (r *RadioButton) Draw(canvas Canvas) {
 	}
 
 	// State-layer overlay (opt-in via StateLayerColor + StateLayerSize).
-	if themed(r.StateLayerColor).A > 0 && r.StateLayerSize > 0 {
+	hasLayer := themed(r.StateLayerColor).A > 0 && r.StateLayerSize > 0
+	if r.Enabled() && hasLayer {
 		stateRect := Rect{X: b.X, Y: b.Y + (b.H-slot)/2, W: slot, H: slot}
 		switch {
 		case r.hovering:
@@ -195,28 +224,42 @@ func (r *RadioButton) Draw(canvas Canvas) {
 		case r.focusVisible:
 			DrawStateLayer(canvas, stateRect, slot/2, themed(r.StateLayerColor), theme.FocusOpacity)
 		}
+	} else if r.focusVisible {
+		ring := Rect{X: outer.X - 3, Y: outer.Y - 3, W: outer.W + 6, H: outer.H + 6}
+		canvas.StrokeRoundedRect(ring, ring.W/2, theme.Accent, 2)
 	}
 
+	disabledAlpha := float32(1)
+	if !r.Enabled() {
+		disabledAlpha = 0.4
+	}
+	dim := func(col Color) Color {
+		col = themed(col)
+		if disabledAlpha == 1 {
+			return col
+		}
+		return mixAlpha(col, disabledAlpha)
+	}
 	ringW := r.RingWidth
 	if ringW <= 0 {
 		ringW = 1
 	}
 	// Outer ring — RingColor unless selected, then SelectedColor.
-	ringColor := themed(r.RingColor)
+	ringColor := dim(r.RingColor)
 	if r.Checked {
-		ringColor = themed(r.SelectedColor)
+		ringColor = dim(r.SelectedColor)
 	}
 	canvas.StrokeRoundedRect(outer, dotSize/2, ringColor, ringW)
 	if r.Checked {
 		// Inner dot ≈ half the ring diameter (20→10; native 13→~6.5).
 		dotR := dotSize / 4
 		inner := Rect{X: outer.X + outer.W/2 - dotR, Y: outer.Y + outer.H/2 - dotR, W: 2 * dotR, H: 2 * dotR}
-		canvas.FillRoundedRect(inner, dotR, themed(r.SelectedColor))
+		canvas.FillRoundedRect(inner, dotR, dim(r.SelectedColor))
 	}
 
 	if r.Label != "" || r.labelKey.key != "" {
 		labelRect := Rect{X: b.X + slot + 4, Y: b.Y, W: b.W - slot - 4, H: b.H}
-		canvas.DrawText(r.DisplayLabel(), labelRect, themed(r.LabelColor), ThemeFont(TextBody))
+		canvas.DrawText(r.DisplayLabel(), labelRect, dim(r.LabelColor), r.labelFont())
 	}
 }
 
@@ -240,6 +283,16 @@ func (r *RadioButton) Handle(event Event) bool {
 			}
 		}
 	case KeyEvent:
+		if r.focused && e.Type() == EventKeyDown {
+			switch e.Key {
+			case KeyLeft, KeyUp:
+				r.moveSelection(-1)
+				return true
+			case KeyRight, KeyDown:
+				r.moveSelection(1)
+				return true
+			}
+		}
 		if r.focused && keyActivate(e, &r.spaceArmed) {
 			r.group.Select(r)
 			if r.OnKeyActivate != nil {
@@ -254,9 +307,34 @@ func (r *RadioButton) Handle(event Event) bool {
 	return false
 }
 
-func (r *RadioButton) HitTest(p Point) Widget {
-	if r.Bounds().Contains(p) {
-		return r
+// moveSelection implements ARIA radio-group arrow navigation: the checked
+// item moves with the arrows and takes focus (a roving tab stop).
+func (r *RadioButton) moveSelection(step int) {
+	g := r.group
+	if g == nil || len(g.buttons) == 0 {
+		return
 	}
-	return nil
+	idx := -1
+	for i, b := range g.buttons {
+		if b == r {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return
+	}
+	n := len(g.buttons)
+	for k := 1; k <= n; k++ {
+		j := (idx + step*k%n + n) % n
+		b := g.buttons[j]
+		if b == nil || !b.Enabled() {
+			continue
+		}
+		g.Select(b)
+		if w := r.Window(); w != nil {
+			w.SetFocus(b)
+		}
+		return
+	}
 }

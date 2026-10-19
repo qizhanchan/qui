@@ -125,8 +125,10 @@ func (b *Button) Invalidate() { b.InvalidateRect(b.dirtyRect()) }
 func (b *Button) PaintBounds() Rect { return b.dirtyRect() }
 
 func (b *Button) CancelInteraction() {
-	if b.pressed {
-		b.pressed = false
+	changed := b.pressed || b.hovering
+	b.pressed = false
+	b.hovering = false
+	if changed {
 		b.Invalidate()
 	}
 }
@@ -159,6 +161,16 @@ func (b *Button) currentState() State {
 	return s
 }
 
+// SetText replaces the literal caption and re-measures. (A keyed caption
+// still wins; use SetTextKey for localized text.)
+func (b *Button) SetText(text string) {
+	if b.Text == text {
+		return
+	}
+	b.Text = text
+	b.InvalidateLayout()
+}
+
 // NewButton creates a plain, unstyled button — no elevation, no
 // ripple, no state-layer overlay; a light-gray background with a thin
 // border that darkens on hover / pressed, roughly matching a browser
@@ -167,6 +179,7 @@ func (b *Button) currentState() State {
 // retinted by assigning its States directly.
 func NewButton(text string, onClick func()) *Button {
 	b := &Button{BaseWidget: NewBaseWidget(), Text: text, OnClick: onClick}
+	b.SetSelf(b)
 	theme := CurrentTheme()
 	b.States = defaultButtonStates()
 	b.hoverTrans.Duration = toDuration(theme.TransitionShort)
@@ -214,7 +227,15 @@ func (b *Button) Style() *Style { return &b.States.Base }
 // storage. Stateful widgets must override this so generic style updates land
 // on the value their Measure and Draw paths actually consume.
 func (b *Button) SetStyle(style Style) {
-	b.States.Base = style.Clone()
+	old := b.States.Base
+	next := style.Clone()
+	b.States.Base = next
+	rebaseStateStyle(b.States.Focused, old, next)
+	rebaseStateStyle(b.States.Disabled, old, next)
+	rebaseStateStyle(b.States.Hover, old, next)
+	rebaseStateStyle(b.States.Pressed, old, next)
+	rebaseStateStyle(b.States.Checked, old, next)
+	rebaseStateStyle(b.States.Errored, old, next)
 	b.InvalidateLayout()
 }
 
@@ -487,7 +508,7 @@ func (b *Button) Handle(event Event) bool {
 			}
 		}
 	case KeyEvent:
-		if b.focused && e.Type() == EventKeyDown && (e.Key == KeySpace || e.Key == KeyEnter) {
+		if b.focused && e.Type() == EventKeyDown && !e.Repeat && (e.Key == KeySpace || e.Key == KeyEnter) {
 			if b.OnClick != nil {
 				b.OnClick()
 			}
@@ -503,13 +524,6 @@ func (b *Button) SetEnabled(enabled bool) {
 	b.Invalidate()
 }
 
-func (b *Button) HitTest(p Point) Widget {
-	if b.Bounds().Contains(p) {
-		return b
-	}
-	return nil
-}
-
 // Image draws an image inside the widget bounds.
 type Image struct {
 	BaseWidget
@@ -521,6 +535,7 @@ type Image struct {
 
 func NewImage(img image.Image) *Image {
 	i := &Image{BaseWidget: NewBaseWidget(), Image: img}
+	i.SetSelf(i)
 	return i
 }
 
@@ -562,13 +577,6 @@ func (i *Image) Draw(canvas Canvas) {
 		return
 	}
 	canvas.DrawImage(i.Image, dst) // contain: letterboxed, no clip needed
-}
-
-func (i *Image) HitTest(p Point) Widget {
-	if i.Bounds().Contains(p) {
-		return i
-	}
-	return nil
 }
 
 func min(a, b float32) float32 {

@@ -118,6 +118,7 @@ func (g *FieldSet) HitTest(p Point) Widget {
 // Layout lays out the content children via the engine, then positions the
 // title Label in the top strip.
 func (g *FieldSet) Layout(rect Rect) {
+	g.syncTitleFont()
 	g.Container.Layout(rect)
 	g.layoutTitle()
 }
@@ -138,35 +139,50 @@ func (g *FieldSet) syncTitleFont() {
 
 func (g *FieldSet) layoutTitle() {
 	b := g.Bounds()
-	g.title.Layout(Rect{X: b.X + 10, Y: b.Y + 4, W: b.W - 20, H: g.titleStripH()})
+	pad := g.Style().Padding
+	g.title.Layout(Rect{X: b.X + pad.Left, Y: b.Y + 4, W: b.W - pad.Left - pad.Right, H: g.titleStripH()})
 }
 
 func (g *FieldSet) Draw(canvas Canvas) {
 	theme := CurrentTheme()
 	b := g.Bounds()
+	st := g.Style()
 
 	var clip Rect
 	if ca, ok := canvas.(ClipAware); ok {
 		clip = ca.ClipBoundsLogical()
 	}
-	drawSelf := clip.IsEmpty() || b.Intersects(clip)
+	// Both sides in the canvas's local space: the logical clip is mapped back
+	// through any ancestor scroll translate, so a window-space rect would miss
+	// it once the FieldSet sits in a scrolled ScrollView.
+	drawSelf := clip.IsEmpty() || PaintBoundsOf(g).Intersects(clip)
 
 	if drawSelf {
-		canvas.FillRoundedRect(b, theme.RadiusMedium, theme.SurfaceRaised)
-		if g.Style().BorderSize > 0 {
-			canvas.StrokeRect(b, theme.Border, g.Style().BorderSize)
+		bg := themed(st.Background)
+		if bg.A == 0 {
+			bg = theme.SurfaceRaised
 		}
-		if g.title.Text() != "" || g.title.TextKey() != "" {
-			// The title's default text color already follows the theme
-			// (Label.resolveForeground); only its font tracks ours. A style
-			// the app set on the title is left as it is.
-			g.syncTitleFont()
-			g.layoutTitle()
+		border := themed(st.Border)
+		if border.A == 0 {
+			border = theme.Border
+		}
+		radius := st.Radius
+		if radius <= 0 {
+			radius = theme.RadiusMedium
+		}
+		canvas.FillRoundedRect(b, radius, bg)
+		if st.BorderSize > 0 {
+			canvas.StrokeRoundedRect(b, radius, border, st.BorderSize)
+		}
+		if (g.title.Text() != "" || g.title.TextKey() != "") && !boxChildHidden(g.title) {
 			g.title.Draw(canvas)
 		}
 	}
 	for _, child := range g.Container.ChildList() {
-		if !clip.IsEmpty() && !child.Bounds().Intersects(clip) {
+		if boxChildHidden(child) {
+			continue
+		}
+		if !clip.IsEmpty() && !PaintBoundsOf(child).Intersects(clip) {
 			continue
 		}
 		child.Draw(canvas)

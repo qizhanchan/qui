@@ -33,13 +33,15 @@ const (
 //   - Focused + Hover can co-occur; Focused wins so the ring + pressed
 //     color don't fight
 //
-// Typical setup:
+// A non-nil variant is a COMPLETE style, not a field-wise patch: Resolve
+// returns it as-is. Start from the base so unset fields (padding, border,
+// font, …) are preserved:
 //
 //	var s qui.StateStyle
 //	s.Base.Background = theme.Accent
 //	s.Base.Foreground = theme.AccentText
-//	s.Hover   = &qui.Style{Background: theme.AccentHover,   Foreground: theme.AccentText}
-//	s.Pressed = &qui.Style{Background: theme.AccentPressed, Foreground: theme.AccentText}
+//	s.Hover   = qui.StyleWith(s.Base, qui.Background(theme.AccentHover))
+//	s.Pressed = qui.StyleWith(s.Base, qui.Background(theme.AccentPressed))
 type StateStyle struct {
 	Base     Style
 	Hover    *Style
@@ -56,6 +58,8 @@ type StateStyle struct {
 
 // Resolve returns the effective Style for the given state flags.
 // Never returns nil — falls back to &s.Base when no override matches.
+// Variants are returned verbatim (no field merge); build them with
+// StyleWith(s.Base, …).
 //
 // Priority order (highest first):
 //

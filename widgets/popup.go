@@ -98,6 +98,29 @@ func NewPopup(content Widget) *Popup {
 // IsShown reports whether the popup is on a window's overlay stack.
 func (p *Popup) IsShown() bool { return p.window != nil }
 
+// SetContent replaces the popup content. A shown popup adopts the new tree
+// and re-lays it immediately; assigning the Content field directly leaves
+// the old tree attached and the new one unlaid.
+func (p *Popup) SetContent(w Widget) {
+	if p.Content == w {
+		return
+	}
+	if p.window != nil {
+		if w != nil && !AdoptWidgetTree(w, p, p.window) {
+			return
+		}
+		if old := p.Content; old != nil {
+			DetachWidgetTree(old)
+		}
+		p.Content = w
+		if p.window != nil {
+			p.RelayoutOverlay(p.window.Size())
+		}
+		return
+	}
+	p.Content = w
+}
+
 // ShowAt measures the content at the window's current size, lays it out
 // at (x, y), then pushes the popup onto the window's overlay stack.
 // Calling ShowAt on an already-shown popup is a no-op. Unless NoClamp is
@@ -140,7 +163,9 @@ func (p *Popup) showAtSize(w *Window, x, y float32, size Size) {
 	p.natural = false
 	contentRect := Rect{X: x, Y: y, W: size.W, H: size.H}
 	p.Layout(contentRect)
-	p.Content.SetParent(p)
+	if !AdoptWidgetTree(p.Content, p, w) {
+		return
+	}
 	p.Content.Layout(contentRect)
 	p.window = w
 	w.PushOverlay(p)
@@ -366,7 +391,11 @@ func (p *Popup) RelayoutOverlay(winSize Size) {
 	if p.natural {
 		size = MeasureConstrained(p.Content, winSize)
 	}
-	p.RelayoutAt(b.X, b.Y, size)
+	x, y := b.X, b.Y
+	if !p.NoClamp {
+		x, y = clampPopup(winSize, x, y, size)
+	}
+	p.RelayoutAt(x, y, size)
 }
 
 // PaintBounds covers the content's elevation halo too, so the window's
@@ -389,7 +418,7 @@ func (p *Popup) ChildList() []Widget {
 }
 
 func (p *Popup) Draw(canvas Canvas) {
-	if p.Content != nil {
+	if p.Content != nil && !boxChildHidden(p.Content) {
 		p.Content.Draw(canvas)
 	}
 }
@@ -406,12 +435,75 @@ func (p *Popup) Handle(event Event) bool {
 			}
 		}
 	case KeyEvent:
+		// Escape belongs to the focused content first. The popup is an
+		// ancestor, so capture would otherwise close an editor/autocomplete
+		// before it ever sees the key.
+		if e.Phase() == PhaseCapture {
+			return false
+		}
 		if e.Type() == EventKeyDown && e.Key == KeyEscape {
 			p.closeFor(PopupCloseEscape)
 			return true
 		}
 	}
 	return false
+}
+
+// ConsumesTab never claims Tab; it closes the popup only when this Tab is
+// about to move focus OUT of it. Without that, Tab moved focus into the page
+// while the popup stayed open but keyboard-dead. Tab between controls inside
+// the popup (a form in a popover) leaves it open. Content that wants Tab
+// itself (autocomplete) implements TabConsumer and is consulted first.
+func (p *Popup) ConsumesTab(shift bool) bool {
+	w := p.window
+	if w == nil {
+		return false
+	}
+	if next := nextTabTarget(w, shift); next != nil && !p.contains(next) {
+		p.close(PopupCloseProgrammatic)
+	}
+	return false
+}
+
+// contains reports whether w is the popup or one of its descendants.
+func (p *Popup) contains(w Widget) bool {
+	var self Widget = p
+	if s := p.Self(); s != nil {
+		self = s
+	}
+	for ; w != nil; w = w.Parent() {
+		if w == self {
+			return true
+		}
+	}
+	return false
+}
+
+// nextTabTarget is the widget Tab (or Shift+Tab) will focus next, using the
+// same wrap-around order as Window.FocusNext / FocusPrev.
+func nextTabTarget(w *Window, shift bool) Widget {
+	list := w.CollectFocusables()
+	if len(list) == 0 {
+		return nil
+	}
+	cur := -1
+	for i, f := range list {
+		if f == w.Focused() {
+			cur = i
+			break
+		}
+	}
+	step := 1
+	if shift {
+		step = -1
+	}
+	if cur < 0 {
+		if shift {
+			return list[len(list)-1]
+		}
+		return list[0]
+	}
+	return list[(cur+step+len(list))%len(list)]
 }
 
 // HitTest routes clicks inside the popup to its content. If

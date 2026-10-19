@@ -1,6 +1,7 @@
 package widgets
 
 import (
+	"reflect"
 	"time"
 
 	. "github.com/qizhanchan/qui"
@@ -113,6 +114,7 @@ type Dialog struct {
 	// has since restyled it.
 	addedButtons []*Button
 	addedStyles  []*Style
+	addedBases   []Style
 }
 
 // DialogCloseReason says why a dialog closed — passed to CanClose and
@@ -128,6 +130,10 @@ const (
 	DialogCloseEscape
 	// DialogCloseBackdrop: a click outside the box (DismissOnBackdrop).
 	DialogCloseBackdrop
+	// DialogCloseRemoved: the overlay left its window behind the dialog's
+	// back — Window.RemoveOverlay / PopOverlay, or the window closing.
+	// Not vetoable; the dialog is already gone.
+	DialogCloseRemoved
 )
 
 func (r DialogCloseReason) String() string {
@@ -138,6 +144,8 @@ func (r DialogCloseReason) String() string {
 		return "escape"
 	case DialogCloseBackdrop:
 		return "backdrop"
+	case DialogCloseRemoved:
+		return "removed"
 	}
 	return "programmatic"
 }
@@ -217,13 +225,27 @@ func NewDialog(title string, content Widget) *Dialog {
 	}
 	d.SetSelf(d)
 	if content != nil {
-		content.SetParent(d)
+		AdoptWidgetTree(content, d, nil)
 	}
 	return d
 }
 
 // Modal marks this overlay as focus-trapping. Satisfies modalOverlay.
 func (d *Dialog) Modal() bool { return true }
+
+// SetWindow notices the dialog being detached by something other than its
+// own close path (Window.RemoveOverlay / PopOverlay, or the window
+// closing) and unwinds so IsShown() and Show() work again, firing
+// OnClose(DialogCloseRemoved). Mirrors Popup.SetWindow.
+func (d *Dialog) SetWindow(w *Window) {
+	d.BaseWidget.SetWindow(w)
+	if w == nil && d.window != nil {
+		d.window = nil
+		if d.OnClose != nil {
+			d.OnClose(DialogCloseRemoved)
+		}
+	}
+}
 
 // SetTitleKey makes the title come from the message catalog. Pass "" to
 // go back to the literal Title field.
@@ -240,11 +262,34 @@ func (d *Dialog) TitleKey() string { return d.titleKey.key }
 // when a title key is set, otherwise Title.
 func (d *Dialog) DisplayTitle() string { return d.titleKey.resolve(d.Title) }
 
+// SetContent replaces the body and re-lays the dialog. Assign the Content
+// field directly only before Show: a live dialog needs the adoption and
+// relayout this does.
+func (d *Dialog) SetContent(w Widget) {
+	if d.Content == w {
+		return
+	}
+	if w != nil && !AdoptWidgetTree(w, d, d.window) {
+		return
+	}
+	if old := d.Content; old != nil {
+		DetachWidgetTree(old)
+	}
+	d.Content = w
+	d.InvalidateLayout()
+	if d.window != nil {
+		d.RelayoutOverlay(d.window.Size())
+	}
+}
+
 // SetHeader replaces the default title row with w (nil restores it).
 func (d *Dialog) SetHeader(w Widget) {
+	if old := d.Header; old != nil && old != w {
+		DetachWidgetTree(old)
+	}
 	d.Header = w
 	if w != nil {
-		w.SetParent(d)
+		AdoptWidgetTree(w, d, d.window)
 	}
 	d.InvalidateLayout()
 }
@@ -274,6 +319,7 @@ func (d *Dialog) AddButton(text string, onClick func()) *Button {
 	btn.States = DialogButtonStates(false)
 	d.addedButtons = append(d.addedButtons, btn)
 	d.addedStyles = append(d.addedStyles, btn.States.Hover)
+	d.addedBases = append(d.addedBases, btn.States.Base)
 	d.AddAction(btn)
 	return btn
 }
@@ -321,11 +367,12 @@ func DialogButtonStates(filled bool) StateStyle {
 // own States after AddButton) keeps that look.
 func (d *Dialog) styleAddedButtons() {
 	for i, b := range d.addedButtons {
-		if b.States.Hover != d.addedStyles[i] {
+		if b.States.Hover != d.addedStyles[i] || !reflect.DeepEqual(b.States.Base, d.addedBases[i]) {
 			continue
 		}
 		b.States = DialogButtonStates(Widget(b) == d.DefaultAction)
 		d.addedStyles[i] = b.States.Hover
+		d.addedBases[i] = b.States.Base
 	}
 }
 
@@ -335,7 +382,14 @@ func (d *Dialog) AddAction(w Widget) {
 	if w == nil {
 		return
 	}
-	w.SetParent(d)
+	for _, a := range d.Actions {
+		if a == w {
+			return
+		}
+	}
+	if !AdoptWidgetTree(w, d, d.window) {
+		return
+	}
 	d.Actions = append(d.Actions, w)
 	d.InvalidateLayout()
 }
@@ -398,11 +452,14 @@ func (d *Dialog) CloseWith(reason DialogCloseReason) {
 }
 
 func (d *Dialog) close(reason DialogCloseReason) {
-	if d.window == nil {
+	w := d.window
+	if w == nil {
 		return
 	}
-	d.window.RemoveOverlay(d)
+	// Clear the shown state before RemoveOverlay so its SetWindow(nil) is
+	// not mistaken for an external removal (which would fire OnClose twice).
 	d.window = nil
+	w.RemoveOverlay(d)
 	if d.OnClose != nil {
 		d.OnClose(reason)
 	}
@@ -663,7 +720,9 @@ func (d *Dialog) Draw(canvas Canvas) {
 
 	m := d.metrics()
 	if d.Header != nil {
-		d.Header.Draw(canvas)
+		if !boxChildHidden(d.Header) {
+			d.Header.Draw(canvas)
+		}
 	} else if title := d.DisplayTitle(); title != "" {
 		titleColor := d.TitleColor
 		if titleColor == (Color{}) {
@@ -683,11 +742,15 @@ func (d *Dialog) Draw(canvas Canvas) {
 		// paints over the headline or the actions.
 		depth := canvas.Save()
 		canvas.ClipRect(d.Content.Bounds())
-		d.Content.Draw(canvas)
+		if !boxChildHidden(d.Content) {
+			d.Content.Draw(canvas)
+		}
 		canvas.RestoreTo(depth)
 	}
 	for _, a := range d.Actions {
-		a.Draw(canvas)
+		if !boxChildHidden(a) {
+			a.Draw(canvas)
+		}
 	}
 }
 

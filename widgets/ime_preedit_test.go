@@ -13,7 +13,7 @@ import (
 // glyphs (e.g. "old" + preedit "haha").
 func TestInputPreeditDoesNotOverlapText(t *testing.T) {
 	tf := focusedInput("old")
-	tf.cursorPos = 0 // caret at the front
+	tf.ed.cursor = 0 // caret at the front
 	tf.SetPreedit("haha", 4)
 
 	rc := &RecordingCanvas{}
@@ -36,7 +36,7 @@ func TestTextAreaPreeditDoesNotOverlapText(t *testing.T) {
 	ta := NewTextArea("")
 	ta.Layout(Rect{X: 0, Y: 0, W: 300, H: 120})
 	ta.SetText("old")
-	ta.cursorPos = 0
+	ta.ed.cursor = 0
 	ta.SetFocused(true)
 	ta.SetPreedit("haha", 4)
 

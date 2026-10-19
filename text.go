@@ -264,9 +264,22 @@ var (
 // per-entry eviction accounting.
 const textLayoutCacheLimit = 8192
 
+// Paragraph-level memo. The whole-text memo above misses on every edit of a
+// long document, and re-shaping all of it made one keystroke in a
+// 2000-line TextArea cost tens of milliseconds. Every '\n'-separated
+// paragraph is shaped and wrapped independently — only the final alignment
+// pass looks across paragraphs — so buildTextLayoutUncached memoizes each
+// paragraph's lines (rune offsets relative to the paragraph) and an edit
+// re-shapes just the paragraph it touched. Shares the lock, the
+// invalidation and the wholesale-reset policy of textLayoutCache.
+var textSegmentCache = map[textLayoutCacheKey][]TextLayoutLine{}
+
+const textSegmentCacheLimit = 32768
+
 func invalidateTextLayoutCache() {
 	textLayoutCacheMu.Lock()
 	textLayoutCache = map[textLayoutCacheKey]TextLayout{}
+	textSegmentCache = map[textLayoutCacheKey][]TextLayoutLine{}
 	textLayoutCacheMu.Unlock()
 }
 
@@ -309,6 +322,73 @@ func BuildTextLayout(text string, fontSpec Font, opts TextLayoutOptions) TextLay
 	return layout
 }
 
+// layoutSegmentCached returns the visual lines of one paragraph (no '\n'),
+// with rune offsets relative to it, through textSegmentCache. The key holds
+// exactly the inputs layoutSegment reads.
+func layoutSegmentCached(segText string, fontSpec Font, opts TextLayoutOptions, fi float32, faces []font.Face, overhang, wrapMaxWidth float32) []TextLayoutLine {
+	keySpec := fontSpec
+	if keySpec.Size <= 0 {
+		keySpec.Size = 14
+	}
+	segOpts := TextLayoutOptions{Direction: opts.Direction, BreakLongWords: opts.BreakLongWords, FirstIndent: fi}
+	if opts.Wrap && opts.MaxWidth > 0 {
+		segOpts.Wrap, segOpts.MaxWidth = true, opts.MaxWidth
+	}
+	key := textLayoutCacheKey{text: segText, font: makeFontCacheKey(keySpec), opts: segOpts, localeGen: LocaleGeneration(),
+		letterSpacing: fontSpec.LetterSpacing, wordSpacing: fontSpec.WordSpacing, smallCaps: fontSpec.SmallCaps}
+	textLayoutCacheMu.Lock()
+	if cached, ok := textSegmentCache[key]; ok {
+		textLayoutCacheMu.Unlock()
+		return cached
+	}
+	textLayoutCacheMu.Unlock()
+
+	segLines := layoutSegment(segText, fontSpec, opts, fi, faces, overhang, wrapMaxWidth)
+
+	textLayoutCacheMu.Lock()
+	if len(textSegmentCache) >= textSegmentCacheLimit {
+		textSegmentCache = map[textLayoutCacheKey][]TextLayoutLine{}
+	}
+	textSegmentCache[key] = segLines
+	textLayoutCacheMu.Unlock()
+	return segLines
+}
+
+// layoutSegment shapes and wraps one paragraph. The result is shared through
+// textSegmentCache, so callers copy lines out and never mutate them.
+func layoutSegment(segText string, fontSpec Font, opts TextLayoutOptions, fi float32, faces []font.Face, overhang, wrapMaxWidth float32) []TextLayoutLine {
+	segRunes := []rune(segText)
+	var lines []TextLayoutLine
+	if paragraph, ok := shapeParagraph(segRunes, fontSpec, opts.Direction); ok {
+		maxWidth := float32(0)
+		if opts.Wrap && opts.MaxWidth > 0 {
+			maxWidth = wrapMaxWidth
+		}
+		for _, sl := range wrapShapedParagraph(paragraph, maxWidth, fi, opts.BreakLongWords) {
+			lineText := string(segRunes[sl.start:sl.end])
+			if opts.Wrap && opts.MaxWidth > 0 {
+				lineText = strings.Trim(lineText, " \t")
+			}
+			line := sl
+			lines = append(lines, TextLayoutLine{
+				Text:   lineText,
+				Width:  withTextVisualOverhang(sl.advance, overhang),
+				Start:  sl.start,
+				End:    sl.end,
+				shaped: &line,
+			})
+		}
+		return lines
+	}
+	if opts.Wrap && opts.MaxWidth > 0 {
+		// text-indent applies only to the first visual line of the block,
+		// i.e. the first segment's first wrapped line.
+		return wrapTextLine(segText, wrapMaxWidth, fi, opts.BreakLongWords, fontSpec, faces)
+	}
+	w := withTextVisualOverhang(measureRunes(segRunes, fontSpec, faces), overhang)
+	return []TextLayoutLine{{Text: segText, Width: w, Start: 0, End: len(segRunes)}}
+}
+
 // buildTextLayoutUncached is the real line builder behind BuildTextLayout.
 // opts arrive normalized (Wrap promotion, LineHeightScale default).
 func buildTextLayoutUncached(text string, fontSpec Font, opts TextLayoutOptions) TextLayout {
@@ -334,54 +414,21 @@ func buildTextLayoutUncached(text string, fontSpec Font, opts TextLayoutOptions)
 	hardEnd := make([]bool, 0, 8)
 	appendSegment := func(segEnd int) {
 		segText := strings.TrimSuffix(string(srcRunes[segStart:segEnd]), "\r")
-		segRunes := []rune(segText)
-		segLen := len(segRunes)
 		fi := float32(0)
 		if segStart == 0 {
 			fi = opts.FirstIndent
 		}
-		if paragraph, ok := shapeParagraph(segRunes, fontSpec, opts.Direction); ok {
-			maxWidth := float32(0)
-			if opts.Wrap && opts.MaxWidth > 0 {
-				maxWidth = wrapMaxWidth
-			}
-			for _, sl := range wrapShapedParagraph(paragraph, maxWidth, fi, opts.BreakLongWords) {
-				lineText := string(segRunes[sl.start:sl.end])
-				if opts.Wrap && opts.MaxWidth > 0 {
-					lineText = strings.Trim(lineText, " \t")
-				}
-				line := sl
-				lines = append(lines, TextLayoutLine{
-					Text:   lineText,
-					Width:  withTextVisualOverhang(sl.advance, overhang),
-					Start:  segStart + sl.start,
-					End:    segStart + sl.end,
-					shaped: &line,
-				})
-				hardEnd = append(hardEnd, false)
-			}
-			if len(hardEnd) > 0 {
-				hardEnd[len(hardEnd)-1] = true
-			}
-			return
+		segLines := layoutSegmentCached(segText, fontSpec, opts, fi, faces, overhang, wrapMaxWidth)
+		for _, l := range segLines {
+			l.Start += segStart
+			l.End += segStart
+			lines = append(lines, l)
+			hardEnd = append(hardEnd, false)
 		}
-		if opts.Wrap && opts.MaxWidth > 0 {
-			// text-indent applies only to the first visual line of the block,
-			// i.e. the first segment's first wrapped line.
-			for _, wl := range wrapTextLine(segText, wrapMaxWidth, fi, opts.BreakLongWords, fontSpec, faces) {
-				wl.Start += segStart
-				wl.End += segStart
-				lines = append(lines, wl)
-				hardEnd = append(hardEnd, false)
-			}
-			if len(hardEnd) > 0 {
-				hardEnd[len(hardEnd)-1] = true
-			}
-			return
+		// The last line of a paragraph ends it (justify leaves it alone).
+		if len(segLines) > 0 {
+			hardEnd[len(hardEnd)-1] = true
 		}
-		w := withTextVisualOverhang(measureRunes([]rune(segText), fontSpec, faces), overhang)
-		lines = append(lines, TextLayoutLine{Text: segText, Width: w, Start: segStart, End: segStart + segLen})
-		hardEnd = append(hardEnd, true)
 	}
 	for i := 0; i < len(srcRunes); i++ {
 		if srcRunes[i] == '\n' {

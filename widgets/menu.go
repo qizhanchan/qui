@@ -1,6 +1,8 @@
 package widgets
 
 import (
+	"runtime"
+	"strings"
 	"time"
 
 	. "github.com/qizhanchan/qui"
@@ -43,6 +45,7 @@ type MenuItem struct {
 	// freshly added command (11 px medium, blue on light blue; see
 	// Theme.Popup.MenuBadgeText / MenuBadgeSurface). Empty = none.
 	Badge     string
+	BadgeKey  string // message key resolving Badge
 	OnClick   func()
 	Disabled  bool
 	Separator bool
@@ -92,6 +95,35 @@ func (it *MenuItem) DisplayLabel() string {
 		return it.Label
 	}
 	return TranslateOr("", it.LabelKey, it.Label, nil)
+}
+
+// DisplayBadge is the localized badge text.
+func (it *MenuItem) DisplayBadge() string {
+	if it.BadgeKey == "" {
+		return it.Badge
+	}
+	return TOr(it.BadgeKey, it.Badge)
+}
+
+// displayShortcut renders the portable accelerator spelling in the
+// platform's own notation. The registry still binds the raw Shortcut.
+func displayShortcut(s string) string {
+	if s == "" {
+		return ""
+	}
+	if runtime.GOOS != "darwin" {
+		return strings.ReplaceAll(s, "CmdOrCtrl", "Ctrl")
+	}
+	r := strings.NewReplacer(
+		"CmdOrCtrl", "⌘",
+		"Cmd", "⌘",
+		"Ctrl", "⌃",
+		"Shift", "⇧",
+		"Alt", "⌥",
+		"Option", "⌥",
+		"+", "",
+	)
+	return r.Replace(s)
 }
 
 // MenuActivatable is implemented by a menu row the keyboard can pick: when
@@ -477,11 +509,11 @@ func MenuPanel(items []*MenuItem) Widget {
 // For anyone who needs a designed menu widget (a specific palette +
 // elevation) outside a live window.
 func MenuPanelStyled(items []*MenuItem, colors MenuColors, elevation int) Widget {
-	_, list := buildMenuPopup(nil, nil, items)
-	list.style.ApplyColors(colors)
-	if elevation > 0 {
-		list.style.elevation = elevation
-	}
+	// Build rows AFTER applying the palette: rows and dividers copy the
+	// style at construction, so post-applying colors to the list left
+	// foreground / selected / hover / divider colors at the defaults.
+	st := styledMenuStyle(colors, elevation)
+	_, list := buildMenuPopupStyled(nil, nil, nil, items, st)
 	return list
 }
 
@@ -759,6 +791,12 @@ func showMenuPopup(window *Window, parent *Popup, closeParent func(), x, y float
 	if popup == nil {
 		return nil
 	}
+	// A submenu that would run off the right edge opens to the left of its
+	// parent instead of being slid back over the parent panel.
+	size := MeasureConstrained(list, window.Size())
+	if size.W > 0 && x+size.W > window.Size().W && x-size.W >= 0 {
+		x -= size.W
+	}
 	popup.ShowAt(window, x, y)
 	window.SetFocus(list)
 	return popup
@@ -874,7 +912,7 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 			// indexed by ITEM index, so a row that appended nothing — or two
 			// — would misdirect every keyboard activation below it.
 			child := it.Panel(closeChain)
-			itemWidgets = append(itemWidgets, newMenuPanelRow(child, st))
+			itemWidgets = append(itemWidgets, newMenuPanelRow(it, child, st))
 			rows = append(rows, child)
 			continue
 		}
@@ -887,7 +925,10 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 				// Open submenu anchored to this row's right edge. In the
 				// column layout the panel rises by its own padding so its
 				// first row lines up with the row that opened it.
-				row := itemWidgets[idx].Bounds()
+				// InteractionBoundsOf maps through a scrolling menu's
+				// transform; Bounds() is content-space and opened submenus
+				// at the wrong Y after a scroll.
+				row := InteractionBoundsOf(itemWidgets[idx])
 				y := row.Y
 				if subStyle.labelInset > 0 {
 					y -= subStyle.menuPadV
@@ -955,7 +996,14 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 		// Google-style hover: resting on a row for menuHoverDelay opens
 		// its submenu, or closes a sibling's. Moving on to the submenu
 		// before the delay leaves hovered at -1, which keeps it open.
+		var row Widget
 		onMove := func(p Point) {
+			// Events arrive in the row's own space (a scrolling menu is a
+			// transform away from window space); the aim test compares
+			// against overlay bounds, so map out.
+			if row != nil {
+				p = LocalPointToWindow(row, p)
+			}
 			pointer, movedAt = p, time.Now()
 			if openSub != nil && openSubIdx == idx {
 				aimFrom, aimSet = p, true
@@ -996,7 +1044,6 @@ func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), ite
 			}
 			afterMenuHoverDelay(window, settle)
 		}
-		var row Widget
 		if it.Content != nil {
 			cr := newMenuContentRow(it, st, onSelect)
 			cr.onHover, cr.onMove = onHover, onMove
@@ -1183,12 +1230,12 @@ func (v *menuItemView) Measure(available Size) Size {
 	if v.style.labelInset > 0 {
 		w = v.style.labelInset + labelW + v.style.trailingSpace
 	}
-	if v.item.Shortcut != "" {
-		sw, _ := TextMetrics(v.item.Shortcut, v.shortcutFont())
+	if sc := displayShortcut(v.item.Shortcut); sc != "" {
+		sw, _ := TextMetrics(sc, v.shortcutFont())
 		w += v.style.shortcutGap + sw
 	}
-	if v.item.Badge != "" {
-		w += menuBadgeGap + menuBadgeSize(v.item.Badge).W
+	if v.item.DisplayBadge() != "" {
+		w += menuBadgeGap + menuBadgeSize(v.item.DisplayBadge()).W
 	}
 	if v.item.Submenu != nil {
 		w += v.style.submenuW
@@ -1382,7 +1429,7 @@ func (v *menuItemView) Draw(canvas Canvas) {
 	}
 	canvas.DrawText(label, labelRect, labelColor, font)
 
-	if v.item.Shortcut != "" || v.item.Submenu != nil || v.item.Badge != "" {
+	if v.item.Shortcut != "" || v.item.Submenu != nil || v.item.DisplayBadge() != "" {
 		// Right-align trailing content (chevron first, then the shortcut
 		// text, then the badge pill).
 		rightCursor := b.X + b.W - st.trailingSpace
@@ -1395,23 +1442,23 @@ func (v *menuItemView) Draw(canvas Canvas) {
 			}
 			rightCursor -= st.submenuW
 		}
-		if v.item.Shortcut != "" {
+		if sc := displayShortcut(v.item.Shortcut); sc != "" {
 			sfont := v.shortcutFont()
-			sw, sh := TextMetrics(v.item.Shortcut, sfont)
+			sw, sh := TextMetrics(sc, sfont)
 			scRect := Rect{
 				X: rightCursor - sw,
 				Y: b.Y + (b.H-sh)/2,
 				W: sw,
 				H: sh,
 			}
-			canvas.DrawText(v.item.Shortcut, scRect, shortcutColor, sfont)
+			canvas.DrawText(sc, scRect, shortcutColor, sfont)
 			rightCursor -= sw + st.shortcutGap
-		} else if v.item.Badge != "" {
+		} else if v.item.DisplayBadge() != "" {
 			rightCursor -= menuBadgeGap
 		}
-		if v.item.Badge != "" {
-			sz := menuBadgeSize(v.item.Badge)
-			drawMenuBadge(canvas, Rect{X: rightCursor - sz.W, Y: b.Y + (b.H-sz.H)/2, W: sz.W, H: sz.H}, v.item.Badge, v.Enabled())
+		if v.item.DisplayBadge() != "" {
+			sz := menuBadgeSize(v.item.DisplayBadge())
+			drawMenuBadge(canvas, Rect{X: rightCursor - sz.W, Y: b.Y + (b.H-sz.H)/2, W: sz.W, H: sz.H}, v.item.DisplayBadge(), v.Enabled())
 		}
 	}
 }
@@ -1508,7 +1555,7 @@ func drawMenuArrow(canvas Canvas, tipX, midY float32, color Color) {
 // nor any hover painting, so the hosted content is the only thing that
 // reacts to the pointer. A nil child yields an empty row rather than a
 // hole in the item/widget index alignment.
-func newMenuPanelRow(child Widget, st menuStyle) Widget {
+func newMenuPanelRow(item *MenuItem, child Widget, st menuStyle) Widget {
 	var children []Widget
 	if child != nil {
 		children = append(children, child)
@@ -1517,6 +1564,9 @@ func newMenuPanelRow(child Widget, st menuStyle) Widget {
 	row.Style().Padding = Insets{
 		Top: st.menuPadV, Right: st.leadingSpace,
 		Bottom: st.menuPadV, Left: st.leadingSpace,
+	}
+	if item != nil && item.ID != "" {
+		row.SetID(item.ID)
 	}
 	return row
 }
@@ -1823,22 +1873,33 @@ func (lv *menuListView) Measure(available Size) Size {
 	}
 	if available.H > 0 && nat.H > available.H {
 		if lv.scroll == nil {
-			lv.scroll = NewScrollView()
-			lv.scroll.SetParent(lv)
+			sc := NewScrollView()
+			// Adopt (not raw SetParent): the wrapper needs the window so
+			// SetContent adopts the content onto the real window instead of
+			// detaching it with a nil window.
+			if !AdoptWidgetTree(sc, lv, lv.Window()) {
+				return Size{W: nat.W, H: available.H}
+			}
+			lv.scroll = sc
 		}
 		lv.scroll.SetContent(lv.content, nat)
 		return Size{W: nat.W, H: available.H}
 	}
 	if lv.scroll != nil {
-		// The list now fits — drop the scroll wrapper and re-parent content.
+		// The list now fits — move content back under the list and drop the
+		// wrapper (detaching it, not leaking it with a stale parent).
+		if lv.content != nil {
+			AdoptWidgetTree(lv.content, lv, lv.Window())
+		}
+		DetachWidgetTree(lv.scroll)
 		lv.scroll = nil
-		lv.content.SetParent(lv)
 	}
 	return nat
 }
 
 func (lv *menuListView) Layout(rect Rect) {
 	lv.BaseWidget.Layout(rect)
+	lv.applySurface()
 	if lv.scroll != nil {
 		lv.scroll.Layout(rect)
 	} else if lv.content != nil {
@@ -1868,15 +1929,30 @@ func (lv *menuListView) HitTest(p Point) Widget {
 	return nil
 }
 
+// applySurface resolves the palette and pushes the panel background onto
+// the content/scroll subtree. Runs in Layout, not Draw: changing a child's
+// Style during paint invalidates layout from inside the paint pass.
+func (lv *menuListView) applySurface() {
+	lv.style.refreshColors()
+	if lv.content == nil {
+		return
+	}
+	bg := lv.style.bg
+	if !lv.style.corners.IsZero() {
+		// Per-corner panel: the panel itself paints the shape; content
+		// stays transparent over it.
+		bg = Color{}
+	}
+	lv.content.Style().Background = bg
+	if lv.scroll != nil {
+		lv.scroll.Style().Background = bg
+		lv.scroll.Style().Radius = lv.style.radius
+	}
+}
+
 func (lv *menuListView) Draw(canvas Canvas) {
 	// Paint level-2 elevation behind the menu surface. The content
 	// Container fills its rounded-rect bg on top.
-	//
-	// Refresh the palette in case the caller-supplied MenuColors path
-	// unpinned or the plain-defaults path wants a refresh.
-	// A pinned palette skips the color reset; itemHeight always
-	// refreshes.
-	lv.style.refreshColors()
 	if lv.content == nil {
 		return
 	}
@@ -1885,24 +1961,20 @@ func (lv *menuListView) Draw(canvas Canvas) {
 	} else if lv.style.shadow != (ElevationSpec{}) {
 		canvas.DrawShadow(lv.Bounds(), lv.style.radius, lv.style.shadow, CurrentTheme().Shadow)
 	}
-	lv.content.Style().Background = lv.style.bg
 	if c := lv.style.corners; !c.IsZero() {
 		// Per-corner panel (a menu-bar dropdown's square top-left): fill
-		// it here, and let the content paint transparent over it.
+		// it here; applySurface left the content transparent over it.
 		p := NewPath().AddRRectCorners(lv.Bounds(), c.TL, c.TR, c.BR, c.BL)
 		canvas.DrawShape(ShapePath{Path: p}, DefaultPaint(lv.style.bg))
-		lv.content.Style().Background = Color{}
 	}
 	if lv.scroll != nil {
-		// The ScrollView clips + scrolls the content; give its viewport the
-		// same surface color so the menu reads as one panel.
-		lv.scroll.Style().Background = lv.content.Style().Background
-		lv.scroll.Style().Radius = lv.style.radius
 		lv.scroll.Draw(canvas)
 		lv.drawOutline(canvas)
 		return
 	}
-	lv.content.Draw(canvas)
+	if !boxChildHidden(lv.content) {
+		lv.content.Draw(canvas)
+	}
 	lv.drawOutline(canvas)
 }
 
@@ -1949,6 +2021,12 @@ func (lv *menuListView) PaintBounds() Rect {
 func (lv *menuListView) Handle(event Event) bool {
 	ke, ok := event.(KeyEvent)
 	if !ok || ke.Type() != EventKeyDown {
+		return false
+	}
+	// A MenuItem.Panel can host a real control (search field, colour
+	// picker). The menu list is its ancestor, so handling navigation keys
+	// during capture would steal them before the focused control sees them.
+	if ke.Phase() == PhaseCapture {
 		return false
 	}
 	switch ke.Key {
@@ -2113,13 +2191,25 @@ func NewMenuBar(window *Window) *MenuBar {
 	return mb
 }
 
-// win is the window dropdowns open in: the constructor's, else the one
-// the bar is attached to.
+// win is the window dropdowns open in: the one the bar is attached to,
+// else the constructor's (before mounting).
 func (mb *MenuBar) win() *Window {
-	if mb.window != nil {
-		return mb.window
+	if w := mb.Window(); w != nil {
+		return w
 	}
-	return mb.Window()
+	return mb.window
+}
+
+// SetWindow closes an open dropdown when the bar leaves its window; a
+// dropdown anchored to an unmounted bar has nothing left to belong to.
+func (mb *MenuBar) SetWindow(w *Window) {
+	mb.BaseWidget.SetWindow(w)
+	if w == nil {
+		mb.window = nil
+		mb.CloseMenu()
+		return
+	}
+	mb.window = w
 }
 
 // AddMenu appends a top-level menu. The caller-supplied items drive the
@@ -2158,8 +2248,16 @@ func (mb *MenuBar) Menus() []string {
 	return out
 }
 
+// SetTriggerStyle sets the trigger look and re-lays the bar. Prefer this
+// over assigning the TriggerStyle field: the field is re-derived in Layout,
+// but nothing schedules that pass for a bare assignment.
+func (mb *MenuBar) SetTriggerStyle(st StateStyle) {
+	mb.TriggerStyle = st
+	mb.InvalidateLayout()
+}
+
 // Trigger returns the button that opens menu i (nil when out of range).
-// Its States are re-derived from TriggerStyle every frame; set that to
+// Its States are re-derived from TriggerStyle during Layout; set that to
 // restyle triggers. Use the button for IDs, tooltips and layout.
 func (mb *MenuBar) Trigger(i int) *Button {
 	if i < 0 || i >= len(mb.menus) {
@@ -2206,18 +2304,55 @@ func (mb *MenuBar) styleTrigger(b *Button, open bool) {
 	b.States.Focused = nil
 }
 
-func (mb *MenuBar) Draw(canvas Canvas) {
+// refreshTriggers derives every trigger's States from TriggerStyle (or the
+// stock bar look) and resolves the bar's own baseline colors against the
+// active theme. Runs in Layout, never in Draw: mutating widget styles
+// during paint breaks per-frame cost and dirty-region assumptions.
+func (mb *MenuBar) refreshTriggers() {
 	for i, m := range mb.menus {
 		mb.styleTrigger(m.trigger, mb.open != nil && mb.openIdx == i)
 	}
-	// The constructor's plain bar colors follow SetTheme (see themed);
-	// colors the app set pass through. Swapped in for this draw only so
-	// Style() keeps reading back what was set.
+}
+
+// Measure/Layout re-derive the trigger styles first so an open/close or
+// theme switch changes the trigger metrics before the engine measures them.
+func (mb *MenuBar) Measure(available Size) Size {
+	mb.refreshTriggers()
+	return mb.Container.Measure(available)
+}
+
+func (mb *MenuBar) Layout(rect Rect) {
+	mb.refreshTriggers()
+	mb.Container.Layout(rect)
+}
+
+func (mb *MenuBar) Draw(canvas Canvas) {
+	// Paint the bar surface with the theme-resolved color without writing
+	// it back into Style (a draw must not mutate observable state), then
+	// paint the triggers.
+	bounds := mb.Bounds()
 	st := mb.Style()
-	bg, fg := st.Background, st.Foreground
-	st.Background, st.Foreground = themed(bg), themed(fg)
-	mb.Container.Draw(canvas)
-	st.Background, st.Foreground = bg, fg
+	bg := themed(st.Background)
+	var clip Rect
+	if ca, ok := canvas.(ClipAware); ok {
+		clip = ca.ClipBoundsLogical()
+	}
+	if (clip.IsEmpty() || bounds.Intersects(clip)) && bg.A > 0 {
+		if st.Radius > 0 {
+			canvas.FillRoundedRect(bounds, st.Radius, bg)
+		} else {
+			canvas.FillRect(bounds, bg)
+		}
+	}
+	for _, child := range ChildrenInPaintOrder(mb.ChildList()) {
+		if boxChildHidden(child) {
+			continue
+		}
+		if !clip.IsEmpty() && !PaintBoundsOf(child).Intersects(clip) {
+			continue
+		}
+		child.Draw(canvas)
+	}
 }
 
 // OpenMenu opens top-level menu idx (closing any other) and focuses it.
@@ -2241,6 +2376,7 @@ func (mb *MenuBar) OpenMenu(idx int) {
 		return
 	}
 	mb.open, mb.openIdx = popup, idx
+	mb.InvalidateLayout()
 	trigger.Invalidate()
 	MenuBarHoverSwitch(popup, func(p Point) func() {
 		for j, m := range mb.menus {
@@ -2257,6 +2393,7 @@ func (mb *MenuBar) OpenMenu(idx int) {
 		}
 		if mb.open == popup {
 			mb.open, mb.openIdx = nil, -1
+			mb.InvalidateLayout()
 		}
 		trigger.Invalidate()
 	}
@@ -2317,6 +2454,7 @@ func (mb *MenuBar) CloseMenu() {
 	if mb.open != nil {
 		p := mb.open
 		mb.open, mb.openIdx = nil, -1
+		mb.InvalidateLayout()
 		p.Close()
 	}
 }

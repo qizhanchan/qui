@@ -42,11 +42,13 @@ func TestTableRowExtraCellsIgnored(t *testing.T) {
 	row := NewTableRow(cols, cells)
 	row.Layout(Rect{X: 0, Y: 0, W: 80, H: 20})
 
-	// Third cell was added as a child (AddChild took it) but Layout
-	// must not place it past the last column — its bounds should
-	// stay at the zero rect it had before Layout.
-	if got := row.ChildAt(2).Bounds(); got != (Rect{}) {
-		t.Errorf("extra cell should be left unlaid; got %+v", got)
+	// Cells past the last column are not mounted at all: leaving them as
+	// children made them focusable/hit-testable at stale bounds.
+	if row.ChildCount() != 2 {
+		t.Fatalf("child count = %d, want 2 (extra cells dropped)", row.ChildCount())
+	}
+	if got := cells[2].Bounds(); got != (Rect{}) {
+		t.Errorf("extra cell should not be laid out; got %+v", got)
 	}
 }
 

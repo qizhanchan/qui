@@ -111,9 +111,146 @@ func NewListView(model ListModel) *ListView {
 }
 
 func (lv *ListView) Focusable() bool { return lv.Enabled() }
+
+// SetRowHeight changes the fixed row height and re-lays the list.
+func (lv *ListView) SetRowHeight(h float32) {
+	if h <= 0 || h == lv.RowHeight {
+		return
+	}
+	lv.RowHeight = h
+	lv.ClampScroll()
+	lv.InvalidateLayout()
+}
+
+// Refresh re-reads the model after the caller mutated it: row count and
+// cell text are not observable, so a model change has to be announced.
+// Clamps the scroll offset to the new content height.
+func (lv *ListView) Refresh() {
+	lv.ClampScroll()
+	lv.InvalidateLayout()
+}
+
+// Layout assigns the viewport, clamps the scroll offset against the new
+// height and prepares visible row widgets. Rows are NOT built or laid out
+// during Draw: a lazy build/detach in the paint pass could steal focus and
+// mutate geometry after the dirty clip was chosen.
+func (lv *ListView) Layout(rect Rect) {
+	lv.BaseWidget.Layout(rect)
+	lv.ClampScroll()
+	lv.prepareRows()
+}
+
+// prepareRows builds/lays out exactly the visible widget rows and releases
+// lazy rows outside the overscan window. Safe to call from Tick/Layout.
+func (lv *ListView) prepareRows() {
+	if !lv.useWidgetRows {
+		return
+	}
+	start, end := lv.visibleRange()
+	contentW := lv.contentWidth()
+	for i := start; i < end; i++ {
+		row := lv.widgetRow(i)
+		if row == nil {
+			continue
+		}
+		row.Layout(lv.rowRect(i, contentW))
+	}
+	if lv.lazy != nil {
+		lv.lazy.prune(start, end, lv.focusedRow())
+	}
+}
+
+// focusedRow is the built row that holds (or contains) keyboard focus.
+func (lv *ListView) focusedRow() Widget {
+	w := lv.Window()
+	if w == nil {
+		return nil
+	}
+	if i := lv.rowIndexFor(w.Focused()); i >= 0 {
+		return lv.builtRow(i)
+	}
+	return nil
+}
+
+// rowsReady reports whether every visible row exists and sits at its
+// current viewport rect.
+func (lv *ListView) rowsReady() bool {
+	start, end := lv.visibleRange()
+	if start == end {
+		return true
+	}
+	contentW := lv.contentWidth()
+	for i := start; i < end; i++ {
+		row := lv.builtRow(i)
+		if row == nil || row.Bounds() != lv.rowRect(i, contentW) {
+			return false
+		}
+	}
+	return true
+}
+
+// rowIndexFor returns the index of the row that is child or contains it,
+// or -1 when child is not inside one of this list's widget rows.
+func (lv *ListView) rowIndexFor(child Widget) int {
+	if !lv.useWidgetRows {
+		return -1
+	}
+	var self Widget = lv
+	if s := lv.Self(); s != nil {
+		self = s
+	}
+	row := child
+	for row != nil && row.Parent() != self {
+		row = row.Parent()
+	}
+	if row == nil {
+		return -1
+	}
+	for i, r := range lv.rowWidgets {
+		if r == row {
+			return i
+		}
+	}
+	if lv.lazy != nil {
+		for i, r := range lv.lazy.live {
+			if r == row {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// requestRowsIfStale runs in Draw. Rows are prepared in Layout, in Tick and
+// whenever an event or API call moves the scroll offset, so they are normally
+// ready here. If a path slipped through, Draw must still not build, lay out
+// or detach row widgets mid-paint: it asks for a tick instead, which prepares
+// the rows and repaints the list on the next frame.
+func (lv *ListView) requestRowsIfStale() {
+	if !lv.useWidgetRows || lv.rowsReady() {
+		return
+	}
+	if w := lv.Window(); w != nil {
+		w.RequestTickAt(time.Now())
+	}
+}
+
+// builtRow returns a widget row without building it. Draw and HitTest use
+// this so they never run a factory callback or adopt a subtree.
+func (lv *ListView) builtRow(i int) Widget {
+	if lv.lazy != nil {
+		return lv.lazy.live[i]
+	}
+	if i < 0 || i >= len(lv.rowWidgets) {
+		return nil
+	}
+	return lv.rowWidgets[i]
+}
 func (lv *ListView) CancelInteraction() {
-	if lv.barDragging {
-		lv.barDragging = false
+	changed := lv.barDragging || lv.hoverIdx != -1
+	lv.barDragging = false
+	lv.hoverIdx = -1
+	if changed {
 		lv.Invalidate()
 	}
 }
@@ -134,6 +271,11 @@ func (lv *ListView) ChildList() []Widget {
 	if lv.lazy != nil {
 		return lv.lazy.children()
 	}
+	// Every row, laid out or not: window attach/detach, interaction
+	// cancellation and locale/theme refresh all walk ChildList, so hiding
+	// off-screen rows here would leave them on a stale (or nil) window.
+	// Tab reaching an off-screen row is handled by ScrollChildIntoView,
+	// which FocusNext/FocusPrev call on the newly focused widget.
 	return lv.rowWidgets
 }
 
@@ -163,10 +305,12 @@ func (lv *ListView) SetRowFactory(count int, build func(index int) Widget) {
 	lv.Model = nil
 	lv.useWidgetRows = true
 	lv.lazy = &lazyRows{count: maxInt(count, 0), build: build}
+	lv.hoverIdx = -1
 	lv.selection.Sync(lv.SelectedIdx)
 	lv.selection.Clamp(lv.lazy.count)
 	lv.SelectedIdx = lv.selection.Index()
 	lv.ClampScroll()
+	lv.prepareRows() // build/lay the visible rows now, never in Draw
 	lv.InvalidateLayout()
 }
 
@@ -176,11 +320,13 @@ func (lv *ListView) SetRowCount(count int) {
 		return
 	}
 	lv.lazy.count = maxInt(count, 0)
-	lv.lazy.prune(0, lv.lazy.count)
+	lv.lazy.prune(0, lv.lazy.count, nil)
+	lv.hoverIdx = -1
 	lv.selection.Sync(lv.SelectedIdx)
 	lv.selection.Clamp(lv.lazy.count)
 	lv.SelectedIdx = lv.selection.Index()
 	lv.ClampScroll()
+	lv.prepareRows() // build/lay the visible rows now, never in Draw
 	lv.InvalidateLayout()
 }
 
@@ -188,6 +334,7 @@ func (lv *ListView) SetRowCount(count int) {
 func (lv *ListView) RefreshRows() {
 	if lv.lazy != nil {
 		lv.lazy.releaseAll()
+		lv.prepareRows() // build/lay the visible rows now, never in Draw
 		lv.Invalidate()
 	}
 }
@@ -273,6 +420,7 @@ func (lv *ListView) SetRowWidgets(rows []Widget) {
 		lv.hoverIdx = -1
 	}
 	lv.ClampScroll()
+	lv.prepareRows() // build/lay the visible rows now, never in Draw
 	lv.InvalidateLayout()
 }
 
@@ -418,13 +566,19 @@ func (lv *ListView) visibleRange() (int, int) {
 // with one row of breathing room (capped to 1/3 of the viewport so a
 // tiny viewport doesn't push the selected row off).
 func (lv *ListView) ensureVisible(idx int) {
+	old := lv.scrollY
 	lv.scrollY = fixedRowEnsureVisible(lv.scrollY, idx, lv.RowCount(), lv.RowHeight, lv.Bounds())
+	if lv.scrollY != old {
+		lv.prepareRows()
+		lv.Invalidate()
+	}
 }
 
 // colors resolves the palette for this frame.
 func (lv *ListView) colors() RowColors { return lv.Colors.resolve(lv.Style()) }
 
 func (lv *ListView) Draw(canvas Canvas) {
+	lv.requestRowsIfStale()
 	b := lv.Bounds()
 	c := lv.colors()
 	// Background + border.
@@ -451,11 +605,6 @@ func (lv *ListView) Draw(canvas Canvas) {
 		}
 		canvas.RestoreTo(id)
 	}
-	if lv.lazy != nil {
-		start, end := lv.visibleRange()
-		lv.lazy.prune(start, end)
-	}
-
 	if lv.hasScrollbar() {
 		lv.drawScrollbar(canvas, c)
 	}
@@ -505,11 +654,10 @@ func (lv *ListView) drawRowWidgets(canvas Canvas, contentW float32, c RowColors)
 			canvas.FillRect(rowRect, c.Hover)
 		}
 
-		row := lv.widgetRow(i)
-		if row == nil {
+		row := lv.builtRow(i)
+		if row == nil || boxChildHidden(row) {
 			continue
 		}
-		row.Layout(rowRect)
 		WithClipRect(canvas, rowRect, row.Draw)
 	}
 }
@@ -520,18 +668,20 @@ func (lv *ListView) Tick(now time.Time) Rect {
 	if !lv.useWidgetRows {
 		return Rect{}
 	}
+	var dirty Rect
+	if !lv.rowsReady() {
+		lv.prepareRows()
+		dirty = PaintBoundsInWindow(lv)
+	}
 	start, end := lv.visibleRange()
 	if start == end {
-		return Rect{}
+		return dirty
 	}
-	contentW := lv.contentWidth()
-	var dirty Rect
 	for i := start; i < end; i++ {
-		row := lv.widgetRow(i)
+		row := lv.builtRow(i)
 		if row == nil {
 			continue
 		}
-		row.Layout(lv.rowRect(i, contentW))
 		dirty = dirty.Union(TickWidget(row, now))
 	}
 	return dirty
@@ -541,6 +691,14 @@ func (lv *ListView) Handle(event Event) bool {
 	if !lv.Enabled() {
 		return false
 	}
+	// Wheel, keyboard and scrollbar drags move scrollY here; prepare the
+	// newly exposed rows now, outside the paint pass.
+	prevScroll := lv.scrollY
+	defer func() {
+		if lv.scrollY != prevScroll {
+			lv.prepareRows()
+		}
+	}()
 	switch e := event.(type) {
 	case MouseEvent:
 		switch e.Type() {
@@ -561,8 +719,13 @@ func (lv *ListView) Handle(event Event) bool {
 				return true
 			}
 		case EventScroll:
+			// Let a nested scrollable inside a row consume the wheel first.
+			if e.Phase() == PhaseCapture {
+				return false
+			}
 			if lv.Bounds().Contains(Point{X: e.X, Y: e.Y}) {
-				lv.scrollBy(-e.DeltaY * lv.RowHeight)
+				_, dy := e.WheelPixels()
+				lv.scrollBy(-dy)
 				return true
 			}
 		case EventMouseDown:
@@ -660,7 +823,7 @@ func (lv *ListView) HitTest(p Point) Widget {
 		if p.X <= lv.Bounds().X+contentW {
 			start, end := lv.visibleRange()
 			for i := end - 1; i >= start; i-- {
-				row := lv.widgetRow(i)
+				row := lv.builtRow(i)
 				if row == nil {
 					continue
 				}
@@ -701,6 +864,7 @@ func (lv *ListView) ScrollTo(y float32) {
 	lv.scrollY = y
 	lv.ClampScroll()
 	if lv.scrollY != old {
+		lv.prepareRows()
 		lv.Invalidate()
 	}
 }

@@ -402,6 +402,16 @@ func (b *BaseWidget) SetEnabled(enabled bool) {
 		return
 	}
 	b.enabled = enabled
+	if !enabled {
+		// A control disabled mid-gesture (a Slider being dragged, a
+		// scrollbar thumb held, a Button pressed) would otherwise keep
+		// that transient state and resume it when re-enabled.
+		self := Widget(b)
+		if b.self != nil {
+			self = b.self
+		}
+		cancelInteractionTree(self)
+	}
 	b.Invalidate()
 }
 func (b *BaseWidget) HitTest(p Point) Widget {
@@ -430,6 +440,7 @@ func (b *BaseWidget) Parent() Widget {
 }
 func (b *BaseWidget) SetParent(p Widget) {
 	b.assertUIThread("BaseWidget.SetParent")
+	b.window.assertNotPainting("SetParent")
 	b.parent = p
 }
 
@@ -488,9 +499,11 @@ func (b *BaseWidget) Window() *Window { return b.window }
 func (b *BaseWidget) SetWindow(w *Window) {
 	if b.window != nil {
 		b.window.assertUIThread("BaseWidget.SetWindow")
+		b.window.assertNotPainting("SetWindow")
 	}
 	if w != nil && w != b.window {
 		w.assertUIThread("BaseWidget.SetWindow")
+		w.assertNotPainting("SetWindow")
 	}
 	b.window = w
 }
@@ -993,6 +1006,7 @@ func (b *BaseWidget) SetID(id string) {
 func (b *BaseWidget) InvalidateLayout() {
 	b.assertUIThread("BaseWidget.InvalidateLayout")
 	if b.window != nil {
+		b.window.assertNotPainting("InvalidateLayout")
 		self := Widget(b)
 		if b.self != nil {
 			self = b.self

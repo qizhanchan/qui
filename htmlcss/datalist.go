@@ -208,15 +208,18 @@ func (e *El) closeSuggestions() {
 
 // applySuggestion fills the field with a suggestion and closes the list.
 //
-// onInput fires from the field's own change wrapper (setting the text IS the
-// value change) — reporting it again here would double every accept.
+// SetInputValue is silent (programmatic sets must not re-enter the app's
+// handler), so an accepted suggestion — a user action — publishes the
+// change explicitly, exactly once.
 //
-// suggestApplying suppresses only the re-filter that same wrapper would
-// trigger, which would otherwise reopen the popup on the value just
-// committed.
+// suggestApplying suppresses only the re-filter that the change wrapper
+// triggers, which would otherwise reopen the popup on the committed value.
 func (e *El) applySuggestion(value string) {
 	e.suggestApplying = true
 	e.SetInputValue(value)
+	if in, ok := e.backing.(*widgets.Input); ok {
+		in.NotifyTextChanged()
+	}
 	e.suggestApplying = false
 	e.closeSuggestions()
 }

@@ -43,7 +43,7 @@ func TestTextAreaRangeRectsWrapped(t *testing.T) {
 	ta := newOverlayArea("alpha beta gamma delta epsilon zeta eta theta iota kappa")
 	ta.AutoWrap = true
 	content, _, _ := ta.visibleContentRect(ta.Bounds())
-	lines := ta.visualLines([]rune(ta.Text), content.W)
+	lines := ta.visualLines(content.W)
 	if len(lines) < 2 {
 		t.Fatalf("want a wrapped text, got %d lines", len(lines))
 	}
@@ -64,7 +64,7 @@ func TestTextAreaRangeRectsScrolled(t *testing.T) {
 	ta := newOverlayArea("0123456789012345678901234567890123456789 teh")
 	n := len([]rune(ta.Text))
 	before := ta.RangeRects(n-3, n)
-	ta.cursorPos = n
+	ta.ed.cursor = n
 	ta.scrollToCursor()
 	if ta.scrollX <= 0 {
 		t.Fatal("expected a horizontal scroll")

@@ -42,7 +42,7 @@ func withFakeClipboard(t *testing.T) *fakeClipboard {
 func TestInputCopyPutsSelectionOnClipboard(t *testing.T) {
 	fc := withFakeClipboard(t)
 	tf := focusedInput("hello world")
-	tf.selStart, tf.selEnd, tf.cursorPos = 0, 5, 5
+	tf.ed.selStart, tf.ed.selEnd, tf.ed.cursor = 0, 5, 5
 
 	tf.Handle(newCmdKeyDown(KeyC))
 
@@ -53,7 +53,7 @@ func TestInputCopyPutsSelectionOnClipboard(t *testing.T) {
 	if tf.Text != "hello world" {
 		t.Errorf("Text mutated by copy: %q", tf.Text)
 	}
-	if !tf.hasSelection() {
+	if !tf.ed.hasSelection() {
 		t.Error("copy cleared the selection; it should preserve it")
 	}
 }
@@ -73,7 +73,7 @@ func TestInputCopyNoSelectionIsNoop(t *testing.T) {
 func TestInputCutPutsAndDeletes(t *testing.T) {
 	fc := withFakeClipboard(t)
 	tf := focusedInput("hello world")
-	tf.selStart, tf.selEnd, tf.cursorPos = 6, 11, 11
+	tf.ed.selStart, tf.ed.selEnd, tf.ed.cursor = 6, 11, 11
 
 	tf.Handle(newCmdKeyDown(KeyX))
 
@@ -83,11 +83,11 @@ func TestInputCutPutsAndDeletes(t *testing.T) {
 	if tf.Text != "hello " {
 		t.Errorf("Text after cut = %q, want 'hello '", tf.Text)
 	}
-	if tf.hasSelection() {
+	if tf.ed.hasSelection() {
 		t.Error("cut should clear the selection")
 	}
-	if tf.cursorPos != 6 {
-		t.Errorf("cursor after cut = %d, want 6", tf.cursorPos)
+	if tf.ed.cursor != 6 {
+		t.Errorf("cursor after cut = %d, want 6", tf.ed.cursor)
 	}
 }
 
@@ -95,15 +95,15 @@ func TestInputPasteInsertsAtCaret(t *testing.T) {
 	fc := withFakeClipboard(t)
 	fc.buf = "XYZ"
 	tf := focusedInput("ab")
-	tf.cursorPos = 1
+	tf.ed.cursor = 1
 
 	tf.Handle(newCmdKeyDown(KeyV))
 
 	if tf.Text != "aXYZb" {
 		t.Errorf("Text after paste = %q, want aXYZb", tf.Text)
 	}
-	if tf.cursorPos != 4 {
-		t.Errorf("cursor after paste = %d, want 4", tf.cursorPos)
+	if tf.ed.cursor != 4 {
+		t.Errorf("cursor after paste = %d, want 4", tf.ed.cursor)
 	}
 }
 
@@ -111,14 +111,14 @@ func TestInputPasteReplacesSelection(t *testing.T) {
 	fc := withFakeClipboard(t)
 	fc.buf = "Z"
 	tf := focusedInput("abcd")
-	tf.selStart, tf.selEnd, tf.cursorPos = 1, 3, 3
+	tf.ed.selStart, tf.ed.selEnd, tf.ed.cursor = 1, 3, 3
 
 	tf.Handle(newCmdKeyDown(KeyV))
 
 	if tf.Text != "aZd" {
 		t.Errorf("Text = %q, want aZd", tf.Text)
 	}
-	if tf.hasSelection() {
+	if tf.ed.hasSelection() {
 		t.Error("paste should clear the selection")
 	}
 }
@@ -141,14 +141,14 @@ func TestInputPasteStripsNewlines(t *testing.T) {
 func TestInputSelectAllSelectsEverything(t *testing.T) {
 	withFakeClipboard(t)
 	tf := focusedInput("hello")
-	tf.cursorPos = 2
+	tf.ed.cursor = 2
 
 	tf.Handle(newCmdKeyDown(KeyA))
 
-	if !tf.hasSelection() {
+	if !tf.ed.hasSelection() {
 		t.Fatal("Cmd+A should establish a selection")
 	}
-	a, b := tf.orderedSelection()
+	a, b := tf.ed.ordered()
 	if a != 0 || b != 5 {
 		t.Errorf("selection = [%d, %d), want [0, 5)", a, b)
 	}
@@ -157,7 +157,7 @@ func TestInputSelectAllSelectsEverything(t *testing.T) {
 func TestInputCopyWithCJK(t *testing.T) {
 	fc := withFakeClipboard(t)
 	tf := focusedInput("你好世界")
-	tf.selStart, tf.selEnd, tf.cursorPos = 0, 2, 2
+	tf.ed.selStart, tf.ed.selEnd, tf.ed.cursor = 0, 2, 2
 
 	tf.Handle(newCmdKeyDown(KeyC))
 
@@ -172,7 +172,7 @@ func focusedTextArea(text string) *TextArea {
 	ta := NewTextArea("")
 	ta.Layout(Rect{X: 0, Y: 0, W: 300, H: 120})
 	ta.Text = text
-	ta.cursorPos = len([]rune(text))
+	ta.ed.cursor = len([]rune(text))
 	ta.SetFocused(true)
 	return ta
 }
@@ -180,7 +180,7 @@ func focusedTextArea(text string) *TextArea {
 func TestTextAreaCopyPutsSelectionOnClipboard(t *testing.T) {
 	fc := withFakeClipboard(t)
 	ta := focusedTextArea("line one\nline two")
-	ta.selStart, ta.selEnd, ta.cursorPos = 0, 8, 8
+	ta.ed.selStart, ta.ed.selEnd, ta.ed.cursor = 0, 8, 8
 
 	ta.Handle(newCmdKeyDown(KeyC))
 
@@ -192,7 +192,7 @@ func TestTextAreaCopyPutsSelectionOnClipboard(t *testing.T) {
 func TestTextAreaCutDeletesSelection(t *testing.T) {
 	fc := withFakeClipboard(t)
 	ta := focusedTextArea("abcdef")
-	ta.selStart, ta.selEnd, ta.cursorPos = 2, 4, 4
+	ta.ed.selStart, ta.ed.selEnd, ta.ed.cursor = 2, 4, 4
 
 	ta.Handle(newCmdKeyDown(KeyX))
 
@@ -202,8 +202,8 @@ func TestTextAreaCutDeletesSelection(t *testing.T) {
 	if ta.Text != "abef" {
 		t.Errorf("Text after cut = %q, want abef", ta.Text)
 	}
-	if ta.cursorPos != 2 {
-		t.Errorf("cursor after cut = %d, want 2", ta.cursorPos)
+	if ta.ed.cursor != 2 {
+		t.Errorf("cursor after cut = %d, want 2", ta.ed.cursor)
 	}
 }
 
@@ -211,7 +211,7 @@ func TestTextAreaPasteKeepsNewlines(t *testing.T) {
 	fc := withFakeClipboard(t)
 	fc.buf = "X\nY"
 	ta := focusedTextArea("ab")
-	ta.cursorPos = 1
+	ta.ed.cursor = 1
 
 	ta.Handle(newCmdKeyDown(KeyV))
 
@@ -219,8 +219,8 @@ func TestTextAreaPasteKeepsNewlines(t *testing.T) {
 		t.Errorf("Text = %q, want aX\\nYb", ta.Text)
 	}
 	// cursor should land after the pasted 3 runes ('X', '\n', 'Y').
-	if ta.cursorPos != 4 {
-		t.Errorf("cursor = %d, want 4", ta.cursorPos)
+	if ta.ed.cursor != 4 {
+		t.Errorf("cursor = %d, want 4", ta.ed.cursor)
 	}
 }
 
@@ -228,7 +228,7 @@ func TestTextAreaPasteReplacesSelection(t *testing.T) {
 	fc := withFakeClipboard(t)
 	fc.buf = "ZZ"
 	ta := focusedTextArea("abcde")
-	ta.selStart, ta.selEnd, ta.cursorPos = 1, 4, 4
+	ta.ed.selStart, ta.ed.selEnd, ta.ed.cursor = 1, 4, 4
 
 	ta.Handle(newCmdKeyDown(KeyV))
 
@@ -243,12 +243,12 @@ func TestTextAreaSelectAllCoversAllRunes(t *testing.T) {
 
 	ta.Handle(newCmdKeyDown(KeyA))
 
-	if ta.selStart != 0 {
-		t.Errorf("selStart = %d, want 0", ta.selStart)
+	if ta.ed.selStart != 0 {
+		t.Errorf("selStart = %d, want 0", ta.ed.selStart)
 	}
 	runes := []rune(ta.Text)
-	if ta.selEnd != len(runes) {
-		t.Errorf("selEnd = %d, want %d", ta.selEnd, len(runes))
+	if ta.ed.selEnd != len(runes) {
+		t.Errorf("selEnd = %d, want %d", ta.ed.selEnd, len(runes))
 	}
 }
 
