@@ -210,11 +210,6 @@ func (b *cpuBackend) blendCoverage(cov []float32, bounds, clip image.Rectangle, 
 	}
 }
 
-func (b *gpuBackend) blendCoverage(cov []float32, bounds, clip image.Rectangle, col Color) {
-	b.fallback.blendCoverage(cov, bounds, clip, col)
-	b.cpuDirty = true
-}
-
 // splitSubpixel splits a device coordinate into its integer origin, the
 // fraction the mask is rasterised at, and the fraction's key.
 func splitSubpixel(v float32, exact bool) (int, float32, uint32) {

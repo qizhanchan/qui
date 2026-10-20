@@ -238,7 +238,12 @@ func TestPinchHandlerFromCmdWheel(t *testing.T) {
 	d.SetOnWheel(func(dx, dy float32) bool { scrolled = true; return true })
 
 	b := d.Bounds()
-	win.IngestScrollForTest(b.X+5, b.Y+6, 0, 1, qui.ModSuper, qui.GesturePhaseNone)
+	// Cmd+wheel on macOS, Ctrl+wheel elsewhere.
+	_, cmdOrCtrl, err := qui.ParseShortcut("CmdOrCtrl+A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	win.IngestScrollForTest(b.X+5, b.Y+6, 0, 1, cmdOrCtrl, qui.GesturePhaseNone)
 	if len(steps) != 1 || steps[0] <= 0 {
 		t.Fatalf("pinch steps = %v, want one zoom-in step", steps)
 	}

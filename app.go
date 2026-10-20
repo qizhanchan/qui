@@ -198,9 +198,13 @@ func (a *App) Run() {
 	// Sleep exactly as long as the windows allow: a frame interval while
 	// something changes, until the next deadline while one is pending,
 	// and until an event otherwise (idle.go).
+	snap := newEnvSnapshot()
 	for a.running {
-		if !a.step(a.idleTimeout(time.Now())) {
+		if !a.step(snap.timeout(a.idleTimeout(time.Now()))) {
 			break
+		}
+		if snap != nil && snap.poll(a) {
+			snap = nil
 		}
 	}
 }

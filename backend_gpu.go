@@ -1,3 +1,5 @@
+//go:build cgo && !js && !qui_nogl
+
 package qui
 
 import (
@@ -919,4 +921,9 @@ func (b *gpuBackend) PopLayer(mask *image.Alpha) {
 func envGPURasterEnabled() bool {
 	v := os.Getenv("QUI_GPU_RASTER")
 	return v != "" && v != "0"
+}
+
+func (b *gpuBackend) blendCoverage(cov []float32, bounds, clip image.Rectangle, col Color) {
+	b.fallback.blendCoverage(cov, bounds, clip, col)
+	b.cpuDirty = true
 }

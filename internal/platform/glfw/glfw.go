@@ -1,4 +1,6 @@
-package qui
+//go:build cgo && !js && !qui_nogl && (windows || qui_glfw)
+
+package glfw
 
 import (
 	"image"
@@ -6,6 +8,7 @@ import (
 	"unsafe"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
+	"github.com/qizhanchan/qui/internal/platform/contract"
 )
 
 // GLFW implementation of the platform seam (see platform.go).
@@ -34,16 +37,16 @@ import (
 // distinguishes "no bridge supplied anything" (fall back to polling) from
 // "bridge saw no modifiers".
 type scrollContext struct {
-	mods  Modifiers
-	phase GesturePhase
+	mods  contract.Modifiers
+	phase contract.GesturePhase
 	valid bool
 }
 
 type glfwApp struct{}
 
-func init() { registerPlatformBackend("glfw", newGLFWApp) }
+func init() { contract.Register("glfw", contract.PriorityPortable, newGLFWApp) }
 
-func newGLFWApp() (platformApp, error) {
+func newGLFWApp() (contract.App, error) {
 	if err := glfw.Init(); err != nil {
 		return nil, err
 	}
@@ -54,14 +57,14 @@ func newGLFWApp() (platformApp, error) {
 	return glfwApp{}, nil
 }
 
-func (glfwApp) newWindow(cfg platformWindowConfig) (platformWindow, error) {
+func (glfwApp) NewWindow(cfg contract.WindowConfig) (contract.Window, error) {
 	// GLFW can drop decorations, float a window and even request a
 	// transparent framebuffer, but it has no way to stop a window taking
 	// keyboard focus — and that is the property an overlay panel exists
 	// for. Handing back a focus-stealing window would be worse than
 	// failing: see the WindowOverlayPanel doc comment.
-	if cfg.Kind == WindowOverlayPanel {
-		return nil, ErrOverlayPanelUnsupported
+	if cfg.Kind == contract.WindowOverlayPanel {
+		return nil, contract.ErrOverlayPanelUnsupported
 	}
 	var share *glfw.Window
 	if cfg.Share != nil {
@@ -89,8 +92,8 @@ func (glfwApp) newWindow(cfg platformWindowConfig) (platformWindow, error) {
 	return w, nil
 }
 
-func (glfwApp) pumpEvents(timeout time.Duration) {
-	if timeout == pumpForever {
+func (glfwApp) PumpEvents(timeout time.Duration) {
+	if timeout == contract.PumpForever {
 		glfw.WaitEvents()
 		return
 	}
@@ -101,11 +104,11 @@ func (glfwApp) pumpEvents(timeout time.Duration) {
 	glfw.PollEvents()
 }
 
-func (glfwApp) wake() { glfw.PostEmptyEvent() }
+func (glfwApp) Wake() { glfw.PostEmptyEvent() }
 
-func (glfwApp) monitors() []platformMonitor {
+func (glfwApp) Monitors() []contract.Monitor {
 	handles := glfw.GetMonitors()
-	out := make([]platformMonitor, 0, len(handles))
+	out := make([]contract.Monitor, 0, len(handles))
 	for _, m := range handles {
 		if m != nil {
 			out = append(out, glfwMonitor{m})
@@ -114,7 +117,7 @@ func (glfwApp) monitors() []platformMonitor {
 	return out
 }
 
-func (glfwApp) primaryMonitor() platformMonitor {
+func (glfwApp) PrimaryMonitor() contract.Monitor {
 	m := glfw.GetPrimaryMonitor()
 	if m == nil {
 		return nil
@@ -126,11 +129,11 @@ func (glfwApp) primaryMonitor() platformMonitor {
 
 type glfwMonitor struct{ handle *glfw.Monitor }
 
-func (m glfwMonitor) name() string { return m.handle.GetName() }
+func (m glfwMonitor) Name() string { return m.handle.GetName() }
 
-func (m glfwMonitor) position() (int, int) { return m.handle.GetPos() }
+func (m glfwMonitor) Position() (int, int) { return m.handle.GetPos() }
 
-func (m glfwMonitor) videoMode() (int, int, int) {
+func (m glfwMonitor) VideoMode() (int, int, int) {
 	mode := m.handle.GetVideoMode()
 	if mode == nil {
 		return 0, 0, 0
@@ -138,16 +141,16 @@ func (m glfwMonitor) videoMode() (int, int, int) {
 	return mode.Width, mode.Height, mode.RefreshRate
 }
 
-func (m glfwMonitor) workArea() (int, int, int, int) { return m.handle.GetWorkarea() }
+func (m glfwMonitor) WorkArea() (int, int, int, int) { return m.handle.GetWorkarea() }
 
-func (m glfwMonitor) contentScale() (float32, float32) { return m.handle.GetContentScale() }
+func (m glfwMonitor) ContentScale() (float32, float32) { return m.handle.GetContentScale() }
 
 // --- window ----------------------------------------------------------
 
 type glfwWindow struct {
 	handle  *glfw.Window
-	handler platformHandler
-	cursors map[CursorShape]*glfw.Cursor
+	handler contract.Handler
+	cursors map[contract.CursorShape]*glfw.Cursor
 	// cursorHidden mirrors GLFW's cursor mode (CursorHidden is a mode).
 	cursorHidden bool
 	// capsOn is the Caps Lock state from the last key callback's lock
@@ -159,12 +162,12 @@ type glfwWindow struct {
 	pending scrollContext
 }
 
-func (w *glfwWindow) setHandler(h platformHandler) { w.handler = h }
+func (w *glfwWindow) SetHandler(h contract.Handler) { w.handler = h }
 
 // setVisible ignores activate: GLFW always focuses on Show. That is
 // precisely why this backend declines overlay panels in newWindow, so the
 // only callers here are normal windows, which want the focus anyway.
-func (w *glfwWindow) setVisible(visible, activate bool) {
+func (w *glfwWindow) SetVisible(visible, activate bool) {
 	if visible {
 		w.handle.Show()
 		return
@@ -172,21 +175,21 @@ func (w *glfwWindow) setVisible(visible, activate bool) {
 	w.handle.Hide()
 }
 
-func (w *glfwWindow) isIconified() bool {
+func (w *glfwWindow) IsIconified() bool {
 	return w.handle.GetAttrib(glfw.Iconified) == glfw.True
 }
 
 // isFocused reports whether the window has keyboard focus.
-func (w *glfwWindow) isFocused() bool {
+func (w *glfwWindow) IsFocused() bool {
 	return w.handle.GetAttrib(glfw.Focused) == glfw.True
 }
 
-func (w *glfwWindow) isVisible() bool {
+func (w *glfwWindow) IsVisible() bool {
 	return w.handle.GetAttrib(glfw.Visible) == glfw.True
 }
 
-func (w *glfwWindow) caps() platformCaps {
-	return platformCaps{
+func (w *glfwWindow) Caps() contract.Caps {
+	return contract.Caps{
 		AbsolutePosition: true,
 		// GLFW always asks for a decorated window, and every platform it
 		// supports honors that.
@@ -198,31 +201,32 @@ func (w *glfwWindow) caps() platformCaps {
 		// No non-activating window style in GLFW — newWindow declines
 		// WindowOverlayPanel outright.
 		OverlayPanels: false,
+		GPUContext:    true,
 	}
 }
 
-func (w *glfwWindow) size() (int, int)                 { return w.handle.GetSize() }
-func (w *glfwWindow) framebufferSize() (int, int)      { return w.handle.GetFramebufferSize() }
-func (w *glfwWindow) contentScale() (float32, float32) { return w.handle.GetContentScale() }
+func (w *glfwWindow) Size() (int, int)                 { return w.handle.GetSize() }
+func (w *glfwWindow) FramebufferSize() (int, int)      { return w.handle.GetFramebufferSize() }
+func (w *glfwWindow) ContentScale() (float32, float32) { return w.handle.GetContentScale() }
 
-func (w *glfwWindow) pos() (int, int, bool) {
+func (w *glfwWindow) Pos() (int, int, bool) {
 	x, y := w.handle.GetPos()
 	return x, y, true
 }
 
-func (w *glfwWindow) setPos(x, y int) bool {
+func (w *glfwWindow) SetPos(x, y int) bool {
 	w.handle.SetPos(x, y)
 	return true
 }
 
-func (w *glfwWindow) setTitle(title string) { w.handle.SetTitle(title) }
+func (w *glfwWindow) SetTitle(title string) { w.handle.SetTitle(title) }
 
 // setSize goes through GLFW's SetSize, which resizes about the window's
 // existing top-left on every platform GLFW supports — the anchor the seam
 // specifies.
-func (w *glfwWindow) setSize(width, height int) { w.handle.SetSize(width, height) }
+func (w *glfwWindow) SetSize(width, height int) { w.handle.SetSize(width, height) }
 
-func (w *glfwWindow) setSizeLimits(minW, minH, maxW, maxH int) {
+func (w *glfwWindow) SetSizeLimits(minW, minH, maxW, maxH int) {
 	limit := func(v int) int {
 		if v <= 0 {
 			return glfw.DontCare
@@ -232,12 +236,12 @@ func (w *glfwWindow) setSizeLimits(minW, minH, maxW, maxH int) {
 	w.handle.SetSizeLimits(limit(minW), limit(minH), limit(maxW), limit(maxH))
 }
 
-func (w *glfwWindow) iconify()  { w.handle.Iconify() }
-func (w *glfwWindow) maximize() { w.handle.Maximize() }
-func (w *glfwWindow) restore()  { w.handle.Restore() }
-func (w *glfwWindow) focus()    { w.handle.Focus() }
+func (w *glfwWindow) Iconify()  { w.handle.Iconify() }
+func (w *glfwWindow) Maximize() { w.handle.Maximize() }
+func (w *glfwWindow) Restore()  { w.handle.Restore() }
+func (w *glfwWindow) Focus()    { w.handle.Focus() }
 
-func (w *glfwWindow) setFullscreen(m platformMonitor, x, y, width, height, refreshHz int) {
+func (w *glfwWindow) SetFullscreen(m contract.Monitor, x, y, width, height, refreshHz int) {
 	var handle *glfw.Monitor
 	if gm, ok := m.(glfwMonitor); ok {
 		handle = gm.handle
@@ -249,20 +253,20 @@ func (w *glfwWindow) setFullscreen(m platformMonitor, x, y, width, height, refre
 	w.handle.SetMonitor(handle, x, y, width, height, rate)
 }
 
-func (w *glfwWindow) shouldClose() bool     { return w.handle.ShouldClose() }
-func (w *glfwWindow) setShouldClose(v bool) { w.handle.SetShouldClose(v) }
+func (w *glfwWindow) ShouldClose() bool     { return w.handle.ShouldClose() }
+func (w *glfwWindow) SetShouldClose(v bool) { w.handle.SetShouldClose(v) }
 
-func (w *glfwWindow) destroy() {
+func (w *glfwWindow) Destroy() {
 	w.handle.Destroy()
 	w.handle = nil
 }
 
-func (w *glfwWindow) cursorPos() (float64, float64) { return w.handle.GetCursorPos() }
+func (w *glfwWindow) CursorPos() (float64, float64) { return w.handle.GetCursorPos() }
 
-func (w *glfwWindow) setCursor(shape CursorShape) {
+func (w *glfwWindow) SetCursor(shape contract.CursorShape) {
 	// Hidden is a cursor MODE in GLFW, not an image: the pointer vanishes
 	// over the content area and comes back when it leaves the window.
-	if shape == CursorHidden {
+	if shape == contract.CursorHidden {
 		if !w.cursorHidden {
 			w.handle.SetInputMode(glfw.CursorMode, glfw.CursorHidden)
 			w.cursorHidden = true
@@ -274,12 +278,12 @@ func (w *glfwWindow) setCursor(shape CursorShape) {
 		w.cursorHidden = false
 	}
 	if w.cursors == nil {
-		w.cursors = map[CursorShape]*glfw.Cursor{}
+		w.cursors = map[contract.CursorShape]*glfw.Cursor{}
 	}
 	cur, ok := w.cursors[shape]
 	if !ok {
-		if ic := lookupImageCursor(shape); ic != nil {
-			cur = glfwImageCursor(shape, ic)
+		if img, hx, hy, ok := contract.Host.ImageCursor(shape); ok {
+			cur = glfwImageCursor(shape, img, hx, hy)
 		} else {
 			cur = glfw.CreateStandardCursor(glfwCursorShape(shape))
 		}
@@ -291,10 +295,10 @@ func (w *glfwWindow) setCursor(shape CursorShape) {
 	w.handle.SetCursor(cur)
 }
 
-// releaseCursor implements platformCursorReleaser: GLFW cursors are
+// ReleaseCursor implements contract.CursorReleaser: GLFW cursors are
 // created per window, so a released image cursor is destroyed here.
 // glfwDestroyCursor resets any window still showing it to the arrow.
-func (w *glfwWindow) releaseCursor(shape CursorShape) {
+func (w *glfwWindow) ReleaseCursor(shape contract.CursorShape) {
 	if cur, ok := w.cursors[shape]; ok {
 		delete(w.cursors, shape)
 		if cur != nil {
@@ -303,17 +307,17 @@ func (w *glfwWindow) releaseCursor(shape CursorShape) {
 	}
 }
 
-func glfwCursorShape(shape CursorShape) glfw.StandardCursor {
+func glfwCursorShape(shape contract.CursorShape) glfw.StandardCursor {
 	switch shape {
-	case CursorText:
+	case contract.CursorText:
 		return glfw.IBeamCursor
-	case CursorCrosshair:
+	case contract.CursorCrosshair:
 		return glfw.CrosshairCursor
-	case CursorHand:
+	case contract.CursorHand:
 		return glfw.HandCursor
-	case CursorResizeEW:
+	case contract.CursorResizeEW:
 		return glfw.HResizeCursor
-	case CursorResizeNS:
+	case contract.CursorResizeNS:
 		return glfw.VResizeCursor
 	default:
 		return glfw.ArrowCursor
@@ -325,9 +329,9 @@ func glfwCursorShape(shape CursorShape) glfw.StandardCursor {
 // them to decide zoom-versus-scroll — so poll rather than trust a value
 // tracked from the last keystroke, which a wheel turn can outlive.
 // capsLock implements platformLockState.
-func (w *glfwWindow) capsLock() bool { return w.capsOn }
+func (w *glfwWindow) CapsLock() bool { return w.capsOn }
 
-func (w *glfwWindow) currentMods() Modifiers {
+func (w *glfwWindow) CurrentMods() contract.Modifiers {
 	pressed := func(keys ...glfw.Key) bool {
 		for _, k := range keys {
 			if w.handle.GetKey(k) == glfw.Press {
@@ -336,18 +340,18 @@ func (w *glfwWindow) currentMods() Modifiers {
 		}
 		return false
 	}
-	var mods Modifiers
+	var mods contract.Modifiers
 	if pressed(glfw.KeyLeftShift, glfw.KeyRightShift) {
-		mods |= ModShift
+		mods |= contract.ModShift
 	}
 	if pressed(glfw.KeyLeftControl, glfw.KeyRightControl) {
-		mods |= ModControl
+		mods |= contract.ModControl
 	}
 	if pressed(glfw.KeyLeftAlt, glfw.KeyRightAlt) {
-		mods |= ModAlt
+		mods |= contract.ModAlt
 	}
 	if pressed(glfw.KeyLeftSuper, glfw.KeyRightSuper) {
-		mods |= ModSuper
+		mods |= contract.ModSuper
 	}
 	return mods
 }
@@ -355,27 +359,27 @@ func (w *glfwWindow) currentMods() Modifiers {
 // GLFW's clipboard API still takes a window for legacy reasons; the
 // underlying OS clipboard is process-wide, so the handle is effectively a
 // passkey into the GLFW runtime.
-func (w *glfwWindow) clipboardText() string {
+func (w *glfwWindow) ClipboardText() string {
 	if w.handle == nil {
 		return ""
 	}
 	return w.handle.GetClipboardString()
 }
 
-func (w *glfwWindow) setClipboardText(text string) {
+func (w *glfwWindow) SetClipboardText(text string) {
 	if w.handle == nil {
 		return
 	}
 	w.handle.SetClipboardString(text)
 }
 
-func (w *glfwWindow) makeCurrent() { w.handle.MakeContextCurrent() }
+func (w *glfwWindow) MakeCurrent() { w.handle.MakeContextCurrent() }
 
-func (w *glfwWindow) surface() platformSurface { return glfwSurface{win: w} }
+func (w *glfwWindow) Surface() contract.Surface { return glfwSurface{win: w} }
 
 // wake is documented goroutine-safe by GLFW: it posts one event into the
 // platform queue, unblocking the next WaitEvents/WaitEventsTimeout.
-func (w *glfwWindow) wake() { glfw.PostEmptyEvent() }
+func (w *glfwWindow) Wake() { glfw.PostEmptyEvent() }
 
 // glfwSurface is the GPU-only presentation path: GLFW gives us a GL
 // context and a buffer swap, and nothing else.
@@ -387,11 +391,11 @@ func (w *glfwWindow) wake() { glfw.PostEmptyEvent() }
 // the engine keeps its timeout-driven pacing.
 type glfwSurface struct{ win *glfwWindow }
 
-func (glfwSurface) ready() <-chan struct{}      { return nil }
-func (glfwSurface) presentCPU(*image.RGBA) bool { return false }
-func (s glfwSurface) present()                  { s.win.handle.SwapBuffers() }
+func (glfwSurface) Ready() <-chan struct{}                       { return nil }
+func (glfwSurface) PresentCPU(*image.RGBA, image.Rectangle) bool { return false }
+func (s glfwSurface) Present()                                   { s.win.handle.SwapBuffers() }
 
-func (w *glfwWindow) nativeWindow() unsafe.Pointer {
+func (w *glfwWindow) NativeWindow() unsafe.Pointer {
 	return glfwNativeWindow(w.handle)
 }
 
@@ -399,7 +403,7 @@ func (w *glfwWindow) nativeWindow() unsafe.Pointer {
 
 // noteScrollContext records what a platform bridge observed on the real
 // scroll event it is about to let GLFW process. See scrollContext.
-func (w *glfwWindow) noteScrollContext(mods Modifiers, phase GesturePhase) {
+func (w *glfwWindow) noteScrollContext(mods contract.Modifiers, phase contract.GesturePhase) {
 	w.pending = scrollContext{mods: mods, phase: phase, valid: true}
 }
 
@@ -410,37 +414,37 @@ func (w *glfwWindow) clearScrollContext() { w.pending = scrollContext{} }
 
 // takeScrollContext consumes the snapshot, falling back to polled
 // modifiers and an unknown phase where no bridge supplied one.
-func (w *glfwWindow) takeScrollContext() (Modifiers, GesturePhase) {
+func (w *glfwWindow) takeScrollContext() (contract.Modifiers, contract.GesturePhase) {
 	if w.pending.valid {
 		ctx := w.pending
 		w.pending = scrollContext{}
 		return ctx.mods, ctx.phase
 	}
-	return w.currentMods(), GesturePhaseNone
+	return w.CurrentMods(), contract.GesturePhaseNone
 }
 
 // noteGesture forwards a gesture from a platform bridge to the handler.
-func (w *glfwWindow) noteGesture(kind EventType, phase GesturePhase, dScale, dRotation float32, mods Modifiers) {
+func (w *glfwWindow) noteGesture(kind contract.GestureKind, phase contract.GesturePhase, dScale, dRotation float32, mods contract.Modifiers) {
 	if w.handler == nil {
 		return
 	}
-	w.handler.onGesture(kind, phase, dScale, dRotation, mods)
+	w.handler.OnGesture(kind, phase, dScale, dRotation, mods)
 }
 
 func (w *glfwWindow) installCallbacks() {
-	h := func() platformHandler { return w.handler }
+	h := func() contract.Handler { return w.handler }
 
 	w.handle.SetCursorPosCallback(func(_ *glfw.Window, x, y float64) {
 		if hh := h(); hh != nil {
 			// Motion carries no modifiers of its own; poll so shift-drag
 			// range selection sees the real state.
-			hh.onMouseMove(x, y, w.currentMods())
+			hh.OnMouseMove(x, y, w.CurrentMods())
 		}
 	})
 
 	w.handle.SetMouseButtonCallback(func(_ *glfw.Window, button glfw.MouseButton, action glfw.Action, mods glfw.ModifierKey) {
 		if hh := h(); hh != nil {
-			hh.onMouseButton(mapMouseButton(button), action != glfw.Release, mapMods(mods))
+			hh.OnMouseButton(mapMouseButton(button), action != glfw.Release, mapMods(mods))
 		}
 	})
 
@@ -451,7 +455,7 @@ func (w *glfwWindow) installCallbacks() {
 		}
 		mods, phase := w.takeScrollContext()
 		x, y := w.handle.GetCursorPos()
-		hh.onScroll(x, y, xoff, yoff, mods, phase, phase != GesturePhaseNone)
+		hh.OnScroll(x, y, xoff, yoff, mods, phase, phase != contract.GesturePhaseNone)
 	})
 
 	w.handle.SetKeyCallback(func(_ *glfw.Window, key glfw.Key, scancode int, action glfw.Action, mods glfw.ModifierKey) {
@@ -468,36 +472,36 @@ func (w *glfwWindow) installCallbacks() {
 		if key == glfw.KeyCapsLock {
 			w.capsOn = down
 		}
-		hh.onKey(mapKey(key), scancode, down, action == glfw.Repeat, mapMods(mods))
+		hh.OnKey(mapKey(key), scancode, down, action == glfw.Repeat, mapMods(mods))
 	})
 
 	w.handle.SetCharCallback(func(_ *glfw.Window, char rune) {
 		if hh := h(); hh != nil {
-			hh.onChar(char)
+			hh.OnChar(char)
 		}
 	})
 
 	w.handle.SetFocusCallback(func(_ *glfw.Window, focused bool) {
 		if hh := h(); hh != nil {
-			hh.onFocus(focused)
+			hh.OnFocus(focused)
 		}
 	})
 
 	w.handle.SetSizeCallback(func(_ *glfw.Window, width, height int) {
 		if hh := h(); hh != nil {
-			hh.onResize(width, height)
+			hh.OnResize(width, height)
 		}
 	})
 
 	w.handle.SetFramebufferSizeCallback(func(_ *glfw.Window, width, height int) {
 		if hh := h(); hh != nil {
-			hh.onFramebufferResize(width, height)
+			hh.OnFramebufferResize(width, height)
 		}
 	})
 
 	w.handle.SetRefreshCallback(func(_ *glfw.Window) {
 		if hh := h(); hh != nil {
-			hh.onRefresh()
+			hh.OnRefresh()
 		}
 	})
 
@@ -505,17 +509,17 @@ func (w *glfwWindow) installCallbacks() {
 	// fullscreen) can change from inside an idle wait with no input event
 	// of its own — a Dock minimize, Dock "Quit", a fullscreen animation
 	// settling. Cut the wait short so the loop notices.
-	w.handle.SetCloseCallback(func(*glfw.Window) { wakeIfBlocked() })
-	w.handle.SetIconifyCallback(func(*glfw.Window, bool) { wakeIfBlocked() })
-	w.handle.SetMaximizeCallback(func(*glfw.Window, bool) { wakeIfBlocked() })
-	w.handle.SetPosCallback(func(*glfw.Window, int, int) { wakeIfBlocked() })
-	w.handle.SetContentScaleCallback(func(*glfw.Window, float32, float32) { wakeIfBlocked() })
+	w.handle.SetCloseCallback(func(*glfw.Window) { contract.Host.WakeIfBlocked() })
+	w.handle.SetIconifyCallback(func(*glfw.Window, bool) { contract.Host.WakeIfBlocked() })
+	w.handle.SetMaximizeCallback(func(*glfw.Window, bool) { contract.Host.WakeIfBlocked() })
+	w.handle.SetPosCallback(func(*glfw.Window, int, int) { contract.Host.WakeIfBlocked() })
+	w.handle.SetContentScaleCallback(func(*glfw.Window, float32, float32) { contract.Host.WakeIfBlocked() })
 }
 
 // setDropEnabled wires (or clears) the OS file-drop callback. GLFW
 // reports the paths without coordinates, so the current cursor position
 // stands in for the drop point.
-func (w *glfwWindow) setDropEnabled(enabled bool) {
+func (w *glfwWindow) SetDropEnabled(enabled bool) {
 	if !enabled {
 		w.handle.SetDropCallback(nil)
 		return
@@ -523,233 +527,233 @@ func (w *glfwWindow) setDropEnabled(enabled bool) {
 	w.handle.SetDropCallback(func(_ *glfw.Window, names []string) {
 		if hh := w.handler; hh != nil {
 			x, y := w.handle.GetCursorPos()
-			hh.onFileDrop(names, x, y)
+			hh.OnFileDrop(names, x, y)
 		}
 	})
 }
 
 // --- GLFW → engine enum translation --------------------------------
 
-func mapMouseButton(button glfw.MouseButton) MouseButton {
+func mapMouseButton(button glfw.MouseButton) contract.MouseButton {
 	switch button {
 	case glfw.MouseButtonRight:
-		return MouseButtonRight
+		return contract.MouseButtonRight
 	case glfw.MouseButtonMiddle:
-		return MouseButtonMiddle
+		return contract.MouseButtonMiddle
 	default:
-		return MouseButtonLeft
+		return contract.MouseButtonLeft
 	}
 }
 
-func mapKey(key glfw.Key) Key {
+func mapKey(key glfw.Key) contract.Key {
 	switch key {
 	case glfw.KeySpace:
-		return KeySpace
+		return contract.KeySpace
 	case glfw.KeyEnter:
-		return KeyEnter
+		return contract.KeyEnter
 	case glfw.KeyEscape:
-		return KeyEscape
+		return contract.KeyEscape
 	case glfw.KeyLeft:
-		return KeyLeft
+		return contract.KeyLeft
 	case glfw.KeyRight:
-		return KeyRight
+		return contract.KeyRight
 	case glfw.KeyUp:
-		return KeyUp
+		return contract.KeyUp
 	case glfw.KeyDown:
-		return KeyDown
+		return contract.KeyDown
 	case glfw.KeyHome:
-		return KeyHome
+		return contract.KeyHome
 	case glfw.KeyEnd:
-		return KeyEnd
+		return contract.KeyEnd
 	case glfw.KeyBackspace:
-		return KeyBackspace
+		return contract.KeyBackspace
 	case glfw.KeyDelete:
-		return KeyDelete
+		return contract.KeyDelete
 	case glfw.KeyInsert:
-		return KeyInsert
+		return contract.KeyInsert
 	case glfw.KeyPageUp:
-		return KeyPageUp
+		return contract.KeyPageUp
 	case glfw.KeyPageDown:
-		return KeyPageDown
+		return contract.KeyPageDown
 	case glfw.KeyF1:
-		return KeyF1
+		return contract.KeyF1
 	case glfw.KeyF2:
-		return KeyF2
+		return contract.KeyF2
 	case glfw.KeyF3:
-		return KeyF3
+		return contract.KeyF3
 	case glfw.KeyF4:
-		return KeyF4
+		return contract.KeyF4
 	case glfw.KeyF5:
-		return KeyF5
+		return contract.KeyF5
 	case glfw.KeyF6:
-		return KeyF6
+		return contract.KeyF6
 	case glfw.KeyF7:
-		return KeyF7
+		return contract.KeyF7
 	case glfw.KeyF8:
-		return KeyF8
+		return contract.KeyF8
 	case glfw.KeyF9:
-		return KeyF9
+		return contract.KeyF9
 	case glfw.KeyF10:
-		return KeyF10
+		return contract.KeyF10
 	case glfw.KeyF11:
-		return KeyF11
+		return contract.KeyF11
 	case glfw.KeyF12:
-		return KeyF12
+		return contract.KeyF12
 	case glfw.KeyTab:
-		return KeyTab
+		return contract.KeyTab
 	case glfw.KeyA:
-		return KeyA
+		return contract.KeyA
 	case glfw.KeyB:
-		return KeyB
+		return contract.KeyB
 	case glfw.KeyC:
-		return KeyC
+		return contract.KeyC
 	case glfw.KeyD:
-		return KeyD
+		return contract.KeyD
 	case glfw.KeyE:
-		return KeyE
+		return contract.KeyE
 	case glfw.KeyF:
-		return KeyF
+		return contract.KeyF
 	case glfw.KeyG:
-		return KeyG
+		return contract.KeyG
 	case glfw.KeyH:
-		return KeyH
+		return contract.KeyH
 	case glfw.KeyI:
-		return KeyI
+		return contract.KeyI
 	case glfw.KeyJ:
-		return KeyJ
+		return contract.KeyJ
 	case glfw.KeyK:
-		return KeyK
+		return contract.KeyK
 	case glfw.KeyL:
-		return KeyL
+		return contract.KeyL
 	case glfw.KeyM:
-		return KeyM
+		return contract.KeyM
 	case glfw.KeyN:
-		return KeyN
+		return contract.KeyN
 	case glfw.KeyO:
-		return KeyO
+		return contract.KeyO
 	case glfw.KeyP:
-		return KeyP
+		return contract.KeyP
 	case glfw.KeyQ:
-		return KeyQ
+		return contract.KeyQ
 	case glfw.KeyR:
-		return KeyR
+		return contract.KeyR
 	case glfw.KeyS:
-		return KeyS
+		return contract.KeyS
 	case glfw.KeyT:
-		return KeyT
+		return contract.KeyT
 	case glfw.KeyU:
-		return KeyU
+		return contract.KeyU
 	case glfw.KeyV:
-		return KeyV
+		return contract.KeyV
 	case glfw.KeyW:
-		return KeyW
+		return contract.KeyW
 	case glfw.KeyX:
-		return KeyX
+		return contract.KeyX
 	case glfw.KeyY:
-		return KeyY
+		return contract.KeyY
 	case glfw.KeyZ:
-		return KeyZ
+		return contract.KeyZ
 	case glfw.Key0:
-		return Key0
+		return contract.Key0
 	case glfw.Key1:
-		return Key1
+		return contract.Key1
 	case glfw.Key2:
-		return Key2
+		return contract.Key2
 	case glfw.Key3:
-		return Key3
+		return contract.Key3
 	case glfw.Key4:
-		return Key4
+		return contract.Key4
 	case glfw.Key5:
-		return Key5
+		return contract.Key5
 	case glfw.Key6:
-		return Key6
+		return contract.Key6
 	case glfw.Key7:
-		return Key7
+		return contract.Key7
 	case glfw.Key8:
-		return Key8
+		return contract.Key8
 	case glfw.Key9:
-		return Key9
+		return contract.Key9
 	case glfw.KeyMinus:
-		return KeyMinus
+		return contract.KeyMinus
 	case glfw.KeyEqual:
-		return KeyEqual
+		return contract.KeyEqual
 	case glfw.KeySlash:
-		return KeySlash
+		return contract.KeySlash
 	case glfw.KeyComma:
-		return KeyComma
+		return contract.KeyComma
 	case glfw.KeyPeriod:
-		return KeyPeriod
+		return contract.KeyPeriod
 	case glfw.KeySemicolon:
-		return KeySemicolon
+		return contract.KeySemicolon
 	case glfw.KeyApostrophe:
-		return KeyApostrophe
+		return contract.KeyApostrophe
 	case glfw.KeyLeftBracket:
-		return KeyLeftBracket
+		return contract.KeyLeftBracket
 	case glfw.KeyRightBracket:
-		return KeyRightBracket
+		return contract.KeyRightBracket
 	case glfw.KeyBackslash:
-		return KeyBackslash
+		return contract.KeyBackslash
 	case glfw.KeyGraveAccent:
-		return KeyGrave
+		return contract.KeyGrave
 	case glfw.KeyLeftShift:
-		return KeyLeftShift
+		return contract.KeyLeftShift
 	case glfw.KeyRightShift:
-		return KeyRightShift
+		return contract.KeyRightShift
 	case glfw.KeyLeftControl:
-		return KeyLeftControl
+		return contract.KeyLeftControl
 	case glfw.KeyRightControl:
-		return KeyRightControl
+		return contract.KeyRightControl
 	case glfw.KeyLeftAlt:
-		return KeyLeftAlt
+		return contract.KeyLeftAlt
 	case glfw.KeyRightAlt:
-		return KeyRightAlt
+		return contract.KeyRightAlt
 	case glfw.KeyLeftSuper:
-		return KeyLeftSuper
+		return contract.KeyLeftSuper
 	case glfw.KeyRightSuper:
-		return KeyRightSuper
+		return contract.KeyRightSuper
 	case glfw.KeyCapsLock:
-		return KeyCapsLock
+		return contract.KeyCapsLock
 	case glfw.KeyMenu:
-		return KeyMenu
+		return contract.KeyMenu
 	case glfw.KeyNumLock:
-		return KeyNumLock
+		return contract.KeyNumLock
 	case glfw.KeyKPDecimal:
-		return KeyKPDecimal
+		return contract.KeyKPDecimal
 	case glfw.KeyKPDivide:
-		return KeyKPDivide
+		return contract.KeyKPDivide
 	case glfw.KeyKPMultiply:
-		return KeyKPMultiply
+		return contract.KeyKPMultiply
 	case glfw.KeyKPSubtract:
-		return KeyKPSubtract
+		return contract.KeyKPSubtract
 	case glfw.KeyKPAdd:
-		return KeyKPAdd
+		return contract.KeyKPAdd
 	case glfw.KeyKPEqual:
-		return KeyKPEqual
+		return contract.KeyKPEqual
 	case glfw.KeyKPEnter:
-		return KeyEnter
+		return contract.KeyEnter
 	}
 	switch {
 	case key >= glfw.KeyF13 && key <= glfw.KeyF20:
-		return KeyF13 + Key(key-glfw.KeyF13)
+		return contract.KeyF13 + contract.Key(key-glfw.KeyF13)
 	case key >= glfw.KeyKP0 && key <= glfw.KeyKP9:
-		return KeyKP0 + Key(key-glfw.KeyKP0)
+		return contract.KeyKP0 + contract.Key(key-glfw.KeyKP0)
 	}
-	return KeyUnknown
+	return contract.KeyUnknown
 }
 
-func mapMods(mods glfw.ModifierKey) Modifiers {
-	var out Modifiers
+func mapMods(mods glfw.ModifierKey) contract.Modifiers {
+	var out contract.Modifiers
 	if mods&glfw.ModShift != 0 {
-		out |= ModShift
+		out |= contract.ModShift
 	}
 	if mods&glfw.ModControl != 0 {
-		out |= ModControl
+		out |= contract.ModControl
 	}
 	if mods&glfw.ModAlt != 0 {
-		out |= ModAlt
+		out |= contract.ModAlt
 	}
 	if mods&glfw.ModSuper != 0 {
-		out |= ModSuper
+		out |= contract.ModSuper
 	}
 	return out
 }

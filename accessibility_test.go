@@ -262,14 +262,19 @@ func TestAgentOverlayShortcut_TogglesWithoutOptIn(t *testing.T) {
 	// agent overlay on. Bug: the shortcut was wired through the
 	// existing debugOverlayConfigured gate, so it stayed silent in
 	// apps that had never opted in.
+	// Cmd on macOS, Ctrl elsewhere.
+	key, mods, err := qui.ParseShortcut("CmdOrCtrl+Shift+A")
+	if err != nil {
+		t.Fatal(err)
+	}
 	w := qui.NewTestWindow(qui.Size{W: 200, H: 100})
 	w.SetRoot(qui.NewContainer(qui.FlexLayout{}))
-	w.DispatchTestEvent(qui.NewKeyEvent(qui.EventKeyDown, qui.KeyA, qui.ModSuper|qui.ModShift))
+	w.DispatchTestEvent(qui.NewKeyEvent(qui.EventKeyDown, key, mods))
 	if !w.IsDebugOverlayEnabled() {
 		t.Fatal("Cmd+Shift+A did not enable the overlay on a fresh window")
 	}
 	// Toggling again should turn it off.
-	w.DispatchTestEvent(qui.NewKeyEvent(qui.EventKeyDown, qui.KeyA, qui.ModSuper|qui.ModShift))
+	w.DispatchTestEvent(qui.NewKeyEvent(qui.EventKeyDown, key, mods))
 	if w.IsDebugOverlayEnabled() {
 		t.Fatal("Cmd+Shift+A did not disable the overlay on second press")
 	}

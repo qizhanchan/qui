@@ -1,17 +1,21 @@
 package qui
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/qizhanchan/qui/internal/platform/contract"
+)
 
 // WindowKind selects a window's role at the OS level. It is fixed at
 // creation: whether a window can take keyboard focus, and whether its
 // framebuffer has an alpha channel the compositor honors, are decided when
 // the OS window and its GPU context are made.
-type WindowKind int
+type WindowKind = contract.WindowKind
 
 const (
 	// WindowNormal is an ordinary application window — title bar, in the
 	// window cycle, takes keyboard focus when clicked.
-	WindowNormal WindowKind = iota
+	WindowNormal = contract.WindowNormal
 
 	// WindowOverlayPanel is a borderless, transparent, always-on-top
 	// surface that NEVER takes keyboard focus away from whatever the user
@@ -43,14 +47,12 @@ const (
 	// focus-stealing panel is worse than no panel, because the failure
 	// shows up as the user's typing going to the wrong place rather than as
 	// a missing feature.
-	WindowOverlayPanel
+	WindowOverlayPanel = contract.WindowOverlayPanel
 )
 
 // ErrOverlayPanelUnsupported is returned by NewOverlayPanel on a backend
 // that cannot make a non-activating window.
-var ErrOverlayPanelUnsupported = errors.New(
-	"qui: the active platform backend cannot create overlay panels " +
-		"(non-activating transparent windows); try QUI_PLATFORM=cocoa")
+var ErrOverlayPanelUnsupported = contract.ErrOverlayPanelUnsupported
 
 // NewOverlayPanel creates a WindowOverlayPanel — see that constant for
 // what it is and why it is a distinct kind.

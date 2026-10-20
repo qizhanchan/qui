@@ -4,8 +4,10 @@ package qui
 
 /*
 #include <stdint.h>
+int quiRawKeyCaptured(void* event);
 */
 import "C"
+import "unsafe"
 
 // Go side of the raw keyboard hooks in ime_darwin.m. Windows are looked
 // up through the IME registry: the hooks live on the same content view,
@@ -57,3 +59,8 @@ func quiAcceleratorClaims(id C.uintptr_t, keyCode C.int, mods C.int) C.int {
 	}
 	return 0
 }
+
+// rawKeyCapturedHook hands the cocoa backend's event pump the C predicate
+// it consults before re-sending a swallowed Command-chord keyUp
+// (contract.Host.RawKeyCaptured).
+func rawKeyCapturedHook() unsafe.Pointer { return unsafe.Pointer(C.quiRawKeyCaptured) }

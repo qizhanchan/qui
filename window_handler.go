@@ -1,6 +1,10 @@
 package qui
 
-import "time"
+import (
+	"time"
+
+	"github.com/qizhanchan/qui/internal/platform/contract"
+)
 
 // Window's implementation of platformHandler (see platform.go) — the
 // engine's side of the platform seam.
@@ -81,20 +85,14 @@ func (w *Window) onKey(k Key, scancode int, down, repeat bool, mods Modifiers) {
 	w.syncKeyCapture()
 }
 
-// platformLockState is implemented by backends that can report the Caps
-// Lock state.
-type platformLockState interface {
-	capsLock() bool
-}
-
 // CapsLockOn reports whether Caps Lock is on, as far as the platform
 // backend knows (false where it cannot tell).
 func (w *Window) CapsLockOn() bool {
 	if w == nil {
 		return false
 	}
-	if p, ok := w.plat.(platformLockState); ok {
-		return p.capsLock()
+	if p, ok := platformOptional[contract.CapsLocker](w.plat); ok {
+		return p.CapsLock()
 	}
 	return false
 }

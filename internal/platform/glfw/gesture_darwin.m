@@ -1,4 +1,4 @@
-//go:build darwin && cgo
+//go:build darwin && cgo && !qui_nogl && qui_glfw
 // ^ Go build tag above is advisory for IDE; the file is compiled on
 // macOS only because of its .m + _darwin suffix, so the Go build
 // system picks it up automatically under darwin.

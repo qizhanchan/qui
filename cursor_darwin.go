@@ -72,3 +72,6 @@ func premultiplied(img *image.NRGBA) []byte {
 	}
 	return out
 }
+
+// nativeCursorForBackend implements contract.Host.NativeCursor.
+func nativeCursorForBackend(shape CursorShape) unsafe.Pointer { return nativeNSCursor(shape) }

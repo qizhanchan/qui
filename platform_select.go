@@ -3,8 +3,9 @@ package qui
 import (
 	"fmt"
 	"os"
-	"sort"
 	"strings"
+
+	"github.com/qizhanchan/qui/internal/platform/contract"
 )
 
 // Backend selection.
@@ -21,22 +22,24 @@ import (
 //     support instruction instead of a patch release;
 //   - both implementations stay compiled, so neither can rot.
 //
-// The default is the most proven backend for the platform, not the newest.
-type platformFactory func() (platformApp, error)
-
-// platformBackends is the registry of compiled-in backends. Populated by
-// each backend's own file in an init, so adding one touches nothing here.
-var platformBackends = map[string]platformFactory{}
-
-// defaultPlatformBackend is the name used when QUI_PLATFORM is unset.
-// Backends override it only when they are the better default on their
-// platform; it stays "glfw" until a native backend has proven itself.
-var defaultPlatformBackend = "glfw"
-
-// registerPlatformBackend adds a backend under name. Called from init.
-func registerPlatformBackend(name string, factory platformFactory) {
-	platformBackends[name] = factory
+// The default is the platform's native backend where one exists (cocoa on
+// macOS, x11 on Linux, web under GOOS=js); GLFW remains only where no
+// native backend has been written yet (Windows) or when built with
+// -tags qui_glfw. headless is compiled in everywhere as the fallback.
+// installPlatformHost hands backends the engine services they call back
+// into (contract.Host). Runs before the first backend is created.
+func installPlatformHost() {
+	contract.Host.ActivationPolicy = func() int { return int(ActivationPolicy()) }
+	contract.Host.QuitRequested = runQuitRequest
+	contract.Host.WakeIfBlocked = wakeIfBlocked
+	contract.Host.NativeCursor = nativeCursorForBackend
+	contract.Host.ImageCursor = imageCursorForBackend
+	contract.Host.RawKeyCaptured = rawKeyCapturedHook()
 }
+
+// defaultPlatformBackend names the backend used when QUI_PLATFORM is
+// unset: the highest-priority compiled-in backend (contract.Default).
+func defaultPlatformBackend() string { return contract.Default() }
 
 // newPlatformApp creates the platform backend named by QUI_PLATFORM, or
 // the platform default.
@@ -45,13 +48,18 @@ func registerPlatformBackend(name string, factory platformFactory) {
 // who sets QUI_PLATFORM=cocao wants to know they typo'd, not to spend an
 // afternoon wondering why their measurements didn't change.
 func newPlatformApp() (platformApp, error) {
+	installPlatformHost()
 	name := resolvePlatformName()
-	factory, ok := platformBackends[name]
+	backend, ok := contract.Lookup(name)
 	if !ok {
 		return nil, fmt.Errorf("qui: unknown QUI_PLATFORM %q (available: %s)",
 			name, strings.Join(availablePlatformBackends(), ", "))
 	}
-	return factory()
+	app, err := backend.Factory()
+	if err != nil {
+		return nil, err
+	}
+	return adaptApp(app), nil
 }
 
 // resolvePlatformName reads the requested backend name, treating an unset
@@ -61,15 +69,8 @@ func resolvePlatformName() string {
 	if name := strings.TrimSpace(os.Getenv("QUI_PLATFORM")); name != "" {
 		return name
 	}
-	return defaultPlatformBackend
+	return defaultPlatformBackend()
 }
 
 // availablePlatformBackends lists the compiled-in backend names, sorted.
-func availablePlatformBackends() []string {
-	names := make([]string, 0, len(platformBackends))
-	for name := range platformBackends {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
+func availablePlatformBackends() []string { return contract.Names() }

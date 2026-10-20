@@ -2,7 +2,11 @@
 // ^ advisory for editors; the _darwin.m suffix is what actually gates it.
 
 #import <Cocoa/Cocoa.h>
+#import <CoreVideo/CoreVideo.h>
+#import <QuartzCore/QuartzCore.h>
 #include <float.h>
+#include <stdatomic.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -10,8 +14,13 @@
 
 // Defined below; the window delegate needs it before its definition.
 void quiCocoaWake(void);
-// ime_darwin.m: whether the raw-keyboard monitor delivers this event.
-int quiRawKeyCaptured(void* event);
+// Whether the engine's raw-keyboard monitor delivers this event
+// (qui/ime_darwin.m). A function pointer handed over at init through
+// contract.Host rather than a direct reference, so this package links on
+// its own (its tests) without the engine's Objective-C.
+static int (*gQuiRawKeyCaptured)(void* event) = NULL;
+
+void quiCocoaSetRawKeyHook(void* fn) { gQuiRawKeyCaptured = (int (*)(void*))fn; }
 
 // -------------------------------------------------------------------
 // Native Cocoa implementation of the platform seam (see platform.go).
@@ -325,6 +334,16 @@ static NSCursor* quiCocoaCursorFor(int shape) {
 @property (nonatomic, strong) QuiWindowDelegate* delegate;
 @property (nonatomic, strong) NSOpenGLContext* glContext;
 @property (nonatomic, assign) BOOL shouldClose;
+// CPU presentation (quiCocoaPresentCPU). Once a window's first CPU frame
+// arrives it leaves GL for good: the context is detached, the view becomes
+// layer-hosting, and frames are composited as the layer's contents.
+@property (nonatomic, assign) BOOL cpuMode;
+@property (nonatomic, assign) CGContextRef bitmap;
+// vsync is set by the display link thread and consumed by the UI thread
+// (quiCocoaTakeFrameReady); heap-allocated so the CV callback can hold a
+// plain C pointer to it.
+@property (nonatomic, assign) atomic_int* vsync;
+@property (nonatomic, assign) CVDisplayLinkRef displayLink;
 @end
 
 @implementation QuiWindowBox
@@ -337,6 +356,23 @@ static QuiWindowBox* quiBox(uintptr_t handle) {
     return gQuiWindows[@((unsigned long)handle)];
 }
 
+// quiCocoaSyncLayerGeometry keeps a CPU-mode window's layer mapping one
+// frame pixel to one device pixel, and its display link on the window's
+// current display.
+static void quiCocoaSyncLayerGeometry(QuiWindowBox* box) {
+    CALayer* layer = box.view.layer;
+    if (layer == nil) return;
+    CGFloat scale = [box.window backingScaleFactor];
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    layer.contentsScale = scale > 0 ? scale : 1;
+    [CATransaction commit];
+    if (box.displayLink) {
+        NSNumber* screen = box.window.screen.deviceDescription[@"NSScreenNumber"];
+        if (screen) CVDisplayLinkSetCurrentCGDisplay(box.displayLink, [screen unsignedIntValue]);
+    }
+}
+
 // quiCocoaNotifyGeometry reports the window's logical and physical sizes
 // and asks for a repaint. Called from every path that can change either
 // (interactive resize, zoom, a move to a display with a different
@@ -346,7 +382,8 @@ static void quiCocoaNotifyGeometry(QuiWindowBox* box, uintptr_t handle) {
     if (box == nil) return;
     NSRect bounds = [box.view bounds];
     NSRect backing = [box.view convertRectToBacking:bounds];
-    if (box.glContext) [box.glContext update];
+    if (box.glContext && !box.cpuMode) [box.glContext update];
+    if (box.cpuMode) quiCocoaSyncLayerGeometry(box);
     quiCocoaOnResize(handle, (int)bounds.size.width, (int)bounds.size.height);
     quiCocoaOnFramebufferResize(handle, (int)backing.size.width, (int)backing.size.height);
     quiCocoaOnRefresh(handle);
@@ -450,6 +487,10 @@ static void quiCocoaMinimalMenu(void) {
 static QuiAppDelegate* gQuiAppDelegate;
 
 int quiCocoaInit(int policy) {
+    // AppKit raises (and aborts the process) when NSApplication is set up
+    // off the main thread. Report it instead, so a test or tool that
+    // touches the platform from a worker gets an error, not a SIGABRT.
+    if (![NSThread isMainThread]) return -1;
     @autoreleasepool {
         gQuiWindows = [[NSMutableDictionary alloc] init];
         [NSApplication sharedApplication];
@@ -498,7 +539,7 @@ void quiCocoaPump(double seconds) {
             // the same workaround GLFW installs as a local monitor.
             if ([event type] == NSEventTypeKeyUp &&
                 ([event modifierFlags] & NSEventModifierFlagCommand) &&
-                !quiRawKeyCaptured((__bridge void*)event)) {
+                !(gQuiRawKeyCaptured && gQuiRawKeyCaptured((__bridge void*)event))) {
                 [[NSApp keyWindow] sendEvent:event];
             }
             [NSApp sendEvent:event];
@@ -710,6 +751,19 @@ void quiCocoaDestroyWindow(uintptr_t handle) {
     @autoreleasepool {
         QuiWindowBox* box = quiBox(handle);
         if (box == nil) return;
+        if (box.displayLink) {
+            CVDisplayLinkStop(box.displayLink);
+            CVDisplayLinkRelease(box.displayLink);
+            box.displayLink = NULL;
+        }
+        // The link is stopped (CVDisplayLinkStop waits for an in-flight
+        // callback), so nothing can touch vsync any more.
+        free(box.vsync);
+        box.vsync = NULL;
+        if (box.bitmap) {
+            CGContextRelease(box.bitmap);
+            box.bitmap = NULL;
+        }
         [box.glContext clearDrawable];
         [box.window setDelegate:nil];
         [box.window orderOut:nil];
@@ -979,12 +1033,119 @@ void quiCocoaSetClipboardText(const char* text) {
 
 void quiCocoaMakeCurrent(uintptr_t handle) {
     QuiWindowBox* box = quiBox(handle);
-    if (box) [box.glContext makeCurrentContext];
+    if (box && !box.cpuMode) [box.glContext makeCurrentContext];
 }
 
 void quiCocoaPresent(uintptr_t handle) {
     QuiWindowBox* box = quiBox(handle);
-    if (box) [box.glContext flushBuffer];
+    if (box && !box.cpuMode) [box.glContext flushBuffer];
+}
+
+// The display link callback runs on CoreVideo's own thread. It only flags
+// "the display wants a frame"; the UI thread polls the flag in
+// quiCocoaTakeFrameReady. No wake is posted: an idle app must stay asleep,
+// and a window with pending paint already wakes on its frame timeout.
+static CVReturn quiCocoaVsync(CVDisplayLinkRef link, const CVTimeStamp* now,
+                              const CVTimeStamp* out, CVOptionFlags in,
+                              CVOptionFlags* flags, void* ctx) {
+    atomic_store((atomic_int*)ctx, 1);
+    return kCVReturnSuccess;
+}
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+// CVDisplayLink is deprecated in favor of NSView/NSScreen displayLink
+// (macOS 14+). Those run on the main run loop and pause while the window
+// is occluded, which would stall a window whose paint is pending; the CV
+// link keeps ticking and works on every supported macOS.
+static void quiCocoaStartDisplayLink(QuiWindowBox* box) {
+    if (box.displayLink) return;
+    atomic_int* flag = malloc(sizeof(atomic_int));
+    if (flag == NULL) return;
+    atomic_init(flag, 0);
+    CVDisplayLinkRef link = NULL;
+    if (CVDisplayLinkCreateWithActiveCGDisplays(&link) != kCVReturnSuccess || link == NULL) {
+        free(flag);
+        return;
+    }
+    CVDisplayLinkSetOutputCallback(link, quiCocoaVsync, flag);
+    box.vsync = flag;
+    box.displayLink = link;
+    quiCocoaSyncLayerGeometry(box);
+    CVDisplayLinkStart(link);
+}
+#pragma clang diagnostic pop
+
+// quiCocoaEnterCPUMode moves a window from GL to layer presentation. One
+// way: a window does not flip back and forth between renderers.
+static void quiCocoaEnterCPUMode(QuiWindowBox* box) {
+    if (box.cpuMode) return;
+    box.cpuMode = YES;
+    [box.glContext clearDrawable];
+    QuiView* view = box.view;
+    CALayer* layer = [CALayer layer];
+    // Top-left gravity with contentsScale = backing scale maps the frame
+    // 1:1 onto device pixels and, during a live resize, leaves the old
+    // frame pinned to the top-left instead of stretching it.
+    layer.contentsGravity = kCAGravityTopLeft;
+    layer.opaque = [box.window isOpaque];
+    layer.actions = @{@"contents": [NSNull null]};
+    [view setLayer:layer];
+    [view setWantsLayer:YES];
+    quiCocoaStartDisplayLink(box);
+}
+
+// quiCocoaPresentCPU composites a CPU frame (premultiplied RGBA, rows of
+// stride bytes, width x height) into the window by copying the damaged
+// rectangle into a retained bitmap and making that the layer's contents.
+// The retained bitmap is what lets a partial repaint touch only its rows.
+int quiCocoaPresentCPU(uintptr_t handle, const uint8_t* pix, int stride, int width, int height,
+                       int dx, int dy, int dw, int dh) {
+    @autoreleasepool {
+        QuiWindowBox* box = quiBox(handle);
+        if (box == nil || pix == NULL || width <= 0 || height <= 0) return 0;
+        quiCocoaEnterCPUMode(box);
+        if (box.bitmap == NULL || (int)CGBitmapContextGetWidth(box.bitmap) != width ||
+            (int)CGBitmapContextGetHeight(box.bitmap) != height) {
+            if (box.bitmap) CGContextRelease(box.bitmap);
+            CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+            box.bitmap = CGBitmapContextCreate(NULL, width, height, 8, (size_t)width * 4, cs,
+                                               kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+            CGColorSpaceRelease(cs);
+            if (box.bitmap == NULL) return 0;
+            // A fresh bitmap holds nothing from earlier frames.
+            dx = 0; dy = 0; dw = width; dh = height;
+        }
+        if (dx < 0) { dw += dx; dx = 0; }
+        if (dy < 0) { dh += dy; dy = 0; }
+        if (dx + dw > width) dw = width - dx;
+        if (dy + dh > height) dh = height - dy;
+        uint8_t* dst = CGBitmapContextGetData(box.bitmap);
+        size_t dstStride = CGBitmapContextGetBytesPerRow(box.bitmap);
+        for (int y = dy; y < dy + dh; y++) {
+            memcpy(dst + (size_t)y * dstStride + (size_t)dx * 4, pix + (size_t)y * stride + (size_t)dx * 4,
+                   (size_t)dw * 4);
+        }
+        // Copy-on-write snapshot: the next frame's writes copy only the
+        // pages they touch, while the compositor reads this image.
+        CGImageRef image = CGBitmapContextCreateImage(box.bitmap);
+        if (image == NULL) return 0;
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        box.view.layer.contents = (__bridge id)image;
+        [CATransaction commit];
+        CGImageRelease(image);
+        return 1;
+    }
+}
+
+// quiCocoaTakeFrameReady reports and clears the display link's flag:
+// 1 = the display has refreshed since the last frame, -1 = this window has
+// no display link (not in CPU mode, or the link could not be created).
+int quiCocoaTakeFrameReady(uintptr_t handle) {
+    QuiWindowBox* box = quiBox(handle);
+    if (box == nil || box.vsync == NULL) return -1;
+    return atomic_exchange(box.vsync, 0) ? 1 : 0;
 }
 
 // --- displays --------------------------------------------------------

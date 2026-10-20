@@ -1,27 +1,6 @@
 package qui
 
-import (
-	"testing"
-
-	"github.com/go-gl/glfw/v3.3/glfw"
-)
-
-func TestGLFWMapsModifierAndExtendedKeys(t *testing.T) {
-	cases := map[glfw.Key]Key{
-		glfw.KeyLeftShift: KeyLeftShift, glfw.KeyRightShift: KeyRightShift,
-		glfw.KeyLeftControl: KeyLeftControl, glfw.KeyRightControl: KeyRightControl,
-		glfw.KeyLeftAlt: KeyLeftAlt, glfw.KeyRightAlt: KeyRightAlt,
-		glfw.KeyLeftSuper: KeyLeftSuper, glfw.KeyRightSuper: KeyRightSuper,
-		glfw.KeyCapsLock: KeyCapsLock, glfw.KeyGraveAccent: KeyGrave,
-		glfw.KeyF13: KeyF13, glfw.KeyF20: KeyF20,
-		glfw.KeyKP0: KeyKP0, glfw.KeyKP9: KeyKP9, glfw.KeyKPAdd: KeyKPAdd,
-	}
-	for in, want := range cases {
-		if got := mapKey(in); got != want {
-			t.Errorf("mapKey(%v) = %v, want %v", in, got, want)
-		}
-	}
-}
+import "testing"
 
 // capsFake adds a Caps Lock source to the fake backend.
 type capsFake struct {
@@ -29,7 +8,7 @@ type capsFake struct {
 	capsState bool
 }
 
-func (c *capsFake) capsLock() bool { return c.capsState }
+func (c *capsFake) CapsLock() bool { return c.capsState }
 
 func TestOnKeyCarriesScanCodeRepeatAndCapsLock(t *testing.T) {
 	f := &capsFake{fakePlatformWindow: newFakePlatformWindow(), capsState: true}

@@ -58,17 +58,6 @@ func (b *cpuBackend) End() {}
 // CPUImage returns the framebuffer for GLRenderer's blit step.
 func (b *cpuBackend) CPUImage() *image.RGBA { return b.base }
 
-// CompositeToDefault uploads the CPU RGBA into the renderer's shared
-// texture and draws it with the same full-screen quad program the
-// pre-refactor End() used. Called from GLRenderer.End() after the
-// clear/hook/deferredGL replay.
-func (b *cpuBackend) CompositeToDefault(r *GLRenderer) {
-	if r == nil || b.base == nil {
-		return
-	}
-	compositeCPUImageToDefault(r, b.base)
-}
-
 // activeImg returns the innermost layer's buffer, or the base
 // framebuffer if no layer is active. Every rasterization method
 // resolves the target through this helper — pushing a layer inside a

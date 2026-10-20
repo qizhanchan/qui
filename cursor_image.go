@@ -5,6 +5,8 @@ import (
 	"image"
 	"image/draw"
 	"sync"
+
+	"github.com/qizhanchan/qui/internal/platform/contract"
 )
 
 // Hidden and image cursors.
@@ -119,15 +121,20 @@ func (w *Window) dropCursor(shape CursorShape) {
 			w.plat.setCursor(CursorDefault)
 		}
 	}
-	if r, ok := w.plat.(platformCursorReleaser); ok {
-		r.releaseCursor(shape)
+	if r, ok := platformOptional[contract.CursorReleaser](w.plat); ok {
+		r.ReleaseCursor(shape)
 	}
 }
 
-// platformCursorReleaser is implemented by backends that cache native
-// cursor objects per window.
-type platformCursorReleaser interface {
-	releaseCursor(shape CursorShape)
+// imageCursorForBackend implements contract.Host.ImageCursor: the cursor's
+// one-pixel-per-point rendition and hotspot, for backends that build their
+// own cursor objects from pixels.
+func imageCursorForBackend(shape CursorShape) (*image.NRGBA, int, int, bool) {
+	ic := lookupImageCursor(shape)
+	if ic == nil {
+		return nil, 0, 0, false
+	}
+	return ic.at1x(), int(ic.hotX), int(ic.hotY), true
 }
 
 // lookupImageCursor returns the registered cursor for shape, or nil.

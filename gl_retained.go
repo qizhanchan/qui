@@ -3,8 +3,6 @@ package qui
 import (
 	"image"
 	"math"
-
-	"github.com/go-gl/gl/v3.3-core/gl"
 )
 
 // Retained GL draws.
@@ -134,25 +132,6 @@ func rectToPixelBounds(r Rect) image.Rectangle {
 	)
 }
 
-// QueueRetainedGLDraw implements RetainedGLCanvas.
-func (c gpuImageCanvas) QueueRetainedGLDraw(key any, physBounds Rect, fn func(GLState)) {
-	if c.renderer == nil || fn == nil || key == nil {
-		return
-	}
-	c.renderer.retained.put(key, physBounds, fn)
-	c.renderer.deferredGL = append(c.renderer.deferredGL, fn)
-}
-
-// ForgetRetainedGLDraw drops a retained draw registered under key, for an
-// owner that stops showing GL content without its area being repainted
-// (it is otherwise dropped automatically). UI thread only.
-func (r *GLRenderer) ForgetRetainedGLDraw(key any) {
-	if r == nil {
-		return
-	}
-	r.retained.forget(key)
-}
-
 // ForgetRetainedGLDraw drops key's retained draw from this window's
 // renderer (see GLRenderer.ForgetRetainedGLDraw). UI thread.
 func (w *Window) ForgetRetainedGLDraw(key any) {
@@ -160,26 +139,9 @@ func (w *Window) ForgetRetainedGLDraw(key any) {
 		return
 	}
 	w.assertUIThread("Window.ForgetRetainedGLDraw")
-	if glr, ok := w.renderer.(*GLRenderer); ok {
-		glr.ForgetRetainedGLDraw(key)
+	if rr, ok := w.renderer.(retainedGLRenderer); ok {
+		rr.ForgetRetainedGLDraw(key)
 	}
-}
-
-// redrawRetained produces a frame that replays the retained GL draws and
-// re-composites the CPU image left by the last painted frame, without
-// rasterizing or uploading any CPU pixels. Returns false when there is
-// nothing to redraw (no frame painted yet, no retained draws).
-func (r *GLRenderer) redrawRetained() bool {
-	if r == nil || !r.initialized || r.img == nil || r.backend == nil || r.retained.len() == 0 {
-		return false
-	}
-	lastActiveGLRenderer = r
-	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
-	gl.Viewport(0, 0, int32(r.img.Rect.Dx()), int32(r.img.Rect.Dy()))
-	r.damage = image.Rectangle{}
-	r.damageNone = true
-	r.composite()
-	return true
 }
 
 // RequestGLRedraw asks for a frame that re-runs this window's retained GL
@@ -202,12 +164,14 @@ func (w *Window) glRedrawPending() bool { return w != nil && w.glRedraw.Load() }
 // redrawGLOnly runs a RequestGLRedraw frame. Step calls it when nothing
 // is dirty.
 func (w *Window) redrawGLOnly() {
-	glr, ok := w.renderer.(*GLRenderer)
+	rr, ok := w.renderer.(retainedGLRenderer)
 	if !ok {
 		return
 	}
-	glr.SetLogicalSize(w.lastSize)
-	if !glr.redrawRetained() {
+	if fi, ok := w.renderer.(frameInfoRenderer); ok {
+		fi.SetLogicalSize(w.lastSize)
+	}
+	if !rr.redrawRetained() {
 		return
 	}
 	w.present()

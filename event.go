@@ -1,6 +1,10 @@
 package qui
 
-import "time"
+import (
+	"time"
+
+	"github.com/qizhanchan/qui/internal/platform/contract"
+)
 
 // EventType enumerates supported input events.
 type EventType int
@@ -152,25 +156,25 @@ type Event interface {
 // GesturePhaseChanged with no Began/Ended pair. Receivers must therefore
 // treat DScale (the per-event increment) as the primary signal and use
 // the cumulative Scale only as a convenience for real gestures.
-type GesturePhase int
+type GesturePhase = contract.GesturePhase
 
 const (
 	// GesturePhaseNone means the platform reported no phase — either it
 	// cannot (X11 scroll wheels) or the event is a one-shot.
-	GesturePhaseNone GesturePhase = iota
+	GesturePhaseNone = contract.GesturePhaseNone
 	// GesturePhaseBegan is the first event of a gesture. Accumulators
 	// (Scale, Rotation) are reset to identity at this point.
-	GesturePhaseBegan
+	GesturePhaseBegan = contract.GesturePhaseBegan
 	// GesturePhaseChanged is an update within an active gesture.
-	GesturePhaseChanged
+	GesturePhaseChanged = contract.GesturePhaseChanged
 	// GesturePhaseEnded fires when the fingers lift.
-	GesturePhaseEnded
+	GesturePhaseEnded = contract.GesturePhaseEnded
 	// GesturePhaseCancelled fires when the system abandons the gesture
 	// (palm rejection, focus loss). Receivers should revert, not commit.
-	GesturePhaseCancelled
+	GesturePhaseCancelled = contract.GesturePhaseCancelled
 	// GesturePhaseMomentum marks post-release inertial scrolling (macOS
 	// momentum scroll). Only reported for scroll, never for pinch.
-	GesturePhaseMomentum
+	GesturePhaseMomentum = contract.GesturePhaseMomentum
 )
 
 // MouseEvent represents mouse movement or buttons.
@@ -438,154 +442,154 @@ func (e DragEvent) Type() EventType      { return e.eventType }
 func (e DragEvent) Timestamp() time.Time { return e.When }
 
 // MouseButton mirrors GLFW mouse button codes.
-type MouseButton int
+type MouseButton = contract.MouseButton
 
 const (
-	MouseButtonLeft MouseButton = iota
-	MouseButtonRight
-	MouseButtonMiddle
+	MouseButtonLeft   = contract.MouseButtonLeft
+	MouseButtonRight  = contract.MouseButtonRight
+	MouseButtonMiddle = contract.MouseButtonMiddle
 )
 
 // Key represents keyboard key codes (subset).
-type Key int
+type Key = contract.Key
 
 const (
-	KeyUnknown Key = iota
-	KeySpace
-	KeyEnter
-	KeyEscape
-	KeyLeft
-	KeyRight
-	KeyUp
-	KeyDown
-	KeyHome
-	KeyEnd
-	KeyBackspace
-	KeyTab
-	KeyDelete
-	KeyInsert
-	KeyPageUp
-	KeyPageDown
-	KeyF1
-	KeyF2
-	KeyF3
-	KeyF4
-	KeyF5
-	KeyF6
-	KeyF7
-	KeyF8
-	KeyF9
-	KeyF10
-	KeyF11
-	KeyF12
+	KeyUnknown   = contract.KeyUnknown
+	KeySpace     = contract.KeySpace
+	KeyEnter     = contract.KeyEnter
+	KeyEscape    = contract.KeyEscape
+	KeyLeft      = contract.KeyLeft
+	KeyRight     = contract.KeyRight
+	KeyUp        = contract.KeyUp
+	KeyDown      = contract.KeyDown
+	KeyHome      = contract.KeyHome
+	KeyEnd       = contract.KeyEnd
+	KeyBackspace = contract.KeyBackspace
+	KeyTab       = contract.KeyTab
+	KeyDelete    = contract.KeyDelete
+	KeyInsert    = contract.KeyInsert
+	KeyPageUp    = contract.KeyPageUp
+	KeyPageDown  = contract.KeyPageDown
+	KeyF1        = contract.KeyF1
+	KeyF2        = contract.KeyF2
+	KeyF3        = contract.KeyF3
+	KeyF4        = contract.KeyF4
+	KeyF5        = contract.KeyF5
+	KeyF6        = contract.KeyF6
+	KeyF7        = contract.KeyF7
+	KeyF8        = contract.KeyF8
+	KeyF9        = contract.KeyF9
+	KeyF10       = contract.KeyF10
+	KeyF11       = contract.KeyF11
+	KeyF12       = contract.KeyF12
 	// Letter keys. Only the ones used by framework/app shortcuts are
 	// wired up; extend as needed. Preserving the A–Z ordering keeps
 	// switches readable.
-	KeyA
-	KeyB
-	KeyC
-	KeyD
-	KeyE
-	KeyF
-	KeyG
-	KeyH
-	KeyI
-	KeyJ
-	KeyK
-	KeyL
-	KeyM
-	KeyN
-	KeyO
-	KeyP
-	KeyQ
-	KeyR
-	KeyS
-	KeyT
-	KeyU
-	KeyV
-	KeyW
-	KeyX
-	KeyY
-	KeyZ
+	KeyA = contract.KeyA
+	KeyB = contract.KeyB
+	KeyC = contract.KeyC
+	KeyD = contract.KeyD
+	KeyE = contract.KeyE
+	KeyF = contract.KeyF
+	KeyG = contract.KeyG
+	KeyH = contract.KeyH
+	KeyI = contract.KeyI
+	KeyJ = contract.KeyJ
+	KeyK = contract.KeyK
+	KeyL = contract.KeyL
+	KeyM = contract.KeyM
+	KeyN = contract.KeyN
+	KeyO = contract.KeyO
+	KeyP = contract.KeyP
+	KeyQ = contract.KeyQ
+	KeyR = contract.KeyR
+	KeyS = contract.KeyS
+	KeyT = contract.KeyT
+	KeyU = contract.KeyU
+	KeyV = contract.KeyV
+	KeyW = contract.KeyW
+	KeyX = contract.KeyX
+	KeyY = contract.KeyY
+	KeyZ = contract.KeyZ
 	// Number row (used for "Cmd+0" reset zoom etc.).
-	Key0
-	Key1
-	Key2
-	Key3
-	Key4
-	Key5
-	Key6
-	Key7
-	Key8
-	Key9
+	Key0 = contract.Key0
+	Key1 = contract.Key1
+	Key2 = contract.Key2
+	Key3 = contract.Key3
+	Key4 = contract.Key4
+	Key5 = contract.Key5
+	Key6 = contract.Key6
+	Key7 = contract.Key7
+	Key8 = contract.Key8
+	Key9 = contract.Key9
 	// Common punctuation used in shortcuts ("Cmd+=" / "Cmd+-").
-	KeyMinus
-	KeyEqual
-	KeySlash
+	KeyMinus = contract.KeyMinus
+	KeyEqual = contract.KeyEqual
+	KeySlash = contract.KeySlash
 	// Word processors bind the rest of the punctuation row: superscript /
 	// subscript on "Cmd+." / "Cmd+,", clear formatting on "Cmd+\\",
 	// indent / outdent on "Cmd+]" / "Cmd+[".
-	KeyComma
-	KeyPeriod
-	KeySemicolon
-	KeyApostrophe
-	KeyLeftBracket
-	KeyRightBracket
-	KeyBackslash
+	KeyComma        = contract.KeyComma
+	KeyPeriod       = contract.KeyPeriod
+	KeySemicolon    = contract.KeySemicolon
+	KeyApostrophe   = contract.KeyApostrophe
+	KeyLeftBracket  = contract.KeyLeftBracket
+	KeyRightBracket = contract.KeyRightBracket
+	KeyBackslash    = contract.KeyBackslash
 	// KeyGrave is the backtick/tilde key. Spreadsheets bind Ctrl+` to
 	// "show formulas"; editors use it for consoles.
-	KeyGrave
+	KeyGrave = contract.KeyGrave
 	// Modifier keys, left and right. They arrive as KeyDown/KeyUp of their
 	// own (as well as in every event's Mods).
-	KeyLeftShift
-	KeyRightShift
-	KeyLeftControl
-	KeyRightControl
-	KeyLeftAlt
-	KeyRightAlt
-	KeyLeftSuper
-	KeyRightSuper
+	KeyLeftShift    = contract.KeyLeftShift
+	KeyRightShift   = contract.KeyRightShift
+	KeyLeftControl  = contract.KeyLeftControl
+	KeyRightControl = contract.KeyRightControl
+	KeyLeftAlt      = contract.KeyLeftAlt
+	KeyRightAlt     = contract.KeyRightAlt
+	KeyLeftSuper    = contract.KeyLeftSuper
+	KeyRightSuper   = contract.KeyRightSuper
 	// KeyCapsLock: KeyDown when Caps Lock turns on, KeyUp when it turns off.
-	KeyCapsLock
+	KeyCapsLock = contract.KeyCapsLock
 	// KeyFn is the macOS Fn / Globe key (cocoa backend only; GLFW does not
 	// report it).
-	KeyFn
-	KeyMenu
-	KeyF13
-	KeyF14
-	KeyF15
-	KeyF16
-	KeyF17
-	KeyF18
-	KeyF19
-	KeyF20
+	KeyFn   = contract.KeyFn
+	KeyMenu = contract.KeyMenu
+	KeyF13  = contract.KeyF13
+	KeyF14  = contract.KeyF14
+	KeyF15  = contract.KeyF15
+	KeyF16  = contract.KeyF16
+	KeyF17  = contract.KeyF17
+	KeyF18  = contract.KeyF18
+	KeyF19  = contract.KeyF19
+	KeyF20  = contract.KeyF20
 	// Keypad.
-	KeyKP0
-	KeyKP1
-	KeyKP2
-	KeyKP3
-	KeyKP4
-	KeyKP5
-	KeyKP6
-	KeyKP7
-	KeyKP8
-	KeyKP9
-	KeyKPDecimal
-	KeyKPDivide
-	KeyKPMultiply
-	KeyKPSubtract
-	KeyKPAdd
-	KeyKPEqual
+	KeyKP0        = contract.KeyKP0
+	KeyKP1        = contract.KeyKP1
+	KeyKP2        = contract.KeyKP2
+	KeyKP3        = contract.KeyKP3
+	KeyKP4        = contract.KeyKP4
+	KeyKP5        = contract.KeyKP5
+	KeyKP6        = contract.KeyKP6
+	KeyKP7        = contract.KeyKP7
+	KeyKP8        = contract.KeyKP8
+	KeyKP9        = contract.KeyKP9
+	KeyKPDecimal  = contract.KeyKPDecimal
+	KeyKPDivide   = contract.KeyKPDivide
+	KeyKPMultiply = contract.KeyKPMultiply
+	KeyKPSubtract = contract.KeyKPSubtract
+	KeyKPAdd      = contract.KeyKPAdd
+	KeyKPEqual    = contract.KeyKPEqual
 	// KeyNumLock is Num Lock, or the Clear key on a Mac keypad.
-	KeyNumLock
+	KeyNumLock = contract.KeyNumLock
 )
 
 // Modifiers represents shift/ctrl/alt/etc.
-type Modifiers int
+type Modifiers = contract.Modifiers
 
 const (
-	ModShift Modifiers = 1 << iota
-	ModControl
-	ModAlt
-	ModSuper
+	ModShift   = contract.ModShift
+	ModControl = contract.ModControl
+	ModAlt     = contract.ModAlt
+	ModSuper   = contract.ModSuper
 )

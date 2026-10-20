@@ -1,11 +1,13 @@
-//go:build !darwin || !cgo
+//go:build !darwin && cgo && !js && !qui_nogl && (windows || qui_glfw)
 
-package qui
+package glfw
 
 import (
+	"image"
 	"unsafe"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
+	"github.com/qizhanchan/qui/internal/platform/contract"
 )
 
 // glfwNativeGestures is false here: no native gesture source is wired up
@@ -27,6 +29,6 @@ func (w *glfwWindow) installGestures() {}
 
 // glfwImageCursor builds a GLFW cursor from the image's 1x rendition —
 // GLFW takes images at one pixel per screen pixel here.
-func glfwImageCursor(shape CursorShape, ic *imageCursor) *glfw.Cursor {
-	return glfw.CreateCursor(ic.at1x(), int(ic.hotX), int(ic.hotY))
+func glfwImageCursor(_ contract.CursorShape, img1x *image.NRGBA, hotX, hotY int) *glfw.Cursor {
+	return glfw.CreateCursor(img1x, hotX, hotY)
 }

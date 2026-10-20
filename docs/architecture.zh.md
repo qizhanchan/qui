@@ -152,6 +152,14 @@ h.Button("Save").T("qui.save")                   // reactive/html DSL
 
 **RTL 现状：** 文字完全 bidi —— 整形、caret、选区、`TextAlignStart/End` 都按段落方向解析，`Locale.Direction()` 报告方向。**布局镜像尚未实现** —— flex 主轴、grid 列序、滚动条一侧、弹出锚定和对话框按钮顺序仍是物理的。`examples/i18n` 切到阿拉伯语能清楚看出哪些可用、哪些不可用。
 
+## 窗口后端
+
+操作系统窗口层是一个接缝：`internal/platform/contract` 定义后端要实现的东西（App / Window / Monitor / Surface / Handler、Caps、后端注册表，以及 `Host` —— 后端回调引擎的少数服务），并持有输入词汇（`Key`、`Modifiers`、`MouseButton`、`CursorShape`、`GesturePhase`、`WindowKind`），`qui` 以类型别名重新导出。每个后端都是 `internal/platform/` 下的叶子包 —— `cocoa`（AppKit）、`x11`（Xlib）、`web`（canvas，GOOS=js）、`headless`（内存）、`glfw`（Windows / `-tags qui_glfw`）—— 从不 import 根包；根包在 `platform_backends*.go` 中按 GOOS 空白导入它们，`platform_adapter.go` 把 contract 对象包装成引擎对接缝的非导出视图（`platform.go`），因此引擎调用点和测试替身都看不到后端如何组织。已注册后端中优先级最高的（原生 > GLFW > headless）为默认，`QUI_PLATFORM` 可在运行时覆盖。
+
+呈现有两条路径（`contract.Surface`）：`Present` 交换 `GLRenderer` 画好的 GL 后缓冲；`PresentCPU(img, damage)` 把完成的 CPU 帧交给合成器 —— XPutImage、putImageData，headless 则什么都不做 —— 且只处理脏矩形；在 `cocoa` 上，窗口收到第一个 CPU 帧后永久切换到 CALayer 呈现（保留位图的写时复制 CGImage），并启动 CVDisplayLink，其标志由 `Ready()` 消费，使绘制与显示器同步。需要 GPU 上下文的渲染器始终通过缓冲交换呈现。表面通过 `Caps.GPUContext` 声明是否有 GL 上下文；设置在无 GL 上下文窗口上的 `GLRenderer` 会被替换为 `CPURenderer`（`renderer_caps.go`），即同一个光栅化器，停在 `*image.RGBA`。无 cgo、wasm 或 `-tags qui_nogl` 的构建不含 OpenGL：此时 `GLRenderer` 是 `CPURenderer` 的别名。
+
+离屏渲染即 `QUI_PLATFORM=headless` 加 `QUI_SNAPSHOT=out.png`（`snapshot_env.go`）：运行任意应用，等首帧稳定后写出帧并退出 —— 无需显示器、GPU 或改代码。
+
 ## 平台桥
 
 平台代码按 build tag 拆分为 `*_darwin.go`（+ `.m`/`.cc`）与 `*_other.go` —— IME（`NSTextInputClient` → `IMEClient` 控件）、原生对话框、emoji（Core Text 位图）、剪贴板、系统托盘、原生菜单。各平台 API 必须一致；非 darwin 得到可编译的 stub。`IsCommandMod` 抽象 Cmd 与 Ctrl 的区别。

@@ -1,3 +1,5 @@
+//go:build cgo && !js && !qui_nogl
+
 package qui
 
 import (

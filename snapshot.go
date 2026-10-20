@@ -36,47 +36,6 @@ import (
 // The buffer is a *copy* — callers may save, mutate, or pass it to
 // downstream image processing without affecting subsequent frames.
 
-// Snapshot returns a deep copy of the last fully-rendered frame, or
-// nil if no frame has been rendered yet (the window's first Step has
-// not completed). The returned image's bounds match the framebuffer
-// size (physical pixels on HiDPI displays).
-//
-// Where the pixels come from depends on the active raster backend, and the
-// caller should not have to care:
-//
-//   - CPU raster (the default): the retained frame buffer, copied.
-//   - GPU raster (QUI_GPU_RASTER=1): read back from the backend's FBO. The
-//     pixels were never in system memory — and the CPU-fallback buffer is
-//     zeroed once uploaded — so without the readback this returned an empty
-//     image, which encodes as a blank white PNG.
-//
-// Because the GPU path issues GL calls, call this from the goroutine that
-// owns the window's GL context: the main goroutine, inside Step (animators,
-// event handlers, or a PostJob job — Step makes the context current before
-// draining jobs). Off-main-goroutine callers should use SnapshotScaled and
-// friends, which serialize through that queue for exactly this reason.
-func (r *GLRenderer) Snapshot() *image.RGBA {
-	if r == nil {
-		return nil
-	}
-	// A backend whose pixels live on the GPU offers a readback; one whose
-	// pixels are already in memory does not, and falls through to the copy
-	// below. Readback failure (no FBO allocated yet) also falls through
-	// rather than reporting a blank frame as success.
-	if rb, ok := r.backend.(CPUReadback); ok {
-		if img := rb.ReadbackCPU(); img != nil {
-			return img
-		}
-	}
-	if r.img == nil {
-		return nil
-	}
-	src := r.img
-	dst := image.NewRGBA(src.Rect)
-	copy(dst.Pix, src.Pix)
-	return dst
-}
-
 // Snapshot returns the latest rendered frame for this window, or nil
 // if the window's renderer keeps no frame (it has no Snapshot method, as
 // GLRenderer does) or no frame exists yet. Convenience wrapper that lets

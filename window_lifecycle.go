@@ -2,6 +2,8 @@ package qui
 
 import (
 	"errors"
+
+	"github.com/qizhanchan/qui/internal/platform/contract"
 )
 
 // ErrWindowOwnershipUnsupported is returned by SetOwner / ShowAsSheet on a
@@ -151,8 +153,8 @@ func (w *Window) IsMinimized() bool {
 	if w == nil || w.plat == nil {
 		return false
 	}
-	if p, ok := w.plat.(interface{ isIconified() bool }); ok {
-		return p.isIconified()
+	if p, ok := platformOptional[contract.Iconifier](w.plat); ok {
+		return p.IsIconified()
 	}
 	return nativeWindowMinimized(w.plat.nativeWindow())
 }

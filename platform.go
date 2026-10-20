@@ -1,54 +1,27 @@
 package qui
 
 import (
+	"errors"
 	"image"
 	"time"
 	"unsafe"
+
+	"github.com/qizhanchan/qui/internal/platform/contract"
 )
 
-// The platform seam.
+// The platform seam, engine side.
 //
-// Everything the engine needs from an OS windowing layer — create a
-// window, pump events, deliver input, present a frame — goes through the
-// interfaces in this file. GLFW is one implementation
-// (platform_glfw.go); a native Cocoa backend is the next one. Nothing
-// else in the engine may reference a windowing library directly.
+// Backends live in their own packages under internal/platform (cocoa,
+// x11, web, headless, glfw) and implement the exported interfaces in
+// internal/platform/contract, which also carries the design notes for the
+// seam (union-of-platforms shape, logical vs physical units, async
+// presentation). platform_adapter.go wraps those for the engine.
 //
-// Why bother, given GLFW works: it has degraded to "window + GL context +
-// event pump + raw input" while every richer capability (IME, menus,
-// tray, dialogs, rich clipboard, native fullscreen, gestures) is already
-// implemented by going around it. Making it a replaceable backend rather
-// than a dependency threaded through ten files is what lets that
-// situation be fixed one platform at a time.
-//
-// # Designing against three platforms while implementing one
-//
-// The interfaces below are deliberately shaped for the UNION of macOS,
-// Windows and Wayland semantics, not for whichever one is implemented
-// today. An interface written against a single platform silently grows
-// that platform's assumptions and only reveals them years later, when
-// there are dozens of call sites. The two constraints that visibly bend
-// this API:
-//
-//   - Wayland clients cannot know or set their absolute position, so pos
-//     and setPos are FALLIBLE. Callers must degrade, not assume.
-//   - DPI scale is not an integer on Windows (arbitrary percentages) or
-//     Wayland (fractional scaling), so contentScale returns float32 —
-//     never round it to a device-pixel-ratio of 1, 2 or 3.
-//
-//   - Presentation is asynchronous, not a synchronous "swap now". Wayland
-//     requires waiting for a wl_surface.frame callback before drawing the
-//     next frame; macOS wants CADisplayLink; Windows has a waitable
-//     swapchain. platformSurface.ready expresses that, and a backend
-//     without such a signal returns nil to keep the timeout-driven
-//     behavior.
-//
-// # Coordinates and units
-//
-// Sizes and positions crossing this boundary are LOGICAL (points), except
-// framebufferSize which is PHYSICAL (device pixels). Everything above the
-// seam works in logical units; the ratio between the two is how HiDPI
-// reaches the renderer.
+// The interfaces below are the engine's private view of the same seam.
+// They mirror contract method for method; keeping them unexported is what
+// lets every engine call site and test fake stay independent of how the
+// backends are packaged. Nothing in the engine may reference a windowing
+// library directly.
 
 // platformApp is the process-level surface: initialization, the event
 // pump, display enumeration, teardown. One instance per process.
@@ -91,39 +64,9 @@ type platformWindowConfig struct {
 	Kind WindowKind
 }
 
-// platformCaps reports abilities that genuinely differ between
-// platforms, so callers can branch or degrade BEFORE attempting an
-// operation instead of interpreting a failure after the fact.
-//
-// This is the alternative to the ErrNotSupported-stub pattern: a UI can
-// hide an affordance it can't offer rather than presenting one that
-// errors when used.
-type platformCaps struct {
-	// AbsolutePosition is false on Wayland, where a client has no access
-	// to global coordinates. When false, pos/setPos always fail and any
-	// feature built on absolute geometry (restoring a saved window rect,
-	// positioning a window on a chosen monitor) must fall back to letting
-	// the compositor decide.
-	AbsolutePosition bool
-	// ServerDecorations is false where the platform will not draw a title
-	// bar (Wayland compositors without xdg-decoration, notably GNOME).
-	// The app must then draw its own chrome.
-	ServerDecorations bool
-	// NativeGestures reports a real multi-touch source. When false, pinch
-	// still reaches widgets through the Ctrl/Cmd+wheel synthesis in
-	// gesture.go, but scroll phase and two-finger rotation are absent.
-	NativeGestures bool
-	// ClipboardNeedsInputSerial is true on Wayland, where setting the
-	// selection requires a serial from a recent input event — a clipboard
-	// write outside an input handler simply will not take effect.
-	ClipboardNeedsInputSerial bool
-	// OverlayPanels reports whether this backend can create a
-	// non-activating, transparent, always-on-top window
-	// (WindowOverlayPanel). False on GLFW, which can turn off decorations
-	// and float a window but cannot stop it taking keyboard focus — the
-	// one property that matters most.
-	OverlayPanels bool
-}
+// platformCaps reports abilities that genuinely differ between platforms
+// (see contract.Caps).
+type platformCaps = contract.Caps
 
 // platformMonitor is one connected display. Methods return logical
 // (point) units so window placement needs no DPI conversion.
@@ -261,7 +204,11 @@ type platformSurface interface {
 	//
 	// The image is owned by the renderer and reused next frame: a backend
 	// must copy or retain-until-composited rather than hold the pointer.
-	presentCPU(img *image.RGBA) bool
+	//
+	// damage is the physical-pixel area that changed since the previous
+	// presentCPU; empty means "all of it". A surface that keeps the last
+	// frame (a browser canvas, an X pixmap) may composite only that area.
+	presentCPU(img *image.RGBA, damage image.Rectangle) bool
 
 	// present displays whatever the GPU path drew into this surface's
 	// backbuffer (the traditional buffer swap).
@@ -296,3 +243,7 @@ type platformHandler interface {
 	onRefresh()
 	onFileDrop(paths []string, x, y float64)
 }
+
+// errNoPlatformWindow is returned when a backend reports success without
+// a window.
+var errNoPlatformWindow = errors.New("qui: platform backend returned no window")

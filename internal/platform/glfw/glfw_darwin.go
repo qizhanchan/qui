@@ -1,6 +1,6 @@
-//go:build darwin && cgo
+//go:build darwin && cgo && !qui_nogl && qui_glfw
 
-package qui
+package glfw
 
 /*
 #cgo CFLAGS: -x objective-c -fobjc-arc
@@ -11,9 +11,11 @@ int quiGLFWCursorAdopt(void* glfwCursor, void* nsCursor);
 import "C"
 
 import (
+	"image"
 	"unsafe"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
+	"github.com/qizhanchan/qui/internal/platform/contract"
 )
 
 // glfwNativeGestures reports that this build has a real multi-touch
@@ -36,12 +38,12 @@ func glfwNativeWindow(handle *glfw.Window) unsafe.Pointer {
 // would come out twice the size: the GLFW cursor is created from the 1x
 // downsample, then its NSCursor is swapped for the full-resolution one
 // (cursor_darwin.m). If the swap is refused the 1x cursor still works.
-func glfwImageCursor(shape CursorShape, ic *imageCursor) *glfw.Cursor {
-	cur := glfw.CreateCursor(ic.at1x(), int(ic.hotX), int(ic.hotY))
-	if cur == nil || ic.scale == 1 {
+func glfwImageCursor(shape contract.CursorShape, img1x *image.NRGBA, hotX, hotY int) *glfw.Cursor {
+	cur := glfw.CreateCursor(img1x, hotX, hotY)
+	if cur == nil {
 		return cur
 	}
-	if ns := nativeNSCursor(shape); ns != nil {
+	if ns := contract.Host.NativeCursor(shape); ns != nil {
 		// go-gl's Cursor is struct{ data *C.GLFWcursor }.
 		data := *(*unsafe.Pointer)(unsafe.Pointer(cur))
 		C.quiGLFWCursorAdopt(data, ns)

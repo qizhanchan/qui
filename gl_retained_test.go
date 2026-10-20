@@ -76,20 +76,6 @@ func TestRetainedGLSetRequeueReplaces(t *testing.T) {
 	}
 }
 
-func TestTextureUploadRectDamageNone(t *testing.T) {
-	r := &GLRenderer{}
-	img := image.NewRGBA(image.Rect(0, 0, 200, 100))
-	r.texSrc = img
-	r.damageNone = true
-	if got := r.textureUploadRect(img); !got.Empty() {
-		t.Fatalf("GL-only frame must upload nothing, got %v", got)
-	}
-	// A different image (resize) still uploads everything.
-	if got := r.textureUploadRect(image.NewRGBA(img.Rect)); got != img.Rect {
-		t.Fatalf("new image must upload fully, got %v", got)
-	}
-}
-
 func TestRequestGLRedrawKeepsLoopAwake(t *testing.T) {
 	w := NewTestWindow(Size{W: 100, H: 100})
 	w.framePainted = false

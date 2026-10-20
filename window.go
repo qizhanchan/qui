@@ -2,12 +2,15 @@ package qui
 
 import (
 	"errors"
+	"image"
 	"log"
 	"os"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/qizhanchan/qui/internal/platform/contract"
 )
 
 // paintDebugEnabled turns on QUI_DEBUG_PAINT=1 diagnostics: logs when a
@@ -17,33 +20,33 @@ import (
 var paintDebugEnabled = os.Getenv("QUI_DEBUG_PAINT") == "1"
 
 // CursorShape is a semantic cursor style.
-type CursorShape int
+type CursorShape = contract.CursorShape
 
 const (
 	// CursorDefault is the platform default arrow cursor.
-	CursorDefault CursorShape = iota
+	CursorDefault = contract.CursorDefault
 	// CursorText is the text I-beam cursor.
-	CursorText
+	CursorText = contract.CursorText
 	// CursorCrosshair is a crosshair cursor.
-	CursorCrosshair
+	CursorCrosshair = contract.CursorCrosshair
 	// CursorHand is a pointing hand cursor.
-	CursorHand
+	CursorHand = contract.CursorHand
 	// CursorResizeEW is a horizontal resize cursor.
-	CursorResizeEW
+	CursorResizeEW = contract.CursorResizeEW
 	// CursorResizeNS is a vertical resize cursor.
-	CursorResizeNS
+	CursorResizeNS = contract.CursorResizeNS
 	// CursorHidden hides the pointer while it is over the widget that
 	// resolves to it; it reappears over anything resolving to another
 	// shape, or outside the window. See cursor_image.go, which also has
 	// image cursors (NewImageCursor).
-	CursorHidden
+	CursorHidden = contract.CursorHidden
 	// CursorResizeNWSE is a diagonal resize cursor for the top-left /
 	// bottom-right corner of a frame (CSS nwse-resize). Backends without a
 	// diagonal shape fall back to the arrow.
-	CursorResizeNWSE
+	CursorResizeNWSE = contract.CursorResizeNWSE
 	// CursorResizeNESW is the top-right / bottom-left counterpart (CSS
 	// nesw-resize).
-	CursorResizeNESW
+	CursorResizeNESW = contract.CursorResizeNESW
 )
 
 // Window is one OS window plus the widget tree it renders. The OS half
@@ -418,7 +421,7 @@ func newWindowFromConfig(plat platformApp, cfg platformWindowConfig) (*Window, e
 	w := &Window{
 		plat:           pw,
 		platformBacked: true,
-		renderer:       NoopRenderer{},
+		renderer:       defaultRenderer(pw),
 		kind:           cfg.Kind,
 		lastSize:       Size{W: float32(width), H: float32(height)},
 		windowSize:     Size{W: float32(width), H: float32(height)},
@@ -430,8 +433,8 @@ func newWindowFromConfig(plat platformApp, cfg platformWindowConfig) (*Window, e
 	// Whether the OS window has keyboard focus right now; onFocus tracks
 	// it from here on. Asked, not assumed: a process launched from a
 	// terminal is not necessarily the active app.
-	if f, ok := pw.(interface{ isFocused() bool }); ok {
-		w.keyCapture.osFocused = f.isFocused()
+	if f, ok := platformOptional[contract.Focuser](pw); ok {
+		w.keyCapture.osFocused = f.IsFocused()
 	}
 	// Force a full paint on the first frame.
 	w.dirtyRegion = Rect{W: float32(width), H: float32(height)}
@@ -1473,8 +1476,8 @@ func (w *Window) SetPreRender(fn func(GLState)) {
 		return
 	}
 	w.assertUIThread("Window.SetPreRender")
-	if gl, ok := w.renderer.(*GLRenderer); ok {
-		gl.SetPreRender(fn)
+	if hr, ok := w.renderer.(glHookRenderer); ok {
+		hr.SetPreRender(fn)
 	}
 }
 
@@ -1486,8 +1489,8 @@ func (w *Window) SetPostRender(fn func(GLState)) {
 		return
 	}
 	w.assertUIThread("Window.SetPostRender")
-	if gl, ok := w.renderer.(*GLRenderer); ok {
-		gl.SetPostRender(fn)
+	if hr, ok := w.renderer.(glHookRenderer); ok {
+		hr.SetPostRender(fn)
 	}
 }
 
@@ -1501,8 +1504,8 @@ func (w *Window) SetGPURaster(on bool) {
 		return
 	}
 	w.assertUIThread("Window.SetGPURaster")
-	if gl, ok := w.renderer.(*GLRenderer); ok {
-		gl.SetGPURaster(on)
+	if gr, ok := w.renderer.(gpuRasterRenderer); ok {
+		gr.SetGPURaster(on)
 	}
 }
 
@@ -1516,14 +1519,15 @@ func (w *Window) SetRenderer(renderer Renderer) {
 		w.renderer = NoopRenderer{}
 		return
 	}
+	renderer = rendererForPlatform(w.plat, renderer)
 	w.renderer = renderer
 	// An overlay panel's framebuffer must stay transparent where the widget
 	// tree drew nothing. Wire it here rather than making every caller
 	// remember: the window already knows its kind, and forgetting produces
 	// a black rectangle, which looks like a rendering bug rather than a
 	// missing call.
-	if gr, ok := renderer.(*GLRenderer); ok {
-		gr.SetTransparent(w.kind == WindowOverlayPanel)
+	if tr, ok := renderer.(transparentRenderer); ok {
+		tr.SetTransparent(w.kind == WindowOverlayPanel)
 	}
 }
 
@@ -1786,8 +1790,8 @@ func (w *Window) Step() {
 	// GL hooks see a correct GLState.LogicalSize. Without this the
 	// renderer would default to the framebuffer size and DPR math
 	// inside QueueGLDraw closures would always compute to 1×.
-	if glr, ok := w.renderer.(*GLRenderer); ok {
-		glr.SetLogicalSize(w.lastSize)
+	if fi, ok := w.renderer.(frameInfoRenderer); ok {
+		fi.SetLogicalSize(w.lastSize)
 	}
 	canvas := w.renderer.Begin(Size{W: float32(fbWidth), H: float32(fbHeight)})
 	if canvas != nil {
@@ -1821,8 +1825,8 @@ func (w *Window) Step() {
 			clip = snapRectOutward(clip, scaleX, scaleY)
 			// Everything below is clipped to clip, so only those pixels
 			// need to reach the GPU.
-			if glr, ok := w.renderer.(*GLRenderer); ok {
-				glr.SetDamage(physicalRect(clip, scaleX, scaleY))
+			if fi, ok := w.renderer.(frameInfoRenderer); ok {
+				fi.SetDamage(physicalRect(clip, scaleX, scaleY))
 			}
 		}
 		// Route everything through clipCanvas so draws outside the dirty
@@ -1909,8 +1913,20 @@ func (w *Window) present() {
 	if surface == nil {
 		return
 	}
+	// A renderer that draws through GL (GLRenderer) has already composited
+	// into the backbuffer — raw-GL content included, which its CPU image
+	// lacks — so its frame is shown by the swap even though it can also
+	// hand out that image.
+	if g, ok := w.renderer.(gpuContextRenderer); ok && g.requiresGPUContext() {
+		surface.present()
+		return
+	}
 	if src, ok := w.renderer.(CPUFrameSource); ok {
-		if img := src.FrameImage(); img != nil && surface.presentCPU(img) {
+		var damage image.Rectangle
+		if d, ok := w.renderer.(frameDamageSource); ok {
+			damage = d.frameDamage()
+		}
+		if img := src.FrameImage(); img != nil && surface.presentCPU(img, damage) {
 			return
 		}
 	}

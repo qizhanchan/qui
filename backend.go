@@ -47,19 +47,6 @@ type RasterBackend interface {
 	// can't accidentally pay for a GPU→CPU transfer.
 	CPUImage() *image.RGBA
 
-	// CompositeToDefault blits the backend's accumulated 2D layer onto
-	// the currently-bound GL framebuffer (typically the default one).
-	// Called from GLRenderer.End() AFTER the framebuffer clear + any
-	// pre-hook / deferred-GL replay, so the 2D layer lands on top of
-	// scene3d / video / webview textures that live under it.
-	//
-	// CPU backend uploads its RGBA into the shared texture and issues
-	// the existing full-screen quad draw. GPU backend binds its FBO's
-	// color texture (contents already accumulated during widget.Draw)
-	// and issues the same draw. GLRenderer owns the shader / VAO;
-	// backends borrow them via the *GLRenderer handle.
-	CompositeToDefault(r *GLRenderer)
-
 	// -- Draw primitives — physical coords, physical clip -------------
 
 	// Clear paints `color` over the ENTIRE current target (not just the

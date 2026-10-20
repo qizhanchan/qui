@@ -1,8 +1,11 @@
 package qui
 
 import (
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/qizhanchan/qui/internal/platform/contract"
 )
 
 // The selector is what makes running two backends side by side possible,
@@ -10,16 +13,24 @@ import (
 // QUI_PLATFORM must be loud, and the default must not drift onto a
 // backend that hasn't earned it.
 
-func TestGLFWBackendIsRegisteredAndDefault(t *testing.T) {
-	if _, ok := platformBackends["glfw"]; !ok {
-		t.Fatalf("glfw backend not registered; available: %v", availablePlatformBackends())
+func TestDefaultBackendIsTheNativeOne(t *testing.T) {
+	if _, ok := contract.Lookup("headless"); !ok {
+		t.Fatalf("headless backend not registered; available: %v", availablePlatformBackends())
 	}
-	if defaultPlatformBackend != "glfw" {
-		t.Fatalf("default backend is %q; it should stay the most proven one until a "+
-			"native backend has been verified against real apps", defaultPlatformBackend)
+	def := defaultPlatformBackend()
+	defBackend, ok := contract.Lookup(def)
+	if !ok {
+		t.Fatalf("default backend %q is not registered", def)
 	}
-	if _, ok := platformBackends[defaultPlatformBackend]; !ok {
-		t.Fatalf("default backend %q is not registered", defaultPlatformBackend)
+	// Whatever native backend this build has must win over GLFW and
+	// headless — the whole point of priorities.
+	for _, name := range contract.Names() {
+		if b, _ := contract.Lookup(name); b.Priority > defBackend.Priority {
+			t.Fatalf("default %q outranked by %q", def, name)
+		}
+	}
+	if runtime.GOOS == "darwin" && cgoEnabled && def != "cocoa" {
+		t.Fatalf("darwin+cgo default is %q, want cocoa", def)
 	}
 }
 
@@ -47,8 +58,8 @@ func TestBlankPlatformNameFallsBackToTheDefault(t *testing.T) {
 	// unknown backend.
 	t.Setenv("QUI_PLATFORM", "   ")
 	name := resolvePlatformName()
-	if name != defaultPlatformBackend {
-		t.Fatalf("blank QUI_PLATFORM resolved to %q, want %q", name, defaultPlatformBackend)
+	if name != defaultPlatformBackend() {
+		t.Fatalf("blank QUI_PLATFORM resolved to %q, want %q", name, defaultPlatformBackend())
 	}
 }
 
@@ -58,7 +69,7 @@ func TestEveryRegisteredBackendHasAFactory(t *testing.T) {
 		t.Fatal("no platform backends registered")
 	}
 	for _, name := range names {
-		if platformBackends[name] == nil {
+		if b, _ := contract.Lookup(name); b.Factory == nil {
 			t.Errorf("backend %q registered with a nil factory", name)
 		}
 	}

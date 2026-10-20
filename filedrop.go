@@ -1,5 +1,7 @@
 package qui
 
+import "github.com/qizhanchan/qui/internal/platform/contract"
+
 // OS → app file drop. The platform reports a list of absolute paths when
 // the user drags files from Finder / Explorer / Nautilus onto a window.
 // Drop coordinates come from the current cursor position because not
@@ -48,16 +50,7 @@ func (w *Window) RetainFileDrops() (release func()) {
 }
 
 func (w *Window) syncFileDropEnabled() {
-	if dropper, ok := w.plat.(platformDropTarget); ok {
-		dropper.setDropEnabled(w.onDrop != nil || w.fileDropRetains > 0)
+	if dropper, ok := platformOptional[contract.DropTarget](w.plat); ok {
+		dropper.SetDropEnabled(w.onDrop != nil || w.fileDropRetains > 0)
 	}
-}
-
-// platformDropTarget is an optional platform capability: a backend that
-// can receive OS file drops implements it. Optional rather than part of
-// platformWindow because a backend may legitimately not support drops
-// (a headless one never will), and the engine's behavior without them is
-// simply "no drops arrive" — nothing to degrade.
-type platformDropTarget interface {
-	setDropEnabled(enabled bool)
 }

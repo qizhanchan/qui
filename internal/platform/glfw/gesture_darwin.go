@@ -1,6 +1,6 @@
-//go:build darwin && cgo
+//go:build darwin && cgo && !qui_nogl && qui_glfw
 
-package qui
+package glfw
 
 /*
 #cgo CFLAGS: -x objective-c -fobjc-arc
@@ -20,6 +20,9 @@ import (
 	"log"
 	"os"
 	"sync"
+
+	"github.com/qizhanchan/qui/internal/platform/contract"
+	"github.com/qizhanchan/qui/internal/platform/darwinkeys"
 )
 
 // gestureDebug, set by QUI_DEBUG_GESTURE=1, logs what the ObjC bridge
@@ -91,46 +94,6 @@ func gestureInstallReport(report int) string {
 		" chained=" + yn(4)
 }
 
-// mapNSGesturePhase converts the NSEventPhase bit the ObjC side already
-// reduced to a small integer into a GesturePhase. The reduction happens
-// in C (quiPhaseOf) because NSEventPhase is a bitmask whose constants
-// aren't worth re-declaring in Go.
-func mapNSGesturePhase(phase C.int) GesturePhase {
-	switch phase {
-	case 1:
-		return GesturePhaseBegan
-	case 2:
-		return GesturePhaseChanged
-	case 3:
-		return GesturePhaseEnded
-	case 4:
-		return GesturePhaseCancelled
-	case 5:
-		return GesturePhaseMomentum
-	default:
-		return GesturePhaseNone
-	}
-}
-
-// mapNSMods converts the modifier bitmask the ObjC side normalized (see
-// quiModsOf) into qui Modifiers.
-func mapNSMods(mods C.int) Modifiers {
-	var out Modifiers
-	if mods&1 != 0 {
-		out |= ModShift
-	}
-	if mods&2 != 0 {
-		out |= ModControl
-	}
-	if mods&4 != 0 {
-		out |= ModAlt
-	}
-	if mods&8 != 0 {
-		out |= ModSuper
-	}
-	return out
-}
-
 // quiGestureMagnify is called from magnifyWithEvent:. magnification is
 // NSEvent's per-event increment (a fraction, e.g. 0.02), which is
 // exactly what GestureEvent.DScale carries.
@@ -141,8 +104,8 @@ func quiGestureMagnify(id C.uintptr_t, magnification C.double, phase C.int, mods
 	if w == nil {
 		return
 	}
-	w.noteGesture(EventGesturePinch, mapNSGesturePhase(phase),
-		float32(magnification), 0, mapNSMods(mods))
+	w.noteGesture(contract.GesturePinch, darwinkeys.GesturePhase(int(phase)),
+		float32(magnification), 0, darwinkeys.Mods(int(mods)))
 }
 
 // quiGestureRotate is called from rotateWithEvent:. NSEvent reports
@@ -154,8 +117,8 @@ func quiGestureRotate(id C.uintptr_t, rotation C.double, phase C.int, mods C.int
 	if w == nil {
 		return
 	}
-	w.noteGesture(EventGestureRotate, mapNSGesturePhase(phase),
-		0, float32(rotation), mapNSMods(mods))
+	w.noteGesture(contract.GestureRotate, darwinkeys.GesturePhase(int(phase)),
+		0, float32(rotation), darwinkeys.Mods(int(mods)))
 }
 
 // quiGestureSmartMagnify is called from smartMagnifyWithEvent: — the
@@ -168,7 +131,7 @@ func quiGestureSmartMagnify(id C.uintptr_t, mods C.int) {
 	if w == nil {
 		return
 	}
-	w.noteGesture(EventGestureSmartMagnify, GesturePhaseNone, 0, 0, mapNSMods(mods))
+	w.noteGesture(contract.GestureSmartMagnify, contract.GesturePhaseNone, 0, 0, darwinkeys.Mods(int(mods)))
 }
 
 // quiNoteScroll is called from the scrollWheel: wrapper BEFORE it chains
@@ -182,7 +145,7 @@ func quiNoteScroll(id C.uintptr_t, mods C.int, phase C.int) {
 	if w == nil {
 		return
 	}
-	w.noteScrollContext(mapNSMods(mods), mapNSGesturePhase(phase))
+	w.noteScrollContext(darwinkeys.Mods(int(mods)), darwinkeys.GesturePhase(int(phase)))
 }
 
 // quiClearScroll is called after GLFW's scrollWheel: returns, dropping

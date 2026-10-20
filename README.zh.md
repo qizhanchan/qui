@@ -2,7 +2,7 @@
 
 [English](README.md) · **中文**
 
-`qui` 是一个保留模式（retained-mode，而非即时模式）的 Go GUI 框架，基于 GLFW 3.3 + OpenGL 3.3 Core，并自带光栅化器 —— 一个 CPU 参考后端，以及通过 `QUI_GPU_RASTER=1` 开启的可选 GPU 光栅后端。它是单一的 Go module：`github.com/qizhanchan/qui`，根目录的 `package qui` 就是引擎。
+`qui` 是一个保留模式（retained-mode，而非即时模式）的 Go GUI 框架，自带光栅化器 —— 一个纯 Go 的 CPU 参考后端，以及通过 `QUI_GPU_RASTER=1` 开启的可选 OpenGL 3.3 GPU 光栅后端 —— 运行在原生窗口后端之上：macOS 用 AppKit，Linux 用 Xlib，浏览器（wasm）里是一个 `<canvas>`，另有用于离屏渲染的 headless 后端。它是单一的 Go module：`github.com/qizhanchan/qui`，根目录的 `package qui` 就是引擎。
 
 **战略方向：用（轻量 HTML + CSS）+ Go 来开发应用。** 支撑它的技术栈是：
 
@@ -28,9 +28,9 @@
 ## 项目状态
 
 - **Module：** `github.com/qizhanchan/qui`（Go 1.25）。
-- **平台：** macOS 是完整支持的平台。Linux / Windows 可以编译并运行核心功能，但原生对话框、IME、emoji 与系统托盘目前仅支持 macOS。
+- **平台：** macOS、Linux（X11）与 Web（GOOS=js/wasm）是优先平台，各有原生窗口后端；Windows 仍运行在 GLFW 上。原生对话框、emoji、拼写检查与系统托盘目前仅支持 macOS。
 - **渲染：** CPU 光栅器是默认实现，且是纯 Go；GPU 光栅后端（`QUI_GPU_RASTER=1`）为可选开启。两者位于同一套 `Canvas` / `RasterBackend` 接缝之后。
-- **窗口：** 默认后端是 GLFW；macOS 上还编译进了原生 AppKit（`cocoa`）后端，在运行时选择。
+- **窗口：** 默认使用原生后端（`cocoa` / `x11` / `web`），`headless` 处处可用；GLFW 改为可选（`-tags qui_glfw`），只在 Windows 上作为默认。见下方后端表。
 - **它不是一个完整的浏览器，也不是一套完整的设计系统。** `htmlcss` 是有意为之的子集，qui 也只提供一套浅色的设计 token 主题 —— 真正「有设计感」的样式属于样式表。
 
 ## 快速开始
@@ -84,6 +84,7 @@ rt := h.Mount(window, css, func() h.Node {
 | 包 | 角色 |
 |---|---|
 | 根 `qui` | 引擎：窗口 / 帧循环、三阶段事件分发、布局引擎（Flex/Grid/Flow/Absolute）、Canvas + RasterBackend 渲染、Path/Paint/Shape、SaveLayer/混合/着色器/滤镜、主题 token、Unicode 整形文字 + 行内流（IFC）、跨控件文字选择，以及始终开启的 AI 内省界面（AX 树、选择器、截图、动作、等待、事件录制、主线程任务队列） |
+| `internal/platform/*` | 窗口后端（`cocoa`、`x11`、`web`、`headless`、`glfw`），实现 `contract` 定义的接缝；`darwinkeys` 存放与根包 AppKit 桥共享的 macOS 键码表 |
 | `widgets` | 原生控件：Box、Label、InlineBox、RichText、Anchor、Button、Input、TextArea、CheckBox、RadioButton/Group、Switch、Slider、Progress、Select、ScrollView、ListView、TableView、TabView、Popup、Dialog、MenuBar/ContextMenu、Image、Rule、FieldSet。另有 `undo.go`（文本控件撤销历史） |
 | `htmlcss` | HTML + CSS 引擎（详见下文） |
 | `reactive`、`reactive/html` | 声明式运行时 + 类 Web DSL（详见下文） |
@@ -99,11 +100,11 @@ rt := h.Mount(window, css, func() h.Node {
 | `i18n` + `cmd/qui-i18n` | 消息目录（JSON，CLDR 复数）+ 区域敏感格式化（数字 / 货币 / 日期 / 相对时间 / 列表 / 排序），通过 `qui.Translator` 接缝接入根包。CLI 可从源码提取 key、检查目录、生成用于布局测试的伪语言 |
 | `fonts/jetbrainsmono` | 内嵌字体；`jetbrainsmono.Use()` 替换全局默认字族（所有字重） |
 
-**严格的依赖方向：** 子包 import 根 `qui`；根包绝不 import 任何子包。根↔子包的耦合通过根包定义的接口进行（`qui.Animator`、`qui.IMEClient`、`qui.VectorSource`、`qui.Translator`，以及 focusable/tickable 约定）。允许的跨子包边：`scene3d`→`widgets`，`htmlcss`→`widgets`+`svg`，`reactive/html`→`reactive`+`htmlcss`+`widgets`，`icons`→`svg`。`widgets` 除根包外什么都不 import —— 菜单里的对勾 / 折角是几何绘制，而不是从 `icons` 拉取。（`i18n` 只 import 根包 + `golang.org/x/text`；其他包一律通过 `qui.Translate` 拿译文，绝不 import `i18n`。）**`reactive` 自身只 import 根包 —— 它后端无关；请保持这一点。** 其余包保持隔离。如果根包看起来需要某个子包符号，就把符号移过去，或在根包定义接口。
+**严格的依赖方向：** 子包 import 根 `qui`；根包绝不 import 任何子包。根↔子包的耦合通过根包定义的接口进行（`qui.Animator`、`qui.IMEClient`、`qui.VectorSource`、`qui.Translator`，以及 focusable/tickable 约定）。唯一的例外：根包 import `internal/platform/*` 下的平台后端（仅在 `platform_backends*.go` 中以空白导入，外加 `internal/platform/contract` 与 `darwinkeys`）。它们是不 import 根包的叶子包 —— 由于根包 import 它们，编译器会强制这一点。允许的跨子包边：`scene3d`→`widgets`，`htmlcss`→`widgets`+`svg`，`reactive/html`→`reactive`+`htmlcss`+`widgets`，`icons`→`svg`。`widgets` 除根包外什么都不 import —— 菜单里的对勾 / 折角是几何绘制，而不是从 `icons` 拉取。（`i18n` 只 import 根包 + `golang.org/x/text`；其他包一律通过 `qui.Translate` 拿译文，绝不 import `i18n`。）**`reactive` 自身只 import 根包 —— 它后端无关；请保持这一点。** 其余包保持隔离。如果根包看起来需要某个子包符号，就把符号移过去，或在根包定义接口。
 
 ## 常用命令
 
-GLFW 需要原生头文件（macOS 上 `brew install glfw`；Linux 上需要 X11/Wayland 开发包）。
+macOS 只需要 Xcode 命令行工具。Linux 需要 `libx11-dev`（GL 渲染器另需 `libgl1-mesa-dev`，或用 `-tags qui_nogl` 构建）；`CGO_ENABLED=0` 构建什么都不需要，得到 headless 后端。GLFW（`-tags qui_glfw` 及 Windows）需要它通常的原生头文件。
 
 ```bash
 go build ./...                              # 编译全部
@@ -118,7 +119,13 @@ go run ./examples/html-css                  # 一次性 htmlcss.Render 展示
 go run ./examples/chrome-tabs               # 标题栏内的浏览器风格标签条
 go run ./examples/i18n                      # 运行时切换 7 种语言、CLDR 复数、RTL
 
-QUI_PLATFORM=cocoa go run ./examples/overlay-panel   # 不激活、透明的浮层
+go run ./examples/overlay-panel                     # 不激活、透明的浮层（cocoa）
+
+# 离屏渲染检查 —— 无需显示器、无需 GPU，可在 CI / 容器中运行
+QUI_PLATFORM=headless QUI_SNAPSHOT=/tmp/ui.png go run ./examples/reactive-html
+
+# 同一个应用跑在浏览器里（见 examples/web/README.md）
+GOOS=js GOARCH=wasm go build -o examples/web/app.wasm ./examples/reactive-html
 
 # 其他示例：3dviewer animation customgl debug-layout dialog filedialog
 # flowchart graphs layouts listview media-audio media-video multiwindow
@@ -133,24 +140,21 @@ go run ./cmd/qui-agent shot /tmp/ui.png
 # 或者直接：curl --unix-socket $TMPDIR/qui-agent-*.sock http://./llm.txt
 ```
 
-常用环境变量：`QUI_PLATFORM=glfw|cocoa`（窗口后端 —— 见下）、`QUI_GPU_RASTER=1`（GPU 光栅后端）、`QUI_AGENT=1` / `QUI_AGENT_TCP=:port` / `QUI_AGENT_TOKEN` / `QUI_AGENT_SOCK`（agent 服务）、`QUI_DEBUG_LAYOUT=1`（flex 溢出日志）、`QUI_DEBUG_PAINT=1`（记录全量重绘提升 + 第一个移动的控件）、`QUI_DEBUG_DRAW=1`（Draw 期间修改控件树或触发重新布局时快速失败）、`QUI_DEBUG_LAYOUT_CACHE=1`（每次命中测量缓存都重新测量，并记录未对自身调用 `InvalidateLayout` 就改变了尺寸的控件）、`QUI_DEBUG_THREAD=1`（UI 线程归属快速失败检查）、`QUI_DEBUG_GESTURE=1`（记录 macOS 桥装了哪些手势选择器，含是否保留 GLFW 的 scrollWheel:）、`QUI_I18N_STRICT=1`（未解析的 key 渲染为 ⟦key⟧ 并各记录一次）、`QUI_GOLDEN=1`（写入 golden 截图）、`QUI_HTMLCSS_SNAPSHOT=1`（htmlcss 快照 PNG）。
+常用环境变量：`QUI_PLATFORM=cocoa|x11|web|headless|glfw`（窗口后端 —— 见下）、`QUI_SNAPSHOT=out.png`（渲染、等待界面稳定、写出帧后退出；`QUI_SNAPSHOT_SETTLE` / `QUI_SNAPSHOT_TIMEOUT` 可调）、`QUI_HEADLESS_SCALE=2`（headless 显示缩放）、`QUI_X11_SCALE`（覆盖由 Xft.dpi 推出的缩放）、`QUI_GPU_RASTER=1`（GPU 光栅后端）、`QUI_AGENT=1` / `QUI_AGENT_TCP=:port` / `QUI_AGENT_TOKEN` / `QUI_AGENT_SOCK`（agent 服务）、`QUI_DEBUG_LAYOUT=1`（flex 溢出日志）、`QUI_DEBUG_PAINT=1`（记录全量重绘提升 + 第一个移动的控件）、`QUI_DEBUG_DRAW=1`（Draw 期间修改控件树或触发重新布局时快速失败）、`QUI_DEBUG_LAYOUT_CACHE=1`（每次命中测量缓存都重新测量，并记录未对自身调用 `InvalidateLayout` 就改变了尺寸的控件）、`QUI_DEBUG_THREAD=1`（UI 线程归属快速失败检查）、`QUI_DEBUG_GESTURE=1`（记录 macOS 桥装了哪些手势选择器，含是否保留 GLFW 的 scrollWheel:）、`QUI_I18N_STRICT=1`（未解析的 key 渲染为 ⟦key⟧ 并各记录一次）、`QUI_GOLDEN=1`（写入 golden 截图）、`QUI_HTMLCSS_SNAPSHOT=1`（htmlcss 快照 PNG）。
 
-**窗口后端（`QUI_PLATFORM`）。** 操作系统窗口层位于平台接缝（`platform.go`）之后，编译进了多个实现，在*运行时*选择：
+**窗口后端（`QUI_PLATFORM`）。** 操作系统窗口层位于平台接缝之后。每个后端都是 `internal/platform/` 下的一个叶子包，实现 `internal/platform/contract`（接缝的设计说明也在那里）；`platform_adapter.go` 把它包装给引擎使用。可以同时编译进多个后端，优先级最高的为默认，`QUI_PLATFORM` 在*运行时*选择其他后端：
 
-| 取值 | 后端 |
-|---|---|
-| `glfw`（默认） | GLFW 3.3 + 一个 macOS 桥，用 swizzle 接入手势和精确的滚轮修饰键 |
-| `cocoa`（darwin） | 原生 AppKit —— 我们自己的 NSApplication 事件泵、NSWindow/NSView，手势是真正的 responder 方法 |
+| 取值 | 包 | 默认于 | 后端 |
+|---|---|---|---|
+| `cocoa` | `internal/platform/cocoa` | macOS | 原生 AppKit —— 自己的 NSApplication 事件泵、NSWindow/NSView，手势是真正的 responder 方法。`GLRenderer` 窗口交换 NSOpenGLContext；`CPURenderer` 窗口（包括所有 `-tags qui_nogl` 构建）以 CALayer contents 呈现，并由 CVDisplayLink 控制节奏 |
+| `x11` | `internal/platform/x11` | Linux（cgo） | Xlib —— 用 XPutImage 呈现 CPU 帧、XIM 文本输入、CLIPBOARD 选区、Xft.dpi 缩放 |
+| `web` | `internal/platform/web` | GOOS=js | `<canvas>` + 只 putImageData 脏矩形；按键来自 keydown，文本来自隐藏的 textarea（兼容 IME / 移动端） |
+| `headless` | `internal/platform/headless` | CGO_ENABLED=0 | 内存中的窗口；通过 `Window.Snapshot` / agent `shot` / `QUI_SNAPSHOT` 读回帧 |
+| `glfw` | `internal/platform/glfw` | Windows | GLFW 3.3；其他平台仅在 `-tags qui_glfw` 时编译 |
 
-两者的几何结果完全一致（经过数值验证，包括多显示器坐标、最大化和 DPR），因此切换后端是一次对比而非迁移：
+没有 GL 上下文的表面（`x11`、`web`、`headless`）直接呈现 CPU 帧（`platformSurface.presentCPU`），`cocoa` 上运行 `CPURenderer` 的窗口也是如此（`GLRenderer` 窗口始终通过缓冲交换呈现，因为它的 CPU 图像不含原始 GL 内容）；交给这类窗口的 `GLRenderer` 会被替换为 `CPURenderer`，因此桌面应用代码无需修改。无 cgo、wasm 或 `-tags qui_nogl` 的构建完全不含 OpenGL（此时 `GLRenderer` 是 `CPURenderer` 的别名）。无法识别的名字会报错并列出可用项 —— 拼错不应该看起来像“什么都没变”。
 
-```bash
-QUI_PLATFORM=cocoa go run ./examples/reactive-html
-```
-
-默认停留在最有验证的后端，而不是最新的后端。无法识别的名字会报错并列出可用项 —— 打错字不应表现为「什么都没变」。
-
-**shell 驱动的测试中的进程生命周期：** `go run` 不会把信号转发给子进程 —— 需要 `kill` 真正的 GLFW 宿主时，请始终用 `go build -o /tmp/app ./... && /tmp/app &`。`App.Run` 通过正常的关闭路径处理 SIGINT/SIGTERM（卸载 agent socket、运行 `OnClose` 回调）。
+**shell 驱动的测试中的进程生命周期：** `go run` 不会把信号转发给子进程 —— 需要 `kill` 真正的宿主进程时，请始终用 `go build -o /tmp/app ./... && /tmp/app &`。`App.Run` 通过正常的关闭路径处理 SIGINT/SIGTERM（卸载 agent socket、运行 `OnClose` 回调）。
 
 ## 引擎架构
 
@@ -188,12 +192,12 @@ if srv, err := agent.BindEnv(window); err == nil && srv != nil {
 
 - **新代码放哪里：** 引擎改动 → 根包（仅当它影响引擎而非单个控件时）。新控件 → `widgets/`（文件以控件命名）。CSS 特性 → `htmlcss`（在共享 applier 中实现，让两条路径都受益；同时补一个引擎测试，视觉相关时再补快照测试）。
 - **面向用户的字符串：** 绝不在 `widgets/`、`htmlcss` 或引擎中硬编码。用 `qui.TOr(key, literal)`，这样没有目录的应用不受影响；给任何带文字的控件加一个在 Measure/Draw 时解析的 `TextKey` 式字段（见 `widgets/i18n.go`）。标题来自 key 的控件必须实现 `AccessibleNameKey()` —— 否则 `[key=]` 选择器会悄悄漏掉它。
-- **依赖 locale 的缓存：** 任何缓存测量 / 整形结果的代码，key 里都要带上 `LocaleGeneration()`，就像 `FontRegistryGeneration()` 那样。reactive 运行时 → `reactive`；DSL 界面 → `reactive/html`。AX 覆写 → 各子包的 `accessibility.go`。HTTP 端点 → `agent/`（原语本身放根包）。平台代码遵循 `_darwin.go`/`_other.go` 拆分 —— 绝不把 darwin 代码散落到带 tag 和通用的文件里。
+- **依赖 locale 的缓存：** 任何缓存测量 / 整形结果的代码，key 里都要带上 `LocaleGeneration()`，就像 `FontRegistryGeneration()` 那样。reactive 运行时 → `reactive`；DSL 界面 → `reactive/html`。AX 覆写 → 各子包的 `accessibility.go`。HTTP 端点 → `agent/`（原语本身放根包）。平台代码遵循 `_darwin.go`/`_other.go` 拆分 —— 绝不把 darwin 代码散落到带 tag 和通用的文件里。窗口相关代码放进 `internal/platform/` 下的后端 —— 绝不放进根包；引擎需要 OS 的新能力时，加到 `internal/platform/contract` 并在每个后端实现。
 - `widgets/` 文件使用 `import . "github.com/qizhanchan/qui"`（点 import）—— 这是唯一被允许的位置，其他位置一律正常限定包名。点 import 不会绕过未导出字段：用访问器（`Bounds()`、`Style()`、`Enabled()`）。
 - Container 子类构造后必须调用 `SetSelf`。
 - 测试使用根包 `testhelpers.go` 的 fixture：`NewTestWindow`、`NewMouseEvent`/`NewKeyEvent`/`NewCharEvent`/`NewScrollEvent`、`RecordingCanvas`、`NewImageCanvas`、`DrainJobsForTest`。测试模式窗口内联执行动作（无需帧泵）。
 - 做动画的控件实现 `Tickable`；文本输入实现 `IMEClient`；可聚焦控件实现 `Focusable() bool` + `SetFocused(bool)`。
-- 依赖：`go-gl/gl`、`go-gl/glfw`、`go-text/typesetting`、`srwiley/rasterx`、`golang.org/x/{image,net,sys,text}`。
+- 依赖：`go-gl/gl`（GL 渲染器，cgo 构建）、`go-gl/glfw`（仅 Windows / `-tags qui_glfw`）、`go-text/typesetting`、`srwiley/rasterx`、`golang.org/x/{image,net,sys,text}`。
 
 `CLAUDE.md` 和 `AGENTS.md` 是指向本文件的符号链接，因此编码 agent 读到的是同一个首页。
 

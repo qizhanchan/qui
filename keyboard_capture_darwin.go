@@ -34,38 +34,6 @@ func (darwinKeyCapture) setActive(w *Window, active bool) {
 	C.quiTapSetActive(C.uintptr_t(w.nativeID), cBool(active), C.int(code), C.int(mods))
 }
 
-// cocoaKeyCodeFor inverts cocoaKeyCodes (-1 when the key has no code).
-func cocoaKeyCodeFor(k Key) int {
-	if k == KeyEnter {
-		return 0x24 // Return, not keypad Enter
-	}
-	for code, key := range cocoaKeyCodes {
-		if key == k {
-			return code
-		}
-	}
-	return -1
-}
-
-// nsModsMask is mapNSMods' inverse: the 4-bit shift/control/option/command
-// mask the C side compares.
-func nsModsMask(m Modifiers) int {
-	out := 0
-	if m&ModShift != 0 {
-		out |= 1
-	}
-	if m&ModControl != 0 {
-		out |= 2
-	}
-	if m&ModAlt != 0 {
-		out |= 4
-	}
-	if m&ModSuper != 0 {
-		out |= 8
-	}
-	return out
-}
-
 // quiTapKeyEvent runs on the tap thread: hand the key to the UI thread,
 // in order, and return immediately.
 //
