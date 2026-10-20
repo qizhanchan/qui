@@ -1,0 +1,28 @@
+{
+  "width": 900,
+  "height": 620,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {"fontFamily": "Arial"},
+    "color": ["#5470c6", "#ee6666"],
+    "title": {"text": "Multiple Grids", "subtext": "secondary axis", "left": 10, "top": 10},
+    "tooltip": {"trigger": "axis"},
+    "axisPointer": {"type": "line"},
+    "grid": [
+      {"left": 70, "right": 70, "top": 70, "bottom": 340},
+      {"left": 70, "right": 70, "top": 360, "bottom": 60}
+    ],
+    "xAxis": [
+      {"type": "category", "data": ["A", "B", "C", "D", "E"], "gridIndex": 0},
+      {"type": "category", "data": ["A", "B", "C", "D", "E"], "gridIndex": 1}
+    ],
+    "yAxis": [
+      {"type": "value", "name": "Top", "gridIndex": 0},
+      {"type": "value", "name": "Bottom", "gridIndex": 1}
+    ],
+    "series": [
+      {"type": "line", "name": "temperature", "xAxisIndex": 0, "yAxisIndex": 0, "gridIndex": 0, "data": [12, 18, 16, 24, 21], "smooth": true},
+      {"type": "bar", "name": "volume", "xAxisIndex": 1, "yAxisIndex": 1, "gridIndex": 1, "data": [22, 34, 28, 41, 37]}
+    ]
+  }
+}

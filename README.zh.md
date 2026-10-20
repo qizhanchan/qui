@@ -91,7 +91,7 @@ rt := h.Mount(window, css, func() h.Node {
 | `agent` + `cmd/qui-agent` | 基于根包内省原语的 HTTP/SSE 线缆层（默认 UDS，可选 TCP + bearer）以及配套命令行客户端。`agent` 保持轻薄 —— 所有原语都在根包 |
 | `scene3d` | 3D 数学 + 场景图 + `Viewport` 控件（离屏 FBO，经 `QueueGLDraw` 合成）；`Vec3Field` 与 widgets 集成，因此 `scene3d` 可以 import `widgets` |
 | `anim` | `Tween[T]` / `Spring` / `Timeline` + 缓动目录；都满足 `qui.Animator` |
-| `graphs` / `graphs/chart` | 稳定的 scale/data 基础能力，以及原生声明式图表方案：笛卡尔、极坐标、层级、网络和流向图（Line/Area/Bar/PictorialBar/Scatter/EffectScatter/Pie/Candlestick/Radar/Gauge/Funnel/Heatmap/Boxplot/Graph/Tree/Treemap/Sunburst/Sankey/Parallel/ThemeRiver）、坐标轴、图例、tooltip、调色板、平移 / 缩放和 ECharts 形状的 Go `Option` |
+| `graphs` | 稳定的 scale/data 基础能力，以及两个原生方案：`graphs/chart`（ECharts 形状的声明式图表）和 `graphs/diagram`（draw.io 级渲染/编辑，支持页面、图层、分组、路由、撤销/重做、AX、JSON/draw.io XML 与 PNG/SVG/PDF 导出） |
 | `svg` | SVG 1.1 子集：解析 / 程序化构建 / 光栅化（可染色）/ 序列化；`Document` 满足 `qui.VectorSource` |
 | `media` | `AudioPlayer`（服务）+ `VideoView` / `FrameView`（控件），不依赖 ffmpeg；内部接口后有两个后端——macOS 原生 AVFoundation（`native`）与纯 Go 编解码栈（`golang`），通过 `QUI_MEDIA_BACKEND` 选择 |
 | `webview` | 基于 CEF 的内嵌浏览器控件，受 `webview_cef` build tag + 拉取的 SDK 门控；默认构建不包含 CEF。JS↔Go 桥只传 JSON。.app 打包流程见 `webview/scripts/` |

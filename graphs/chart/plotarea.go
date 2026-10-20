@@ -64,6 +64,14 @@ func drawGrid(canvas Canvas, plot Rect, x, y Axis, theme *Theme, override Color)
 // drawAxes paints the two axis lines, tick marks, and tick labels
 // around plot. Inspired by matplotlib / Qt Graphs axis rendering.
 func drawAxes(canvas Canvas, plot Rect, x, y Axis, theme *Theme, family string, axisColor, labelColor, titleColor Color) {
+	drawXAxis(canvas, plot, x, theme, family, axisColor, labelColor, titleColor, false)
+	drawYAxis(canvas, plot, y, theme, family, axisColor, labelColor, titleColor, false)
+}
+
+func drawXAxis(canvas Canvas, plot Rect, x Axis, theme *Theme, family string, axisColor, labelColor, titleColor Color, top bool) {
+	if x == nil {
+		return
+	}
 	if axisColor.A == 0 {
 		axisColor = theme.TextMuted
 	}
@@ -79,65 +87,105 @@ func drawAxes(canvas Canvas, plot Rect, x, y Axis, theme *Theme, family string, 
 	}
 	tickLen := float32(5)
 
-	// X axis baseline (bottom edge of plot).
+	axisY := plot.Y + plot.H
+	tickSign := float32(1)
+	if top {
+		axisY = plot.Y
+		tickSign = -1
+	}
+	// X axis baseline.
 	canvas.DrawLine(
-		Point{X: plot.X, Y: plot.Y + plot.H},
-		Point{X: plot.X + plot.W, Y: plot.Y + plot.H},
+		Point{X: plot.X, Y: axisY},
+		Point{X: plot.X + plot.W, Y: axisY},
 		axisColor, 1,
 	)
-	// Y axis baseline (left edge of plot).
-	canvas.DrawLine(
-		Point{X: plot.X, Y: plot.Y},
-		Point{X: plot.X, Y: plot.Y + plot.H},
-		axisColor, 1,
-	)
-
-	// X ticks + labels below the plot.
+	// X ticks + labels outside the plot.
 	for _, t := range x.TickPositions() {
 		px := plot.X + x.ValueToPixel(t.Value, plot.W)
 		canvas.DrawLine(
-			Point{X: px, Y: plot.Y + plot.H},
-			Point{X: px, Y: plot.Y + plot.H + tickLen},
+			Point{X: px, Y: axisY},
+			Point{X: px, Y: axisY + tickSign*tickLen},
 			axisColor, 1,
 		)
 		labelW, _ := TextMetrics(t.Label, tickLabelFont)
 		if labelW <= 0 {
 			labelW = float32(len(t.Label)) * tickLabelFont.Size * 0.55
 		}
-		canvas.DrawText(t.Label,
-			Rect{X: px - labelW/2, Y: plot.Y + plot.H + tickLen, W: labelW, H: tickLabelFont.Size + 2},
-			labelColor, tickLabelFont,
-		)
-	}
-
-	// Y ticks + labels to the left of the plot.
-	for _, t := range y.TickPositions() {
-		py := plot.Y + y.ValueToPixel(t.Value, plot.H)
-		canvas.DrawLine(
-			Point{X: plot.X - tickLen, Y: py},
-			Point{X: plot.X, Y: py},
-			axisColor, 1,
-		)
-		labelW, _ := TextMetrics(t.Label, tickLabelFont)
-		if labelW <= 0 {
-			labelW = float32(len(t.Label)) * tickLabelFont.Size * 0.55
+		labelY := axisY + tickLen
+		if top {
+			labelY = axisY - tickLen - tickLabelFont.Size - 2
 		}
 		canvas.DrawText(t.Label,
-			Rect{X: plot.X - tickLen - labelW - 3, Y: py - tickLabelFont.Size/2 - 3, W: labelW, H: tickLabelFont.Size + 2},
+			Rect{X: px - labelW/2, Y: labelY, W: labelW, H: tickLabelFont.Size + 2},
 			labelColor, tickLabelFont,
 		)
 	}
-
-	// X-axis title, centered below the tick labels.
 	if x.Title() != "" {
 		titleFont := Font{Family: family, Size: theme.FontSmall}
 		titleW, _ := TextMetrics(x.Title(), titleFont)
 		if titleW <= 0 {
 			titleW = float32(len(x.Title())) * titleFont.Size * 0.55
 		}
+		titleY := plot.Y + plot.H - 10
+		if top {
+			titleY = plot.Y - tickLabelFont.Size - 12
+		}
 		canvas.DrawText(x.Title(),
-			Rect{X: plot.X + plot.W + 15, Y: plot.Y + plot.H - 10, W: titleW, H: titleFont.Size + 2},
+			Rect{X: plot.X + plot.W + 15, Y: titleY, W: titleW, H: titleFont.Size + 2},
 			titleColor, titleFont,
+		)
+	}
+}
+
+func drawYAxis(canvas Canvas, plot Rect, y Axis, theme *Theme, family string, axisColor, labelColor, titleColor Color, right bool) {
+	if y == nil {
+		return
+	}
+	if axisColor.A == 0 {
+		axisColor = theme.TextMuted
+	}
+	if labelColor.A == 0 {
+		labelColor = theme.TextMuted
+	}
+	if titleColor.A == 0 {
+		titleColor = theme.Text
+	}
+	tickLabelFont := Font{Family: family, Size: theme.FontSmall}
+	if tickLabelFont.Size <= 0 {
+		tickLabelFont.Size = 12
+	}
+	tickLen := float32(5)
+	axisX := plot.X
+	tickSign := float32(-1)
+	if right {
+		axisX = plot.X + plot.W
+		tickSign = 1
+	}
+	canvas.DrawLine(
+		Point{X: axisX, Y: plot.Y},
+		Point{X: axisX, Y: plot.Y + plot.H},
+		axisColor, 1,
+	)
+
+	// Y ticks + labels outside the plot.
+	for _, t := range y.TickPositions() {
+		py := plot.Y + y.ValueToPixel(t.Value, plot.H)
+		canvas.DrawLine(
+			Point{X: axisX, Y: py},
+			Point{X: axisX + tickSign*tickLen, Y: py},
+			axisColor, 1,
+		)
+		labelW, _ := TextMetrics(t.Label, tickLabelFont)
+		if labelW <= 0 {
+			labelW = float32(len(t.Label)) * tickLabelFont.Size * 0.55
+		}
+		labelX := plot.X - tickLen - labelW - 3
+		if right {
+			labelX = axisX + tickLen + 3
+		}
+		canvas.DrawText(t.Label,
+			Rect{X: labelX, Y: py - tickLabelFont.Size/2 - 3, W: labelW, H: tickLabelFont.Size + 2},
+			labelColor, tickLabelFont,
 		)
 	}
 	// ECharts defaults a value-axis name to the end position: horizontal,
@@ -148,8 +196,12 @@ func drawAxes(canvas Canvas, plot Rect, x, y Axis, theme *Theme, family string, 
 		if titleW <= 0 {
 			titleW = float32(len(y.Title())) * titleFont.Size * 0.55
 		}
+		titleX := plot.X - titleW/2
+		if right {
+			titleX = plot.X + plot.W - titleW/2
+		}
 		canvas.DrawText(y.Title(),
-			Rect{X: plot.X - titleW/2, Y: plot.Y - 35, W: titleW, H: titleFont.Size + 2},
+			Rect{X: titleX, Y: plot.Y - 35, W: titleW, H: titleFont.Size + 2},
 			titleColor, titleFont,
 		)
 	}

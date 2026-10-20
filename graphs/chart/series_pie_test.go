@@ -1,11 +1,52 @@
 package chart
 
 import (
+	"encoding/json"
+	"fmt"
 	"math"
 	"testing"
 
 	"github.com/qizhanchan/qui"
 )
+
+func TestPieHideOverlapSuppressesCollidingLabels(t *testing.T) {
+	slices := make([]PieSlice, 60)
+	for i := range slices {
+		slices[i] = PieSlice{Label: fmt.Sprintf("slice-%02d", i), Value: 1}
+	}
+	base := NewPieSeries("many", slices)
+	plot := qui.Rect{W: 320, H: 240}
+	plain := &qui.RecordingCanvas{}
+	base.Draw(plain, plot, nil, nil, NoHotSpot)
+	if len(plain.Texts) != len(slices) {
+		t.Fatalf("plain labels = %d, want %d", len(plain.Texts), len(slices))
+	}
+
+	base.HideOverlap = true
+	collapsed := &qui.RecordingCanvas{}
+	base.Draw(collapsed, plot, nil, nil, NoHotSpot)
+	if len(collapsed.Texts) >= len(plain.Texts) {
+		t.Fatalf("hideOverlap did not suppress labels: plain=%d collapsed=%d", len(plain.Texts), len(collapsed.Texts))
+	}
+}
+
+func TestPieLabelLayoutOptionEnablesHideOverlap(t *testing.T) {
+	var opt Option
+	if err := json.Unmarshal([]byte(`{
+		"series": [{
+			"type": "pie",
+			"labelLayout": {"hideOverlap": true},
+			"data": [{"name": "A", "value": 1}, {"name": "B", "value": 1}]
+		}]
+	}`), &opt); err != nil {
+		t.Fatal(err)
+	}
+	c := New(opt)
+	pie := c.Series[0].(*PieSeries)
+	if !pie.HideOverlap {
+		t.Fatal("labelLayout.hideOverlap did not reach PieSeries")
+	}
+}
 
 func TestPieSeriesSlicesSumTo2Pi(t *testing.T) {
 	s := NewPieSeries("p", []PieSlice{

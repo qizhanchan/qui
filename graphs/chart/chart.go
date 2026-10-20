@@ -8,6 +8,39 @@ import (
 	"github.com/qizhanchan/qui/graphs"
 )
 
+func easeOutCubic(t float32) float32 {
+	t = clampf(t, 0, 1)
+	inverse := 1 - t
+	return 1 - inverse*inverse*inverse
+}
+
+func easeAnimation(t float32, name string) float32 {
+	t = clampf(t, 0, 1)
+	inverse := 1 - t
+	switch name {
+	case "linear":
+		return t
+	case "cubicIn":
+		return t * t * t
+	case "cubicInOut":
+		if t < .5 {
+			return 4 * t * t * t
+		}
+		return 1 - 4*inverse*inverse*inverse
+	case "quarticOut":
+		return 1 - inverse*inverse*inverse*inverse
+	default: // cubicOut
+		return 1 - inverse*inverse*inverse
+	}
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // Chart is the top-level graph widget. It owns a set of series, up to
 // two axes (X + Y), an optional title/subtitle, and an optional legend.
 // Chart subclasses Container so the Legend participates in the widget
@@ -39,10 +72,16 @@ type Chart struct {
 	Background *Color
 	XAxis      Axis // nil → auto ValueAxis on first Layout from series bounds
 	YAxis      Axis // nil → auto ValueAxis; defaults Inverted so larger = up
-	Series     []Series
-	Legend     *Legend // nil disables; use SetLegend to attach
-	Palette    []Color
-	ShowGrid   bool
+	// XAxes/YAxes and GridRects hold the full declarative coordinate system.
+	// XAxis/YAxis/plotRect remain aliases for the primary (index 0) entries.
+	XAxes       []Axis
+	YAxes       []Axis
+	GridRects   []Rect
+	GridOptions []GridOption
+	Series      []Series
+	Legend      *Legend // nil disables; use SetLegend to attach
+	Palette     []Color
+	ShowGrid    bool
 	// GridColor, when set (A > 0), paints the gridlines instead of the
 	// theme's subdued text colour.
 	GridColor Color
@@ -59,6 +98,11 @@ type Chart struct {
 	EnableZoom   bool
 	EnablePan    bool
 	EnableSelect bool
+	// Animate enables the declarative entrance/update animation. Direct
+	// NewChart users opt in; chart.New follows ECharts and defaults to true.
+	Animate           bool
+	AnimationDuration time.Duration
+	AnimationEasing   string
 
 	OnSelect func(series Series, index int)
 	OnHover  func(series Series, index int) // index=-1 on leave
@@ -71,6 +115,18 @@ type Chart struct {
 	TooltipTrigger string
 	// AxisTooltipBuilder customizes axis-trigger tooltip text.
 	AxisTooltipBuilder func(index int) string
+	// AxisPointer state is derived from Option.AxisPointer and tooltip
+	// trigger. The default axis-trigger crosshair is a one-pixel line.
+	ShowAxisPointer  bool
+	AxisPointerType  string
+	AxisPointerColor Color
+	// VisualMap legend state is independent of the heatmap color mapping:
+	// ShowVisualMap controls only the rendered legend.
+	ShowVisualMap   bool
+	VisualMapMin    float32
+	VisualMapMax    float32
+	VisualMapColors []Color
+	DataZoom        []DataZoomOption
 
 	// autoPalette is true when Palette was not set explicitly; we then
 	// derive it from the active theme and re-derive on theme change.
@@ -79,18 +135,35 @@ type Chart struct {
 	// directly; title/legend must not grow those gutters.
 	fixedGutters bool
 	// cached layout rects.
-	plotRect    Rect
-	titleRect   Rect
-	hoverSeries int
-	hoverIndex  int
-	tooltip     tooltipState
-	interact    *interaction
+	plotRect        Rect
+	titleRect       Rect
+	visualMapRect   Rect
+	dataZoomRect    Rect
+	dataZoomBaseMin float32
+	dataZoomBaseMax float32
+	pendingDataZoom bool
+	hoverSeries     int
+	hoverIndex      int
+	tooltip         tooltipState
+	interact        *interaction
 	// lastBoundsX/Y cache the auto-range derived from series the last
 	// time we resolved axes, so Layout can detect when series changed.
 	lastBoundsX [2]float32
 	lastBoundsY [2]float32
 	// lastOption is retained for incremental MergeOption updates.
 	lastOption Option
+	// animationStart/progress drive the current entrance/update transition.
+	// A zero start means the first Tick has not established the clock yet.
+	animationStart    time.Time
+	animationProgress float32
+	animating         bool
+	seriesAxes        []seriesAxisRef
+}
+
+type seriesAxisRef struct {
+	xAxis int
+	yAxis int
+	grid  int
 }
 
 // NewChart constructs a Chart with grid enabled by default and a
@@ -179,6 +252,10 @@ func (c *Chart) AddSeries(s Series) *Chart {
 		}
 	}
 	c.Series = append(c.Series, s)
+	if len(c.seriesAxes) < len(c.Series) {
+		gridCount := maxInt(1, len(c.GridOptions))
+		c.seriesAxes = append(c.seriesAxes, seriesAxisRefFor(SeriesOption{}, maxInt(1, len(c.XAxes)), maxInt(1, len(c.YAxes)), gridCount))
+	}
 	c.InvalidateLayout()
 	return c
 }
@@ -268,6 +345,9 @@ func (c *Chart) Layout(r Rect) {
 			}
 		}
 	}
+	if c.hasDataZoomSlider() {
+		g.Bottom += 30
+	}
 
 	// An end-positioned X axis name occupies space at the right edge of
 	// the grid in ECharts. Reserve it explicitly so data coordinates and
@@ -281,6 +361,9 @@ func (c *Chart) Layout(r Rect) {
 			g.Right += nameW - 12
 		}
 	}
+	if c.ShowVisualMap && c.usesAxes() && !c.fixedGutters {
+		g.Right += 64
+	}
 
 	c.plotRect = Rect{
 		X: r.X + g.Left,
@@ -293,6 +376,20 @@ func (c *Chart) Layout(r Rect) {
 	}
 	if c.plotRect.H < 0 {
 		c.plotRect.H = 0
+	}
+	c.layoutGridRects(r, g, theme)
+	c.visualMapRect = Rect{}
+	if c.ShowVisualMap && !c.plotRect.IsEmpty() {
+		h := minF32(c.plotRect.H-20, 160)
+		if h < 60 {
+			h = c.plotRect.H
+		}
+		c.visualMapRect = Rect{
+			X: c.plotRect.X + c.plotRect.W + 12,
+			Y: c.plotRect.Y + 10,
+			W: 12,
+			H: h,
+		}
 	}
 
 	if c.Legend != nil {
@@ -327,9 +424,11 @@ func (c *Chart) Layout(r Rect) {
 		}
 		c.Legend.Layout(legendRect)
 	}
+	c.layoutDataZoom(r)
 
 	if c.usesAxes() {
 		c.ensureAxes()
+		c.applyPendingDataZoom()
 	}
 	c.resolveBarGrouping()
 	c.resolveBoxplotGrouping()
@@ -392,80 +491,96 @@ func (c *Chart) resolvePieSliceColors() {
 // them from series data. If axes are supplied but have Min==Max==0
 // (zero-value), we treat that as "auto" and compute from series too.
 func (c *Chart) ensureAxes() {
+	if len(c.XAxes) == 0 {
+		if c.XAxis == nil {
+			c.XAxis = &ValueAxis{}
+		}
+		c.XAxes = []Axis{c.XAxis}
+	}
+	if len(c.YAxes) == 0 {
+		if c.YAxis == nil {
+			c.YAxis = &ValueAxis{InvertedAxis: true}
+		}
+		c.YAxes = []Axis{c.YAxis}
+	}
+	c.XAxis = c.XAxes[0]
+	c.YAxis = c.YAxes[0]
+	for i, axis := range c.XAxes {
+		bx, _ := c.boundsForAxes(i, 0)
+		c.ensureXAxisRange(axis, bx)
+		extendValueAxisToNiceTicks(axis)
+	}
+	for i, axis := range c.YAxes {
+		_, by := c.boundsForAxes(0, i)
+		c.ensureYAxisRange(axis, by, c.hasBarSeriesForY(i))
+		extendValueAxisToNiceTicks(axis)
+	}
 	bx, by := c.dataBounds()
-	if c.XAxis == nil {
-		c.XAxis = &ValueAxis{}
-	}
-	if c.YAxis == nil {
-		c.YAxis = &ValueAxis{InvertedAxis: true}
-	}
-	xmin, xmax := c.XAxis.Range()
-	if xmin == 0 && xmax == 0 && bx.HasData {
-		xLo := bx.Xmin
-		xHi := bx.Xmax
-		if !c.XAxis.IsCategorical() && !valueAxisScale(c.XAxis) {
-			if bx.Xmin >= 0 {
-				xLo = 0
-			}
-			if bx.Xmax <= 0 {
-				xHi = 0
-			}
-		}
-		c.XAxis.SetRange(xLo, xHi)
-	}
-	ymin, ymax := c.YAxis.Range()
-	if va, ok := c.YAxis.(*ValueAxis); ok && (va.PinMin || va.PinMax) {
-		// A pinned end stays; the other still follows the data.
-		lo, hi := va.Min, va.Max
-		if by.HasData {
-			if !va.PinMin {
-				lo = padLow(min(by.Ymin, hi), max(by.Ymax, hi))
-			}
-			if !va.PinMax {
-				hi = padHigh(min(by.Ymin, lo), max(by.Ymax, lo))
-			}
-		}
-		if hi > lo {
-			va.SetRange(lo, hi)
-		}
-	} else if ymin == 0 && ymax == 0 && by.HasData {
-		yLo := by.Ymin
-		yHi := by.Ymax
-		// ECharts value axes include zero by default when all values are on
-		// one side of it. Bars do not add percentage padding; their visible
-		// extent is already meaningful and is expanded only to nice ticks.
-		if !valueAxisScale(c.YAxis) {
-			if by.Ymin >= 0 {
-				yLo = 0
-			}
-			if by.Ymax <= 0 {
-				yHi = 0
-			}
-		}
-		if c.hasBarSeries() {
-			if by.Ymin < 0 {
-				yLo = by.Ymin
-			}
-			if by.Ymax > 0 {
-				yHi = by.Ymax
-			}
-		}
-		c.YAxis.SetRange(yLo, yHi)
-	}
-	extendValueAxisToNiceTicks(c.XAxis)
-	extendValueAxisToNiceTicks(c.YAxis)
 	c.lastBoundsX = [2]float32{bx.Xmin, bx.Xmax}
 	c.lastBoundsY = [2]float32{by.Ymin, by.Ymax}
 }
 
-func (c *Chart) hasBarSeries() bool {
-	for _, s := range c.Series {
-		switch s.(type) {
-		case *BarSeries, *PictorialBarSeries:
-			return true
+func (c *Chart) ensureXAxisRange(axis Axis, bounds SeriesBounds) {
+	if axis == nil {
+		return
+	}
+	xmin, xmax := axis.Range()
+	if xmin != 0 || xmax != 0 || !bounds.HasData {
+		return
+	}
+	xLo, xHi := bounds.Xmin, bounds.Xmax
+	if !axis.IsCategorical() && !valueAxisScale(axis) {
+		if bounds.Xmin >= 0 {
+			xLo = 0
+		}
+		if bounds.Xmax <= 0 {
+			xHi = 0
 		}
 	}
-	return false
+	axis.SetRange(xLo, xHi)
+}
+
+func (c *Chart) ensureYAxisRange(axis Axis, bounds SeriesBounds, hasBars bool) {
+	if axis == nil {
+		return
+	}
+	if value, ok := axis.(*ValueAxis); ok && (value.PinMin || value.PinMax) {
+		lo, hi := value.Min, value.Max
+		if bounds.HasData {
+			if !value.PinMin {
+				lo = padLow(min(bounds.Ymin, hi), max(bounds.Ymax, hi))
+			}
+			if !value.PinMax {
+				hi = padHigh(min(bounds.Ymin, lo), max(bounds.Ymax, lo))
+			}
+		}
+		if hi > lo {
+			value.SetRange(lo, hi)
+		}
+		return
+	}
+	ymin, ymax := axis.Range()
+	if ymin != 0 || ymax != 0 || !bounds.HasData {
+		return
+	}
+	yLo, yHi := bounds.Ymin, bounds.Ymax
+	if !valueAxisScale(axis) {
+		if bounds.Ymin >= 0 {
+			yLo = 0
+		}
+		if bounds.Ymax <= 0 {
+			yHi = 0
+		}
+	}
+	if hasBars {
+		if bounds.Ymin < 0 {
+			yLo = bounds.Ymin
+		}
+		if bounds.Ymax > 0 {
+			yHi = bounds.Ymax
+		}
+	}
+	axis.SetRange(yLo, yHi)
 }
 
 func valueAxisScale(axis Axis) bool {
@@ -485,6 +600,12 @@ func extendValueAxisToNiceTicks(axis Axis) {
 	}
 	target := a.TickCount
 	if target <= 0 {
+		target = 5
+	}
+	if a.autoTickCount && target == 5 && a.Min < 0 && a.Max > 0 {
+		// ECharts keeps mixed-sign value axes to 10-unit steps more often
+		// than the coarser 5-split default, avoiding oversized padding on
+		// both sides of zero.
 		target = 7
 	}
 	ticks := graphs.NiceLinearTicks(float64(a.Min), float64(a.Max), target)
@@ -850,8 +971,24 @@ func (c *Chart) Draw(canvas Canvas) {
 		return
 	}
 
-	if c.ShowGrid && c.XAxis != nil && c.YAxis != nil && c.usesAxes() {
-		drawGrid(canvas, c.plotRect, c.XAxis, c.YAxis, theme, c.GridColor)
+	if c.ShowGrid && c.usesAxes() {
+		for i, rect := range c.GridRects {
+			xAxis, yAxis := c.gridAxesAt(i)
+			if xAxis != nil && yAxis != nil {
+				drawGrid(canvas, rect, xAxis, yAxis, theme, c.GridColor)
+			}
+		}
+	}
+
+	// Series animation is isolated in a layer so it can fade independently
+	// of axes, title and legend. Cartesian series additionally reveal from
+	// left to right; radial/hierarchical series use the fade alone.
+	animating := c.animating || (c.Animate && c.animationProgress < 1)
+	animationProgress := clampf(c.animationProgress, 0, 1)
+	revealProgress := easeAnimation(animationProgress, c.AnimationEasing)
+	var animationDepth int
+	if animating {
+		animationDepth = canvas.SaveLayer(c.Bounds(), Paint{Alpha: revealProgress})
 	}
 
 	// Clip cartesian series to the plot rectangle. Radial, hierarchical
@@ -865,20 +1002,41 @@ func (c *Chart) Draw(canvas Canvas) {
 		if c.hoverSeries == i {
 			hot = HotSpot{SeriesIdx: i, PointIdx: c.hoverIndex}
 		}
-		seriesRect := c.plotRect
-		clipRect := c.plotRect
+		seriesRect, xAxis, yAxis := c.seriesAxesAt(i)
+		clipRect := seriesRect
 		if chartUsesFullBounds(s) {
 			seriesRect = c.Bounds()
 			clipRect = c.Bounds()
+		} else if animating && revealProgress < 1 {
+			clipRect.W *= revealProgress
 		}
 		depth := canvas.Save()
 		canvas.ClipRect(clipRect)
-		s.Draw(canvas, seriesRect, c.XAxis, c.YAxis, hot)
+		s.Draw(canvas, seriesRect, xAxis, yAxis, hot)
 		canvas.RestoreTo(depth)
 	}
+	if animating {
+		canvas.RestoreTo(animationDepth)
+	}
 
-	if c.XAxis != nil && c.YAxis != nil && c.usesAxes() {
-		drawAxes(canvas, c.plotRect, c.XAxis, c.YAxis, theme, c.FontFamily, c.AxisColor, c.AxisLabelColor, c.TextColor)
+	if c.usesAxes() {
+		for i, rect := range c.GridRects {
+			xAxis, yAxis := c.gridAxesAt(i)
+			drawXAxis(canvas, rect, xAxis, theme, c.FontFamily, c.AxisColor, c.AxisLabelColor, c.TextColor, false)
+			drawYAxis(canvas, rect, yAxis, theme, c.FontFamily, c.AxisColor, c.AxisLabelColor, c.TextColor, false)
+		}
+		primary := c.plotRect
+		for i := maxInt(1, len(c.GridRects)); i < len(c.YAxes); i++ {
+			drawYAxis(canvas, primary, c.YAxes[i], theme, c.FontFamily, c.AxisColor, c.AxisLabelColor, c.TextColor, true)
+		}
+		for i := maxInt(1, len(c.GridRects)); i < len(c.XAxes); i++ {
+			drawXAxis(canvas, primary, c.XAxes[i], theme, c.FontFamily, c.AxisColor, c.AxisLabelColor, c.TextColor, true)
+		}
+	}
+	c.drawAxisPointer(canvas)
+	c.drawDataZoomSlider(canvas, theme)
+	if c.ShowVisualMap {
+		c.drawVisualMapLegend(canvas, theme)
 	}
 
 	// Paint children (legend, etc.) on top via the Container path.
@@ -899,11 +1057,11 @@ func (c *Chart) HoverAt(p Point) (seriesIdx, pointIdx int) {
 		if !s.Visible() {
 			continue
 		}
-		seriesRect := c.plotRect
+		seriesRect, xAxis, yAxis := c.seriesAxesAt(i)
 		if chartUsesFullBounds(s) {
 			seriesRect = c.Bounds()
 		}
-		if idx := s.HitTest(p, seriesRect, c.XAxis, c.YAxis); idx >= 0 {
+		if idx := s.HitTest(p, seriesRect, xAxis, yAxis); idx >= 0 {
 			c.setHover(i, idx, p)
 			return i, idx
 		}
@@ -953,8 +1111,130 @@ func (c *Chart) clearHover() {
 // PlotRect exposes the plot area for tests and interaction logic.
 func (c *Chart) PlotRect() Rect { return c.plotRect }
 
-// Tick is a no-op today; interaction-driven animations hook here later.
-func (c *Chart) Tick(_ time.Time) Rect { return Rect{} }
+// VisualMapRect exposes the rendered continuous-color legend bounds. It is
+// empty when the legend is disabled or the chart has no cartesian plot.
+func (c *Chart) VisualMapRect() Rect { return c.visualMapRect }
+
+func (c *Chart) drawAxisPointer(canvas Canvas) {
+	if !c.ShowAxisPointer || !c.tooltip.active || c.TooltipTrigger != "axis" || c.plotRect.IsEmpty() {
+		return
+	}
+	x := c.tooltip.anchor.X
+	rect := c.plotRect
+	xAxis := c.XAxis
+	if _, configuredX, _ := c.seriesAxesAt(c.hoverSeries); configuredX != nil {
+		xAxis = configuredX
+		rect, _, _ = c.seriesAxesAt(c.hoverSeries)
+	}
+	if category, ok := xAxis.(*CategoryAxis); ok && c.hoverIndex >= 0 && c.hoverIndex < len(category.Categories) {
+		x = rect.X + category.ValueToPixel(float32(c.hoverIndex), rect.W)
+	}
+	if x < rect.X || x > rect.X+rect.W {
+		return
+	}
+	color := c.AxisPointerColor
+	if color.A == 0 {
+		color = c.AxisColor
+	}
+	canvas.DrawLine(
+		Point{X: x, Y: rect.Y},
+		Point{X: x, Y: rect.Y + rect.H},
+		color, 1,
+	)
+}
+
+func (c *Chart) drawVisualMapLegend(canvas Canvas, theme *Theme) {
+	rect := c.visualMapRect
+	if rect.IsEmpty() {
+		return
+	}
+	colors := c.VisualMapColors
+	if len(colors) == 0 {
+		colors = []Color{
+			{R: 0x31 / 255.0, G: 0x7a / 255.0, B: 0xef / 255.0, A: 1},
+			{R: 0xf0 / 255.0, G: 0x4b / 255.0, B: 0x4b, A: 1},
+		}
+	}
+	stops := make([]GradientStop, len(colors))
+	for i, color := range colors {
+		offset := float32(0)
+		if len(colors) > 1 {
+			offset = float32(i) / float32(len(colors)-1)
+		}
+		stops[i] = GradientStop{Offset: offset, Color: color}
+	}
+	shader := LinearGradient{
+		Start: Point{X: rect.X, Y: rect.Y + rect.H},
+		End:   Point{X: rect.X, Y: rect.Y},
+		Stops: stops,
+	}
+	canvas.DrawShape(ShapeRect(rect), Paint{Shader: shader, AntiAlias: true})
+	canvas.StrokeRect(rect, theme.TextMuted, 1)
+	lo, hi := c.visualMapRange()
+	font := Font{Family: c.FontFamily, Size: theme.FontSmall}
+	if font.Size <= 0 {
+		font.Size = 12
+	}
+	labelX := rect.X + rect.W + 6
+	canvas.DrawText(formatFloat(hi), Rect{X: labelX, Y: rect.Y - 2, W: 44, H: font.Size + 4}, theme.Text, font)
+	canvas.DrawText(formatFloat(lo), Rect{X: labelX, Y: rect.Y + rect.H - font.Size - 2, W: 44, H: font.Size + 4}, theme.Text, font)
+}
+
+func (c *Chart) visualMapRange() (float32, float32) {
+	lo, hi := c.VisualMapMin, c.VisualMapMax
+	if hi > lo {
+		return lo, hi
+	}
+	for _, series := range c.Series {
+		if heatmap, ok := series.(*HeatmapSeries); ok && series.Visible() {
+			lo, hi = heatmap.valueExtent()
+			if hi > lo {
+				return lo, hi
+			}
+		}
+	}
+	return 0, 1
+}
+
+// Tick advances the entrance/update animation and forwards child ticks.
+func (c *Chart) Tick(now time.Time) Rect {
+	dirty := c.Container.Tick(now)
+	if !c.animating {
+		return dirty
+	}
+	if c.animationStart.IsZero() {
+		c.animationStart = now
+	}
+	duration := c.AnimationDuration
+	if duration <= 0 {
+		duration = time.Second
+	}
+	elapsed := now.Sub(c.animationStart)
+	if elapsed >= duration {
+		c.animationProgress = 1
+		c.animating = false
+	} else if elapsed > 0 {
+		c.animationProgress = float32(elapsed) / float32(duration)
+	} else {
+		c.animationProgress = 0
+	}
+	return dirty.Union(RectInWindow(c, c.Bounds()))
+}
+
+// RestartAnimation starts the declarative entrance animation from zero. It
+// is a no-op when Animate is false. The next Tick establishes the clock.
+func (c *Chart) RestartAnimation() {
+	if c == nil || !c.Animate {
+		return
+	}
+	c.restartAnimation()
+}
+
+func (c *Chart) restartAnimation() {
+	c.animationStart = time.Time{}
+	c.animationProgress = 0
+	c.animating = true
+}
 
 // HitTest lets children (e.g. Legend) claim the pointer first, then
 // falls back to returning the chart itself when the point is inside

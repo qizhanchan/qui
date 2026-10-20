@@ -18,13 +18,15 @@ const (
 // cluster plots.
 type ScatterSeries struct {
 	seriesBase
-	Points       []Point2D
-	Size         float32     // marker diameter in logical pixels; default 6
-	Shape        MarkerShape // default MarkerCircle
-	Opacity      float32     // fill opacity; 0 falls back to 1 for direct use
-	Effect       bool
-	RippleScale  float32
-	RippleNumber int
+	Points         []Point2D
+	Size           float32     // marker diameter in logical pixels; default 6
+	Shape          MarkerShape // default MarkerCircle
+	Opacity        float32     // fill opacity; 0 falls back to 1 for direct use
+	Effect         bool
+	RippleScale    float32
+	RippleNumber   int
+	Sampling       string
+	LargeThreshold int
 }
 
 // NewScatterSeries constructs a ScatterSeries with sensible defaults.
@@ -66,7 +68,24 @@ func (s *ScatterSeries) Draw(canvas Canvas, plot Rect, x, y Axis, hot HotSpot) {
 	if s.Opacity > 0 && s.Opacity < 1 {
 		color.A *= s.Opacity
 	}
-	for i, p := range s.Points {
+	points := s.Points
+	mode := s.Sampling
+	if mode == "" && s.LargeThreshold > 0 && len(points) > s.LargeThreshold {
+		mode = "lttb"
+	}
+	if mode != "" {
+		threshold := s.LargeThreshold
+		if threshold <= 0 {
+			threshold = 2000
+		}
+		if len(points) > threshold {
+			points = samplePoints(points, samplingTarget(plot), mode)
+		}
+	}
+	if len(points) != len(s.Points) {
+		hot = NoHotSpot
+	}
+	for i, p := range points {
 		cx := plot.X + x.ValueToPixel(p.X, plot.W)
 		cy := plot.Y + y.ValueToPixel(p.Y, plot.H)
 		if s.Effect {

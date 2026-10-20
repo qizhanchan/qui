@@ -13,7 +13,9 @@ type AreaSeries struct {
 	Stroke   float32 // upper-edge stroke width; 0 = no stroke
 	// FillAlpha (0..1) is applied to Color when producing the fill
 	// color; 0 falls back to 0.35 (good default for overlays).
-	FillAlpha float32
+	FillAlpha      float32
+	Sampling       string
+	LargeThreshold int
 }
 
 // NewAreaSeries returns a series filled to Y=0 with a 35%-alpha fill.
@@ -58,13 +60,24 @@ func (s *AreaSeries) Draw(canvas Canvas, plot Rect, x, y Axis, hot HotSpot) {
 
 	// Project each data point, pairing with baseline Y pixel at the same X.
 	baselineY := plot.Y + y.ValueToPixel(s.Baseline, plot.H)
-	pts := make([]Point, len(s.Points))
-	for i, p := range s.Points {
-		pts[i] = Point{
-			X: plot.X + x.ValueToPixel(p.X, plot.W),
-			Y: plot.Y + y.ValueToPixel(p.Y, plot.H),
+	points := s.Points
+	mode := s.Sampling
+	if mode == "" && s.LargeThreshold > 0 && len(points) > s.LargeThreshold {
+		mode = "lttb"
+	}
+	if mode != "" {
+		threshold := s.LargeThreshold
+		if threshold <= 0 {
+			threshold = 2000
+		}
+		if len(points) > threshold {
+			points = samplePoints(points, samplingTarget(plot), mode)
 		}
 	}
+	if len(points) != len(s.Points) {
+		hot = NoHotSpot
+	}
+	pts := projectPoint2Ds(points, plot, x, y)
 
 	// Paint fill as a run of 1px-wide rectangles between each segment's
 	// interpolated Y and baselineY. This is O(pixelsWide × 1) per

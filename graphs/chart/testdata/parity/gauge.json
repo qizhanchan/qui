@@ -6,6 +6,7 @@
     "textStyle": {
       "fontFamily": "Arial"
     },
+    "color": ["#5470c6"],
     "title": {
       "text": "Gauge",
       "subtext": "speed",

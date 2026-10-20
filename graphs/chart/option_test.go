@@ -181,11 +181,11 @@ func TestMergeOptionUpdatesSeriesByNameAndKeepsUnsetFields(t *testing.T) {
 			{Type: SeriesBar, Name: "target", Data: Numbers(3, 4)},
 		},
 	})
-	c.MergeOption(Option{
-		Title: &TitleOption{SubText: "updated"},
-		YAxis: AxisOption{Name: "Revenue"},
-		Series: []SeriesOption{
-			{Name: "target", Data: Numbers(8, 9)},
+	c.MergeOption(OptionPatch{
+		Title: &TitlePatch{SubText: valuePtr("updated")},
+		YAxis: &AxisPatch{Name: valuePtr("Revenue")},
+		Series: []SeriesPatch{
+			{Name: valuePtr("target"), Data: &[]DataPoint{Number(8), Number(9)}},
 		},
 	})
 	if c.Title != "Revenue" || c.SubTitle != "updated" {
@@ -206,3 +206,152 @@ func TestMergeOptionUpdatesSeriesByNameAndKeepsUnsetFields(t *testing.T) {
 		t.Fatalf("line should be unchanged: %+v", line.Points)
 	}
 }
+
+func TestMergeOptionCanClearFalseZeroAndNullableFields(t *testing.T) {
+	smooth := true
+	c := New(Option{
+		Title:  &TitleOption{Text: "Revenue", SubText: "old"},
+		Legend: &LegendOption{Show: boolPtr(true), Position: "top"},
+		Grid:   &GridOption{Left: 80, Right: 20, Top: 30, Bottom: 50},
+		XAxis: AxisOption{
+			Type:         AxisCategory,
+			Data:         []string{"A", "B"},
+			GroupPadding: .2,
+			Min:          valuePtr(0.0),
+		},
+		YAxis: AxisOption{Type: AxisValue, Name: "USD", Min: valuePtr(10.0)},
+		VisualMap: &VisualMapOption{
+			Min: valuePtr(1.0), Max: valuePtr(9.0), Show: boolPtr(true),
+		},
+		BackgroundColor: "#ffffff",
+		Series: []SeriesOption{{
+			Type:        SeriesLine,
+			Name:        "actual",
+			Data:        Numbers(1, 2),
+			Stack:       "total",
+			Smooth:      true,
+			SymbolSize:  12,
+			FillOpacity: .5,
+			Color:       "#112233",
+			Label:       &LabelOption{Show: boolPtr(true), Color: "#445566"},
+		}, {
+			Type: SeriesBar,
+			Name: "target",
+			Data: Numbers(3, 4),
+		}},
+	})
+	c.EnableZoom = true
+	c.EnablePan = true
+	c.EnableSelect = true
+
+	c.MergeOption(OptionPatch{
+		Title:           &TitlePatch{Text: valuePtr(""), SubText: valuePtr("")},
+		Legend:          &LegendPatch{Show: boolPtr(false), Position: valuePtr("bottom")},
+		Grid:            &GridPatch{Left: valuePtr(float32(0))},
+		XAxis:           &AxisPatch{GroupPadding: valuePtr(float32(0)), ClearMin: true},
+		YAxis:           &AxisPatch{Name: valuePtr(""), Min: valuePtr(0.0)},
+		VisualMap:       &VisualMapPatch{Min: valuePtr(0.0), ClearMax: true, Show: boolPtr(false)},
+		BackgroundColor: valuePtr(CSSColor("")),
+		EnableZoom:      valuePtr(false),
+		EnablePan:       valuePtr(false),
+		EnableSelect:    valuePtr(false),
+		Series: []SeriesPatch{{
+			Name:         valuePtr("actual"),
+			Stack:        valuePtr(""),
+			Smooth:       valuePtr(false),
+			SymbolSize:   valuePtr(0.0),
+			FillOpacity:  valuePtr(0.0),
+			Color:        valuePtr(CSSColor("")),
+			ClearLabel:   true,
+			SymbolHeight: valuePtr(0.0),
+		}},
+	})
+
+	if c.Title != "" || c.SubTitle != "" {
+		t.Fatalf("title did not clear: %q/%q", c.Title, c.SubTitle)
+	}
+	if c.Legend != nil {
+		t.Fatalf("legend should be hidden, got %+v", c.Legend)
+	}
+	if c.XAxis.Title() != "" {
+		t.Fatalf("unpatched X axis title changed: %q", c.XAxis.Title())
+	}
+	if c.YAxis.Title() != "" {
+		t.Fatalf("Y axis title = %q, want clear", c.YAxis.Title())
+	}
+	if c.EnableZoom || c.EnablePan || c.EnableSelect {
+		t.Fatalf("interaction flags did not clear")
+	}
+	if c.lastOption.Grid.Left != 0 || c.lastOption.XAxis.GroupPadding != 0 || c.lastOption.XAxis.Min != nil {
+		t.Fatalf("axis/grid zero patches not applied: %+v %+v", c.lastOption.Grid, c.lastOption.XAxis)
+	}
+	if c.lastOption.YAxis.Min == nil || *c.lastOption.YAxis.Min != 0 {
+		t.Fatalf("Y axis min = %v, want explicit 0", c.lastOption.YAxis.Min)
+	}
+	if c.lastOption.VisualMap.Min == nil || *c.lastOption.VisualMap.Min != 0 || c.lastOption.VisualMap.Max != nil {
+		t.Fatalf("visual map patch = %+v", c.lastOption.VisualMap)
+	}
+	if c.lastOption.BackgroundColor != "" {
+		t.Fatalf("background = %q, want clear", c.lastOption.BackgroundColor)
+	}
+	line := c.lastOption.Series[0]
+	if line.Smooth || line.SymbolSize != 0 || line.FillOpacity != 0 || line.Stack != "" || line.Color != "" || line.Label != nil {
+		t.Fatalf("line patch did not clear fields: %+v", line)
+	}
+	if line.SymbolHeight != 0 {
+		t.Fatalf("symbol height = %v, want 0", line.SymbolHeight)
+	}
+	if !smooth {
+		t.Fatal("source variable should remain unchanged")
+	}
+}
+
+func TestOptionPatchJSONPreservesExplicitFalseAndSymbolSizePair(t *testing.T) {
+	var patch OptionPatch
+	err := json.Unmarshal([]byte(`{
+		"legend": {"show": false},
+		"series": [{
+			"name": "actual",
+			"smooth": false,
+			"symbolSize": [7, 11],
+			"label": {"show": false}
+		}]
+	}`), &patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patch.Legend == nil || patch.Legend.Show == nil || *patch.Legend.Show {
+		t.Fatalf("legend show patch = %+v", patch.Legend)
+	}
+	if len(patch.Series) != 1 {
+		t.Fatalf("series patches = %d", len(patch.Series))
+	}
+	series := patch.Series[0]
+	if series.Smooth == nil || *series.Smooth || series.SymbolSize == nil || *series.SymbolSize != 7 ||
+		series.SymbolHeight == nil || *series.SymbolHeight != 11 || series.Label == nil ||
+		series.Label.Show == nil || *series.Label.Show {
+		t.Fatalf("series patch = %+v", series)
+	}
+}
+
+func TestOptionJSONKeepsSingularAxisAndGridForm(t *testing.T) {
+	input := Option{
+		Grid:  &GridOption{Left: 12},
+		XAxis: AxisOption{Type: AxisCategory, Data: []string{"A"}},
+		YAxis: AxisOption{Type: AxisValue, Name: "value"},
+	}
+	data, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output Option
+	if err := json.Unmarshal(data, &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.Grid == nil || output.Grid.Left != 12 || output.XAxis.Type != AxisCategory ||
+		output.YAxis.Name != "value" || len(output.XAxes) != 0 || len(output.YAxes) != 0 {
+		t.Fatalf("singular round trip = %+v", output)
+	}
+}
+
+func valuePtr[T any](value T) *T { return &value }

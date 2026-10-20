@@ -1,0 +1,220 @@
+{
+  "pages": [
+    {
+      "id": "page-1",
+      "name": "Page-1",
+      "width": 1000,
+      "height": 640,
+      "background": "#ffffff",
+      "grid": {
+        "visible": true,
+        "size": 10,
+        "color": "#e5e7eb"
+      },
+      "layers": [
+        {
+          "id": "layer-1",
+          "name": "Layer-1",
+          "default": true
+        }
+      ],
+      "cells": [
+        {
+          "id": "start",
+          "type": "vertex",
+          "layer": "layer-1",
+          "label": "Start",
+          "geometry": {
+            "x": 420,
+            "y": 40,
+            "w": 160,
+            "h": 60
+          },
+          "style": {
+            "shape": "ellipse",
+            "fill": "#d5e8d4",
+            "stroke": "#82b366",
+            "fontFamily": "Arial",
+            "fontSize": 14
+          },
+          "source": {},
+          "target": {}
+        },
+        {
+          "id": "load",
+          "type": "vertex",
+          "layer": "layer-1",
+          "label": "Load input",
+          "geometry": {
+            "x": 395,
+            "y": 170,
+            "w": 210,
+            "h": 70
+          },
+          "style": {
+            "shape": "rect",
+            "fill": "#dae8fc",
+            "stroke": "#6c8ebf",
+            "fontFamily": "Arial",
+            "fontSize": 14
+          },
+          "source": {},
+          "target": {}
+        },
+        {
+          "id": "valid",
+          "type": "vertex",
+          "layer": "layer-1",
+          "label": "Valid?",
+          "geometry": {
+            "x": 420,
+            "y": 315,
+            "w": 160,
+            "h": 90
+          },
+          "style": {
+            "shape": "diamond",
+            "fill": "#fff2cc",
+            "stroke": "#d6b656",
+            "fontFamily": "Arial",
+            "fontSize": 14
+          },
+          "source": {},
+          "target": {}
+        },
+        {
+          "id": "ok",
+          "type": "vertex",
+          "layer": "layer-1",
+          "label": "Process",
+          "geometry": {
+            "x": 190,
+            "y": 470,
+            "w": 180,
+            "h": 70
+          },
+          "style": {
+            "shape": "roundedRect",
+            "fill": "#dae8fc",
+            "stroke": "#6c8ebf",
+            "fontFamily": "Arial",
+            "fontSize": 14
+          },
+          "source": {},
+          "target": {}
+        },
+        {
+          "id": "err",
+          "type": "vertex",
+          "layer": "layer-1",
+          "label": "Show error",
+          "geometry": {
+            "x": 630,
+            "y": 470,
+            "w": 180,
+            "h": 70
+          },
+          "style": {
+            "shape": "roundedRect",
+            "fill": "#f8cecc",
+            "stroke": "#b85450",
+            "fontFamily": "Arial",
+            "fontSize": 14
+          },
+          "source": {},
+          "target": {}
+        },
+        {
+          "id": "e1",
+          "type": "edge",
+          "layer": "layer-1",
+          "geometry": {},
+          "style": {
+            "route": "orthogonal",
+            "stroke": "#667085",
+            "strokeWidth": 1.5,
+            "endArrow": "triangle",
+            "fontFamily": "Arial",
+            "fontSize": 12
+          },
+          "source": {
+            "cell": "start",
+            "port": "auto"
+          },
+          "target": {
+            "cell": "load",
+            "port": "auto"
+          }
+        },
+        {
+          "id": "e2",
+          "type": "edge",
+          "layer": "layer-1",
+          "geometry": {},
+          "style": {
+            "route": "orthogonal",
+            "stroke": "#667085",
+            "strokeWidth": 1.5,
+            "endArrow": "triangle",
+            "fontFamily": "Arial",
+            "fontSize": 12
+          },
+          "source": {
+            "cell": "load",
+            "port": "auto"
+          },
+          "target": {
+            "cell": "valid",
+            "port": "auto"
+          }
+        },
+        {
+          "id": "e3",
+          "type": "edge",
+          "layer": "layer-1",
+          "label": "yes",
+          "geometry": {},
+          "style": {
+            "route": "roundedOrthogonal",
+            "stroke": "#667085",
+            "strokeWidth": 1.5,
+            "endArrow": "triangle",
+            "fontFamily": "Arial",
+            "fontSize": 12
+          },
+          "source": {
+            "cell": "valid",
+            "port": "auto"
+          },
+          "target": {
+            "cell": "ok",
+            "port": "auto"
+          }
+        },
+        {
+          "id": "e4",
+          "type": "edge",
+          "layer": "layer-1",
+          "label": "no",
+          "geometry": {},
+          "style": {
+            "route": "roundedOrthogonal",
+            "stroke": "#667085",
+            "strokeWidth": 1.5,
+            "endArrow": "triangle",
+            "fontFamily": "Arial",
+            "fontSize": 12
+          },
+          "source": {
+            "cell": "valid",
+            "port": "auto"
+          },
+          "target": {
+            "cell": "err",
+            "port": "auto"
+          }
+        }
+      ]
+    }
+  ]
+}

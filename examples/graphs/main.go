@@ -1,151 +1,161 @@
-// Command graphs demonstrates the native, declarative qui/graphs/chart
-// surface: line, area, bar, scatter and pie series driven by one Option.
+// Command graphs is the interactive gallery for qui/graphs/chart. It keeps
+// the examples close to the real declarative API: every page is built from an
+// ordinary chart.Option and hosted in the same window.
 package main
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/qizhanchan/qui"
+	"github.com/qizhanchan/qui/agent"
 	"github.com/qizhanchan/qui/graphs/chart"
+	"github.com/qizhanchan/qui/widgets"
 )
+
+type galleryEntry struct {
+	category    string
+	name        string
+	description string
+	features    string
+	build       func() *chart.Chart
+}
 
 func main() {
 	app, err := qui.NewApp()
 	if err != nil {
 		log.Fatal(err)
 	}
-	window, err := app.NewWindow("qui/graphs demo", 1024, 720)
+	window, err := app.NewWindow("qui — Native Chart Gallery", 1320, 900)
 	if err != nil {
 		log.Fatal(err)
 	}
 	window.SetRenderer(qui.NewGLRenderer())
 
-	// --- Top: line + area combo -----------------------------------------
-	showSymbols := true
-	topChart := chart.New(chart.Option{
-		Title: &chart.TitleOption{
-			Text:    "Weekly Revenue",
-			SubText: "Line = actuals, Area = forecast",
-		},
-		Legend:  &chart.LegendOption{Position: "bottom"},
-		Tooltip: &chart.TooltipOption{Trigger: "axis"},
-		Palette: []chart.CSSColor{
-			"#4285f4", "#f28c42", "#4cbf66", "#f2b333",
-		},
-		EnableSelect: true,
-		Series: []chart.SeriesOption{
-			{
-				Type: chart.SeriesArea,
-				Name: "Forecast",
-				Data: []chart.DataPoint{
-					chart.XYPoint(1, 1100), chart.XYPoint(2, 1400),
-					chart.XYPoint(3, 1000), chart.XYPoint(4, 1700),
-					chart.XYPoint(5, 2000), chart.XYPoint(6, 1700),
-					chart.XYPoint(7, 1500),
-				},
-				FillOpacity: 0.2,
-			},
-			{
-				Type: chart.SeriesLine,
-				Name: "Revenue",
-				Data: []chart.DataPoint{
-					chart.XYPoint(1, 1200), chart.XYPoint(2, 1350),
-					chart.XYPoint(3, 900), chart.XYPoint(4, 1800),
-					chart.XYPoint(5, 2100), chart.XYPoint(6, 1600),
-					chart.XYPoint(7, 1400),
-				},
-				Smooth:     true,
-				ShowSymbol: &showSymbols,
-			},
-		},
-	})
-	topChart.OnSelect = func(s chart.Series, i int) {
-		log.Printf("selected %s[%d]", s.Name(), i)
+	entries := galleryEntries()
+	labels := make([]string, len(entries))
+	for i, entry := range entries {
+		labels[i] = fmt.Sprintf("%02d  %-12s  %s", i+1, entry.category, entry.name)
+	}
+	nav := widgets.NewListView(widgets.NewListModel(labels))
+	nav.SetFlex(1)
+	nav.SetRowHeight(32)
+	nav.Style().Width = 306
+	nav.Style().Font.Size = 14
+	nav.Colors = widgets.RowColors{
+		Background:   qui.Color{R: 1, G: 1, B: 1, A: 1},
+		Text:         qui.Color{R: .16, G: .20, B: .25, A: 1},
+		Border:       qui.Color{R: .86, G: .89, B: .93, A: 1},
+		Selected:     qui.Color{R: .90, G: .94, B: 1, A: 1},
+		SelectedText: qui.Color{R: .12, G: .32, B: .72, A: 1},
+		Hover:        qui.Color{R: .95, G: .97, B: .99, A: 1},
+		NoStripe:     true,
 	}
 
-	// --- Bottom-left: bar chart (grouped) -------------------------------
-	barChart := chart.New(chart.Option{
-		Title:   &chart.TitleOption{Text: "Orders by Day"},
-		Legend:  &chart.LegendOption{Position: "bottom"},
-		Tooltip: &chart.TooltipOption{Trigger: "axis"},
-		XAxis: chart.AxisOption{
-			Type:         chart.AxisCategory,
-			Data:         []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"},
-			GroupPadding: 0.2,
-		},
-		YAxis: chart.AxisOption{Type: chart.AxisValue},
-		Series: []chart.SeriesOption{
-			{
-				Type: chart.SeriesBar,
-				Name: "Online",
-				Data: chart.Numbers(45, 52, 38, 61, 72, 55, 48),
-			},
-			{
-				Type: chart.SeriesBar,
-				Name: "Retail",
-				Data: chart.Numbers(22, 28, 20, 35, 40, 62, 58),
-			},
-		},
+	title := widgets.NewLabel("Native Chart Gallery")
+	title.Style().Font.Size = 28
+	title.Style().Font.Weight = qui.FontWeightBold
+	title.Style().Foreground = qui.Color{R: .12, G: .16, B: .22, A: 1}
+
+	subtitle := widgets.NewLabel("20 interactive, parity-backed examples built with chart.Option")
+	subtitle.Style().Font.Size = 14
+	subtitle.Style().Foreground = qui.Color{R: .38, G: .44, B: .52, A: 1}
+
+	heading := widgets.NewLabel("")
+	heading.Style().Font.Size = 24
+	heading.Style().Font.Weight = qui.FontWeightBold
+	heading.Style().Foreground = qui.Color{R: .12, G: .16, B: .22, A: 1}
+
+	description := widgets.NewLabel("")
+	description.Paragraph.Wrap = true
+	description.Style().Font.Size = 14
+	description.Style().Foreground = qui.Color{R: .32, G: .38, B: .46, A: 1}
+
+	features := widgets.NewLabel("")
+	features.Paragraph.Wrap = true
+	features.Style().Font.Size = 12
+	features.Style().Foreground = qui.Color{R: .08, G: .40, B: .62, A: 1}
+
+	status := widgets.NewLabel("Hover data for tooltips · wheel to zoom · drag to pan · click to select")
+	status.Style().Font.Size = 12
+	status.Style().Foreground = qui.Color{R: .45, G: .50, B: .58, A: 1}
+
+	chartHost := qui.NewContainer(qui.FlexLayout{Direction: qui.Vertical})
+	chartHost.SetFlex(1)
+	chartHost.Style().Background = qui.Color{R: 1, G: 1, B: 1, A: 1}
+	chartHost.Style().Radius = 14
+	chartHost.Style().BorderSize = 1
+	chartHost.Style().Border = qui.Color{R: .88, G: .91, B: .95, A: 1}
+	chartHost.Style().Padding = qui.Insets{Top: 8, Right: 8, Bottom: 8, Left: 8}
+
+	var current *chart.Chart
+	selectEntry := func(index int) {
+		if index < 0 || index >= len(entries) {
+			return
+		}
+		entry := entries[index]
+		heading.SetText(entry.name)
+		description.SetText(entry.description)
+		features.SetText("Try: " + entry.features)
+		current = entry.build()
+		current.SetFlex(1)
+		chartHost.SetChildren(current)
+		window.Invalidate()
+	}
+	nav.OnSelect = selectEntry
+
+	prev := widgets.NewButton("← Previous", func() {
+		index := nav.SelectedIdx - 1
+		if index < 0 {
+			index = len(entries) - 1
+		}
+		nav.Select(index)
+	})
+	next := widgets.NewButton("Next →", func() {
+		index := nav.SelectedIdx + 1
+		if index >= len(entries) {
+			index = 0
+		}
+		nav.Select(index)
+	})
+	replay := widgets.NewButton("Replay animation", func() {
+		if current != nil {
+			current.RestartAnimation()
+		}
+	})
+	reset := widgets.NewButton("Reset axes", func() {
+		if current != nil {
+			current.ResetAxes()
+		}
 	})
 
-	// --- Bottom-center: scatter ----------------------------------------
-	scatterChart := chart.New(chart.Option{
-		Title: &chart.TitleOption{Text: "Latency vs Throughput"},
-		XAxis: chart.AxisOption{Type: chart.AxisValue},
-		YAxis: chart.AxisOption{Type: chart.AxisValue},
-		Series: []chart.SeriesOption{{
-			Type: chart.SeriesScatter,
-			Name: "req/s",
-			Data: scatterData(),
-		}},
-	})
-
-	// --- Bottom-right: pie ---------------------------------------------
-	pieChart := chart.New(chart.Option{
-		Title: &chart.TitleOption{Text: "Channel Split"},
-		Series: []chart.SeriesOption{{
-			Type: chart.SeriesPie,
-			Name: "channels",
-			Data: []chart.DataPoint{
-				chart.NamedPoint("Mobile", 55),
-				chart.NamedPoint("Web", 30),
-				chart.NamedPoint("API", 10),
-				chart.NamedPoint("Kiosk", 5),
-			},
-		}},
-	})
-
-	// Layout: top row holds the combo chart; bottom row is the three
-	// smaller charts side-by-side.
-	topChart.SetFlex(1)
-	barChart.SetFlex(1)
-	scatterChart.SetFlex(1)
-	pieChart.SetFlex(1)
-
-	bottomRow := qui.NewContainer(qui.FlexLayout{Direction: qui.Horizontal, Gap: 12},
-		barChart, scatterChart, pieChart,
+	actions := qui.NewContainer(qui.FlexLayout{Direction: qui.Horizontal, Gap: 8},
+		prev, next, replay, reset,
 	)
-	bottomRow.SetFlex(1)
 
-	root := qui.NewContainer(qui.FlexLayout{Direction: qui.Vertical, Gap: 12},
-		topChart, bottomRow,
+	navTitle := widgets.NewLabel("DEMOS")
+	navTitle.Style().Font.Size = 12
+	navTitle.Style().Font.Weight = qui.FontWeightBold
+	navTitle.Style().Foreground = qui.Color{R: .42, G: .48, B: .56, A: 1}
+
+	sidebar := qui.NewContainer(qui.FlexLayout{Direction: qui.Vertical, Gap: 10}, navTitle, nav)
+	sidebar.Style().Width = 306
+	sidebar.SetFlex(0)
+
+	right := qui.NewContainer(qui.FlexLayout{Direction: qui.Vertical, Gap: 9},
+		heading, description, features, chartHost, status, actions,
 	)
-	root.Style().Padding = qui.Insets{Top: 12, Right: 12, Bottom: 12, Left: 12}
-	root.Style().Background = qui.Color{R: 0.95, G: 0.95, B: 0.97, A: 1}
+	right.SetFlex(1)
+
+	content := qui.NewContainer(qui.FlexLayout{Direction: qui.Horizontal, Gap: 18}, sidebar, right)
+
+	root := qui.NewContainer(qui.FlexLayout{Direction: qui.Vertical, Gap: 14}, title, subtitle, content)
+	root.SetFlex(1)
+	root.Style().Background = qui.Color{R: .955, G: .968, B: .984, A: 1}
+	root.Style().Padding = qui.Insets{Top: 20, Right: 20, Bottom: 20, Left: 20}
 
 	window.SetRoot(root)
+	nav.Select(0)
+	agent.BindEnv(window)
 	app.Run()
-}
-
-// scatterData returns 40 synthetic (latency, rps) pairs. Kept deterministic
-// so screenshots are reproducible across runs.
-func scatterData() []chart.DataPoint {
-	pts := make([]chart.DataPoint, 0, 40)
-	for i := 0; i < 40; i++ {
-		x := float64(i) * 3.5
-		// Two overlapping clusters.
-		y := float64(80) + float64(i%8)*7 + float64((i*17)%13)
-		pts = append(pts, chart.XYPoint(x, y))
-	}
-	return pts
 }

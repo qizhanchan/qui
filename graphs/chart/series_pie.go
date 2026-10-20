@@ -42,6 +42,7 @@ type PieSeries struct {
 	FontFamily    string
 	LabelColor    Color
 	LabelColorSet bool
+	HideOverlap   bool
 }
 
 // pieDefaultOuterRatio is the fraction of min(plot.W, plot.H)/2 the
@@ -177,6 +178,7 @@ func (s *PieSeries) drawSliceLabels(canvas Canvas, cx, cy, outer, total float32)
 		labelColor = Color{R: 0x33 / 255.0, G: 0x33 / 255.0, B: 0x33 / 255.0, A: 1}
 	}
 	angle := -float32(math.Pi) / 2
+	var placed []Rect
 	for _, slice := range s.Slices {
 		if slice.Value <= 0 || slice.Hidden {
 			continue
@@ -196,8 +198,6 @@ func (s *PieSeries) drawSliceLabels(canvas Canvas, cx, cy, outer, total float32)
 			dir = -1
 		}
 		end := Point{X: elbow.X + 30*dir, Y: elbow.Y}
-		canvas.DrawLine(innerPoint, elbow, color, 1)
-		canvas.DrawLine(elbow, end, color, 1)
 		labelW, _ := TextMetrics(slice.Label, font)
 		if labelW <= 0 {
 			labelW = float32(len(slice.Label)) * font.Size * 0.55
@@ -206,12 +206,27 @@ func (s *PieSeries) drawSliceLabels(canvas Canvas, cx, cy, outer, total float32)
 		if dir < 0 {
 			labelX = end.X - 4 - labelW
 		}
-		canvas.DrawText(slice.Label,
-			Rect{X: labelX, Y: end.Y - font.Size/2 - 2, W: labelW, H: font.Size + 2},
-			labelColor, font,
-		)
+		labelRect := Rect{X: labelX, Y: end.Y - font.Size/2 - 2, W: labelW, H: font.Size + 2}
+		if s.HideOverlap && labelOverlapsAny(labelRect, placed) {
+			angle += sweep
+			continue
+		}
+		canvas.DrawLine(innerPoint, elbow, color, 1)
+		canvas.DrawLine(elbow, end, color, 1)
+		canvas.DrawText(slice.Label, labelRect, labelColor, font)
+		placed = append(placed, labelRect)
 		angle += sweep
 	}
+}
+
+func labelOverlapsAny(rect Rect, placed []Rect) bool {
+	padded := Rect{X: rect.X - 2, Y: rect.Y - 1, W: rect.W + 4, H: rect.H + 2}
+	for _, other := range placed {
+		if padded.Intersects(other) {
+			return true
+		}
+	}
+	return false
 }
 
 // HitTest returns the index of the slice whose wedge contains the

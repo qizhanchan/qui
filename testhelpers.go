@@ -249,6 +249,18 @@ func (r *RecordingCanvas) DrawLine(p1, p2 Point, _ Color, width float32) {
 		minY, maxY = maxY, minY
 	}
 	bbox := top.matrix.TransformRect(Rect{X: minX, Y: minY, W: maxX - minX, H: maxY - minY})
+	// A perfectly vertical or horizontal line has a zero-width or zero-height
+	// bounding box, which Rect.Intersect treats as empty. Grow the bbox by the
+	// stroke footprint so axis lines and crosshairs are recorded like any
+	// other visible draw call.
+	halfStroke := width * .5
+	if halfStroke < .5 {
+		halfStroke = .5
+	}
+	bbox.X -= halfStroke
+	bbox.Y -= halfStroke
+	bbox.W += halfStroke * 2
+	bbox.H += halfStroke * 2
 	if !bbox.Intersects(top.clip) {
 		return
 	}

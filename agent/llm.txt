@@ -69,7 +69,7 @@ Standard roles: button, textbox, textarea, label, checkbox, radio,
 slider, spinner, combobox, listbox, listitem, tree, treeitem,
 table, row, cell, tabs, tab, scrollview, split, menu, menuitem,
 dialog, popup, tooltip, frame, colorpicker, viewport3d, video,
-webview, chart, container.
+webview, chart, diagram, node, edge, container.
 
 ------------------------------------------------------------------
 OBSERVING — what the app looks like

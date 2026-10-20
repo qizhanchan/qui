@@ -1,0 +1,31 @@
+{
+  "width": 900,
+  "height": 460,
+  "option": {
+    "backgroundColor": "#ffffff",
+    "textStyle": {"fontFamily": "Arial"},
+    "color": ["#5470c6", "#91cc75"],
+    "title": {"text": "Dataset", "subtext": "dimensions + encode", "left": 10, "top": 10},
+    "grid": {"left": 70, "right": 30, "top": 70, "bottom": 70},
+    "legend": {"bottom": 10},
+    "tooltip": {"trigger": "axis"},
+    "xAxis": {"type": "category"},
+    "yAxis": {"type": "value"},
+    "dataset": {
+      "dimensions": ["day", "online", "retail"],
+      "source": [
+        ["Mon", 45, 22],
+        ["Tue", 52, 28],
+        ["Wed", 38, 20],
+        ["Thu", 61, 35],
+        ["Fri", 72, 40],
+        ["Sat", 55, 62],
+        ["Sun", 48, 58]
+      ]
+    },
+    "series": [
+      {"type": "line", "name": "Online", "encode": {"x": "day", "y": "online"}, "smooth": true},
+      {"type": "bar", "name": "Retail", "encode": {"x": "day", "y": "retail"}}
+    ]
+  }
+}

@@ -3,6 +3,8 @@ package chart
 import (
 	"math"
 	"testing"
+
+	"github.com/qizhanchan/qui"
 )
 
 func TestValueAxisTicksNiceNumbers(t *testing.T) {
@@ -65,5 +67,32 @@ func TestValueAxisCustomFormatUsed(t *testing.T) {
 	ticks := a.TickPositions()
 	if len(ticks) == 0 || ticks[0].Label != "X" {
 		t.Errorf("custom format not applied, got ticks=%+v", ticks)
+	}
+}
+
+func TestDefaultValueAxisSplitMatchesEChartsPositiveAndMixedSign(t *testing.T) {
+	positive := New(Option{
+		Animation: boolPointer(false),
+		YAxis:     AxisOption{Type: AxisValue},
+		Series:    []SeriesOption{{Type: SeriesBar, Data: Numbers(20, 32, 18, 44, 30, 38)}},
+	})
+	positive.Layout(qui.Rect{W: 500, H: 300})
+	lo, hi := positive.YAxis.Range()
+	if lo != 0 || hi != 50 {
+		t.Fatalf("positive default range = %v..%v, want 0..50", lo, hi)
+	}
+
+	mixed := New(Option{
+		Animation: boolPointer(false),
+		YAxis:     AxisOption{Type: AxisValue},
+		Series: []SeriesOption{
+			{Type: SeriesBar, Data: Numbers(20, 32, 18, 44, 30, 38)},
+			{Type: SeriesBar, Data: Numbers(-12, -18, -10, -24, -16, -20)},
+		},
+	})
+	mixed.Layout(qui.Rect{W: 500, H: 300})
+	lo, hi = mixed.YAxis.Range()
+	if lo != -30 || hi != 50 {
+		t.Fatalf("mixed-sign default range = %v..%v, want -30..50", lo, hi)
 	}
 }

@@ -139,7 +139,7 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 | Package | Highlights |
 |---|---|
 | `anim` | `Tween[T]`, `Spring`, `Timeline`; easing catalog; satisfies `qui.Animator` |
-| `graphs` / `graphs/chart` | Stable scale/data primitives plus the native declarative chart layer: ECharts-shaped Go `Option`; cartesian, radial, hierarchical, network and flow charts; value/category axes, legend, tooltip, visual-map colors, grid gutters, pan/zoom and theme palettes |
+| `graphs` | Stable scale/data primitives plus two native solutions: `graphs/chart` (ECharts-shaped declarative charting) and `graphs/diagram` (draw.io-class pages, layers, groups, shapes, port routing, interactive editing, undo/redo, AX, JSON/draw.io XML and PNG/SVG/PDF export) |
 | `svg` | SVG 1.1 subset: parse/build/rasterize (with tint)/serialize; `Document` satisfies `qui.VectorSource` |
 | `scene3d` | Scene graph (nodes, mesh, material, lights, camera), `Viewport` FBO widget, orbit controls, picking, `Vec3Field` |
 | `media` | `AudioPlayer` (service) and `VideoView` (widget) without ffmpeg; AVFoundation backend on macOS. `FrameView` shows frames pushed from any goroutine — `PushCVPixelBuffer` (zero-copy IOSurface → CVOpenGLTextureCache, macOS) or `PushRGBA` — latest-wins with no idle cost, fit modes, `MapToFrame` for input, `Stats` / `OnPresent` for latency, raw keyboard |

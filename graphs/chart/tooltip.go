@@ -57,15 +57,24 @@ func DefaultAxisTooltipText(c *Chart, index int) string {
 		return ""
 	}
 	label := ""
-	if ca, ok := c.XAxis.(*CategoryAxis); ok && index < len(ca.Categories) {
+	_, xAxis, _ := c.seriesAxesAt(c.hoverSeries)
+	if xAxis == nil {
+		xAxis = c.XAxis
+	}
+	if ca, ok := xAxis.(*CategoryAxis); ok && index < len(ca.Categories) {
 		label = ca.Categories[index]
 	}
 	lines := make([]string, 0, len(c.Series)+1)
 	if label != "" {
 		lines = append(lines, label)
 	}
-	for _, series := range c.Series {
+	hoverRef := c.seriesRefAt(c.hoverSeries)
+	for i, series := range c.Series {
 		if !series.Visible() {
+			continue
+		}
+		ref := c.seriesRefAt(i)
+		if c.hoverSeries >= 0 && (ref.xAxis != hoverRef.xAxis || ref.yAxis != hoverRef.yAxis) {
 			continue
 		}
 		if value, ok := seriesValueAt(series, index); ok {

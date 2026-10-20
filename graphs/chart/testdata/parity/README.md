@@ -12,7 +12,15 @@ go run ./graphs/chart/cmd/chartcompare \
   -out /tmp/qui-chart-parity
 ```
 
-The command renders:
+Run the complete suite and write a machine-readable report:
+
+```bash
+go run ./graphs/chart/cmd/chartcompare \
+  -all \
+  -out /tmp/qui-chart-parity > /tmp/qui-chart-parity/report.json
+```
+
+For each case the command renders:
 
 - `native.png` through `qui.NewImageCanvas`
 - `browser.png` through ECharts in headless Chrome
@@ -26,16 +34,18 @@ Current local baseline (macOS, Arial loaded as the shared font, ECharts
 
 | Case | RMSE |
 |---|---:|
-| `mixed-bar-line.json` | 0.0354 |
-| `line-smooth.json` | 0.0315 |
-| `stacked-bar.json` | 0.0328 |
-| `negative-bar.json` | 0.0378 |
-| `scatter.json` | 0.0387 |
+| `mixed-bar-line.json` | 0.0376 |
+| `line-smooth.json` | 0.0343 |
+| `stacked-bar.json` | 0.0312 |
+| `negative-bar.json` | 0.0399 |
+| `multi-grid-axis.json` | 0.0353 |
+| `scatter.json` | 0.0372 |
 | `pie.json` | 0.0355 |
 | `candlestick.json` | 0.0347 |
+| `dataset-line.json` | 0.0377 |
 | `radar.json` | 0.0345 |
 | `funnel.json` | 0.0159 |
-| `gauge.json` | 0.0393 |
+| `gauge.json` | 0.0390 |
 | `heatmap.json` | 0.0325 |
 | `boxplot.json` | 0.0314 |
 | `graph.json` | 0.0157 |

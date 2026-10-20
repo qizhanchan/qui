@@ -25,6 +25,9 @@ type ValueAxis struct {
 	PinMin, PinMax bool
 	// Scale disables ECharts' default inclusion of zero for value axes.
 	Scale bool
+	// autoTickCount distinguishes the ECharts default from an explicit
+	// SplitNumber so mixed-sign ranges can use the denser default strategy.
+	autoTickCount bool
 }
 
 // compile-time check

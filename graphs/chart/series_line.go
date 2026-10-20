@@ -23,7 +23,9 @@ type LineSeries struct {
 	// SmoothSteps controls the samples per segment when Smooth is true;
 	// 0 or negative falls back to 16, which is smooth enough for a
 	// few-hundred-point series without pathological overdraw.
-	SmoothSteps int
+	SmoothSteps    int
+	Sampling       string
+	LargeThreshold int
 }
 
 // NewLineSeries returns a series with sensible defaults.
@@ -45,7 +47,24 @@ func (s *LineSeries) Draw(canvas Canvas, plot Rect, x, y Axis, hot HotSpot) {
 	if len(s.Points) == 0 {
 		return
 	}
-	pts := s.projectPoints(plot, x, y)
+	points := s.Points
+	mode := s.Sampling
+	if mode == "" && s.LargeThreshold > 0 && len(points) > s.LargeThreshold {
+		mode = "lttb"
+	}
+	if mode != "" {
+		threshold := s.LargeThreshold
+		if threshold <= 0 {
+			threshold = 2000
+		}
+		if len(points) > threshold {
+			points = samplePoints(points, samplingTarget(plot), mode)
+		}
+	}
+	if len(points) != len(s.Points) {
+		hot = NoHotSpot
+	}
+	pts := projectPoint2Ds(points, plot, x, y)
 	width := s.Stroke
 	if width <= 0 {
 		width = 2
@@ -69,7 +88,9 @@ func (s *LineSeries) Draw(canvas Canvas, plot Rect, x, y Axis, hot HotSpot) {
 			if hot.PointIdx == i && hot.SeriesIdx >= 0 {
 				r = size + 3 // halo for hover highlight
 			}
-			canvas.FillRoundedRect(Rect{X: p.X - r/2, Y: p.Y - r/2, W: r, H: r}, r/2, s.color)
+			rect := Rect{X: p.X - r/2, Y: p.Y - r/2, W: r, H: r}
+			canvas.FillRoundedRect(rect, r/2, Color{R: 1, G: 1, B: 1, A: 1})
+			canvas.StrokeRoundedRect(rect, r/2, s.color, 1.5)
 		}
 	}
 }
@@ -122,8 +143,12 @@ func (s *LineSeries) LegendMarker(canvas Canvas, swatch Rect) {
 // Points outside the visible range are still projected (they'll be
 // clipped by whatever ClipCanvas wraps the plot area).
 func (s *LineSeries) projectPoints(plot Rect, x, y Axis) []Point {
-	out := make([]Point, len(s.Points))
-	for i, p := range s.Points {
+	return projectPoint2Ds(s.Points, plot, x, y)
+}
+
+func projectPoint2Ds(points []Point2D, plot Rect, x, y Axis) []Point {
+	out := make([]Point, len(points))
+	for i, p := range points {
 		out[i] = Point{
 			X: plot.X + x.ValueToPixel(p.X, plot.W),
 			Y: plot.Y + y.ValueToPixel(p.Y, plot.H),

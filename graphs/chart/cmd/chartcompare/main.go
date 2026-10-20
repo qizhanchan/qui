@@ -1,6 +1,7 @@
-// Command chartcompare renders one ECharts option twice — once with the
-// native qui chart renderer and once with ECharts in an offscreen Chrome
-// canvas — then compares the PNGs with ImageMagick compare.
+// Command chartcompare renders ECharts options twice — once with the native
+// qui chart renderer and once with ECharts in an offscreen Chrome canvas —
+// then compares the PNGs with ImageMagick compare. It accepts one -case or
+// runs every JSON fixture in -dir with -all.
 package main
 
 import (
@@ -15,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -40,11 +42,21 @@ type result struct {
 	MaxRMSE       float64 `json:"maxRmse"`
 	Pass          bool    `json:"pass"`
 	CompareStatus int     `json:"compareStatus"`
+	Error         string  `json:"error,omitempty"`
+}
+
+type compareConfig struct {
+	echartsPath string
+	chromePath  string
+	comparePath string
+	maxRMSE     float64
 }
 
 func main() {
 	var (
 		casePath    = flag.String("case", "", "parity case JSON")
+		allCases    = flag.Bool("all", false, "run every JSON fixture in -dir")
+		caseDir     = flag.String("dir", "graphs/chart/testdata/parity", "directory scanned by -all")
 		outDir      = flag.String("out", "", "output directory (default: temp)")
 		echartsPath = flag.String("echarts", "/opt/js_work/echarts/dist/echarts.min.js", "ECharts browser bundle")
 		chromePath  = flag.String("chrome", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "Chrome executable")
@@ -55,55 +67,114 @@ func main() {
 		keepTemp    = flag.Bool("keep", false, "keep generated HTML when -out is not set")
 	)
 	flag.Parse()
-	if *casePath == "" {
-		fmt.Fprintln(os.Stderr, "chartcompare: -case is required")
+	if (*casePath == "") == !*allCases {
+		fmt.Fprintln(os.Stderr, "chartcompare: specify exactly one of -case or -all")
 		os.Exit(2)
 	}
-
-	c, err := loadCase(*casePath)
-	if err != nil {
-		fatalf("load case: %v", err)
+	cases := []string{*casePath}
+	if *allCases {
+		var err error
+		cases, err = parityCases(*caseDir)
+		if err != nil {
+			fatalf("scan cases: %v", err)
+		}
 	}
 	if err := loadParityFonts(*fontRegular, *fontBold); err != nil {
 		fatalf("load fonts: %v", err)
 	}
-	dir := *outDir
-	if dir == "" {
-		dir, err = os.MkdirTemp("", "qui-chart-parity-*")
+	rootDir := *outDir
+	if rootDir == "" {
+		var err error
+		rootDir, err = os.MkdirTemp("", "qui-chart-parity-*")
 		if err != nil {
 			fatalf("create temp dir: %v", err)
 		}
 		if !*keepTemp {
-			defer os.RemoveAll(dir)
+			defer os.RemoveAll(rootDir)
 		}
-	} else if err := os.MkdirAll(dir, 0o755); err != nil {
+	} else if err := os.MkdirAll(rootDir, 0o755); err != nil {
 		fatalf("create output dir: %v", err)
 	}
 
+	cfg := compareConfig{
+		echartsPath: *echartsPath,
+		chromePath:  *chromePath,
+		comparePath: *comparePath,
+		maxRMSE:     *maxRMSE,
+	}
+	results := make([]result, 0, len(cases))
+	failed := false
+	for _, path := range cases {
+		dir := rootDir
+		if *allCases {
+			dir = filepath.Join(rootDir, strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			fatalf("create case output dir: %v", err)
+		}
+		res, err := runCase(path, dir, cfg)
+		if err != nil {
+			res = result{Case: path, MaxRMSE: cfg.maxRMSE, Error: err.Error()}
+		}
+		results = append(results, res)
+		if !res.Pass {
+			failed = true
+		}
+	}
+
+	var encoded []byte
+	if *allCases {
+		encoded, _ = json.MarshalIndent(results, "", "  ")
+	} else {
+		encoded, _ = json.MarshalIndent(results[0], "", "  ")
+	}
+	fmt.Println(string(encoded))
+	if failed {
+		os.Exit(1)
+	}
+}
+
+func parityCases(dir string) ([]string, error) {
+	cases, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(cases)
+	if len(cases) == 0 {
+		return nil, fmt.Errorf("no JSON fixtures in %s", dir)
+	}
+	return cases, nil
+}
+
+func runCase(casePath, dir string, cfg compareConfig) (result, error) {
+	c, err := loadCase(casePath)
+	if err != nil {
+		return result{}, fmt.Errorf("load case: %w", err)
+	}
 	nativePath := filepath.Join(dir, "native.png")
 	browserPath := filepath.Join(dir, "browser.png")
 	diffPath := filepath.Join(dir, "diff.png")
 	if err := renderNative(c, nativePath); err != nil {
-		fatalf("render native: %v", err)
+		return result{}, fmt.Errorf("render native: %w", err)
 	}
 	htmlPath := filepath.Join(dir, "browser.html")
-	if err := writeBrowserHTML(c, *echartsPath, htmlPath); err != nil {
-		fatalf("write browser HTML: %v", err)
+	if err := writeBrowserHTML(c, cfg.echartsPath, htmlPath); err != nil {
+		return result{}, fmt.Errorf("write browser HTML: %w", err)
 	}
-	if err := renderBrowser(*chromePath, htmlPath, browserPath, c.Width, c.Height, dir); err != nil {
-		fatalf("render browser: %v", err)
+	if err := renderBrowser(cfg.chromePath, htmlPath, browserPath, c.Width, c.Height, dir); err != nil {
+		return result{}, fmt.Errorf("render browser: %w", err)
 	}
 
-	metric, status, err := compareImages(*comparePath, browserPath, nativePath, diffPath)
+	metric, status, err := compareImages(cfg.comparePath, browserPath, nativePath, diffPath)
 	if err != nil {
-		fatalf("compare: %v", err)
+		return result{}, fmt.Errorf("compare: %w", err)
 	}
 	rmse, absolute, err := parseRMSE(metric)
 	if err != nil {
-		fatalf("parse compare metric %q: %v", metric, err)
+		return result{}, fmt.Errorf("parse compare metric %q: %w", metric, err)
 	}
-	res := result{
-		Case:          *casePath,
+	return result{
+		Case:          casePath,
 		Width:         c.Width,
 		Height:        c.Height,
 		Native:        nativePath,
@@ -111,15 +182,10 @@ func main() {
 		Diff:          diffPath,
 		RMSE:          rmse,
 		RMSEAbsolute:  absolute,
-		MaxRMSE:       *maxRMSE,
-		Pass:          *maxRMSE <= 0 || rmse <= *maxRMSE,
+		MaxRMSE:       cfg.maxRMSE,
+		Pass:          cfg.maxRMSE <= 0 || rmse <= cfg.maxRMSE,
 		CompareStatus: status,
-	}
-	encoded, _ := json.MarshalIndent(res, "", "  ")
-	fmt.Println(string(encoded))
-	if !res.Pass {
-		os.Exit(1)
-	}
+	}, nil
 }
 
 func loadParityFonts(regular, bold string) error {
@@ -166,6 +232,10 @@ func renderNative(c parityCase, path string) error {
 	if err := json.Unmarshal(c.Option, &opt); err != nil {
 		return err
 	}
+	// Native screenshots are deterministic final states, matching the
+	// browser side where writeBrowserHTML forces animation off.
+	animation := false
+	opt.Animation = &animation
 	w := chart.New(opt)
 	w.Layout(qui.Rect{X: 0, Y: 0, W: float32(c.Width), H: float32(c.Height)})
 	w.Draw(canvas)

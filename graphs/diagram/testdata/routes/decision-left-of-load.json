@@ -1,0 +1,22 @@
+{
+  "pages": [
+    {
+      "id": "page-1",
+      "name": "Page-1",
+      "width": 1000,
+      "height": 640,
+      "layers": [{"id": "layer-1", "name": "Layer-1", "default": true}],
+      "cells": [
+        {"id": "start", "type": "vertex", "layer": "layer-1", "label": "Start", "geometry": {"x": 420, "y": 40, "w": 160, "h": 60}, "style": {"shape": "ellipse"}},
+        {"id": "load", "type": "vertex", "layer": "layer-1", "label": "Load input", "geometry": {"x": 395, "y": 170, "w": 210, "h": 70}, "style": {"shape": "rect"}},
+        {"id": "valid", "type": "vertex", "layer": "layer-1", "label": "Valid?", "geometry": {"x": 150, "y": 95, "w": 160, "h": 90}, "style": {"shape": "diamond"}},
+        {"id": "ok", "type": "vertex", "layer": "layer-1", "label": "Process", "geometry": {"x": 190, "y": 470, "w": 180, "h": 70}, "style": {"shape": "roundedRect"}},
+        {"id": "err", "type": "vertex", "layer": "layer-1", "label": "Show error", "geometry": {"x": 630, "y": 470, "w": 180, "h": 70}, "style": {"shape": "roundedRect"}},
+        {"id": "e1", "type": "edge", "layer": "layer-1", "style": {"route": "orthogonal", "endArrow": "triangle"}, "source": {"cell": "start", "port": "auto"}, "target": {"cell": "load", "port": "auto"}},
+        {"id": "e2", "type": "edge", "layer": "layer-1", "style": {"route": "orthogonal", "endArrow": "triangle"}, "source": {"cell": "load", "port": "auto"}, "target": {"cell": "valid", "port": "auto"}},
+        {"id": "e3", "type": "edge", "layer": "layer-1", "label": "yes", "style": {"route": "roundedOrthogonal", "endArrow": "triangle"}, "source": {"cell": "valid", "port": "auto"}, "target": {"cell": "ok", "port": "auto"}},
+        {"id": "e4", "type": "edge", "layer": "layer-1", "label": "no", "style": {"route": "roundedOrthogonal", "endArrow": "triangle"}, "source": {"cell": "valid", "port": "auto"}, "target": {"cell": "err", "port": "auto"}}
+      ]
+    }
+  ]
+}

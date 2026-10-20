@@ -21,6 +21,9 @@ type interaction struct {
 	// lastClickAt lets us detect double-click for "reset axes".
 	lastClickAt    time.Time
 	clickThreshold time.Duration
+
+	sliderDragging bool
+	sliderAnchorX  float32
 }
 
 func newInteraction(c *Chart) *interaction {
@@ -36,6 +39,11 @@ func (i *interaction) handleMouse(e MouseEvent) bool {
 	case EventMouseDown:
 		if e.Button != MouseButtonLeft {
 			return false
+		}
+		if c.dataZoomSliderHit(p) {
+			i.sliderDragging = true
+			i.sliderAnchorX = p.X
+			return true
 		}
 		if !c.plotRect.Contains(p) {
 			return false
@@ -66,6 +74,10 @@ func (i *interaction) handleMouse(e MouseEvent) bool {
 		}
 		return false
 	case EventMouseMove:
+		if i.sliderDragging {
+			c.setDataZoomFromSliderPixels(i.sliderAnchorX, p.X)
+			return true
+		}
 		if i.dragging {
 			i.pan(p)
 			return true
@@ -73,6 +85,11 @@ func (i *interaction) handleMouse(e MouseEvent) bool {
 		c.HoverAt(p)
 		return false
 	case EventMouseUp:
+		if i.sliderDragging {
+			c.setDataZoomFromSliderPixels(i.sliderAnchorX, p.X)
+			i.sliderDragging = false
+			return true
+		}
 		wasDrag := i.dragging
 		i.dragging = false
 		if wasDrag {

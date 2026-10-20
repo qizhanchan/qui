@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/qizhanchan/qui"
 )
@@ -220,6 +221,14 @@ type TooltipOption struct {
 	AxisFormatter func(index int, entries []TooltipEntry) string `json:"-"`
 }
 
+// AxisPointerOption controls the crosshair shown for axis-trigger tooltips.
+// Type is "line" (default) or "none".
+type AxisPointerOption struct {
+	Show  *bool    `json:"show,omitempty"`
+	Type  string   `json:"type,omitempty"`
+	Color CSSColor `json:"color,omitempty"`
+}
+
 // TextStyleOption carries chart-wide typography inherited by labels.
 type TextStyleOption struct {
 	FontFamily string   `json:"fontFamily,omitempty"`
@@ -269,6 +278,11 @@ type LabelOption struct {
 	FontSize float64  `json:"fontSize,omitempty"`
 }
 
+// LabelLayoutOption controls collision handling for self-drawn labels.
+type LabelLayoutOption struct {
+	HideOverlap *bool `json:"hideOverlap,omitempty"`
+}
+
 // GraphEndpoint accepts either a node name or a numeric node index.
 type GraphEndpoint string
 
@@ -293,39 +307,49 @@ type GraphLinkOption struct {
 
 // SeriesOption is one declarative data layer.
 type SeriesOption struct {
-	Type         SeriesType         `json:"type,omitempty"`
-	Name         string             `json:"name,omitempty"`
-	Data         []DataPoint        `json:"data,omitempty"`
-	Color        CSSColor           `json:"color,omitempty"`
-	Stack        string             `json:"stack,omitempty"`
-	Smooth       bool               `json:"smooth,omitempty"`
-	ShowSymbol   *bool              `json:"showSymbol,omitempty"`
-	SymbolSize   float64            `json:"symbolSize,omitempty"`
-	SymbolHeight float64            `json:"-"`
-	Symbol       string             `json:"symbol,omitempty"`
-	SymbolRepeat *bool              `json:"symbolRepeat,omitempty"`
-	SymbolMargin float64            `json:"symbolMargin,omitempty"`
-	SymbolClip   *bool              `json:"symbolClip,omitempty"`
-	FillOpacity  float64            `json:"fillOpacity,omitempty"`
-	BarGap       float64            `json:"barGap,omitempty"`
-	Radius       string             `json:"radius,omitempty"`
-	Opacity      *float64           `json:"opacity,omitempty"`
-	Label        *LabelOption       `json:"label,omitempty"`
-	Layout       string             `json:"layout,omitempty"`
-	Links        []GraphLinkOption  `json:"links,omitempty"`
-	Edges        []GraphLinkOption  `json:"edges,omitempty"`
-	NodeWidth    float64            `json:"nodeWidth,omitempty"`
-	NodeGap      float64            `json:"nodeGap,omitempty"`
-	Sort         string             `json:"sort,omitempty"`
-	Gap          float64            `json:"gap,omitempty"`
-	MinSize      string             `json:"minSize,omitempty"`
-	MaxSize      string             `json:"maxSize,omitempty"`
-	Min          *float64           `json:"min,omitempty"`
-	Max          *float64           `json:"max,omitempty"`
-	StartAngle   float64            `json:"startAngle,omitempty"`
-	EndAngle     float64            `json:"endAngle,omitempty"`
-	Clockwise    *bool              `json:"clockwise,omitempty"`
-	Candles      []CandlestickPoint `json:"-"`
+	Type           SeriesType         `json:"type,omitempty"`
+	Name           string             `json:"name,omitempty"`
+	Data           []DataPoint        `json:"data,omitempty"`
+	Color          CSSColor           `json:"color,omitempty"`
+	Stack          string             `json:"stack,omitempty"`
+	Smooth         bool               `json:"smooth,omitempty"`
+	ShowSymbol     *bool              `json:"showSymbol,omitempty"`
+	SymbolSize     float64            `json:"symbolSize,omitempty"`
+	SymbolHeight   float64            `json:"-"`
+	Symbol         string             `json:"symbol,omitempty"`
+	SymbolRepeat   *bool              `json:"symbolRepeat,omitempty"`
+	SymbolMargin   float64            `json:"symbolMargin,omitempty"`
+	SymbolClip     *bool              `json:"symbolClip,omitempty"`
+	FillOpacity    float64            `json:"fillOpacity,omitempty"`
+	BarGap         float64            `json:"barGap,omitempty"`
+	Radius         string             `json:"radius,omitempty"`
+	Opacity        *float64           `json:"opacity,omitempty"`
+	Label          *LabelOption       `json:"label,omitempty"`
+	LabelLayout    *LabelLayoutOption `json:"labelLayout,omitempty"`
+	Layout         string             `json:"layout,omitempty"`
+	Links          []GraphLinkOption  `json:"links,omitempty"`
+	Edges          []GraphLinkOption  `json:"edges,omitempty"`
+	NodeWidth      float64            `json:"nodeWidth,omitempty"`
+	NodeGap        float64            `json:"nodeGap,omitempty"`
+	Sort           string             `json:"sort,omitempty"`
+	Gap            float64            `json:"gap,omitempty"`
+	MinSize        string             `json:"minSize,omitempty"`
+	MaxSize        string             `json:"maxSize,omitempty"`
+	Min            *float64           `json:"min,omitempty"`
+	Max            *float64           `json:"max,omitempty"`
+	StartAngle     float64            `json:"startAngle,omitempty"`
+	EndAngle       float64            `json:"endAngle,omitempty"`
+	Clockwise      *bool              `json:"clockwise,omitempty"`
+	Sampling       string             `json:"sampling,omitempty"`
+	Large          *bool              `json:"large,omitempty"`
+	LargeThreshold int                `json:"largeThreshold,omitempty"`
+	Candles        []CandlestickPoint `json:"-"`
+	// DatasetIndex selects an Option.Dataset source when Data is empty.
+	DatasetIndex int           `json:"datasetIndex,omitempty"`
+	Encode       *EncodeOption `json:"encode,omitempty"`
+	XAxisIndex   int           `json:"xAxisIndex,omitempty"`
+	YAxisIndex   int           `json:"yAxisIndex,omitempty"`
+	GridIndex    int           `json:"gridIndex,omitempty"`
 }
 
 // UnmarshalJSON accepts both scalar and [width,height] ECharts
@@ -363,24 +387,137 @@ func (s *SeriesOption) UnmarshalJSON(data []byte) error {
 // Option is the declarative, ECharts-shaped chart description. It is a
 // native Go value: no JavaScript runtime or document object model is used.
 type Option struct {
-	Title           *TitleOption     `json:"title,omitempty"`
-	Tooltip         *TooltipOption   `json:"tooltip,omitempty"`
-	TextStyle       *TextStyleOption `json:"textStyle,omitempty"`
-	Legend          *LegendOption    `json:"legend,omitempty"`
-	Grid            *GridOption      `json:"grid,omitempty"`
-	Radar           *RadarOption     `json:"radar,omitempty"`
-	VisualMap       *VisualMapOption `json:"visualMap,omitempty"`
-	ParallelAxis    []AxisOption     `json:"parallelAxis,omitempty"`
-	SingleAxis      AxisOption       `json:"singleAxis,omitempty"`
-	XAxis           AxisOption       `json:"xAxis,omitempty"`
-	YAxis           AxisOption       `json:"yAxis,omitempty"`
-	Series          []SeriesOption   `json:"series,omitempty"`
-	Palette         []CSSColor       `json:"color,omitempty"`
-	BackgroundColor CSSColor         `json:"backgroundColor,omitempty"`
+	Title           *TitleOption       `json:"title,omitempty"`
+	Tooltip         *TooltipOption     `json:"tooltip,omitempty"`
+	AxisPointer     *AxisPointerOption `json:"axisPointer,omitempty"`
+	TextStyle       *TextStyleOption   `json:"textStyle,omitempty"`
+	Legend          *LegendOption      `json:"legend,omitempty"`
+	Grid            *GridOption        `json:"-"`
+	Grids           []GridOption       `json:"-"`
+	Radar           *RadarOption       `json:"radar,omitempty"`
+	VisualMap       *VisualMapOption   `json:"visualMap,omitempty"`
+	ParallelAxis    []AxisOption       `json:"parallelAxis,omitempty"`
+	SingleAxis      AxisOption         `json:"singleAxis,omitempty"`
+	XAxis           AxisOption         `json:"-"`
+	YAxis           AxisOption         `json:"-"`
+	XAxes           []AxisOption       `json:"-"`
+	YAxes           []AxisOption       `json:"-"`
+	Series          []SeriesOption     `json:"series,omitempty"`
+	Dataset         DatasetList        `json:"dataset,omitempty"`
+	DataZoom        []DataZoomOption   `json:"dataZoom,omitempty"`
+	Palette         []CSSColor         `json:"color,omitempty"`
+	BackgroundColor CSSColor           `json:"backgroundColor,omitempty"`
+	// Animation controls the declarative entrance/update animation. When
+	// omitted, chart.New enables it; nil on a direct SetOption also enables
+	// it for ECharts-compatible defaults. Use false for deterministic output.
+	Animation         *bool  `json:"animation,omitempty"`
+	AnimationDuration int    `json:"animationDuration,omitempty"`
+	AnimationEasing   string `json:"animationEasing,omitempty"`
 
 	EnableZoom   bool `json:"-"`
 	EnablePan    bool `json:"-"`
 	EnableSelect bool `json:"-"`
+}
+
+// UnmarshalJSON accepts ECharts' single-object and array forms for grid,
+// xAxis and yAxis while retaining the ergonomic singular Go fields.
+func (o *Option) UnmarshalJSON(data []byte) error {
+	type plain Option
+	aux := struct {
+		*plain
+		Grid  json.RawMessage `json:"grid"`
+		XAxis json.RawMessage `json:"xAxis"`
+		YAxis json.RawMessage `json:"yAxis"`
+	}{plain: (*plain)(o)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if err := parseGridJSON(aux.Grid, &o.Grid, &o.Grids); err != nil {
+		return err
+	}
+	if err := parseAxisJSON(aux.XAxis, &o.XAxis, &o.XAxes); err != nil {
+		return fmt.Errorf("xAxis: %w", err)
+	}
+	if err := parseAxisJSON(aux.YAxis, &o.YAxis, &o.YAxes); err != nil {
+		return fmt.Errorf("yAxis: %w", err)
+	}
+	return nil
+}
+
+// MarshalJSON emits the singular form for one axis/grid and the array form
+// when the plural fields are populated.
+func (o Option) MarshalJSON() ([]byte, error) {
+	type plain Option
+	wire := struct {
+		plain
+		Grid  any `json:"grid,omitempty"`
+		XAxis any `json:"xAxis,omitempty"`
+		YAxis any `json:"yAxis,omitempty"`
+	}{plain: plain(o)}
+	if len(o.Grids) > 0 {
+		wire.Grid = o.Grids
+	} else if o.Grid != nil {
+		wire.Grid = o.Grid
+	}
+	if len(o.XAxes) > 0 {
+		wire.XAxis = o.XAxes
+	} else if !axisOptionZero(o.XAxis) {
+		wire.XAxis = o.XAxis
+	}
+	if len(o.YAxes) > 0 {
+		wire.YAxis = o.YAxes
+	} else if !axisOptionZero(o.YAxis) {
+		wire.YAxis = o.YAxis
+	}
+	return json.Marshal(wire)
+}
+
+func parseAxisJSON(data json.RawMessage, singular *AxisOption, plural *[]AxisOption) error {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
+		return nil
+	}
+	if data[0] == '[' {
+		if err := json.Unmarshal(data, plural); err != nil {
+			return err
+		}
+		if len(*plural) > 0 {
+			*singular = (*plural)[0]
+		}
+		return nil
+	}
+	*plural = nil
+	return json.Unmarshal(data, singular)
+}
+
+func parseGridJSON(data json.RawMessage, singular **GridOption, plural *[]GridOption) error {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
+		return nil
+	}
+	if data[0] == '[' {
+		if err := json.Unmarshal(data, plural); err != nil {
+			return err
+		}
+		if len(*plural) > 0 {
+			one := (*plural)[0]
+			*singular = &one
+		}
+		return nil
+	}
+	*plural = nil
+	var one GridOption
+	if err := json.Unmarshal(data, &one); err != nil {
+		return err
+	}
+	*singular = &one
+	return nil
+}
+
+func axisOptionZero(option AxisOption) bool {
+	return option.Type == "" && option.Name == "" && len(option.Data) == 0 && option.Min == nil &&
+		option.Max == nil && option.Inverse == nil && option.Scale == nil && option.SplitNumber == 0 &&
+		option.GroupPadding == 0 && option.Formatter == nil
 }
 
 // New creates a chart from a declarative Option.
@@ -390,14 +527,18 @@ func New(opt Option) *Chart {
 	return c
 }
 
-// SetOption replaces the chart's declarative configuration. Existing
-// event callbacks are retained. A future merge update API can add partial
-// ECharts setOption semantics without changing this full-replacement call.
+// SetOption replaces the chart's declarative configuration. Existing event
+// callbacks are retained. Use MergeOption with an OptionPatch for partial
+// ECharts-style updates.
 func (c *Chart) SetOption(opt Option) {
 	if c == nil {
 		return
 	}
 	c.lastOption = opt
+	// Resolve dataset-backed series only for the widgets built below. The
+	// retained lastOption stays declarative so later patches mutate the source
+	// configuration rather than a frozen copy of mapped data.
+	opt = resolveDatasetOption(opt)
 	// ECharts-compatible title defaults for the declarative surface.
 	c.TitleLeft = 10
 	c.TitleTop = 10
@@ -431,11 +572,13 @@ func (c *Chart) SetOption(opt Option) {
 
 	c.ShowGrid = true
 	c.GridColor = qui.Color{R: 0xe0 / 255.0, G: 0xe6 / 255.0, B: 0xf1 / 255.0, A: 1}
-	c.fixedGutters = opt.Grid != nil
-	if opt.Grid != nil {
+	c.GridOptions = normalizedGridOptions(opt)
+	c.fixedGutters = len(c.GridOptions) > 0
+	if len(c.GridOptions) == 1 {
+		one := c.GridOptions[0]
 		c.Gutters = &PlotGutters{
-			Left: opt.Grid.Left, Right: opt.Grid.Right,
-			Top: opt.Grid.Top, Bottom: opt.Grid.Bottom,
+			Left: one.Left, Right: one.Right,
+			Top: one.Top, Bottom: one.Bottom,
 		}
 	} else {
 		c.Gutters = nil
@@ -449,6 +592,21 @@ func (c *Chart) SetOption(opt Option) {
 	c.EnableZoom = opt.EnableZoom
 	c.EnablePan = opt.EnablePan
 	c.EnableSelect = opt.EnableSelect
+	c.DataZoom = append([]DataZoomOption(nil), opt.DataZoom...)
+	c.pendingDataZoom = len(c.DataZoom) > 0
+	if c.hasInsideDataZoom() {
+		c.EnableZoom = true
+		c.EnablePan = true
+	}
+	c.Animate = boolDefault(opt.Animation, true)
+	c.AnimationDuration = 1000 * time.Millisecond
+	if opt.AnimationDuration > 0 {
+		c.AnimationDuration = time.Duration(opt.AnimationDuration) * time.Millisecond
+	}
+	c.AnimationEasing = opt.AnimationEasing
+	if c.AnimationEasing == "" {
+		c.AnimationEasing = "cubicOut"
+	}
 
 	if opt.Tooltip == nil {
 		c.ShowTooltip = true
@@ -476,29 +634,38 @@ func (c *Chart) SetOption(opt Option) {
 			hasCategorySeries = true
 		}
 	}
-	xAxis := opt.XAxis
-	if xAxis.Type == "" {
-		if hasCategorySeries || len(xAxis.Data) > 0 {
-			xAxis.Type = AxisCategory
-		} else {
-			xAxis.Type = AxisValue
-		}
-	}
-	if xAxis.Type == AxisCategory && len(xAxis.Data) == 0 {
-		xAxis.Data = deriveCategories(opt.Series)
-	}
-	c.XAxis = axisFromOption(xAxis, false)
-	yAxis := opt.YAxis
-	if yAxis.Type == "" {
-		yAxis.Type = AxisValue
-		for _, series := range opt.Series {
-			if series.effectiveType() == SeriesHeatmap {
-				yAxis.Type = AxisCategory
-				break
+	xAxisOptions := normalizedXAxisOptions(opt)
+	c.XAxes = make([]Axis, len(xAxisOptions))
+	for i, xAxis := range xAxisOptions {
+		if xAxis.Type == "" {
+			if hasCategorySeries || len(xAxis.Data) > 0 {
+				xAxis.Type = AxisCategory
+			} else {
+				xAxis.Type = AxisValue
 			}
 		}
+		if xAxis.Type == AxisCategory && len(xAxis.Data) == 0 {
+			xAxis.Data = deriveCategories(opt.Series)
+		}
+		c.XAxes[i] = axisFromOption(xAxis, false)
 	}
-	c.YAxis = axisFromOption(yAxis, true)
+	c.XAxis = c.XAxes[0]
+
+	yAxisOptions := normalizedYAxisOptions(opt)
+	c.YAxes = make([]Axis, len(yAxisOptions))
+	for i, yAxis := range yAxisOptions {
+		if yAxis.Type == "" {
+			yAxis.Type = AxisValue
+			for _, series := range opt.Series {
+				if series.effectiveType() == SeriesHeatmap {
+					yAxis.Type = AxisCategory
+					break
+				}
+			}
+		}
+		c.YAxes[i] = axisFromOption(yAxis, true)
+	}
+	c.YAxis = c.YAxes[0]
 
 	c.SetLegend(nil)
 	if opt.Legend != nil && boolDefault(opt.Legend.Show, true) {
@@ -508,6 +675,7 @@ func (c *Chart) SetOption(opt Option) {
 	// Replace series only after axes and palette are configured so
 	// color assignment and layout observe the new option immediately.
 	c.Series = nil
+	c.seriesAxes = nil
 	c.hoverSeries = -1
 	c.hoverIndex = -1
 	c.tooltip = tooltipState{}
@@ -522,10 +690,22 @@ func (c *Chart) SetOption(opt Option) {
 				funnel.FontFamily = c.FontFamily
 			}
 			c.AddSeries(series)
+			ref := seriesAxisRefFor(seriesOpt, len(c.XAxes), len(c.YAxes), maxInt(1, len(c.GridOptions)))
+			if len(c.seriesAxes) == len(c.Series) {
+				c.seriesAxes[len(c.seriesAxes)-1] = ref
+			} else {
+				c.seriesAxes = append(c.seriesAxes, ref)
+			}
 		}
+	}
+	if c.Animate && len(c.Series) > 0 {
+		c.restartAnimation()
 	}
 	c.TooltipTrigger = "item"
 	c.AxisTooltipBuilder = nil
+	c.ShowAxisPointer = false
+	c.AxisPointerType = "line"
+	c.AxisPointerColor = qui.Color{}
 	if opt.Tooltip != nil {
 		if opt.Tooltip.Trigger != "" {
 			c.TooltipTrigger = opt.Tooltip.Trigger
@@ -566,6 +746,41 @@ func (c *Chart) SetOption(opt Option) {
 	} else {
 		c.TooltipBuilder = nil
 	}
+	if opt.AxisPointer != nil {
+		c.ShowAxisPointer = boolDefault(opt.AxisPointer.Show, true)
+		if opt.AxisPointer.Type != "" {
+			c.AxisPointerType = opt.AxisPointer.Type
+		}
+		if color, ok := ParseColor(string(opt.AxisPointer.Color)); ok {
+			c.AxisPointerColor = color
+		}
+	} else if c.TooltipTrigger == "axis" {
+		c.ShowAxisPointer = true
+	}
+	if c.AxisPointerType == "none" {
+		c.ShowAxisPointer = false
+	}
+
+	c.ShowVisualMap = false
+	c.VisualMapMin = 0
+	c.VisualMapMax = 0
+	c.VisualMapColors = nil
+	if opt.VisualMap != nil && boolDefault(opt.VisualMap.Show, true) {
+		c.ShowVisualMap = true
+		if opt.VisualMap.Min != nil {
+			c.VisualMapMin = float32(*opt.VisualMap.Min)
+		}
+		if opt.VisualMap.Max != nil {
+			c.VisualMapMax = float32(*opt.VisualMap.Max)
+		}
+		if opt.VisualMap.InRange != nil {
+			for _, raw := range opt.VisualMap.InRange.Color {
+				if color, ok := ParseColor(string(raw)); ok {
+					c.VisualMapColors = append(c.VisualMapColors, color)
+				}
+			}
+		}
+	}
 	c.InvalidateLayout()
 }
 
@@ -590,13 +805,15 @@ func axisFromOption(opt AxisOption, yAxis bool) Axis {
 		return axis
 	}
 	tickCount := opt.SplitNumber
+	autoTickCount := tickCount <= 0
 	if tickCount <= 0 {
-		tickCount = 7
+		tickCount = 5
 	}
 	axis := &ValueAxis{
-		TitleText:    opt.Name,
-		TickCount:    tickCount,
-		InvertedAxis: yAxis,
+		TitleText:     opt.Name,
+		TickCount:     tickCount,
+		InvertedAxis:  yAxis,
+		autoTickCount: autoTickCount,
 	}
 	if opt.Inverse != nil {
 		axis.InvertedAxis = *opt.Inverse
@@ -631,10 +848,10 @@ func seriesFromOption(opt SeriesOption, root Option) Series {
 	case SeriesLine:
 		points := cartesianPoints(opt.Data, false)
 		series := NewLineSeries(name, points)
-		if opt.ShowSymbol != nil {
-			series.ShowMarkers = *opt.ShowSymbol
-		}
+		series.ShowMarkers = boolDefault(opt.ShowSymbol, true)
 		series.Smooth = opt.Smooth
+		series.Sampling = effectiveSampling(opt)
+		series.LargeThreshold = opt.LargeThreshold
 		if opt.SymbolSize > 0 {
 			series.MarkerSize = float32(opt.SymbolSize)
 		}
@@ -643,6 +860,8 @@ func seriesFromOption(opt SeriesOption, root Option) Series {
 	case SeriesArea:
 		points := cartesianPoints(opt.Data, false)
 		series := NewAreaSeries(name, points)
+		series.Sampling = effectiveSampling(opt)
+		series.LargeThreshold = opt.LargeThreshold
 		if opt.FillOpacity > 0 {
 			series.FillAlpha = float32(opt.FillOpacity)
 		}
@@ -686,6 +905,8 @@ func seriesFromOption(opt SeriesOption, root Option) Series {
 	case SeriesEffectScatter:
 		points := cartesianPoints(opt.Data, true)
 		series := NewEffectScatterSeries(name, points)
+		series.Sampling = effectiveSampling(opt)
+		series.LargeThreshold = opt.LargeThreshold
 		if opt.SymbolSize > 0 {
 			series.Size = float32(opt.SymbolSize)
 		}
@@ -697,6 +918,8 @@ func seriesFromOption(opt SeriesOption, root Option) Series {
 	case SeriesScatter:
 		points := cartesianPoints(opt.Data, true)
 		series := NewScatterSeries(name, points)
+		series.Sampling = effectiveSampling(opt)
+		series.LargeThreshold = opt.LargeThreshold
 		series.Opacity = 0.8
 		if opt.SymbolSize > 0 {
 			series.Size = float32(opt.SymbolSize)
@@ -989,6 +1212,9 @@ func seriesFromOption(opt SeriesOption, root Option) Series {
 			slices = append(slices, slice)
 		}
 		series := NewPieSeries(name, slices)
+		if opt.LabelLayout != nil && opt.LabelLayout.HideOverlap != nil {
+			series.HideOverlap = *opt.LabelLayout.HideOverlap
+		}
 		if pct := parsePercentValue(opt.Radius); pct > 0 {
 			series.RadiusPercent = pct
 		}
@@ -1012,6 +1238,16 @@ func cartesianPoints(data []DataPoint, useExplicitX bool) []Point2D {
 		points = append(points, Point2D{X: float32(x), Y: float32(point.Y)})
 	}
 	return points
+}
+
+func effectiveSampling(option SeriesOption) string {
+	if option.Sampling != "" {
+		return option.Sampling
+	}
+	if option.Large != nil && *option.Large {
+		return "lttb"
+	}
+	return ""
 }
 
 func barValues(data []DataPoint) []float32 {
@@ -1099,8 +1335,13 @@ func parsePercentValue(value string) float32 {
 
 func axisTooltipEntries(c *Chart, index int) []TooltipEntry {
 	entries := make([]TooltipEntry, 0, len(c.Series))
-	for _, series := range c.Series {
+	hoverRef := c.seriesRefAt(c.hoverSeries)
+	for i, series := range c.Series {
 		if !series.Visible() {
+			continue
+		}
+		ref := c.seriesRefAt(i)
+		if c.hoverSeries >= 0 && (ref.xAxis != hoverRef.xAxis || ref.yAxis != hoverRef.yAxis) {
 			continue
 		}
 		if value, ok := seriesValueAt(series, index); ok {

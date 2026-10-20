@@ -14,16 +14,20 @@
 //		}},
 //	})
 //
-// Option currently covers title, legend, item/axis tooltips, axes and grid
-// gutters, palettes, continuous visual-map colors, line/area/bar/
-// pictorial-bar/scatter/effect-scatter/pie/candlestick/radar/funnel/gauge/
-// heatmap/boxplot series,
+// Option covers title, legend, item/axis tooltips/crosshairs, one or more
+// grids, multiple primary/secondary axes, grid gutters, palettes, continuous
+// visual-map colors and legends, line/area/bar/pictorial-bar/scatter/
+// effect-scatter/pie/candlestick/radar/funnel/gauge/heatmap/boxplot series,
 // and graph/tree/treemap/sunburst/sankey/parallel/theme-river layouts.
-// MergeOption supplies ECharts-style incremental updates while SetOption
-// replaces. Multi-grid/secondary axes, dataset transforms, dataZoom,
-// rendered visualMap legends, animation and large-data progressive rendering
-// are the next layers of the same native pipeline. Map/GEO charts are out of
-// scope.
+// Dataset sources support dimensions/encode plus native and JSON-declarative
+// filter/sort transforms.
+// MergeOption supplies presence-aware incremental updates while SetOption
+// replaces. DataZoom supports initial windows, a draggable slider and inside
+// wheel/pan navigation. Declarative charts animate by default; pass
+// animation:false for deterministic rendering. Large line/area/scatter data
+// can use sampling/largeThreshold, and pie labelLayout.hideOverlap suppresses
+// collisions. Progressive chunked rendering remains future work; Map/GEO
+// charts are intentionally out of scope.
 //
 // Pixel-parity fixtures under testdata/parity compare this renderer with
 // ECharts in offscreen Chrome Canvas using ImageMagick compare. Run the
