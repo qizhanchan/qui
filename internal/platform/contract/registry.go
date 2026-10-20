@@ -3,6 +3,7 @@ package contract
 import (
 	"errors"
 	"image"
+	"io"
 	"sort"
 	"time"
 	"unsafe"
@@ -96,6 +97,13 @@ var Host struct {
 	// (macOS only; nil elsewhere). A C pointer rather than a Go func because
 	// the event pump consults it for every event without leaving C.
 	RawKeyCaptured unsafe.Pointer
+	// SetTextFallback installs the backend's text engine for clusters no
+	// loaded font covers (see TextFallback); nil removes it.
+	SetTextFallback func(TextFallback)
+	// SetMacKeyboard tells the engine whether the user's keyboard follows
+	// macOS conventions (Command shortcuts), for backends where that is not
+	// implied by the build's GOOS — the browser.
+	SetMacKeyboard func(bool)
 }
 
 // Optional capabilities a Window may implement. The engine type-asserts
@@ -109,6 +117,12 @@ type (
 	CapsLocker interface{ CapsLock() bool }
 	// DropTarget turns OS file drops onto the window on or off.
 	DropTarget interface{ SetDropEnabled(enabled bool) }
+	// DropOpener opens a path delivered through Handler.OnFileDrop when
+	// it is not a real file — the browser hands over file contents, not
+	// paths, so the web backend keeps them in memory under virtual paths.
+	DropOpener interface {
+		OpenDropped(path string) (io.ReadCloser, bool)
+	}
 	// CursorReleaser frees per-window native cursors built for an image
 	// cursor that is being released.
 	CursorReleaser interface{ ReleaseCursor(shape CursorShape) }

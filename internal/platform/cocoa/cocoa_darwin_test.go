@@ -133,3 +133,8 @@ func (silentHandler) OnResize(int, int)                                       {}
 func (silentHandler) OnFramebufferResize(int, int)                            {}
 func (silentHandler) OnRefresh()                                              {}
 func (silentHandler) OnFileDrop([]string, float64, float64)                   {}
+func (silentHandler) OnPreedit(string, int)                                   {}
+func (silentHandler) OnCommitText(string)                                     {}
+func (silentHandler) IMECaretRect() (float64, float64, float64, float64, bool) {
+	return 0, 0, 0, 0, false
+}

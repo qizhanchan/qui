@@ -3,7 +3,6 @@ package qui
 import (
 	"fmt"
 	"reflect"
-	"runtime"
 	"strings"
 )
 
@@ -172,7 +171,7 @@ func (w *Window) handleDebugOverlayShortcut(ke KeyEvent) bool {
 }
 
 func defaultDebugOverlayShortcut() (Key, Modifiers, error) {
-	if runtime.GOOS == "darwin" {
+	if MacKeyboard() {
 		return KeyD, ModSuper | ModShift, nil
 	}
 	return KeyD, ModControl | ModShift, nil
@@ -298,7 +297,7 @@ func (w *Window) handleAgentOverlayShortcut(ke KeyEvent) bool {
 }
 
 func defaultAgentOverlayShortcut() (Key, Modifiers, error) {
-	if runtime.GOOS == "darwin" {
+	if MacKeyboard() {
 		return KeyA, ModSuper | ModShift, nil
 	}
 	return KeyA, ModControl | ModShift, nil

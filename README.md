@@ -149,7 +149,7 @@ Useful env vars: `QUI_PLATFORM=cocoa|x11|web|headless|glfw` (windowing backend �
 |---|---|---|---|
 | `cocoa` | `internal/platform/cocoa` | macOS | Native AppKit — our own NSApplication event pump, NSWindow/NSView, gestures as real responder methods. `GLRenderer` windows swap an NSOpenGLContext; `CPURenderer` windows (incl. all `-tags qui_nogl` builds) present as CALayer contents, paced by a CVDisplayLink |
 | `x11` | `internal/platform/x11` | Linux (cgo) | Xlib — XPutImage presentation of CPU frames, XIM text input, CLIPBOARD selection, Xft.dpi scale |
-| `web` | `internal/platform/web` | GOOS=js | `<canvas>` + putImageData of the damaged rect; keys from keydown, text from a hidden textarea (IME/mobile-safe) |
+| `web` | `internal/platform/web` | GOOS=js | `<canvas>` + putImageData of the damaged rect, paced by requestAnimationFrame; keys from keydown, text + IME preedit from a hidden textarea anchored at the caret; glyphs the embedded fonts lack (CJK…) and color emoji drawn with the browser's own fonts; file drop via `Window.OpenDroppedFile`; Cmd shortcuts on Mac browsers |
 | `headless` | `internal/platform/headless` | CGO_ENABLED=0 | In-memory windows; frames read back via `Window.Snapshot` / agent `shot` / `QUI_SNAPSHOT` |
 | `glfw` | `internal/platform/glfw` | Windows | GLFW 3.3; elsewhere only with `-tags qui_glfw` |
 

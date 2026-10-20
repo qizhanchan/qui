@@ -12,7 +12,9 @@
 <script src="wasm_exec.js"></script>
 <script>
 const go = new Go();
-WebAssembly.instantiateStreaming(fetch("app.wasm"), go.importObject)
+// no-cache: revalidate on every load (a 304 when unchanged), so a rebuilt
+// app.wasm is never shadowed by the browser's heuristic cache.
+WebAssembly.instantiateStreaming(fetch("app.wasm", {cache: "no-cache"}), go.importObject)
   .then(r => go.run(r.instance))
   .catch(e => { document.body.textContent = String(e); console.error(e); });
 </script>

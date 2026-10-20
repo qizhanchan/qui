@@ -35,6 +35,8 @@ func installPlatformHost() {
 	contract.Host.NativeCursor = nativeCursorForBackend
 	contract.Host.ImageCursor = imageCursorForBackend
 	contract.Host.RawKeyCaptured = rawKeyCapturedHook()
+	contract.Host.SetTextFallback = setTextFallback
+	contract.Host.SetMacKeyboard = setMacKeyboard
 }
 
 // defaultPlatformBackend names the backend used when QUI_PLATFORM is

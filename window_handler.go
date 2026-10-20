@@ -166,3 +166,18 @@ func (w *Window) onFileDrop(paths []string, x, y float64) {
 	w.Invalidate()
 	w.InvalidateLayout()
 }
+
+func (w *Window) onPreedit(text string, cursor int) { w.SetPreedit(text, cursor) }
+func (w *Window) onCommitText(text string)          { w.CommitIME(text) }
+
+// imeCaretRect reports the focused IME client's caret in window-logical
+// coordinates (viewport coordinates times zoom), for backends anchoring a
+// candidate window.
+func (w *Window) imeCaretRect() (x, y, width, height float64, ok bool) {
+	if _, isClient := w.focused.(IMEClient); !isClient {
+		return 0, 0, 0, 0, false
+	}
+	r := w.CaretRect()
+	z := float64(w.Zoom())
+	return float64(r.X) * z, float64(r.Y) * z, float64(r.W) * z, float64(r.H) * z, true
+}

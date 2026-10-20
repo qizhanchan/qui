@@ -4,6 +4,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // Clipboard is the OS clipboard abstraction used by text widgets for
@@ -177,11 +178,25 @@ func (c platformClipboard) Set(text string) {
 	c.win.setClipboardText(text)
 }
 
+// macKeyboard holds whether the platform follows macOS keyboard
+// conventions. True on darwin; the web backend sets it from the browser's
+// OS, because a wasm build's GOOS says nothing about the user's keyboard.
+var macKeyboard atomic.Bool
+
+func init() { macKeyboard.Store(runtime.GOOS == "darwin") }
+
+func setMacKeyboard(on bool) { macKeyboard.Store(on) }
+
+// MacKeyboard reports whether shortcuts follow macOS conventions — Command
+// as the primary modifier and ⌘⇧⌥ notation — rather than Ctrl-based ones:
+// on macOS, and in a browser running on a Mac or iOS device.
+func MacKeyboard() bool { return macKeyboard.Load() }
+
 // CommandMod is the platform's primary shortcut modifier: ModSuper (⌘) on
 // macOS, ModControl elsewhere. "CmdOrCtrl+S" in ParseShortcut resolves to
 // it.
 func CommandMod() Modifiers {
-	if runtime.GOOS == "darwin" {
+	if MacKeyboard() {
 		return ModSuper
 	}
 	return ModControl
@@ -191,7 +206,7 @@ func CommandMod() Modifiers {
 // "command" modifier — ModSuper (Cmd) on macOS, ModControl (Ctrl)
 // elsewhere. Lets widgets write one branch for Cmd+C / Ctrl+C.
 func IsCommandMod(m Modifiers) bool {
-	if runtime.GOOS == "darwin" {
+	if MacKeyboard() {
 		return m&ModSuper != 0
 	}
 	return m&ModControl != 0

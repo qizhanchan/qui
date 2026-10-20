@@ -25,8 +25,11 @@
 package web
 
 import (
+	"bytes"
 	"image"
+	"io"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall/js"
@@ -68,6 +71,17 @@ type webApp struct {
 	// focused is the window whose canvas last took the pointer or focus;
 	// keyboard and text input go to it.
 	focused *webWindow
+	// composing is true between compositionstart and compositionend.
+	composing bool
+	// caret is the last IME anchor applied to the textarea (CSS px).
+	caret [4]float64
+
+	// dropped holds the contents of files dropped onto a canvas, under
+	// the virtual paths delivered to the engine (contract.DropOpener):
+	// the browser hands over contents, never paths.
+	dropped   map[string][]byte
+	dropSeq   int
+	dprListen js.Value
 }
 
 func newWebApp() (contract.App, error) {
@@ -86,14 +100,52 @@ func newWebApp() (contract.App, error) {
 		}
 	})
 	a.installTextInput()
-	a.listen(js.Global(), "resize", false, func(js.Value) {
-		a.post(func() {
-			for _, w := range a.windows {
-				w.syncSize()
-			}
-		})
-	})
+	a.listen(js.Global(), "resize", false, func(js.Value) { a.post(a.syncAllSizes) })
+	a.watchDevicePixelRatio()
+	// A file dropped anywhere outside an accepting canvas must not make the
+	// browser navigate away from the app to display it.
+	for _, ev := range []string{"dragover", "drop"} {
+		a.listen(a.doc, ev, false, func(e js.Value) { e.Call("preventDefault") })
+	}
+	if bt := newBrowserText(); bt != nil && contract.Host.SetTextFallback != nil {
+		contract.Host.SetTextFallback(bt)
+	}
+	if contract.Host.SetMacKeyboard != nil {
+		contract.Host.SetMacKeyboard(browserOnApplePlatform())
+	}
 	return a, nil
+}
+
+func (a *webApp) syncAllSizes() {
+	for _, w := range a.windows {
+		w.syncSize()
+	}
+}
+
+// watchDevicePixelRatio resyncs every canvas when the device pixel ratio
+// changes — browser zoom, or the window moving to a display with another
+// scale — which resizes no element and so fires no resize event. A
+// resolution media query matches only the current ratio, so it is
+// re-armed with the new one after each change.
+func (a *webApp) watchDevicePixelRatio() {
+	if js.Global().Get("matchMedia").Type() != js.TypeFunction {
+		return
+	}
+	var f js.Func
+	f = js.FuncOf(func(js.Value, []js.Value) any {
+		f.Release()
+		a.post(func() {
+			a.syncAllSizes()
+			a.watchDevicePixelRatio()
+		})
+		return nil
+	})
+	q := "(resolution: " + strconv.FormatFloat(devicePixelRatio(), 'f', -1, 64) + "dppx)"
+	mql := js.Global().Call("matchMedia", q)
+	opts := js.Global().Get("Object").New()
+	opts.Set("once", true)
+	mql.Call("addEventListener", "change", f, opts)
+	a.dprListen = mql
 }
 
 // listen adds an event listener whose handler runs in the JS callback.
@@ -194,6 +246,12 @@ type webWindow struct {
 	jsBuf      js.Value
 	jsBufBytes int
 	cursorCSS  string
+
+	dropEnabled bool
+	// rAF pacing (Ready): rafPending while a requestAnimationFrame is
+	// outstanding, frameReady once it fired and before a frame used it.
+	rafPending bool
+	frameReady bool
 }
 
 func (a *webApp) NewWindow(cfg contract.WindowConfig) (contract.Window, error) {
@@ -327,8 +385,29 @@ func (a *webApp) installTextInput() {
 			}
 		})
 	}
+	a.listen(ta, "compositionstart", true, func(js.Value) {
+		a.composing = true
+		a.post(a.placeTextInput)
+	})
+	a.listen(ta, "compositionupdate", true, func(e js.Value) {
+		text := ""
+		if d := e.Get("data"); d.Type() == js.TypeString {
+			text = d.String()
+		}
+		cursor := len([]rune(text))
+		// The caret inside the composition (an IME moving it with the arrow
+		// keys) is the textarea's selection, counted in UTF-16 units.
+		if sel := ta.Get("selectionStart"); sel.Type() == js.TypeNumber {
+			cursor = min(utf16ToRuneIndex(ta.Get("value").String(), sel.Int()), len([]rune(text)))
+		}
+		a.post(func() {
+			if w := a.focused; w != nil && w.handler != nil {
+				w.handler.OnPreedit(text, cursor)
+			}
+		})
+	})
 	a.listen(ta, "input", true, func(e js.Value) {
-		if e.Get("isComposing").Bool() {
+		if e.Get("isComposing").Bool() || a.composing {
 			return
 		}
 		if t := e.Get("inputType"); t.Type() == js.TypeString && t.String() == "insertFromPaste" {
@@ -340,10 +419,23 @@ func (a *webApp) installTextInput() {
 		commit(text)
 	})
 	a.listen(ta, "compositionend", true, func(e js.Value) {
+		a.composing = false
 		ta.Set("value", "")
+		text := ""
 		if d := e.Get("data"); d.Type() == js.TypeString {
-			commit(d.String())
+			text = d.String()
 		}
+		// CommitIME replaces the preedit with the final text; an empty
+		// commit (composition cancelled with Escape) still clears it.
+		a.post(func() {
+			if w := a.focused; w != nil && w.handler != nil {
+				if text == "" {
+					w.handler.OnPreedit("", 0)
+				} else {
+					w.handler.OnCommitText(text)
+				}
+			}
+		})
 	})
 	a.listen(ta, "focus", true, func(js.Value) {
 		a.post(func() {
@@ -359,6 +451,38 @@ func (a *webApp) installTextInput() {
 			}
 		})
 	})
+}
+
+// placeTextInput moves the hidden textarea onto the focused field's caret,
+// so the IME's candidate window lands where the user is typing. UI
+// goroutine only.
+func (a *webApp) placeTextInput() {
+	w := a.focused
+	if w == nil || w.handler == nil {
+		return
+	}
+	x, y, _, h, ok := w.handler.IMECaretRect()
+	if !ok {
+		return
+	}
+	r := w.canvas.Call("getBoundingClientRect")
+	left := r.Get("left").Float() + x
+	top := r.Get("top").Float() + y
+	if h <= 0 {
+		h = 16
+	}
+	next := [4]float64{left, top, h, 0}
+	if next == a.caret {
+		return
+	}
+	a.caret = next
+	px := func(v float64) string { return strconv.FormatFloat(v, 'f', 1, 64) + "px" }
+	st := a.textInput.Get("style")
+	st.Set("left", px(left))
+	st.Set("top", px(top))
+	st.Set("height", px(h))
+	st.Set("fontSize", px(h*0.8))
+	st.Set("lineHeight", px(h))
 }
 
 // focusWindow routes keyboard input to w and gives the page focus to the
@@ -534,7 +658,101 @@ func (w *webWindow) installListeners() {
 		})
 	})
 	a.listen(c, "focus", true, func(js.Value) { a.focusWindow(w) })
+	a.listen(c, "dragover", false, func(e js.Value) {
+		e.Call("preventDefault")
+		if dt := e.Get("dataTransfer"); dt.Truthy() {
+			if w.dropEnabled {
+				dt.Set("dropEffect", "copy")
+			} else {
+				dt.Set("dropEffect", "none")
+			}
+		}
+	})
+	a.listen(c, "drop", false, func(e js.Value) {
+		e.Call("preventDefault")
+		if !w.dropEnabled {
+			return
+		}
+		x, y := pos(e)
+		files := e.Get("dataTransfer").Get("files")
+		n := files.Get("length").Int()
+		list := make([]js.Value, 0, n)
+		for i := 0; i < n; i++ {
+			list = append(list, files.Call("item", i))
+		}
+		go w.readDrop(list, x, y)
+	})
 }
+
+// readDrop reads dropped files into memory and delivers them as virtual
+// paths (/dropped/<n>/<name>) that Window.OpenDroppedFile resolves. Runs
+// on its own goroutine: reading a File is a promise, and the JS callback
+// that saw the drop must return without waiting for it.
+func (w *webWindow) readDrop(files []js.Value, x, y float64) {
+	type item struct {
+		name string
+		data []byte
+	}
+	items := make([]item, 0, len(files))
+	for _, f := range files {
+		done := make(chan []byte, 1)
+		var ok, fail js.Func
+		ok = js.FuncOf(func(_ js.Value, args []js.Value) any {
+			arr := js.Global().Get("Uint8Array").New(args[0])
+			b := make([]byte, arr.Get("length").Int())
+			js.CopyBytesToGo(b, arr)
+			done <- b
+			return nil
+		})
+		fail = js.FuncOf(func(js.Value, []js.Value) any { done <- nil; return nil })
+		f.Call("arrayBuffer").Call("then", ok, fail)
+		data := <-done
+		ok.Release()
+		fail.Release()
+		if data != nil {
+			items = append(items, item{name: f.Get("name").String(), data: data})
+		}
+	}
+	if len(items) == 0 {
+		return
+	}
+	a := w.app
+	a.post(func() {
+		if a.dropped == nil {
+			a.dropped = map[string][]byte{}
+		}
+		a.dropSeq++
+		paths := make([]string, 0, len(items))
+		for _, it := range items {
+			name := strings.NewReplacer("/", "_", "\\", "_").Replace(it.name)
+			p := "/dropped/" + strconv.Itoa(a.dropSeq) + "/" + name
+			a.dropped[p] = it.data
+			paths = append(paths, p)
+		}
+		if w.handler != nil {
+			w.handler.OnFileDrop(paths, x, y)
+		}
+	})
+}
+
+// SetDropEnabled implements contract.DropTarget.
+func (w *webWindow) SetDropEnabled(enabled bool) { w.dropEnabled = enabled }
+
+// OpenDropped implements contract.DropOpener.
+func (w *webWindow) OpenDropped(path string) (io.ReadCloser, bool) {
+	data, ok := w.app.dropped[path]
+	if !ok {
+		return nil, false
+	}
+	return io.NopCloser(bytes.NewReader(data)), true
+}
+
+var (
+	_ contract.Window     = (*webWindow)(nil)
+	_ contract.DropTarget = (*webWindow)(nil)
+	_ contract.DropOpener = (*webWindow)(nil)
+	_ contract.Focuser    = (*webWindow)(nil)
+)
 
 func (w *webWindow) SetHandler(h contract.Handler) { w.handler = h }
 
@@ -701,8 +919,41 @@ func (w *webWindow) NativeWindow() unsafe.Pointer { return nil }
 
 type webSurface struct{ win *webWindow }
 
-func (webSurface) Ready() <-chan struct{} { return nil }
-func (webSurface) Present()               {}
+var (
+	// readyNow is closed: "the browser is about to paint; draw now".
+	readyNow = func() chan struct{} { c := make(chan struct{}); close(c); return c }()
+	// readyLater never fires: "wait for the animation frame".
+	readyLater = make(chan struct{})
+)
+
+// Ready paces painting to the browser's refresh with requestAnimationFrame.
+// A frame is requested only when the loop asks — never continuously — so an
+// idle tab runs no callbacks; the frame callback wakes the loop, and the
+// next Ready reports it. Hidden tabs get no animation frames, which simply
+// stops painting there; posted jobs still run (the engine's PendingJobs
+// escape).
+func (s webSurface) Ready() <-chan struct{} {
+	w := s.win
+	if w.frameReady {
+		w.frameReady = false
+		return readyNow
+	}
+	if !w.rafPending {
+		w.rafPending = true
+		var f js.Func
+		f = js.FuncOf(func(js.Value, []js.Value) any {
+			f.Release()
+			w.app.post(func() {
+				w.rafPending = false
+				w.frameReady = true
+			})
+			return nil
+		})
+		js.Global().Call("requestAnimationFrame", f)
+	}
+	return readyLater
+}
+func (webSurface) Present() {}
 
 // PresentCPU copies the damaged rectangle of the frame into the canvas.
 // The canvas keeps the previous frame, so undamaged pixels need no copy.
@@ -741,6 +992,11 @@ func (s webSurface) PresentCPU(img *image.RGBA, damage image.Rectangle) bool {
 	js.CopyBytesToJS(view, buf)
 	data := js.Global().Get("ImageData").New(view, rw, rh)
 	w.ctx.Call("putImageData", data, r.Min.X-img.Rect.Min.X, r.Min.Y-img.Rect.Min.Y)
+	// Keep the IME anchor on the caret as the field scrolls or the
+	// composition grows; cheap when nothing moved.
+	if w.app.focused == w {
+		w.app.placeTextInput()
+	}
 	return true
 }
 
@@ -784,48 +1040,21 @@ func itoa(v int) string {
 	return string(b[i:])
 }
 
-// domKey maps KeyboardEvent.code (physical key, layout-independent — the
-// same thing GLFW key codes and macOS virtual key codes describe) to Key.
-func domKey(code string) contract.Key {
-	if k, ok := domKeys[code]; ok {
-		return k
-	}
-	if strings.HasPrefix(code, "Key") && len(code) == 4 {
-		if c := code[3]; c >= 'A' && c <= 'Z' {
-			return contract.KeyA + contract.Key(c-'A')
+// browserOnApplePlatform reports whether the browser runs on macOS or iOS,
+// whose users expect Command shortcuts. userAgentData where available,
+// navigator.platform otherwise (deprecated but universally present).
+func browserOnApplePlatform() bool {
+	nav := js.Global().Get("navigator")
+	platform := ""
+	if uad := nav.Get("userAgentData"); uad.Truthy() {
+		if p := uad.Get("platform"); p.Type() == js.TypeString {
+			platform = p.String()
 		}
 	}
-	if strings.HasPrefix(code, "Digit") && len(code) == 6 {
-		if c := code[5]; c >= '0' && c <= '9' {
-			return contract.Key0 + contract.Key(c-'0')
+	if platform == "" {
+		if p := nav.Get("platform"); p.Type() == js.TypeString {
+			platform = p.String()
 		}
 	}
-	if strings.HasPrefix(code, "Numpad") && len(code) == 7 {
-		if c := code[6]; c >= '0' && c <= '9' {
-			return contract.KeyKP0 + contract.Key(c-'0')
-		}
-	}
-	return contract.KeyUnknown
-}
-
-var domKeys = map[string]contract.Key{
-	"Space": contract.KeySpace, "Enter": contract.KeyEnter, "NumpadEnter": contract.KeyEnter, "Escape": contract.KeyEscape,
-	"ArrowLeft": contract.KeyLeft, "ArrowRight": contract.KeyRight, "ArrowUp": contract.KeyUp, "ArrowDown": contract.KeyDown,
-	"Home": contract.KeyHome, "End": contract.KeyEnd, "Backspace": contract.KeyBackspace, "Tab": contract.KeyTab,
-	"Delete": contract.KeyDelete, "Insert": contract.KeyInsert, "PageUp": contract.KeyPageUp, "PageDown": contract.KeyPageDown,
-	"F1": contract.KeyF1, "F2": contract.KeyF2, "F3": contract.KeyF3, "F4": contract.KeyF4, "F5": contract.KeyF5, "F6": contract.KeyF6,
-	"F7": contract.KeyF7, "F8": contract.KeyF8, "F9": contract.KeyF9, "F10": contract.KeyF10, "F11": contract.KeyF11, "F12": contract.KeyF12,
-	"F13": contract.KeyF13, "F14": contract.KeyF14, "F15": contract.KeyF15, "F16": contract.KeyF16, "F17": contract.KeyF17,
-	"F18": contract.KeyF18, "F19": contract.KeyF19, "F20": contract.KeyF20,
-	"Minus": contract.KeyMinus, "Equal": contract.KeyEqual, "Slash": contract.KeySlash, "Comma": contract.KeyComma,
-	"Period": contract.KeyPeriod, "Semicolon": contract.KeySemicolon, "Quote": contract.KeyApostrophe,
-	"BracketLeft": contract.KeyLeftBracket, "BracketRight": contract.KeyRightBracket,
-	"Backslash": contract.KeyBackslash, "Backquote": contract.KeyGrave,
-	"ShiftLeft": contract.KeyLeftShift, "ShiftRight": contract.KeyRightShift,
-	"ControlLeft": contract.KeyLeftControl, "ControlRight": contract.KeyRightControl,
-	"AltLeft": contract.KeyLeftAlt, "AltRight": contract.KeyRightAlt,
-	"MetaLeft": contract.KeyLeftSuper, "MetaRight": contract.KeyRightSuper, "OSLeft": contract.KeyLeftSuper, "OSRight": contract.KeyRightSuper,
-	"CapsLock": contract.KeyCapsLock, "ContextMenu": contract.KeyMenu, "NumLock": contract.KeyNumLock,
-	"NumpadDecimal": contract.KeyKPDecimal, "NumpadDivide": contract.KeyKPDivide, "NumpadMultiply": contract.KeyKPMultiply,
-	"NumpadSubtract": contract.KeyKPSubtract, "NumpadAdd": contract.KeyKPAdd, "NumpadEqual": contract.KeyKPEqual,
+	return isApplePlatform(platform)
 }

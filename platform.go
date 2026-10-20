@@ -242,6 +242,9 @@ type platformHandler interface {
 	onFramebufferResize(w, h int)
 	onRefresh()
 	onFileDrop(paths []string, x, y float64)
+	onPreedit(text string, cursor int)
+	onCommitText(text string)
+	imeCaretRect() (x, y, w, h float64, ok bool)
 }
 
 // errNoPlatformWindow is returned when a backend reports success without

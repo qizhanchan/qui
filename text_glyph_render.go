@@ -42,7 +42,7 @@ func (c imageCanvas) drawShapedLineAtBaseline(line *shapedLine, x, baseline floa
 		for _, runIndex := range visual {
 			for _, glyph := range line.runs[runIndex].Glyphs {
 				if glyph.GlyphID == gtfont.EmptyGlyph {
-					drawEmojiGlyph(c, line, glyph, penX, baseline, capHeight, fontSpec)
+					drawAtomicGlyph(c, line, glyph, penX, baseline, capHeight, fontSpec, color)
 				}
 				penX += fixedToPx(glyph.Advance)
 			}
@@ -64,7 +64,7 @@ func (c imageCanvas) drawShapedLineAtBaseline(line *shapedLine, x, baseline floa
 		run := &line.runs[runIndex]
 		for _, glyph := range run.Glyphs {
 			if glyph.GlyphID == gtfont.EmptyGlyph {
-				drawEmojiGlyph(c, line, glyph, penX, baseline, capHeight, fontSpec)
+				drawAtomicGlyph(c, line, glyph, penX, baseline, capHeight, fontSpec, color)
 			} else {
 				appendGlyphOutline(path, run, glyph, penX, baseline, fontSpec)
 			}

@@ -25,6 +25,7 @@ package main
 import (
 	_ "embed"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -160,7 +161,8 @@ func App(window *qui.Window) h.Node {
 	})
 
 	// OS → app file drop onto the drop zone element (Builder.OnFileDrop):
-	// we stat each path and push the result into a signal, so the list
+	// we stat each path (or, in the browser, open it through
+	// Window.OpenDroppedFile) and push the result into a signal, so the list
 	// below re-syncs with no render pass.
 	drops := reactive.UseSignal([]droppedFile{})
 	onDrop := func(paths []string) {
@@ -170,6 +172,10 @@ func App(window *qui.Window) h.Node {
 			if info, err := os.Stat(p); err == nil {
 				df.size = info.Size()
 				df.dir = info.IsDir()
+			} else if rc, err := window.OpenDroppedFile(p); err == nil {
+				// In the browser drops are in-memory copies, not files.
+				df.size, _ = io.Copy(io.Discard, rc)
+				rc.Close()
 			}
 			items = append(items, df)
 		}

@@ -298,6 +298,19 @@ type Handler interface {
 	OnFramebufferResize(w, h int)
 	OnRefresh()
 	OnFileDrop(paths []string, x, y float64)
+
+	// Input-method composition, for backends that receive it as text
+	// rather than through a native text-input protocol of their own
+	// (the browser's composition events; X11/Wayland preedit callbacks).
+	// OnPreedit replaces the uncommitted composition (cursor is a rune
+	// index into text; "" clears it); OnCommitText inserts final text and
+	// ends the composition.
+	OnPreedit(text string, cursor int)
+	OnCommitText(text string)
+	// IMECaretRect is where the focused text field's caret is, in logical
+	// window coordinates, so the backend can anchor the candidate window
+	// there; ok is false when no text field has focus.
+	IMECaretRect() (x, y, w, h float64, ok bool)
 }
 
 // GestureKind names a multi-touch gesture delivered through

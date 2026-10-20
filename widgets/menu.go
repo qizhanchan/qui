@@ -1,7 +1,6 @@
 package widgets
 
 import (
-	"runtime"
 	"strings"
 	"time"
 
@@ -111,7 +110,7 @@ func displayShortcut(s string) string {
 	if s == "" {
 		return ""
 	}
-	if runtime.GOOS != "darwin" {
+	if !MacKeyboard() {
 		return strings.ReplaceAll(s, "CmdOrCtrl", "Ctrl")
 	}
 	r := strings.NewReplacer(

@@ -163,3 +163,8 @@ func (a handlerAdapter) OnResize(w, h int)                   { a.h.onResize(w, h
 func (a handlerAdapter) OnFramebufferResize(w, h int)        { a.h.onFramebufferResize(w, h) }
 func (a handlerAdapter) OnRefresh()                          { a.h.onRefresh() }
 func (a handlerAdapter) OnFileDrop(p []string, x, y float64) { a.h.onFileDrop(p, x, y) }
+func (a handlerAdapter) OnPreedit(text string, cursor int)   { a.h.onPreedit(text, cursor) }
+func (a handlerAdapter) OnCommitText(text string)            { a.h.onCommitText(text) }
+func (a handlerAdapter) IMECaretRect() (float64, float64, float64, float64, bool) {
+	return a.h.imeCaretRect()
+}

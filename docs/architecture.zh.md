@@ -158,6 +158,8 @@ h.Button("Save").T("qui.save")                   // reactive/html DSL
 
 呈现有两条路径（`contract.Surface`）：`Present` 交换 `GLRenderer` 画好的 GL 后缓冲；`PresentCPU(img, damage)` 把完成的 CPU 帧交给合成器 —— XPutImage、putImageData，headless 则什么都不做 —— 且只处理脏矩形；在 `cocoa` 上，窗口收到第一个 CPU 帧后永久切换到 CALayer 呈现（保留位图的写时复制 CGImage），并启动 CVDisplayLink，其标志由 `Ready()` 消费，使绘制与显示器同步。需要 GPU 上下文的渲染器始终通过缓冲交换呈现。表面通过 `Caps.GPUContext` 声明是否有 GL 上下文；设置在无 GL 上下文窗口上的 `GLRenderer` 会被替换为 `CPURenderer`（`renderer_caps.go`），即同一个光栅化器，停在 `*image.RGBA`。无 cgo、wasm 或 `-tags qui_nogl` 的构建不含 OpenGL：此时 `GLRenderer` 是 `CPURenderer` 的别名。
 
+已加载字体画不出的文本可以交给平台自己的文字引擎：后端安装 `contract.TextFallback`（web 后端就是这样 —— wasm 构建只能看到内嵌的拉丁字体，而浏览器自带中日韩字体），任何已加载字体都不覆盖的字素簇会像彩色 emoji 一样成为原子字形，采用平台给出的 advance，并以文字颜色着色的覆盖遮罩绘制（`text_fallback.go`）。换行、光标、选区与命中测试不受影响；加载真正覆盖这些字符的字体（`LoadFallbackFontFromBytes`）优先。以文本形式接收输入法组字的后端调用 `Handler.OnPreedit` / `OnCommitText`，并用 `Handler.IMECaretRect` 定位候选窗。
+
 离屏渲染即 `QUI_PLATFORM=headless` 加 `QUI_SNAPSHOT=out.png`（`snapshot_env.go`）：运行任意应用，等首帧稳定后写出帧并退出 —— 无需显示器、GPU 或改代码。
 
 ## 平台桥

@@ -1,6 +1,11 @@
 package qui
 
-import "github.com/qizhanchan/qui/internal/platform/contract"
+import (
+	"io"
+	"os"
+
+	"github.com/qizhanchan/qui/internal/platform/contract"
+)
 
 // OS → app file drop. The platform reports a list of absolute paths when
 // the user drags files from Finder / Explorer / Nautilus onto a window.
@@ -53,4 +58,20 @@ func (w *Window) syncFileDropEnabled() {
 	if dropper, ok := platformOptional[contract.DropTarget](w.plat); ok {
 		dropper.SetDropEnabled(w.onDrop != nil || w.fileDropRetains > 0)
 	}
+}
+
+// OpenDroppedFile opens a path delivered to a file-drop handler. On the
+// desktop backends drop paths are real files and this is os.Open; in the
+// browser, which hands over file contents rather than paths, they name
+// in-memory copies the web backend kept. Code that reads dropped files
+// through this works on every platform.
+func (w *Window) OpenDroppedFile(path string) (io.ReadCloser, error) {
+	if w != nil && w.plat != nil {
+		if o, ok := platformOptional[contract.DropOpener](w.plat); ok {
+			if rc, ok := o.OpenDropped(path); ok {
+				return rc, nil
+			}
+		}
+	}
+	return os.Open(path)
 }

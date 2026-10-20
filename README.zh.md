@@ -148,7 +148,7 @@ go run ./cmd/qui-agent shot /tmp/ui.png
 |---|---|---|---|
 | `cocoa` | `internal/platform/cocoa` | macOS | 原生 AppKit —— 自己的 NSApplication 事件泵、NSWindow/NSView，手势是真正的 responder 方法。`GLRenderer` 窗口交换 NSOpenGLContext；`CPURenderer` 窗口（包括所有 `-tags qui_nogl` 构建）以 CALayer contents 呈现，并由 CVDisplayLink 控制节奏 |
 | `x11` | `internal/platform/x11` | Linux（cgo） | Xlib —— 用 XPutImage 呈现 CPU 帧、XIM 文本输入、CLIPBOARD 选区、Xft.dpi 缩放 |
-| `web` | `internal/platform/web` | GOOS=js | `<canvas>` + 只 putImageData 脏矩形；按键来自 keydown，文本来自隐藏的 textarea（兼容 IME / 移动端） |
+| `web` | `internal/platform/web` | GOOS=js | `<canvas>` + 只 putImageData 脏矩形，由 requestAnimationFrame 控制节奏；按键来自 keydown，文本与 IME 预编辑来自锚定在光标处的隐藏 textarea；内嵌字体缺失的字形（中日韩等）与彩色 emoji 用浏览器自身字体绘制；文件拖放经 `Window.OpenDroppedFile` 读取；Mac 浏览器上使用 Cmd 快捷键 |
 | `headless` | `internal/platform/headless` | CGO_ENABLED=0 | 内存中的窗口；通过 `Window.Snapshot` / agent `shot` / `QUI_SNAPSHOT` 读回帧 |
 | `glfw` | `internal/platform/glfw` | Windows | GLFW 3.3；其他平台仅在 `-tags qui_glfw` 时编译 |
 

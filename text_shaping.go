@@ -452,11 +452,21 @@ func shapeSegmentWithEmojiLocked(input shaping.Input, graphemes []int, fontSpec 
 		if end <= input.RunStart || start >= input.RunEnd {
 			continue
 		}
-		if start < input.RunStart || end > input.RunEnd || !isEmojiCluster(input.Text[start:end]) {
+		if start < input.RunStart || end > input.RunEnd {
+			continue
+		}
+		cluster := input.Text[start:end]
+		var glyphRun shaping.Output
+		switch {
+		case isEmojiCluster(cluster):
+			glyphRun = emojiShapingOutput(input, start, end, fontSpec)
+		case isFallbackCluster(cluster):
+			glyphRun = fallbackShapingOutput(input, start, end, fontSpec)
+		default:
 			continue
 		}
 		flushPlain(start)
-		outputs = append(outputs, emojiShapingOutput(input, start, end, fontSpec))
+		outputs = append(outputs, glyphRun)
 		plainStart = end
 	}
 	flushPlain(input.RunEnd)
