@@ -89,3 +89,50 @@ void quiPasteboardRich(char **plain, char **html) {
         }
     }
 }
+
+// quiPasteboardImage reads an image off the pasteboard into a malloc'd
+// buffer the caller frees: a copied image file (Finder) as its own bytes,
+// else PNG data, else TIFF (screenshots, browsers) converted to PNG. ext
+// gets the file extension without the dot. Returns NULL when there is none.
+void *quiPasteboardImage(int *len, char **ext) {
+    *len = 0;
+    *ext = NULL;
+    @autoreleasepool {
+        NSPasteboard *pb = [NSPasteboard generalPasteboard];
+        NSData *data = nil;
+        NSString *e = nil;
+        NSArray *urls = [pb readObjectsForClasses:@[ [NSURL class] ]
+                                          options:@{NSPasteboardURLReadingFileURLsOnlyKey : @YES}];
+        if ([urls count] > 0) {
+            NSURL *u = urls[0];
+            NSString *x = [[u pathExtension] lowercaseString];
+            NSSet *ok = [NSSet setWithArray:@[ @"png", @"jpg", @"jpeg", @"gif", @"webp", @"svg", @"bmp" ]];
+            if ([ok containsObject:x]) {
+                data = [NSData dataWithContentsOfURL:u];
+                e = x;
+            } else {
+                return NULL; // a non-image file: its icon is not the content
+            }
+        }
+        if (!data) {
+            data = [pb dataForType:NSPasteboardTypePNG];
+            e = @"png";
+        }
+        if (!data) {
+            NSData *tiff = [pb dataForType:NSPasteboardTypeTIFF];
+            if (tiff) {
+                NSBitmapImageRep *rep = [NSBitmapImageRep imageRepWithData:tiff];
+                data = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+                e = @"png";
+            }
+        }
+        if (!data || [data length] == 0) {
+            return NULL;
+        }
+        void *buf = malloc([data length]);
+        memcpy(buf, [data bytes], [data length]);
+        *len = (int)[data length];
+        *ext = strdup([e UTF8String]);
+        return buf;
+    }
+}

@@ -112,6 +112,25 @@ func GetClipboardHTML() string {
 	return html
 }
 
+// ImageClipboard is an optional capability of a Clipboard provider: reading
+// an image (a screenshot, a copied image file) off the clipboard.
+type ImageClipboard interface {
+	// GetImage returns the image bytes and their file extension ("png",
+	// "jpg", …), or nil when the clipboard holds no image.
+	GetImage() ([]byte, string)
+}
+
+// GetClipboardImage returns the clipboard's image and its extension, or
+// nil when there is none (or the platform cannot read images).
+func GetClipboardImage() ([]byte, string) {
+	clipboardMu.RLock()
+	defer clipboardMu.RUnlock()
+	if ic, ok := activeClipboard.(ImageClipboard); ok {
+		return ic.GetImage()
+	}
+	return nil, ""
+}
+
 // withCharsetMeta prepends a UTF-8 declaration to a clipboard HTML
 // fragment.
 //

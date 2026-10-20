@@ -8,6 +8,7 @@ package qui
 #include <stdlib.h>
 void quiSetPasteboardRich(const char *plain, const char *html);
 void quiPasteboardRich(char **plain, char **html);
+void *quiPasteboardImage(int *len, char **ext);
 */
 import "C"
 
@@ -55,6 +56,19 @@ func (c darwinClipboard) GetRich() (string, string) {
 		C.free(unsafe.Pointer(cHTML))
 	}
 	return plain, html
+}
+
+// GetImage returns the pasteboard's image (see quiPasteboardImage).
+func (c darwinClipboard) GetImage() ([]byte, string) {
+	var n C.int
+	var cExt *C.char
+	p := C.quiPasteboardImage(&n, &cExt)
+	if p == nil {
+		return nil, ""
+	}
+	defer C.free(p)
+	defer C.free(unsafe.Pointer(cExt))
+	return C.GoBytes(p, n), C.GoString(cExt)
 }
 
 func newOSClipboard(win platformWindow) Clipboard {
