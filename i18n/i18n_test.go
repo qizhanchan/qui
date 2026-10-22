@@ -259,8 +259,23 @@ func TestNumberAndCurrencyFormatting(t *testing.T) {
 		}
 	}
 	// Grouping and symbol placement both come from the locale.
-	if got := i18n.In("en").Currency(1234.5, "USD"); got == "" {
-		t.Error("en USD produced an empty string")
+	for _, c := range []struct {
+		loc  qui.Locale
+		v    float64
+		code string
+		want string
+	}{
+		{"en", 1234.5, "USD", "$1,234.50"},
+		{"en", -5, "USD", "-$5.00"},
+		{"de", 1234.5, "EUR", "1.234,50\u00a0€"},
+		{"de", -5, "EUR", "-5,00\u00a0€"},
+		{"nl", 3, "EUR", "€\u00a03,00"},
+		{"ja", 1234, "JPY", "￥1,234"},
+		{"es-MX", 7, "MXN", "$7.00"},
+	} {
+		if got := i18n.In(c.loc).Currency(c.v, c.code); got != c.want {
+			t.Errorf("%s %v %s: got %q, want %q", c.loc, c.v, c.code, got, c.want)
+		}
 	}
 	// An unknown code degrades instead of failing.
 	if got := i18n.In("en").Currency(10, "NOTACODE"); got != "NOTACODE 10" {

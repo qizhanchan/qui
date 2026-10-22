@@ -316,6 +316,9 @@ func defaultUDSPath() string {
 	return filepath.Join(dir, fmt.Sprintf("qui-agent-%d.sock", os.Getpid()))
 }
 
+// maxRequestBody bounds a request body (the /act and /dom/act JSON).
+const maxRequestBody = 1 << 20
+
 // authMiddleware enforces bearer-token auth on TCP requests. UDS
 // requests bypass it (filesystem permission is the auth).
 func (s *Server) authMiddleware(h http.Handler, opts Options) http.Handler {
@@ -327,6 +330,11 @@ func (s *Server) authMiddleware(h http.Handler, opts Options) http.Handler {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
+		}
+		// Every body is a small JSON action; cap it so one request can't
+		// make the decoder buffer arbitrary input.
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 		}
 		h.ServeHTTP(w, r)
 	})

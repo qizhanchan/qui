@@ -304,6 +304,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Commit the response now: with an empty backlog nothing else would
+	// send the headers until the first live event, leaving the client
+	// unsure the stream is open.
+	flusher.Flush()
 	ctx := r.Context()
 	for {
 		select {
