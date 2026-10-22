@@ -577,8 +577,8 @@ func (w *Window) typeInto(widget Widget, label, text string, opts TypeOptions) e
 			// Focus first so OnSubmit / IME handlers see a focused widget.
 			w.SetFocus(widget)
 			sink.SetText(text)
-			// SetText is silent by design; tell the widget to publish the
-			// change so the app's OnChange runs as it would for typing.
+			// Tell the widget the change is user-equivalent; one whose
+			// SetText is silent publishes OnChange from here.
 			if n, ok := widget.(TextChangeNotifier); ok {
 				n.NotifyTextChanged()
 			}

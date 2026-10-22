@@ -173,8 +173,8 @@ func snapshotProviders(pass *reconcilePass) map[*contextKey][]*providerState {
 // the window main goroutine (PostJob), which serializes it against full
 // flushes and other scoped syncs.
 func (r *Runtime) syncBoundNode(node *instance) {
-	if r == nil || node == nil || node.bnd == nil || node.bnd.data == nil {
-		return
+	if r == nil || node == nil || node.unmounted || node.bnd == nil || node.bnd.data == nil {
+		return // unmounted: the job was queued before the Show/For went away
 	}
 	var (
 		cleanups []func()
@@ -231,6 +231,9 @@ func (r *Runtime) syncBoundNode(node *instance) {
 		}
 	}
 	r.runPendingEffects()
+	// Layout effects of rows this sync mounted (scroll-into-view, measure)
+	// run after the next layout pass, exactly as after a full Flush.
+	r.scheduleLayoutEffects()
 
 	if window != nil {
 		// Style any freshly-mounted host elements now (same job) so a list

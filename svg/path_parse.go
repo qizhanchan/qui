@@ -54,7 +54,12 @@ func ParsePath(d string) (*Path, error) {
 		} else if cmd == 0 {
 			return nil, fmt.Errorf("svg: path: leading number with no command")
 		} else {
-			// implicit repeat of last command; M repeats as L (per spec)
+			// implicit repeat of last command; M repeats as L (per spec).
+			// Z takes no arguments, so a number after it can never be
+			// consumed — repeating it would loop forever.
+			if cmd == 'Z' || cmd == 'z' {
+				return nil, fmt.Errorf("svg: path: number after closepath")
+			}
 			if cmd == 'M' {
 				cmd = 'L'
 			} else if cmd == 'm' {

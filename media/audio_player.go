@@ -276,11 +276,7 @@ func (p *AudioPlayer) State() State {
 func (p *AudioPlayer) OnEnded(fn func()) {
 	p.mu.Lock()
 	p.onEnded = fn
-	r := p.renderer
 	p.mu.Unlock()
-	if r != nil {
-		r.OnEnded(p.handleEnded)
-	}
 }
 
 // OnError registers a callback for asynchronous errors (decode failures

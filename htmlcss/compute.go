@@ -161,6 +161,12 @@ type ComputedStyle struct {
 	HasFlexShrink bool
 	FlexBasis     float32
 	HasFlexBasis  bool
+	// FlexBasisAuto: flex-basis is EXPLICITLY auto/content (`flex: auto`,
+	// `flex-basis: auto`) — a growing item then starts from its content
+	// size. Left unset, a bare flex-grow keeps the engine's basis-0
+	// default: scroll containers measure at the available size, so a
+	// content basis would claim all of it.
+	FlexBasisAuto bool
 	Order         int
 
 	// Effects (Wave 1: box-shadow / opacity / transform / gradient).
@@ -392,7 +398,8 @@ func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedSty
 func pseudoStyle(n *Node, sheet *Stylesheet, which string, parent *ComputedStyle) (*ComputedStyle, string) {
 	var decls []matchedDecl
 	order := 0
-	for _, rule := range sheet.Rules {
+	for _, ri := range sheet.candidateRules(n) {
+		rule := &sheet.Rules[ri]
 		best := -1
 		var ba, bb, bc int
 		for _, sel := range rule.Selectors {
@@ -554,8 +561,15 @@ func mergedDecls(n *Node, sheet *Stylesheet, st selectorState) map[string]string
 		return cascadeKey(decls[i]) < cascadeKey(decls[j])
 	})
 
+	// Fold in cascade order. A shorthand evicts every longhand (and
+	// sub-shorthand) of its family that an EARLIER declaration set, so a
+	// longhand surviving next to its shorthand is known to come later —
+	// which is what lets the interpreter always prefer the longhand.
 	merged := map[string]string{}
 	for _, m := range decls {
+		for _, lh := range shorthandLonghands[m.decl.Property] {
+			delete(merged, lh)
+		}
 		merged[m.decl.Property] = m.decl.Value
 	}
 	return merged
@@ -850,11 +864,8 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	}
 
 	// --- background ---
-	if v, ok := m["background-color"]; ok {
-		if c, ok := parseColor(v); ok {
-			cs.Background, cs.HasBackground = c, true
-		}
-	}
+	// The shorthand first, then the longhand: when both survive the
+	// cascade the longhand was declared later (mergedDecls), so it wins.
 	if v, ok := m["background"]; ok {
 		// Simplification: treat `background` as a color if it parses as one. Try the whole
 		// value first (so functional colors like rgb()/hsl() with internal
@@ -865,6 +876,11 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 			if c, ok := parseColor(fields[0]); ok {
 				cs.Background, cs.HasBackground = c, true
 			}
+		}
+	}
+	if v, ok := m["background-color"]; ok {
+		if c, ok := parseColor(v); ok {
+			cs.Background, cs.HasBackground = c, true
 		}
 	}
 	// linear/radial-gradient or url() in background / background-image.
@@ -1053,7 +1069,9 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		}
 	}
 	if v, ok := m["flex-basis"]; ok {
-		if s := strings.ToLower(strings.TrimSpace(v)); s != "" && s != "auto" {
+		if s := strings.ToLower(strings.TrimSpace(v)); s == "auto" || s == "content" {
+			cs.FlexBasisAuto = true
+		} else if s != "" {
 			if px, ok := parseLength(s, fs, 0); ok {
 				cs.FlexBasis, cs.HasFlexBasis = px, true
 			}
@@ -1494,7 +1512,7 @@ func parsePercentFraction(v string) (float32, bool) {
 // the 1–4 value shorthand (top/right/bottom/left) plus longhand overrides.
 func marginAutoFlags(m map[string]string) (top, right, bottom, left bool) {
 	if v, ok := m["margin"]; ok {
-		f := strings.Fields(strings.ToLower(v))
+		f := fieldsTopLevel(strings.ToLower(v))
 		isAuto := func(i int) bool { return i < len(f) && f[i] == "auto" }
 		switch len(f) {
 		case 1:
@@ -1528,7 +1546,8 @@ func marginAutoFlags(m map[string]string) (top, right, bottom, left bool) {
 func parseBox(m map[string]string, prop string, fs float32) qui.Insets {
 	var ins qui.Insets
 	if v, ok := m[prop]; ok {
-		fields := strings.Fields(v)
+		// Top-level split: `calc(1rem + 4px) 8px` is two values, not four.
+		fields := fieldsTopLevel(v)
 		vals := make([]float32, 0, 4)
 		for _, f := range fields {
 			px, _ := parseLength(f, fs, 0)

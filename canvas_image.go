@@ -1135,25 +1135,28 @@ func strokePolyline(img *image.RGBA, pxClip image.Rectangle, pts []Point, m Matr
 	halfW := width * 0.5
 	// Hairline shortcut — caps/joins indistinguishable at width <= 1.5.
 	thin := width < 1.5
+	// Interior segment endpoints render with cap=butt so the per-segment
+	// capsule doesn't leak past the polyline's join (Skia does the
+	// equivalent inside its stroker). Hairlines keep the cap: there the
+	// overlap is what closes the corner.
+	interior := cap
+	if !thin {
+		interior = CapButt
+	}
 	for i := 1; i < len(proj); i++ {
-		segCap := cap
-		// Interior segment endpoints render with cap=butt so the
-		// per-segment capsule doesn't leak past the polyline's join.
-		// Skia does the equivalent inside its hairline / stroker.
-		if !thin {
-			if i > 1 {
-				// not the polyline's start — interior side is butt
-			}
-			if i < len(proj)-1 || closed {
-				// not the polyline's end — interior side is butt
-			}
+		startCap, endCap := cap, cap
+		if i > 1 || closed {
+			startCap = interior
 		}
-		drawLineInto(img, pxClip, proj[i-1], proj[i], width, rgba, segCap)
+		if i < len(proj)-1 || closed {
+			endCap = interior
+		}
+		drawSegmentInto(img, pxClip, proj[i-1], proj[i], width, rgba, startCap, endCap)
 	}
 	// Closed polyline — draw the closing segment + treat both ends as
 	// joins, not caps.
 	if closed && len(proj) >= 3 {
-		drawLineInto(img, pxClip, proj[len(proj)-1], proj[0], width, rgba, cap)
+		drawSegmentInto(img, pxClip, proj[len(proj)-1], proj[0], width, rgba, interior, interior)
 	}
 	if thin {
 		return // caps/joins blend into the segment overlap at width 1
@@ -1882,15 +1885,20 @@ func (c imageCanvas) DrawPolyline(points []Point, color Color, width float32) {
 // still produce a visible 1-pixel trace.
 //
 // `cap` controls the endpoint shape:
-//   - CapRound: classic capsule (rounded ends). Distance from the
-//     parametric foot is the same at every t.
-//   - CapButt: endpoints are perpendicular to the segment — t is
-//     clamped strict-equality outside [0, segLen] so pixels past the
-//     endpoint contribute zero coverage.
-//   - CapSquare: behave like CapRound's perpendicular-foot for the
-//     interior but extend the segment by halfW at each end so the
-//     square cap juts out by halfW past the endpoint.
+//   - CapRound: classic capsule (rounded ends) — distance is measured
+//     to the nearest point of the segment, so the ends are half-disks.
+//   - CapButt: endpoints are perpendicular to the segment — pixels whose
+//     foot falls outside [0, segLen] contribute zero coverage.
+//   - CapSquare: like CapButt but with the segment extended by halfW at
+//     each end, so the square cap juts out by halfW past the endpoint.
 func drawLineInto(img *image.RGBA, pxClip image.Rectangle, p1, p2 Point, width float32, rgba color.RGBA, cap StrokeCap) {
+	drawSegmentInto(img, pxClip, p1, p2, width, rgba, cap, cap)
+}
+
+// drawSegmentInto is drawLineInto with an independent cap at each end:
+// cap1 at p1 and cap2 at p2. strokePolyline uses it to keep interior
+// segment ends butt so a round or square cap doesn't leak past the join.
+func drawSegmentInto(img *image.RGBA, pxClip image.Rectangle, p1, p2 Point, width float32, rgba color.RGBA, cap1, cap2 StrokeCap) {
 	if pxClip.Empty() {
 		return
 	}
@@ -1905,7 +1913,7 @@ func drawLineInto(img *image.RGBA, pxClip image.Rectangle, p1, p2 Point, width f
 	if lenSq < 1e-6 {
 		// Degenerate segment — still draw a round dot of diameter=width
 		// (round/square) or nothing (butt).
-		if cap != CapButt {
+		if cap1 != CapButt || cap2 != CapButt {
 			stampDot(img, pxClip, p1, halfW, rgba)
 		}
 		return
@@ -1915,27 +1923,34 @@ func drawLineInto(img *image.RGBA, pxClip image.Rectangle, p1, p2 Point, width f
 	ux := dx * invLen
 	uy := dy * invLen
 
-	// CapSquare extends the segment endpoints by halfW so the square
-	// cap juts out. The interior clamp + perpendicular-distance math
-	// then renders the extended capsule with butt-ish ends but the
-	// segment is now longer.
-	tMin := float32(0)
-	tMax := segLen
-	if cap == CapSquare {
-		tMin = -halfW
-		tMax = segLen + halfW
+	edge := halfW + 0.5
+	// [tMin, tMax] is the parametric range a pixel's foot may fall in;
+	// feet outside it are culled. Inside it, the foot is clamped to
+	// [footMin, footMax] before measuring distance — that clamp is what
+	// rounds a CapRound end (its cull range reaches out by the AA edge).
+	tMin, footMin := float32(0), float32(0)
+	switch cap1 {
+	case CapSquare:
+		tMin, footMin = -halfW, -halfW
+	case CapRound:
+		tMin = -edge
+	}
+	tMax, footMax := segLen, segLen
+	switch cap2 {
+	case CapSquare:
+		tMax, footMax = segLen+halfW, segLen+halfW
+	case CapRound:
+		tMax = segLen + edge
 	}
 
 	// Iteration bbox = segment bbox inflated by halfW + 1 for the AA
-	// transition band. CapSquare's extension is captured via tMin/tMax;
-	// expand the bbox to match.
+	// transition band, plus CapSquare's extension along the segment.
 	pad := halfW + 1
 	bbMinX := minF(p1.X, p2.X) - pad
 	bbMinY := minF(p1.Y, p2.Y) - pad
 	bbMaxX := maxF(p1.X, p2.X) + pad
 	bbMaxY := maxF(p1.Y, p2.Y) + pad
-	if cap == CapSquare {
-		// Bbox extension along the segment direction.
+	if cap1 == CapSquare || cap2 == CapSquare {
 		bbMinX -= halfW * absF(ux)
 		bbMinY -= halfW * absF(uy)
 		bbMaxX += halfW * absF(ux)
@@ -1958,34 +1973,18 @@ func drawLineInto(img *image.RGBA, pxClip image.Rectangle, p1, p2 Point, width f
 		y1 = pxClip.Max.Y
 	}
 
-	edge := halfW + 0.5
 	for py := y0; py < y1; py++ {
 		for px := x0; px < x1; px++ {
 			cx := float32(px) + 0.5 - p1.X
 			cy := float32(py) + 0.5 - p1.Y
 			t := cx*ux + cy*uy
-			if cap == CapButt {
-				// Skip pixels past the endpoints entirely (no round cap).
-				if t < 0 || t > segLen {
-					continue
-				}
-			} else if t < tMin || t > tMax {
+			if t < tMin || t > tMax {
 				continue
 			}
-			if t < tMin {
-				t = tMin
-			} else if t > tMax {
-				t = tMax
-			}
-			// For CapRound we still want round caps — clamp t to [0,
-			// segLen] so the distance includes the radial extent past
-			// the endpoint.
-			if cap == CapRound {
-				if t < 0 {
-					t = 0
-				} else if t > segLen {
-					t = segLen
-				}
+			if t < footMin {
+				t = footMin
+			} else if t > footMax {
+				t = footMax
 			}
 			ex := cx - t*ux
 			ey := cy - t*uy

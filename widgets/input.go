@@ -1345,6 +1345,7 @@ func (t *Input) editorHooks() editorHooks {
 }
 
 func (t *Input) editorMultiline() bool { return false }
+func (t *Input) editorSecret() bool    { return t.Password }
 
 func (t *Input) editorHorizontal(dir int) int {
 	if t.Text == "" {

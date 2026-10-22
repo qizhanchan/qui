@@ -42,12 +42,16 @@ func (h *hookHost) finish() []func() {
 
 // cleanupAll returns every live effect cleanup — used when the whole host
 // is torn down (component unmount) so effects release their resources.
+// Each cleanup is handed out once: the slots are cleared, so a second
+// call returns nothing.
 func (h *hookHost) cleanupAll() []func() {
 	h.dead = true
 	var cleanups []func()
-	for _, slot := range h.hooks {
+	for i := range h.hooks {
+		slot := &h.hooks[i]
 		if slot.kind == hookKindEffect && slot.effect.cleanup != nil {
 			cleanups = append(cleanups, slot.effect.cleanup)
+			slot.effect.cleanup = nil
 		}
 	}
 	return cleanups

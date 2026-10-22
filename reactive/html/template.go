@@ -548,9 +548,14 @@ func (n *tnode) applyContent(t *Template, b *Builder, scope Scope) {
 				b.children = append(b.children, textNode(s))
 				continue
 			}
-			if c := k.bind(t, scope); c != nil {
-				b.children = append(b.children, c)
+			// A false :if or an empty <slot> keeps its position as an
+			// empty placeholder (like h.If): dropping it would shift every
+			// later unkeyed sibling and remount it, losing focus and state.
+			c := k.bind(t, scope)
+			if c == nil {
+				c = Nothing()
 			}
+			b.children = append(b.children, c)
 		}
 		return
 	}

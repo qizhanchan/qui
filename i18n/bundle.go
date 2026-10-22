@@ -248,28 +248,22 @@ func (b *Bundle) pluralForm(loc qui.Locale, n float64) plural.Form {
 	}
 	i := int(math.Floor(n))
 	frac := n - math.Floor(n)
-	// Round to 3 decimals, then strip trailing zeros to get w/t.
+	// Operands describe the number as {n} DISPLAYS it — minimal form,
+	// at most 3 decimals: 0.1 has v=1 f=1, 0.05 has v=2 f=5. Rules such
+	// as hr/sr "f % 10 = 1" depend on that; forcing v=3 (f=100 for 0.1)
+	// picked the wrong category.
 	f := int(math.Round(frac * 1000))
 	if f >= 1000 { // rounding carried into the integer part
 		i++
 		f = 0
 	}
-	v, t := 3, f
-	if f == 0 {
-		v, t = 0, 0
-	} else {
-		for t%10 == 0 {
-			t /= 10
-		}
+	v := 3
+	for v > 0 && f%10 == 0 {
+		f /= 10
+		v--
 	}
-	w := 0
-	for x := t; x > 0; x /= 10 {
-		w++
-	}
-	if f == 0 {
-		v = 0
-	}
-	return plural.Cardinal.MatchPlural(tag, i, v, w, f, t)
+	// No trailing zeros are ever displayed, so w = v and t = f.
+	return plural.Cardinal.MatchPlural(tag, i, v, v, f, f)
 }
 
 func parseTag(loc qui.Locale) language.Tag {

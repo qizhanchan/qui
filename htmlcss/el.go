@@ -2956,6 +2956,7 @@ func (e *El) hoistControlLayout(cs *ComputedStyle) {
 	if cs.HasFlexBasis {
 		est.Basis = cs.FlexBasis
 	}
+	est.BasisAuto = cs.FlexBasisAuto
 	est.AlignSelf = cs.AlignSelf
 	qui.UpdateFlexItem(e, func(f *qui.FlexItem) {
 		f.Order = cs.Order

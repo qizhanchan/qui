@@ -198,6 +198,10 @@ type Style struct {
 	Shrink    float32
 	Basis     float32
 	AlignSelf AlignCross
+	// BasisAuto keeps a growing item's basis at its content size (CSS
+	// flex-basis: auto, as in `flex: auto` or a bare flex-grow) instead of
+	// the engine's Grow>0 ⇒ basis 0 default (`flex: <n>`).
+	BasisAuto bool
 
 	// Effects. Opacity 0 means "unspecified" (renderer treats as 1). A
 	// non-zero Shadow paints a Skia-style drop shadow behind the box

@@ -314,3 +314,34 @@ func TestRuntimeFlushesHostStylesBeforePaint(t *testing.T) {
 		t.Fatalf("bound sync (list grow) did not flush host styles (flushes stayed %d)", before)
 	}
 }
+
+// A layout effect in a row the For mounts through a scoped sync runs after
+// the next layout pass, as it would after a full render.
+func TestForRowLayoutEffectRunsAfterScopedSync(t *testing.T) {
+	window := qui.NewTestWindow(qui.Size{W: 400, H: 300})
+	ran := map[string]int{}
+	items := reactive.NewSignal([]string{"a"})
+	row := func(id string) reactive.Element {
+		return reactive.Component("LayoutFxRow", id, id, func(id string) reactive.Element {
+			reactive.UseLayoutEffect(func() func() {
+				ran[id]++
+				return nil
+			}, []any{})
+			return uiLabel(id).Key(id).Build()
+		})
+	}
+	rt := reactive.NewRuntime(window, func() reactive.Element {
+		return uiVBox().Children(
+			uiForOf(items, func(_ int, s string) uiNode { return uiElem(row(s)) }),
+		).Build()
+	})
+	rt.Render()
+	window.LayoutForTest()
+
+	items.Set([]string{"a", "b"})
+	window.DrainJobsForTest()
+	window.LayoutForTest()
+	if ran["b"] != 1 {
+		t.Fatalf("layout effect of scoped-mounted row ran %d times, want 1", ran["b"])
+	}
+}

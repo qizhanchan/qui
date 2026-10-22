@@ -166,7 +166,17 @@ func (b *Builder) Key(k string) *Builder { b.key = k; return b }
 func (b *Builder) Text(t string) *Builder { b.children = nil; b.addString(t); return b }
 
 // Attr sets an arbitrary attribute (href, data-*, type, …).
+//
+// "class" and "id" route to Class and ID: as plain attributes the managed
+// attribute sync would write them back over the class (and :class) set
+// separately, and an id would never reach Window.Find.
 func (b *Builder) Attr(k, v string) *Builder {
+	switch k {
+	case "class":
+		return b.Class(v)
+	case "id":
+		return b.ID(v)
+	}
 	if b.attrs == nil {
 		b.attrs = map[string]string{}
 	}
@@ -562,8 +572,15 @@ func (b *Builder) Build() reactive.Element {
 			if bb.onFormSubmit != nil || bb.tag == "form" {
 				el.SetOnFormSubmit(bb.onFormSubmit)
 			}
+			// OnDraw, Icon and ID are cleared when a re-render drops them —
+			// but only when this builder set them, so content a ref
+			// installed directly (el.SetCanvas, el.SetIcon) survives.
 			if bb.canvasPaint != nil {
 				el.SetCanvasPaint(bb.canvasPaint)
+				el.SetUserData(ownsPaintKey, true)
+			} else if el.UserData(ownsPaintKey) != nil {
+				el.SetCanvasPaint(nil)
+				el.SetUserData(ownsPaintKey, nil)
 			}
 			// The latest ref closures are kept on the element so the
 			// unmount call (wired at mount) reaches the current ones.
@@ -623,12 +640,21 @@ func (b *Builder) Build() reactive.Element {
 				} else {
 					el.SetIcon(bb.icon)
 				}
+				el.SetUserData(ownsIconKey, true)
+			} else if el.UserData(ownsIconKey) != nil {
+				el.SetIcon(nil)
+				el.SetUserData(ownsIconKey, nil)
 			}
 			if bb.tag == "img" {
 				el.SetImage(bb.image)
 			}
 			if bb.id != "" {
 				el.SetElementID(bb.id)
+				el.SetUserData(ownsIDKey, true)
+			} else if el.UserData(ownsIDKey) != nil {
+				el.SetID("")
+				el.RemoveAttr("id")
+				el.SetUserData(ownsIDKey, nil)
 			}
 			if bb.bindClass == nil {
 				el.SetClass(bb.class)
@@ -693,8 +719,13 @@ func (b *Builder) Build() reactive.Element {
 }
 
 const (
-	refKey   = "h.ref"
-	refToKey = "h.refTo"
+	refKey = "h.ref"
+	// own*Key mark an element property this DSL set, so a render that
+	// drops it clears it without touching what a ref installed.
+	ownsPaintKey = "h.ownsPaint"
+	ownsIconKey  = "h.ownsIcon"
+	ownsIDKey    = "h.ownsID"
+	refToKey     = "h.refTo"
 )
 
 // --- node wrappers ---

@@ -89,8 +89,14 @@ func (p *Printer) Percent(v any, opts ...number.Option) string {
 }
 
 // Currency formats an amount in the given ISO 4217 code ("USD", "EUR",
-// "CNY"), using the locale's symbol and placement: 1234.5 in USD is
-// "$1,234.50" in en and "1.234,50 $" in de.
+// "CNY") with the locale's symbol, separators and symbol placement, and
+// the currency's standard number of digits: 1234.5 in USD is "$1,234.50"
+// in en, "1.234,50 $" in de and "1 234,50 $US" in fr; -5 is "-$5.00" in
+// en.
+//
+// Placement follows CLDR's standard currency pattern for the common
+// cases (see currencyPlacement); x/text exposes the symbol but not that
+// pattern, and its own formatter always writes "<symbol> <number>".
 //
 // An unknown code degrades to "<code> <number>" rather than failing —
 // a formatting call on the Draw path must always return something.
@@ -99,7 +105,93 @@ func (p *Printer) Currency(v any, code string) string {
 	if err != nil {
 		return strings.ToUpper(code) + " " + p.Number(v)
 	}
-	return p.p.Sprint(currency.Symbol(unit.Amount(v)))
+	f, ok := toFloat(v)
+	if !ok {
+		return p.p.Sprint(currency.Symbol(unit.Amount(v)))
+	}
+	scale, _ := currency.Standard.Rounding(unit)
+	sign := ""
+	if f < 0 {
+		f = -f
+		// The locale's minus (Arabic carries a letter mark with it):
+		// format -1 and drop the digit.
+		one := p.p.Sprint(number.Decimal(1))
+		sign = strings.TrimSuffix(p.p.Sprint(number.Decimal(-1)), one)
+	}
+	num := p.p.Sprint(number.Decimal(f, number.Scale(scale)))
+	sym := p.p.Sprint(currency.Symbol(unit))
+	switch currencyPlacement(p.tag) {
+	case symbolAfter:
+		return sign + num + "\u00a0" + sym
+	case symbolBeforeSpaced:
+		return sign + sym + "\u00a0" + num
+	default:
+		return sign + sym + num
+	}
+}
+
+type symbolPlacement int
+
+const (
+	symbolBefore       symbolPlacement = iota // ¤#,##0.00 (en, ja, zh, ko, …)
+	symbolBeforeSpaced                        // ¤ #,##0.00 (nl, pt-BR, de-AT, de-CH)
+	symbolAfter                               // #,##0.00 ¤ (de, fr, es, ru, …)
+)
+
+// currencyPlacement maps a locale to its CLDR standard currency pattern's
+// symbol position. Regions that differ from their language come first.
+func currencyPlacement(tag language.Tag) symbolPlacement {
+	base, _ := tag.Base()
+	region, _ := tag.Region()
+	lang, reg := base.String(), region.String()
+	switch lang + "-" + reg {
+	case "de-AT", "de-CH", "de-LI", "it-CH":
+		return symbolBeforeSpaced
+	case "es-MX", "es-US", "es-419", "es-AR", "es-CO", "es-CL", "es-PE":
+		return symbolBefore
+	case "pt-PT", "pt-AO", "pt-MZ":
+		return symbolAfter
+	}
+	switch lang {
+	case "de", "fr", "es", "it", "ru", "uk", "be", "pl", "cs", "sk", "sl", "hr",
+		"sr", "bs", "bg", "mk", "ro", "hu", "sv", "nb", "nn", "no", "da", "fi",
+		"et", "lv", "lt", "el", "is", "ca", "eu", "gl", "vi", "az", "kk", "hy", "ka":
+		return symbolAfter
+	case "nl", "pt":
+		return symbolBeforeSpaced
+	}
+	return symbolBefore
+}
+
+// toFloat converts the numeric kinds Currency accepts to float64.
+func toFloat(v any) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case float32:
+		return float64(x), true
+	case int:
+		return float64(x), true
+	case int8:
+		return float64(x), true
+	case int16:
+		return float64(x), true
+	case int32:
+		return float64(x), true
+	case int64:
+		return float64(x), true
+	case uint:
+		return float64(x), true
+	case uint8:
+		return float64(x), true
+	case uint16:
+		return float64(x), true
+	case uint32:
+		return float64(x), true
+	case uint64:
+		return float64(x), true
+	}
+	return 0, false
 }
 
 // Collator returns a locale-aware string collator, cached per printer.

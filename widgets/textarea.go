@@ -1380,6 +1380,7 @@ func (t *TextArea) editorHooks() editorHooks {
 }
 
 func (t *TextArea) editorMultiline() bool { return true }
+func (t *TextArea) editorSecret() bool    { return false }
 
 // editorHorizontal steps one glyph along the visual line, crossing to the
 // neighbouring line at its end. At a soft-wrap boundary the offset does not

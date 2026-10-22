@@ -168,3 +168,10 @@ func TestUnsupportedArgPanics(t *testing.T) {
 	}()
 	h.Div("ok", struct{}{})
 }
+
+// A nil *Builder child is dropped like a plain nil instead of panicking at
+// Build.
+func TestTypedNilBuilderChildIsDropped(t *testing.T) {
+	var extra *h.Builder
+	_ = h.Div(h.Span("a"), extra).Build() // panicked before the fix
+}

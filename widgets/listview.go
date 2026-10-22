@@ -554,6 +554,10 @@ func (lv *ListView) ClampScroll() {
 // intersect the viewport at the current scrollY. Used by Draw to skip
 // every out-of-view row — the core of the virtualization.
 func (lv *ListView) visibleRange() (int, int) {
+	// The model is live (RowCount reads it), so it may have shrunk under
+	// a scroll offset set while it was longer; re-clamp before painting
+	// or hit-testing so the view never shows an empty page.
+	lv.ClampScroll()
 	return fixedRowVisibleRange(lv.RowCount(), lv.RowHeight, lv.scrollY, lv.Bounds())
 }
 

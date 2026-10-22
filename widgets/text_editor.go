@@ -78,6 +78,9 @@ type textEditorHost interface {
 	// editorMultiline reports whether '\n' is content. It decides the paste
 	// newline policy and whether a '\n' CharEvent is text.
 	editorMultiline() bool
+	// editorSecret reports a masked field (Input.Password): copy and cut
+	// are no-ops, as browsers make them on type=password.
+	editorSecret() bool
 	// editorHorizontal is the caret offset one visual step left (dir < 0)
 	// or right (dir > 0), following bidi and grapheme clusters.
 	editorHorizontal(dir int) int
@@ -660,12 +663,12 @@ func (e *textEditor) clipboardShortcut(h textEditorHost, k Key) {
 		h.editorRevealCaret()
 		e.resetBlink()
 	case KeyC:
-		if e.hasSelection() {
+		if e.hasSelection() && !h.editorSecret() {
 			lo, hi := e.ordered()
 			SetClipboardText(string([]rune(*text)[lo:hi]))
 		}
 	case KeyX:
-		if !e.hasSelection() {
+		if !e.hasSelection() || h.editorSecret() {
 			return
 		}
 		lo, hi := e.ordered()

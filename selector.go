@@ -110,6 +110,20 @@ func (w *Window) FindNodes(selector string) ([]*AXNode, error) {
 	return sel.matchNodes(w.AccessibilityTree()), nil
 }
 
+// FindNodesSynced is FindNodes for callers off the UI goroutine (the
+// agent's HTTP handlers): the tree is captured on the UI thread via
+// AccessibilityTreeSynced, then matched here.
+func (w *Window) FindNodesSynced(selector string) ([]*AXNode, error) {
+	if w == nil {
+		return nil, nil
+	}
+	sel, err := parseSelector(selector)
+	if err != nil {
+		return nil, err
+	}
+	return sel.matchNodes(w.AccessibilityTreeSynced()), nil
+}
+
 // -------------------------------------------------------------------
 // Selector AST + matching
 

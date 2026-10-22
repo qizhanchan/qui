@@ -151,8 +151,8 @@ func resolveSocket(override string) (string, error) {
 		if !ok || !processAlive(pid) {
 			continue
 		}
-		info, err := os.Stat(path)
-		if err != nil {
+		info, err := os.Lstat(path)
+		if err != nil || !ownSocket(info) {
 			continue
 		}
 		alive = append(alive, live{path: path, mod: info.ModTime()})
@@ -184,17 +184,25 @@ func pidFromSock(path string) (int, bool) {
 	return pid, true
 }
 
-// processAlive reports whether pid refers to a running process. Signal 0 is a
-// no-op probe: nil or EPERM => alive, ESRCH => dead.
+// processAlive reports whether pid refers to a running process we may
+// signal. Signal 0 is a no-op probe. EPERM means another user's process —
+// never a socket we should talk to, so it counts as not ours.
 func processAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	err := syscall.Kill(pid, 0)
-	if err == nil {
-		return true
+	return syscall.Kill(pid, 0) == nil
+}
+
+// ownSocket reports whether info is a Unix socket owned by the current
+// user. /tmp is world-writable: without this check another user could
+// plant qui-agent-<pid>.sock and receive the next `type '#password' …`.
+func ownSocket(info os.FileInfo) bool {
+	if info.Mode()&os.ModeSocket == 0 {
+		return false
 	}
-	return err == syscall.EPERM
+	st, ok := info.Sys().(*syscall.Stat_t)
+	return ok && int(st.Uid) == os.Getuid()
 }
 
 // ---------------------------------------------------------------------------
@@ -515,7 +523,13 @@ func waitFor(c *http.Client, kind string, args []string) error {
 	path := fmt.Sprintf("/wait?for=%s&selector=%s&state=%s&timeoutMs=%d",
 		kind, queryEscape(selector), state, timeoutMs)
 
-	out, status, err := httpDo(c, "GET", path, nil)
+	// The server holds the request for up to timeoutMs; the client must
+	// outlast it or a long --timeout always fails client-side.
+	wc := *c
+	if d := time.Duration(timeoutMs)*time.Millisecond + 10*time.Second; d > wc.Timeout {
+		wc.Timeout = d
+	}
+	out, status, err := httpDo(&wc, "GET", path, nil)
 	if err != nil {
 		return err
 	}

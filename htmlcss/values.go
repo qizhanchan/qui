@@ -217,10 +217,12 @@ func parseHexColor(s string) (qui.Color, bool) {
 	h := strings.TrimPrefix(s, "#")
 	switch len(h) {
 	case 3: // #rgb
-		r := hexNibble(h[0])
-		g := hexNibble(h[1])
-		b := hexNibble(h[2])
-		return qui.Color{R: float32(r*17) / 255, G: float32(g*17) / 255, B: float32(b*17) / 255, A: 1}, true
+		r, ok1 := hexByte(h[0:1])
+		g, ok2 := hexByte(h[1:2])
+		b, ok3 := hexByte(h[2:3])
+		if ok1 && ok2 && ok3 {
+			return qui.Color{R: float32(r*17) / 255, G: float32(g*17) / 255, B: float32(b*17) / 255, A: 1}, true
+		}
 	case 6: // #rrggbb
 		r, ok1 := hexByte(h[0:2])
 		g, ok2 := hexByte(h[2:4])
@@ -257,8 +259,10 @@ func parseRGBColor(s string) (qui.Color, bool) {
 	b := parseColorComponent(fields[2])
 	a := float32(1)
 	if len(fields) >= 4 {
-		if v, err := strconv.ParseFloat(strings.TrimSpace(fields[3]), 32); err == nil {
-			a = float32(v)
+		// parseAlpha takes a percentage too (`rgb(0 0 0 / 50%)`) and
+		// clamps to [0,1], matching parseHSLColor.
+		if v, ok := parseAlpha(fields[3]); ok {
+			a = v
 		}
 	}
 	return qui.Color{R: r, G: g, B: b, A: a}, true
@@ -276,11 +280,6 @@ func parseColorComponent(s string) float32 {
 		return clamp01(float32(v) / 255)
 	}
 	return 0
-}
-
-func hexNibble(b byte) int {
-	v, _ := hexByte(string([]byte{b}))
-	return v
 }
 
 func hexByte(s string) (int, bool) {
@@ -310,6 +309,11 @@ func parseLength(s string, fontSize, pctRef float32) (float32, bool) {
 		return 0, false
 	}
 	if strings.HasPrefix(s, "calc(") {
+		return parseCalc(s, fontSize, pctRef)
+	}
+	if strings.HasPrefix(s, "(") {
+		// A calc() nested in min()/max() reaches here with its "calc"
+		// already rewritten to a bare paren by the outer parseCalc.
 		return parseCalc(s, fontSize, pctRef)
 	}
 	if strings.HasPrefix(s, "min(") || strings.HasPrefix(s, "max(") || strings.HasPrefix(s, "clamp(") {
@@ -519,6 +523,17 @@ func (p *calcParser) factor() (float32, bool) {
 	if p.pos >= len(p.src) {
 		return 0, false
 	}
+	// Unary sign: `calc(-1 * 8px)`, `calc(100% - -4px)`. A sign directly
+	// before a number/paren/function is part of the operand, never an
+	// operator (binary +/- need whitespace around them in CSS).
+	if c := p.src[p.pos]; (c == '-' || c == '+') && p.pos+1 < len(p.src) && p.src[p.pos+1] != ' ' {
+		p.pos++
+		v, ok := p.factor()
+		if c == '-' {
+			v = -v
+		}
+		return v, ok
+	}
 	if p.src[p.pos] == '(' {
 		p.pos++
 		v, ok := p.expr()
@@ -543,6 +558,24 @@ func (p *calcParser) factor() (float32, bool) {
 done:
 	tok := p.src[start:p.pos]
 	if tok == "" {
+		return 0, false
+	}
+	if p.pos < len(p.src) && p.src[p.pos] == '(' {
+		// A nested math function — min(10px, 2em) — evaluated whole by
+		// parseLength once its balanced argument list is read.
+		depth := 0
+		for p.pos < len(p.src) {
+			switch p.src[p.pos] {
+			case '(':
+				depth++
+			case ')':
+				depth--
+			}
+			p.pos++
+			if depth == 0 {
+				return parseLength(p.src[start:p.pos], p.fontSize, p.pctRef)
+			}
+		}
 		return 0, false
 	}
 	return parseLength(tok, p.fontSize, p.pctRef)

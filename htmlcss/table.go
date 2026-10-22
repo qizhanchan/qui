@@ -68,8 +68,10 @@ func (e *El) buildTable(cs *ComputedStyle) {
 			for occupied[[2]int{r, col}] {
 				col++
 			}
-			cspan := spanAttr(ke, "colspan")
-			rspan := spanAttr(ke, "rowspan")
+			cspan := min(spanAttr(ke, "colspan"), maxColSpan)
+			// A rowspan never reaches past the table's last row; clamping
+			// here also keeps a hostile value from filling `occupied`.
+			rspan := min(spanAttr(ke, "rowspan"), len(rows)-r)
 			places = append(places, placed{ke, col, r, cspan, rspan})
 			for rr := r; rr < r+rspan; rr++ {
 				for cc := col; cc < col+cspan; cc++ {
@@ -497,7 +499,7 @@ type colWidth struct {
 func gatherColWidths(table *El, tableCS *ComputedStyle) []colWidth {
 	var out []colWidth
 	add := func(n *Node) {
-		span := spanAttrNode(n, "span")
+		span := min(spanAttrNode(n, "span"), maxColSpan)
 		px, has := colWidthOfNode(n, tableCS)
 		for i := 0; i < span; i++ {
 			out = append(out, colWidth{px, has})
@@ -602,6 +604,10 @@ func gatherTableRows(table *El) []*El {
 	walk(table)
 	return rows
 }
+
+// maxColSpan is HTML's cap on colspan and <col span>: one malformed
+// attribute must not allocate a billion grid tracks.
+const maxColSpan = 1000
 
 // spanAttr reads a colspan/rowspan attribute, clamped to a minimum of 1.
 func spanAttr(e *El, name string) int {

@@ -19,6 +19,51 @@ func expandShorthands(m map[string]string) {
 	}
 }
 
+// shorthandLonghands lists, per shorthand, every property it resets —
+// longhands and sub-shorthands alike (`border` covers `border-top`,
+// `border-width` and `border-top-width`). mergedDecls uses it to keep
+// cascade order between a shorthand and its longhands.
+var shorthandLonghands = func() map[string][]string {
+	sides := []string{"top", "right", "bottom", "left"}
+	m := map[string][]string{
+		"background": {"background-color", "background-image", "background-position",
+			"background-size", "background-repeat", "background-attachment",
+			"background-origin", "background-clip"},
+		"font": {"font-style", "font-variant", "font-weight", "font-stretch",
+			"font-size", "line-height", "font-family"},
+		"flex":            {"flex-grow", "flex-shrink", "flex-basis"},
+		"flex-flow":       {"flex-direction", "flex-wrap"},
+		"inset":           {"top", "right", "bottom", "left"},
+		"outline":         {"outline-width", "outline-style", "outline-color"},
+		"overflow":        {"overflow-x", "overflow-y"},
+		"gap":             {"row-gap", "column-gap"},
+		"text-decoration": {"text-decoration-line", "text-decoration-style", "text-decoration-color", "text-decoration-thickness"},
+		"list-style":      {"list-style-type", "list-style-position", "list-style-image"},
+		"border-radius": {"border-top-left-radius", "border-top-right-radius",
+			"border-bottom-right-radius", "border-bottom-left-radius"},
+	}
+	var border []string
+	for _, box := range []string{"margin", "padding"} {
+		for _, s := range sides {
+			m[box] = append(m[box], box+"-"+s)
+		}
+	}
+	for _, part := range []string{"width", "style", "color"} {
+		for _, s := range sides {
+			m["border-"+part] = append(m["border-"+part], "border-"+s+"-"+part)
+		}
+		border = append(border, "border-"+part)
+		border = append(border, m["border-"+part]...)
+	}
+	for _, s := range sides {
+		side := "border-" + s
+		m[side] = []string{side + "-width", side + "-style", side + "-color"}
+		border = append(border, side)
+	}
+	m["border"] = border
+	return m
+}()
+
 func setIfAbsent(m map[string]string, key, val string) {
 	if val == "" {
 		return
@@ -76,44 +121,50 @@ func expandFont(v string, m map[string]string) {
 
 // expandFlex expands `flex: <grow> [shrink] [basis]` into its longhands.
 // Keyword forms: `none` = 0 0 auto; `auto` = 1 1 auto; `initial` = 0 1 auto.
+// Omitted parts take the shorthand's defaults, not the longhands'
+// initial values: grow and shrink 1, basis 0 — so `flex: 1` is `1 1 0`
+// and `flex: 200px` is `1 1 200px`. The basis may sit in any position.
 func expandFlex(v string, m map[string]string) {
 	v = strings.ToLower(strings.TrimSpace(v))
+	grow, shrink, basis := "", "", ""
 	switch v {
 	case "none":
-		setIfAbsent(m, "flex-grow", "0")
-		setIfAbsent(m, "flex-shrink", "0")
-		return
+		grow, shrink, basis = "0", "0", "auto"
 	case "auto":
-		setIfAbsent(m, "flex-grow", "1")
-		setIfAbsent(m, "flex-shrink", "1")
-		return
+		grow, shrink, basis = "1", "1", "auto"
 	case "initial":
-		return
-	}
-	fields := strings.Fields(v)
-	// A single unitless value is flex-grow; a single value with a unit is
-	// flex-basis (CSS `flex: <basis>`).
-	if len(fields) == 1 {
-		if _, ok := parseFloat(fields[0]); ok {
-			setIfAbsent(m, "flex-grow", fields[0])
-		} else {
-			setIfAbsent(m, "flex-basis", fields[0])
+		grow, shrink, basis = "0", "1", "auto"
+	default:
+		for _, f := range fieldsTopLevel(v) {
+			if _, ok := parseFloat(f); ok && (grow == "" || shrink == "") {
+				if grow == "" {
+					grow = f
+				} else {
+					shrink = f
+				}
+				continue
+			}
+			if basis != "" {
+				return // two bases: invalid, ignore the declaration
+			}
+			basis = f
 		}
-		return
-	}
-	if len(fields) >= 1 {
-		if _, ok := parseFloat(fields[0]); ok {
-			setIfAbsent(m, "flex-grow", fields[0])
+		if grow == "" && basis == "" {
+			return
+		}
+		if grow == "" {
+			grow = "1"
+		}
+		if shrink == "" {
+			shrink = "1"
+		}
+		if basis == "" {
+			basis = "0"
 		}
 	}
-	if len(fields) >= 2 {
-		if _, ok := parseFloat(fields[1]); ok {
-			setIfAbsent(m, "flex-shrink", fields[1])
-		}
-	}
-	if len(fields) >= 3 {
-		setIfAbsent(m, "flex-basis", fields[2])
-	}
+	setIfAbsent(m, "flex-grow", grow)
+	setIfAbsent(m, "flex-shrink", shrink)
+	setIfAbsent(m, "flex-basis", basis)
 }
 
 // expandInset expands `inset: <t> [r] [b] [l]` (CSS logical shorthand for

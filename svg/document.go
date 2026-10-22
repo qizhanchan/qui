@@ -24,7 +24,17 @@ type Document struct {
 
 	mu    sync.Mutex
 	cache map[cacheKey]*image.RGBA
+	// order is cache's keys oldest-first, for eviction past
+	// maxRasterCache; gen counts invalidations so a raster started before
+	// one is not stored after it.
+	order []cacheKey
+	gen   uint64
 }
+
+// maxRasterCache bounds one document's cached rasters. Icon documents are
+// shared process-wide, so a tint tween or a resize sweep would otherwise
+// add a bitmap per distinct color/size forever.
+const maxRasterCache = 32
 
 type cacheKey struct {
 	w, h       int
@@ -56,7 +66,8 @@ func (d *Document) Add(els ...Element) *Document {
 // pixels from the old tree.
 func (d *Document) invalidateCache() {
 	d.mu.Lock()
-	d.cache = nil
+	d.cache, d.order = nil, nil
+	d.gen++
 	d.mu.Unlock()
 }
 
@@ -78,13 +89,16 @@ func (d *Document) Rasterize(width, height int, tint qui.Color) image.Image {
 		b: byteFrom(tint.B), a: byteFrom(tint.A),
 	}
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.cache == nil {
-		d.cache = make(map[cacheKey]*image.RGBA)
-	}
 	if img, ok := d.cache[key]; ok {
+		d.mu.Unlock()
 		return img
 	}
+	gen := d.gen
+	d.mu.Unlock()
+
+	// Render without the lock: other sizes/tints of a shared icon need
+	// not wait on this one. Two callers racing on the same key both
+	// render; the first to store wins.
 	img := rasterizeDocument(d, width, height)
 	if key.a == 0 {
 		// Untinted path — keep the SVG's authored colors. Still need
@@ -93,7 +107,24 @@ func (d *Document) Rasterize(width, height int, tint qui.Color) image.Image {
 	} else {
 		applyTint(img, color.RGBA{R: key.r, G: key.g, B: key.b, A: key.a})
 	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.gen != gen {
+		return img // the document changed mid-render; don't cache stale pixels
+	}
+	if prev, ok := d.cache[key]; ok {
+		return prev
+	}
+	if d.cache == nil {
+		d.cache = make(map[cacheKey]*image.RGBA)
+	}
+	if len(d.order) >= maxRasterCache {
+		delete(d.cache, d.order[0])
+		d.order = d.order[1:]
+	}
 	d.cache[key] = img
+	d.order = append(d.order, key)
 	return img
 }
 
