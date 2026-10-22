@@ -23,8 +23,8 @@ import (
 
 // rtRegistry maps a window to the reactive Runtime driving it, so the agent
 // layer (which only has the *qui.Window) can find the runtime to inspect.
-// Registered in NewRuntime; last mount per window wins. Entries for closed
-// windows are harmless (the agent only queries its own live window).
+// Registered in NewRuntime (last mount per window wins) and removed by
+// Runtime.Unmount, which runs when the window closes.
 var rtRegistry sync.Map // *qui.Window -> *Runtime
 
 func registerRuntime(w *qui.Window, r *Runtime) {

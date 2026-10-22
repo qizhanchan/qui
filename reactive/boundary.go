@@ -97,6 +97,7 @@ func reconcileBoundaryChild(node *instance, data *boundaryData, pass *reconcileP
 // — the aborted subtree pushed frames it never got to pop.
 func reconcileGuarded(prev *instance, elem Element, pass *reconcilePass) (child *instance, flags Flags, panicked bool, err any) {
 	fiberDepth := len(pass.fiberStack)
+	hostDepth := len(pass.hosts)
 	scopeSnapshot := renderScopeDepth()
 	providerDepths := make(map[*contextKey]int, len(pass.providers))
 	for key, stack := range pass.providers {
@@ -108,6 +109,10 @@ func reconcileGuarded(prev *instance, elem Element, pass *reconcilePass) (child 
 			panicked = true
 			err = r
 			pass.fiberStack = pass.fiberStack[:fiberDepth]
+			// Host pushes below aren't deferred-popped either: without
+			// this, later siblings would style against the aborted
+			// subtree's widget as their enclosing host.
+			pass.hosts = pass.hosts[:hostDepth]
 			trimRenderScopes(scopeSnapshot)
 			for key, stack := range pass.providers {
 				if depth := providerDepths[key]; len(stack) > depth {

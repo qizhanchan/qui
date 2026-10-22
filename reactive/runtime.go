@@ -38,6 +38,10 @@ type Runtime struct {
 	// here so element Create hooks resolve the right engine per runtime —
 	// a package-level global would break with multiple windows).
 	hostData any
+
+	// unmounted is set by Unmount; the runtime then ignores render
+	// requests (a goroutine's late setState after the window closed).
+	unmounted bool
 }
 
 // currentRT tracks the runtime whose render / reconcile / scoped-sync
@@ -135,7 +139,56 @@ func NewRuntime(window *qui.Window, renderFn func() Element) *Runtime {
 	r.scheduleFn = r.defaultSchedule
 	r.reconciler.runtime = r
 	registerRuntime(window, r)
+	if window != nil {
+		// Closing the window tears the tree down: effect cleanups (timers,
+		// subscriptions) run and the window is no longer pinned.
+		window.OnClose(r.Unmount)
+	}
 	return r
+}
+
+// Unmount tears the runtime down: every mounted component unmounts (its
+// effect cleanups and host destroy hooks run, children first), signal
+// bindings are released, the window's registry entry is dropped, and
+// later render requests do nothing. NewRuntime arranges for it to run
+// when the window closes; call it directly to drop a runtime from a
+// window that stays open. Idempotent.
+func (r *Runtime) Unmount() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	if r.unmounted {
+		r.mu.Unlock()
+		return
+	}
+	r.unmounted = true
+	r.pending = false
+	window := r.window
+	r.mu.Unlock()
+
+	var cleanups []func()
+	runtimePassMu.Lock()
+	func() {
+		defer runtimePassMu.Unlock()
+		prev := setCurrentRuntime(r)
+		defer setCurrentRuntime(prev)
+		pass := &reconcilePass{runtime: r}
+		unmountInstance(r.reconciler.root, pass)
+		r.reconciler.root = nil
+		cleanups = append(pass.cleanups, r.rootHost.cleanupAll()...)
+	}()
+	for _, cleanup := range cleanups {
+		if cleanup != nil {
+			cleanup()
+		}
+	}
+	r.mu.Lock()
+	r.pendingEffects, r.pendingLayoutEffects = nil, nil
+	r.mu.Unlock()
+	if window != nil {
+		rtRegistry.CompareAndDelete(window, r)
+	}
 }
 
 // Mount creates a runtime and performs the initial render.
@@ -227,6 +280,10 @@ func (r *Runtime) RequestRender() {
 	}
 
 	r.mu.Lock()
+	if r.unmounted {
+		r.mu.Unlock()
+		return
+	}
 	r.pending = true
 	if r.rendering {
 		r.mu.Unlock()
@@ -261,7 +318,7 @@ func (r *Runtime) Flush() {
 	}
 	for i := 0; i < maxFlushPasses; i++ {
 		r.mu.Lock()
-		if !r.pending || r.rendering {
+		if !r.pending || r.rendering || r.unmounted {
 			r.mu.Unlock()
 			return
 		}

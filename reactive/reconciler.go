@@ -326,6 +326,12 @@ type instance struct {
 	// state (see Show / For in structural.go). instance.widget is the
 	// hosting container.
 	bnd *boundState
+
+	// unmounted is set by the first unmountInstance. Unmount is then a
+	// no-op (an ErrorBoundary can reach a subtree whose pieces the aborted
+	// reconcile already unmounted — their cleanups must not run twice),
+	// and a Show/For scoped sync queued before the unmount bails out.
+	unmounted bool
 }
 
 func (n *instance) isComponent() bool { return n != nil && n.comp != nil }
@@ -427,6 +433,16 @@ func reconcileNode(prev *instance, next Element, pass *reconcilePass) (*instance
 		// children from the signal's current value like a regular host —
 		// a full pass must also observe non-signal state the render
 		// closure reads.
+		if old := prev.bnd.data; old != nil && old.watch != next.bound.watch {
+			// The parent swapped the signal (a positionally reused row
+			// whose :if is a per-item signal): follow the new one, or the
+			// old signal would keep driving this subtree.
+			if prev.bnd.unsub != nil {
+				prev.bnd.unsub()
+			}
+			node, rt := prev, pass.runtime
+			prev.bnd.unsub = next.bound.watch.Subscribe(func() { rt.scheduleBoundSync(node) })
+		}
 		prev.bnd.data = next.bound
 		prev.bnd.parentFiber = pass.currentFiber()
 		prev.bnd.providers = snapshotProviders(pass)
@@ -847,9 +863,10 @@ func mountComponent(elem Element, pass *reconcilePass) (*instance, Flags) {
 // unmountInstance counts the removed subtree and gathers component effect
 // cleanups so they fire after commit.
 func unmountInstance(node *instance, pass *reconcilePass) {
-	if node == nil {
+	if node == nil || node.unmounted {
 		return
 	}
+	node.unmounted = true
 	if pass != nil && pass.metrics != nil {
 		pass.metrics.Unmounts++
 	}

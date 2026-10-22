@@ -358,12 +358,22 @@ func (r *Runtime) runEffectQueue(pending *[]effectRef) {
 		if item.cleanup != nil {
 			item.cleanup()
 		}
+		// An earlier item (a layout effect's synchronous re-render on a
+		// headless window) may have unmounted this component. Its old
+		// cleanup was taken out of the slot above, so it ran here rather
+		// than in unmount; the effect itself must not run on a dead host.
+		r.mu.Lock()
+		dead := item.host.dead
+		r.mu.Unlock()
+		if dead {
+			continue
+		}
 		newCleanup := item.effect()
 		if newCleanup == nil {
 			continue
 		}
 		r.mu.Lock()
-		if item.index < len(item.host.hooks) &&
+		if !item.host.dead && item.index < len(item.host.hooks) &&
 			item.host.hooks[item.index].kind == hookKindEffect &&
 			item.host.hooks[item.index].effect.revision == item.revision {
 			item.host.hooks[item.index].effect.cleanup = newCleanup
