@@ -136,3 +136,43 @@ void *quiPasteboardImage(int *len, char **ext) {
         return buf;
     }
 }
+
+// quiSetPasteboardImage publishes an image (PNG bytes) together with a
+// plain-text flavor, so image consumers paste the picture and text
+// editors the text (e.g. the Markdown that references it).
+void quiSetPasteboardImage(const void *png, int len, const char *plain) {
+    @autoreleasepool {
+        NSPasteboard *pb = [NSPasteboard generalPasteboard];
+        [pb clearContents];
+        NSData *d = [NSData dataWithBytes:png length:len];
+        NSString *p = plain ? [NSString stringWithUTF8String:plain] : @"";
+        [pb declareTypes:@[ NSPasteboardTypePNG, NSPasteboardTypeString ] owner:nil];
+        [pb setData:d forType:NSPasteboardTypePNG];
+        [pb setString:p forType:NSPasteboardTypeString];
+    }
+}
+
+// quiPasteboardFiles returns the paths of the file URLs on the pasteboard
+// (files copied in Finder) as a malloc'd array of malloc'd strings the
+// caller frees; *n gets their count. NULL when there are none.
+char **quiPasteboardFiles(int *n) {
+    *n = 0;
+    @autoreleasepool {
+        NSPasteboard *pb = [NSPasteboard generalPasteboard];
+        NSArray *urls = [pb readObjectsForClasses:@[ [NSURL class] ]
+                                          options:@{NSPasteboardURLReadingFileURLsOnlyKey : @YES}];
+        if ([urls count] == 0) {
+            return NULL;
+        }
+        char **out = malloc(sizeof(char *) * [urls count]);
+        int k = 0;
+        for (NSURL *u in urls) {
+            const char *p = [[u path] fileSystemRepresentation];
+            if (p) {
+                out[k++] = strdup(p);
+            }
+        }
+        *n = k;
+        return out;
+    }
+}

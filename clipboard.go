@@ -132,6 +132,43 @@ func GetClipboardImage() ([]byte, string) {
 	return nil, ""
 }
 
+// ImageClipboardWriter is an optional capability of a Clipboard provider:
+// putting an image on the clipboard.
+type ImageClipboardWriter interface {
+	// SetImage publishes PNG bytes along with a plain-text flavor.
+	SetImage(png []byte, plain string)
+}
+
+// SetClipboardImage puts a PNG image on the clipboard with plain as its
+// text flavor (apps that take images paste the picture, text editors the
+// text). Where images cannot be written, only the text is.
+func SetClipboardImage(png []byte, plain string) {
+	clipboardMu.RLock()
+	defer clipboardMu.RUnlock()
+	if iw, ok := activeClipboard.(ImageClipboardWriter); ok && len(png) > 0 {
+		iw.SetImage(png, plain)
+		return
+	}
+	activeClipboard.Set(plain)
+}
+
+// FileClipboard is an optional capability of a Clipboard provider:
+// reading the files on the clipboard (copied in a file manager).
+type FileClipboard interface {
+	GetFiles() []string
+}
+
+// GetClipboardFiles returns the paths of the files on the clipboard, or
+// nil when it holds none (or the platform cannot tell).
+func GetClipboardFiles() []string {
+	clipboardMu.RLock()
+	defer clipboardMu.RUnlock()
+	if fc, ok := activeClipboard.(FileClipboard); ok {
+		return fc.GetFiles()
+	}
+	return nil
+}
+
 // withCharsetMeta prepends a UTF-8 declaration to a clipboard HTML
 // fragment.
 //

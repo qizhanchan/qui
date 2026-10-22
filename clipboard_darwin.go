@@ -9,6 +9,8 @@ package qui
 void quiSetPasteboardRich(const char *plain, const char *html);
 void quiPasteboardRich(char **plain, char **html);
 void *quiPasteboardImage(int *len, char **ext);
+void quiSetPasteboardImage(const void *png, int len, const char *plain);
+char **quiPasteboardFiles(int *n);
 */
 import "C"
 
@@ -69,6 +71,33 @@ func (c darwinClipboard) GetImage() ([]byte, string) {
 	defer C.free(p)
 	defer C.free(unsafe.Pointer(cExt))
 	return C.GoBytes(p, n), C.GoString(cExt)
+}
+
+// SetImage publishes PNG bytes with a plain-text flavor.
+func (c darwinClipboard) SetImage(png []byte, plain string) {
+	if len(png) == 0 {
+		return
+	}
+	cPlain := C.CString(plain)
+	defer C.free(unsafe.Pointer(cPlain))
+	C.quiSetPasteboardImage(unsafe.Pointer(&png[0]), C.int(len(png)), cPlain)
+}
+
+// GetFiles returns the paths of the files on the pasteboard.
+func (c darwinClipboard) GetFiles() []string {
+	var n C.int
+	arr := C.quiPasteboardFiles(&n)
+	if arr == nil {
+		return nil
+	}
+	defer C.free(unsafe.Pointer(arr))
+	items := unsafe.Slice(arr, int(n))
+	out := make([]string, 0, len(items))
+	for _, p := range items {
+		out = append(out, C.GoString(p))
+		C.free(unsafe.Pointer(p))
+	}
+	return out
 }
 
 func newOSClipboard(win platformWindow) Clipboard {
