@@ -219,3 +219,18 @@ func TestShorthandLonghandCascadeOrder(t *testing.T) {
 		t.Errorf("margin = %+v, want left 1 (later longhand) and top 10", cs.Margin)
 	}
 }
+
+// The rule index keeps source order and follows a sheet that grows.
+func TestRuleIndexOrderAndGrowth(t *testing.T) {
+	sheet := ParseCSS(`.a { color: red } span { color: green } * { padding: 1px } #x.a { color: blue }`)
+	doc := ParseHTML(`<span id="x" class="a b"></span>`)
+	n := findByID(doc, "x")
+	if got := mergedDecls(n, sheet, selectorState{})["color"]; got != "blue" {
+		t.Fatalf("color = %q, want blue (highest specificity)", got)
+	}
+	extra := ParseCSS(`.b { margin: 3px }`)
+	sheet.Rules = append(sheet.Rules, extra.Rules...)
+	if got := mergedDecls(n, sheet, selectorState{})["margin"]; got != "3px" {
+		t.Fatalf("margin = %q after appending a rule, want 3px", got)
+	}
+}

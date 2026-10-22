@@ -15,6 +15,28 @@ func valuesEqual(a, b any) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
+	// The common state / dependency types compare without reflection —
+	// this runs on every setState, Signal.Set and deps check.
+	switch x := a.(type) {
+	case string:
+		y, ok := b.(string)
+		return ok && x == y
+	case int:
+		y, ok := b.(int)
+		return ok && x == y
+	case bool:
+		y, ok := b.(bool)
+		return ok && x == y
+	case float64:
+		y, ok := b.(float64)
+		return ok && x == y
+	case float32:
+		y, ok := b.(float32)
+		return ok && x == y
+	case int64:
+		y, ok := b.(int64)
+		return ok && x == y
+	}
 	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
 	if va.Type() != vb.Type() {
 		return false

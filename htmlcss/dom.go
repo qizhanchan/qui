@@ -88,19 +88,25 @@ func (n *Node) ID() string { return n.AttrOr("id", "") }
 // Iterates the attribute in place: selector matching calls this per
 // element per rule, so a []string per call adds up.
 func (n *Node) hasClass(name string) bool {
-	c, ok := n.Attr("class")
-	if !ok || c == "" {
-		return false
-	}
-	if c != n.classSrc || n.classList == nil {
-		n.classSrc, n.classList = c, strings.Fields(c)
-	}
-	for _, x := range n.classList {
+	for _, x := range n.cachedClasses() {
 		if x == name {
 			return true
 		}
 	}
 	return false
+}
+
+// cachedClasses is Classes memoized against the attribute's current value.
+// The result is shared: callers must not modify it.
+func (n *Node) cachedClasses() []string {
+	c, ok := n.Attr("class")
+	if !ok || c == "" {
+		return nil
+	}
+	if c != n.classSrc || n.classList == nil {
+		n.classSrc, n.classList = c, strings.Fields(c)
+	}
+	return n.classList
 }
 
 // isElement reports whether n is an element with the given tag.

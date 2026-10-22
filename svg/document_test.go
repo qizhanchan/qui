@@ -307,3 +307,18 @@ func TestGroupTransformAndOpacityApplyOnce(t *testing.T) {
 		t.Errorf("group opacity 0.5: alpha %#x, want ~0x80", a)
 	}
 }
+
+// The per-document raster cache stays bounded across many tints.
+func TestRasterCacheIsBounded(t *testing.T) {
+	doc := NewDocument(4, 4)
+	for i := 0; i < 3*maxRasterCache; i++ {
+		doc.Rasterize(4, 4, qui.Color{R: float32(i) / 255, A: 1})
+	}
+	if n := len(doc.cache); n > maxRasterCache {
+		t.Fatalf("cache holds %d rasters, cap %d", n, maxRasterCache)
+	}
+	a := doc.Rasterize(8, 8, qui.Color{A: 1})
+	if b := doc.Rasterize(8, 8, qui.Color{A: 1}); a != b {
+		t.Error("repeat Rasterize did not hit the cache")
+	}
+}

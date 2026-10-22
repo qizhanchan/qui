@@ -1308,10 +1308,7 @@ func (t *Input) handleClipboardShortcut(k Key) bool {
 		if t.hasSelection() {
 			t.deleteSelection()
 		}
-		for _, r := range text {
-			t.insertRune(t.cursorPos, r)
-			t.cursorPos++
-		}
+		t.insertText(t.cursorPos, text)
 		t.pushUndo("paste", before)
 		t.fireChange()
 		t.ensureCursorVisible()
@@ -1400,12 +1397,24 @@ func (t *Input) insertRune(pos int, r rune) {
 	t.Text = string(out)
 }
 
-func (t *Input) removeRune(pos int) {
+// insertText splices s in at rune offset pos in one pass and moves the
+// caret past it — paste / IME commit / InsertText used to loop insertRune,
+// re-encoding the whole text once per inserted rune.
+func (t *Input) insertText(pos int, s string) {
 	runes := []rune(t.Text)
-	if pos < 0 || pos >= len(runes) {
-		return
+	if pos < 0 {
+		pos = 0
 	}
-	t.Text = string(append(runes[:pos], runes[pos+1:]...))
+	if pos > len(runes) {
+		pos = len(runes)
+	}
+	ins := []rune(s)
+	out := make([]rune, 0, len(runes)+len(ins))
+	out = append(out, runes[:pos]...)
+	out = append(out, ins...)
+	out = append(out, runes[pos:]...)
+	t.Text = string(out)
+	t.cursorPos = pos + len(ins)
 }
 
 func (t *Input) deleteSelection() {
@@ -1664,10 +1673,7 @@ func (t *Input) CommitIME(text string) {
 	if t.hasSelection() {
 		t.deleteSelection()
 	}
-	for _, r := range text {
-		t.insertRune(t.cursorPos, r)
-		t.cursorPos++
-	}
+	t.insertText(t.cursorPos, text)
 	t.pushUndo("ime", before)
 	t.fireChange()
 	t.ensureCursorVisible()
@@ -1741,10 +1747,7 @@ func (t *Input) InsertText(text string) {
 	if t.hasSelection() {
 		t.deleteSelection()
 	}
-	for _, r := range text {
-		t.insertRune(t.cursorPos, r)
-		t.cursorPos++
-	}
+	t.insertText(t.cursorPos, text)
 	t.pushUndo("insert", before)
 	t.fireChange()
 	t.ensureCursorVisible()

@@ -10,6 +10,13 @@ import (
 // TextArea provides multiline text input.
 type TextArea struct {
 	BaseWidget
+	// lay memoizes the visual-line split and content size: a Draw, a
+	// caret move and a scroll each need them several times, and
+	// recomputing over the whole text cost milliseconds on long documents.
+	// Two entries, most recent first: visibleContentRect alternates
+	// between the widths with and without the scrollbar.
+	lay  [2]textAreaLayoutMemo
+	layH textAreaLineHeightMemo
 	// Cols, when > 0, sizes a box-model (raw-HTML) area to that many
 	// average characters — HTML's `cols` attribute (browsers default to
 	// 20): Cols × the font's "0" advance (CSS `ch`) plus the 15px of
@@ -107,6 +114,71 @@ type TextArea struct {
 type visualLine struct {
 	start int
 	end   int
+}
+
+// textAreaLayoutKey is everything the visual lines depend on. Font is not
+// comparable (Features / Variations), so its shaping-relevant identity is
+// spelled out, as InlineBox's key does.
+type textAreaLayoutKey struct {
+	text          string
+	width         float32
+	opts          TextLayoutOptions
+	family        string
+	size          float32
+	weight        FontWeight
+	bold, italic  bool
+	smallCaps     bool
+	letterSpacing float32
+	wordSpacing   float32
+	fontGen       uint64
+	localeGen     uint64
+}
+
+type textAreaLayoutMemo struct {
+	key       textAreaLayoutKey
+	valid     bool
+	runeCount int
+	lines     []visualLine
+	contentW  float32
+	haveW     bool
+}
+
+// textAreaLineHeightMemo is keyed by the font/options with no text or width.
+type textAreaLineHeightMemo struct {
+	key   textAreaLayoutKey
+	h     float32
+	valid bool
+}
+
+// layoutMemo returns the memo entry for width, building it on a miss.
+func (t *TextArea) layoutMemo(width float32) *textAreaLayoutMemo {
+	key := t.layoutKey(width)
+	if t.lay[0].valid && t.lay[0].key == key {
+		return &t.lay[0]
+	}
+	if t.lay[1].valid && t.lay[1].key == key {
+		t.lay[0], t.lay[1] = t.lay[1], t.lay[0]
+		return &t.lay[0]
+	}
+	runes := []rune(t.Text)
+	t.lay[1] = t.lay[0]
+	t.lay[0] = textAreaLayoutMemo{
+		key: key, valid: true, runeCount: len(runes),
+		lines: t.buildVisualLines(runes, width),
+	}
+	return &t.lay[0]
+}
+
+func (t *TextArea) layoutKey(width float32) textAreaLayoutKey {
+	f := t.font()
+	opts := t.layoutOptions()
+	return textAreaLayoutKey{
+		text: t.Text, width: width, opts: opts,
+		family: f.Family, size: f.Size, weight: f.Weight,
+		bold: f.Bold, italic: f.Italic, smallCaps: f.SmallCaps,
+		letterSpacing: f.LetterSpacing, wordSpacing: f.WordSpacing,
+		fontGen: FontRegistryGeneration(), localeGen: LocaleGeneration(),
+	}
 }
 
 func NewTextArea(placeholder string) *TextArea {
@@ -1548,9 +1620,8 @@ func (t *TextArea) MoveCursorToEnd() {
 
 // getContentHeight calculates the total height of the text content
 func (t *TextArea) getContentHeight(content Rect) float32 {
-	runes := []rune(t.Text)
 	lineHeight := t.lineHeight()
-	lines := t.visualLines(runes, content.W)
+	lines := t.visualLinesOfText(content.W)
 	if len(lines) == 0 {
 		return lineHeight
 	}
@@ -1620,15 +1691,38 @@ func (t *TextArea) layoutOptions() TextLayoutOptions {
 }
 
 func (t *TextArea) lineHeight() float32 {
-	opts := t.layoutOptions()
-	return BuildTextLayout("M", t.font(), opts).LineHeight
+	key := t.layoutKey(0)
+	key.text = ""
+	if t.layH.valid && t.layH.key == key {
+		return t.layH.h
+	}
+	t.layH = textAreaLineHeightMemo{key: key, h: BuildTextLayout("M", t.font(), key.opts).LineHeight, valid: true}
+	return t.layH.h
 }
 
 func (t *TextArea) wrapEnabled() bool {
 	return t.AutoWrap || t.Paragraph.Wrap
 }
 
+// visualLinesOfText is visualLines for the current Text, memoized.
+func (t *TextArea) visualLinesOfText(contentWidth float32) []visualLine {
+	return t.layoutMemo(contentWidth).lines
+}
+
+// visualLines splits runes (always []rune(t.Text) at the call sites) into
+// visual lines at contentWidth. The result is shared with the memo:
+// callers must not modify it.
 func (t *TextArea) visualLines(runes []rune, contentWidth float32) []visualLine {
+	m := t.layoutMemo(contentWidth)
+	if m.runeCount != len(runes) {
+		// Not the current Text after all (a caller holding runes from
+		// before an edit): compute fresh rather than return a stale split.
+		return t.buildVisualLines(runes, contentWidth)
+	}
+	return m.lines
+}
+
+func (t *TextArea) buildVisualLines(runes []rune, contentWidth float32) []visualLine {
 	opts := t.layoutOptions()
 	opts.MaxLines = 0
 	opts.Ellipsis = false
@@ -1648,18 +1742,19 @@ func (t *TextArea) visualLines(runes []rune, contentWidth float32) []visualLine 
 }
 
 func (t *TextArea) getContentWidth(content Rect) float32 {
-	runes := []rune(t.Text)
-	lines := t.visualLines(runes, content.W)
-	if len(lines) == 0 {
-		return 0
+	m := t.layoutMemo(content.W)
+	if m.haveW {
+		return m.contentW
 	}
+	runes := []rune(t.Text)
 	maxW := float32(0)
-	for _, line := range lines {
+	for _, line := range m.lines {
 		w := t.runesWidth(runes[line.start:line.end])
 		if w > maxW {
 			maxW = w
 		}
 	}
+	m.contentW, m.haveW = maxW, true
 	return maxW
 }
 

@@ -206,6 +206,10 @@ type Stylesheet struct {
 	// preceding siblings, not just ancestors.
 	stateSels          []stateSel
 	hasSiblingStateSel bool
+
+	// ruleIdx is the lazily built rule index (rule_index.go). Rules is
+	// treated as append-only: replace the slice, don't edit it in place.
+	ruleIdx ruleIndexHolder
 }
 
 // stateTriggersFor reports which of cand's interactive states activate a

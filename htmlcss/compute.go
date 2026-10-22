@@ -340,25 +340,42 @@ func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedSty
 	// hovered / focused / pressed. Each variant inherits from the parent's
 	// resting style, matching how the base does.
 	fwHover, fwFocus, fwFocusVisible, fwActive := frameworkStateWants(n)
+	// Which state pseudos n's candidate rules use at all. A variant whose
+	// state none of them mention matches exactly the resting rules, so it
+	// is a copy of base rather than another cascade + interpret — most
+	// elements of a sheet with a few :hover rules are in that case.
+	ix := sheet.index()
+	mask := ix.stateMask(ix.candidates(n, nil))
+	resting := *base
+	variant := func(need bool, st selectorState) *ComputedStyle {
+		if !need {
+			cp := resting
+			return &cp
+		}
+		return interpret(n, mergedDecls(n, sheet, st), parent)
+	}
+	hover, focus := mask&stateHover != 0, mask&stateFocus != 0
 	if sheet.HasHover || fwHover {
 		// The subject's hover propagates to ancestor compounds in matching
 		// (hovering an element hovers its ancestors), so `.row:hover .del`
 		// also lands in .del's own Hover variant — and `.a:hover .b:hover`
 		// works when the cursor is on .b.
-		base.Hover = interpret(n, mergedDecls(n, sheet, selectorState{hover: true}), parent)
+		base.Hover = variant(hover || fwHover, selectorState{hover: true})
 	}
 	if sheet.HasFocus || fwFocus {
-		base.Focus = interpret(n, mergedDecls(n, sheet, selectorState{focus: true}), parent)
+		base.Focus = variant(focus || fwFocus, selectorState{focus: true})
 	}
 	if sheet.HasFocusVisible || fwFocusVisible {
-		base.FocusVisible = interpret(n, mergedDecls(n, sheet, selectorState{focus: true, focusVisible: true}), parent)
+		base.FocusVisible = variant(focus || mask&stateFocusVisible != 0 || fwFocusVisible,
+			selectorState{focus: true, focusVisible: true})
 	}
 	if sheet.HasActive || fwActive {
 		// A pressed element is conventionally also hovered; both states
 		// propagate to ancestor compounds in matching, keeping `.btn:hover`
 		// under an `.btn:active` press and `.row:hover .btn:active` while
 		// the row is hovered.
-		base.Active = interpret(n, mergedDecls(n, sheet, selectorState{hover: true, active: true}), parent)
+		base.Active = variant(hover || mask&stateActive != 0 || fwActive,
+			selectorState{hover: true, active: true})
 	}
 	// The ancestor-state UNION variants: only NON-subject compounds are
 	// treated as hovered / focused / pressed, so `.row:hover .del` lands here
@@ -366,13 +383,14 @@ func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedSty
 	// such rule matches this node, so their delta is a no-op — see
 	// hasStateBoxVariant / textStateDiffers / El.linkAncestorState.
 	if sheet.HasAncestorHover {
-		base.AncestorHover = interpret(n, mergedDecls(n, sheet, selectorState{ancestorHover: true}), parent)
+		base.AncestorHover = variant(hover, selectorState{ancestorHover: true})
 	}
 	if sheet.HasAncestorFocus {
-		base.AncestorFocus = interpret(n, mergedDecls(n, sheet, selectorState{ancestorFocus: true}), parent)
+		// On a non-subject compound :focus-visible acts as :focus.
+		base.AncestorFocus = variant(focus || mask&stateFocusVisible != 0, selectorState{ancestorFocus: true})
 	}
 	if sheet.HasAncestorActive {
-		base.AncestorActive = interpret(n, mergedDecls(n, sheet, selectorState{ancestorActive: true}), parent)
+		base.AncestorActive = variant(mask&stateActive != 0, selectorState{ancestorActive: true})
 	}
 	return base
 }
@@ -383,7 +401,8 @@ func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedSty
 func pseudoStyle(n *Node, sheet *Stylesheet, which string, parent *ComputedStyle) (*ComputedStyle, string) {
 	var decls []matchedDecl
 	order := 0
-	for _, rule := range sheet.Rules {
+	for _, ri := range sheet.index().candidates(n, nil) {
+		rule := &sheet.Rules[ri]
 		best := -1
 		var ba, bb, bc int
 		for _, sel := range rule.Selectors {
@@ -509,9 +528,11 @@ func mergedDecls(n *Node, sheet *Stylesheet, st selectorState) map[string]string
 	// Still tier 0: framework component defaults (RegisterFrameworkCSS).
 	decls = append(decls, frameworkDecls(n, st)...)
 
-	// Tier 1: author rules that match.
+	// Tier 1: author rules that match. The index narrows the walk to the
+	// rules whose subject could be this element, still in source order.
 	order := 0
-	for _, rule := range sheet.Rules {
+	for _, ri := range sheet.index().candidates(n, nil) {
+		rule := &sheet.Rules[ri]
 		best := -1
 		var ba, bb, bc int
 		for _, sel := range rule.Selectors {
