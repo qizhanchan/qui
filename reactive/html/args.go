@@ -95,7 +95,12 @@ func (b *Builder) applyArg(i int, a any) {
 }
 
 func (b *Builder) addChild(n Node) {
+	// A nil *Builder in a Node interface isn't == nil; drop it like a
+	// plain nil (`var extra *h.Builder; h.Div(extra)`), not at Build.
 	if n == nil {
+		return
+	}
+	if bb, ok := n.(*Builder); ok && bb == nil {
 		return
 	}
 	b.children = append(b.children, n)

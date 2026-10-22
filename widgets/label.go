@@ -349,11 +349,11 @@ func (l *Label) Handle(event Event) bool {
 			l.Invalidate()
 			return true
 		case KeyC:
-			if !l.hasSelection() {
-				return true
+			// SelectedText clamps: the selection can outlive a text change
+			// (SetTextKey, a locale switch) and index past the new runes.
+			if text := l.SelectedText(); text != "" {
+				SetClipboardText(text)
 			}
-			a, b := l.orderedSelection()
-			SetClipboardText(string(runes[a:b]))
 			return true
 		}
 	}

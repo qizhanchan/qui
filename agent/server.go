@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log"
@@ -31,6 +32,10 @@ type Server struct {
 	started     bool
 	stopped     bool
 	listenerTok qui.EventListenerToken
+	// baseCtx parents every request context; Stop cancels it so
+	// long-lived streams (/events) end instead of stalling Shutdown.
+	baseCtx    context.Context
+	cancelBase context.CancelFunc
 
 	// recordedEvents holds the most recent dispatched events for
 	// /console and /events. Filled by the listener installed in
@@ -88,8 +93,13 @@ func Bind(window *qui.Window, opts Options) (*Server, error) {
 		s.udsPath = defaultUDSPath()
 	}
 	s.installRoutes()
+	s.baseCtx, s.cancelBase = context.WithCancel(context.Background())
 	s.httpd = &http.Server{
-		Handler: s.authMiddleware(s.mux, opts),
+		Handler:     s.authMiddleware(s.mux, opts),
+		BaseContext: func(net.Listener) context.Context { return s.baseCtx },
+		// Bound how long a client may dribble headers: the TCP listener
+		// is reachable before authentication runs.
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 	return s, nil
 }
@@ -140,6 +150,18 @@ func (s *Server) Start() error {
 	if s.started {
 		return nil
 	}
+	ok := false
+	defer func() {
+		if !ok {
+			// Undo a partial start: a UDS listener already serving
+			// must not outlive the error that reports Start failed.
+			s.window.RemoveEventListener(s.listenerTok)
+			for _, l := range s.listenrs {
+				_ = l.Close()
+			}
+			s.listenrs = nil
+		}
+	}()
 	// Subscribe to the window's event stream so /console and
 	// /events have content to serve.
 	s.listenerTok = s.window.AddEventListener(func(rec qui.EventRecord) {
@@ -177,6 +199,11 @@ func (s *Server) Start() error {
 			return fmt.Errorf("agent: listen UDS %q: %w", s.udsPath, err)
 		}
 		s.listenrs = append(s.listenrs, l)
+		// UDS requests skip token auth, so the socket's mode IS the
+		// access control — don't leave it to the process umask.
+		if err := os.Chmod(s.udsPath, 0o600); err != nil {
+			return fmt.Errorf("agent: chmod UDS %q: %w", s.udsPath, err)
+		}
 		go func() {
 			if err := s.httpd.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Printf("agent: UDS serve: %v", err)
@@ -198,6 +225,7 @@ func (s *Server) Start() error {
 		log.Printf("agent: listening on tcp://%s", l.Addr())
 	}
 	s.started = true
+	ok = true
 	return nil
 }
 
@@ -212,8 +240,15 @@ func (s *Server) Stop() error {
 	if s.window != nil {
 		s.window.RemoveEventListener(s.listenerTok)
 	}
+	if s.cancelBase != nil {
+		s.cancelBase()
+	}
 	if s.httpd != nil {
-		_ = s.httpd.Shutdown(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if err := s.httpd.Shutdown(ctx); err != nil {
+			_ = s.httpd.Close()
+		}
+		cancel()
 	}
 	for _, l := range s.listenrs {
 		_ = l.Close()
@@ -257,8 +292,14 @@ func (s *Server) Handler() http.Handler {
 // in place so the subsequent net.Listen fails with a clear "address
 // already in use" rather than silently stealing a live socket.
 func removeStaleSocket(path string) {
-	if _, err := os.Stat(path); err != nil {
+	fi, err := os.Lstat(path)
+	if err != nil {
 		return // nothing there
+	}
+	if fi.Mode()&os.ModeSocket == 0 {
+		// Not a socket — a mistyped QUI_AGENT_SOCK naming a real
+		// file. Never delete it; net.Listen will report the clash.
+		return
 	}
 	conn, err := net.DialTimeout("unix", path, 200*time.Millisecond)
 	if err == nil {
@@ -282,7 +323,7 @@ func (s *Server) authMiddleware(h http.Handler, opts Options) http.Handler {
 		isUDS := r.RemoteAddr == "@" || r.RemoteAddr == ""
 		if !isUDS && opts.Token != "" {
 			authHdr := r.Header.Get("Authorization")
-			if authHdr != "Bearer "+opts.Token {
+			if subtle.ConstantTimeCompare([]byte(authHdr), []byte("Bearer "+opts.Token)) != 1 {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}

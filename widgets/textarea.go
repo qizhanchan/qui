@@ -949,11 +949,15 @@ func (t *TextArea) handleKeyDown(e KeyEvent) bool {
 
 	switch e.Key {
 	case KeyBackspace:
+		hasSel := t.selStart >= 0 && t.selStart != t.selEnd
+		if !hasSel && t.cursorPos == 0 {
+			return true // nothing to delete: no change, no OnChange
+		}
 		if !t.beforeInput("delete", "") {
 			return true
 		}
 		before := t.snapshot()
-		if t.selStart >= 0 && t.selStart != t.selEnd {
+		if hasSel {
 			// Delete selection
 			start := int(min(float32(t.selStart), float32(t.selEnd)))
 			end := int(max(float32(t.selStart), float32(t.selEnd)))
@@ -1128,8 +1132,8 @@ func (t *TextArea) handleClipboardShortcut(k Key, runes []rune) bool {
 }
 
 func (t *TextArea) handleChar(e CharEvent) bool {
-	// Ignore control characters
-	if e.Rune < 32 && e.Rune != '\n' {
+	// Ignore control characters (C0 except newline, and DEL)
+	if (e.Rune < 32 && e.Rune != '\n') || e.Rune == 0x7F {
 		return false
 	}
 	if !t.beforeInput("type", string(e.Rune)) {
@@ -1892,7 +1896,9 @@ func (t *TextArea) CaretRect() Rect {
 // imprecise but correct — the cursor rect is expensive to compute outside
 // Draw. It's cheap: a ~1KB scissor upload and a partial buffer re-paint.
 func (t *TextArea) Tick(now time.Time) Rect {
-	if !t.focused || !t.hovering {
+	// Blink whenever focused — gating on hover too left a Tab-focused
+	// caret frozen, and one the pointer left mid-blink stuck invisible.
+	if !t.focused {
 		return Rect{}
 	}
 	currentTime := now.UnixMilli()

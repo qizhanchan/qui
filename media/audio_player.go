@@ -92,16 +92,13 @@ func (p *AudioPlayer) Open(path string) error {
 	p.renderer = renderer
 	p.state = StatePaused
 	vol, rate := p.volume, p.rate
-	onEnded := p.onEnded
 	p.mu.Unlock()
 
 	renderer.SetVolume(vol)
 	renderer.SetRate(rate)
-	if onEnded != nil {
-		renderer.OnEnded(p.handleEnded)
-	} else {
-		renderer.OnEnded(p.handleEnded)
-	}
+	// handleEnded reads p.onEnded at fire time, so this one registration
+	// covers any OnEnded call before or after Open.
+	renderer.OnEnded(p.handleEnded)
 
 	if prevSrc != nil {
 		_ = prevSrc.Close()
@@ -240,11 +237,7 @@ func (p *AudioPlayer) State() State {
 func (p *AudioPlayer) OnEnded(fn func()) {
 	p.mu.Lock()
 	p.onEnded = fn
-	r := p.renderer
 	p.mu.Unlock()
-	if r != nil {
-		r.OnEnded(p.handleEnded)
-	}
 }
 
 // OnError registers a callback for asynchronous errors (decode

@@ -227,6 +227,10 @@ type Window struct {
 	// to live in the tree. Tween / Spring / Timeline register here.
 	// Done animators are pruned in-place during Step.
 	animators []Animator
+	// tickingAnimators is set while tickAnimators walks the slice, so an
+	// UnregisterAnimator from inside a Tick nils the slot instead of
+	// splicing the slice out from under the walk.
+	tickingAnimators bool
 	// tickAt is the earliest RequestTickAt deadline still pending; Step
 	// clears it once reached. framePainted records that the last Step
 	// painted, which buys the window another frame (see idle.go).
@@ -657,37 +661,38 @@ func (w *Window) RegisterAnimator(a Animator) {
 // registered DURING a Tick (e.g. reactive's RequestRender path —
 // state setter → RegisterAnimator — that commonly fires from inside
 // another animator's Tick when async results bridge back into reactive
-// state). Without the carry-forward step the newcomer would be
-// silently dropped by the truncation and its first Tick would never
-// run, leaving callers waiting for a render that never arrives.
+// state). Newcomers are appended past the walk and first tick next Step.
+//
+// The walk only ever nils slots (done animators here, unregistered ones
+// in UnregisterAnimator) and compacts once it's over, so a Tick may
+// register or unregister any animator without disturbing the walk.
 func (w *Window) tickAnimators(now time.Time) {
 	if len(w.animators) == 0 {
 		return
 	}
+	w.tickingAnimators = true
 	n := len(w.animators)
-	survivors := 0
 	for i := 0; i < n; i++ {
 		a := w.animators[i]
+		if a == nil { // unregistered by an earlier Tick this pass
+			continue
+		}
 		dirty, done := a.Tick(now)
 		w.dirtyRegion = w.dirtyRegion.Union(dirty)
-		if !done {
-			w.animators[survivors] = a
-			survivors++
+		if done {
+			w.animators[i] = nil
 		}
 	}
-	// Pull newcomers from [n, end) down to [survivors, survivors+added).
-	// When the survivor block already fills the original window the
-	// moves are no-ops; correctness still holds because each newcomer
-	// is read before any later write touches its slot.
-	added := len(w.animators) - n
-	for j := 0; j < added; j++ {
-		w.animators[survivors+j] = w.animators[n+j]
+	w.tickingAnimators = false
+	end := 0
+	for _, a := range w.animators {
+		if a != nil {
+			w.animators[end] = a
+			end++
+		}
 	}
-	end := survivors + added
 	// Zero the tail so removed animators can be GC'd.
-	for i := end; i < len(w.animators); i++ {
-		w.animators[i] = nil
-	}
+	clear(w.animators[end:])
 	w.animators = w.animators[:end]
 }
 
@@ -700,6 +705,11 @@ func (w *Window) UnregisterAnimator(a Animator) {
 	w.assertUIThread("Window.UnregisterAnimator")
 	for i, existing := range w.animators {
 		if existing == a {
+			if w.tickingAnimators {
+				// tickAnimators compacts the slice once its walk ends.
+				w.animators[i] = nil
+				return
+			}
 			w.animators = append(w.animators[:i], w.animators[i+1:]...)
 			return
 		}

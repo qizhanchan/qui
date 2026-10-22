@@ -171,3 +171,13 @@ func commandsEqual(a, b []PathCommand) bool {
 func approx(a, b float32) bool {
 	return math.Abs(float64(a-b)) < 1e-4
 }
+
+// A number after Z has no command to repeat; it must error, not spin.
+func TestParsePathNumberAfterCloseErrors(t *testing.T) {
+	if _, err := ParsePath("M0 0 L10 10 Z 5 5"); err == nil {
+		t.Fatal("expected an error for a number after Z")
+	}
+	if _, err := ParsePath("M0 0 L10 10 Z M5 5 L6 6"); err != nil {
+		t.Fatalf("Z followed by a command: %v", err)
+	}
+}

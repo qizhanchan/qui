@@ -58,7 +58,10 @@ func UseResource[T any](fetch func(ctx context.Context) (T, error), deps ...any)
 	scope := requireScope()
 	rt := scope.runtime
 	st, _, update := UseStateFn(resourceState[T]{loading: true})
-	reload, setReload := UseState(0)
+	// Reload bumps through the functional updater: a Reload captured by an
+	// older render (a polling goroutine) would otherwise keep setting the
+	// same stale reload+1, which equals the current value and is a no-op.
+	reload, _, bumpReload := UseStateFn(0)
 	ctl := UseRef(resourceControl{})
 
 	UseEffect(func() func() {
@@ -100,7 +103,7 @@ func UseResource[T any](fetch func(ctx context.Context) (T, error), deps ...any)
 		Err:     st.err,
 		Loading: st.loading,
 		Ready:   st.ready,
-		Reload:  func() { setReload(reload + 1) },
+		Reload:  func() { bumpReload(func(n int) int { return n + 1 }) },
 	}
 }
 

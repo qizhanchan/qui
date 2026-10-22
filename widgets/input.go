@@ -1191,8 +1191,8 @@ func (t *Input) handleKey(e KeyEvent) bool {
 }
 
 func (t *Input) handleChar(r rune) bool {
-	if r < 0x20 && r != 0x7F {
-		return false // ignore control chars
+	if r < 0x20 || r == 0x7F {
+		return false // ignore control chars (C0 and DEL)
 	}
 	if !t.beforeInput("type", string(r)) {
 		return true
@@ -1247,14 +1247,16 @@ func (t *Input) handleClipboardShortcut(k Key) bool {
 		t.resetBlink()
 		return true
 	case KeyC:
-		if t.hasSelection() {
+		// A password field never exposes its plaintext — browsers make
+		// copy and cut no-ops on type=password.
+		if t.hasSelection() && !t.Password {
 			a, b := t.orderedSelection()
 			runes := []rune(t.Text)
 			SetClipboardText(string(runes[a:b]))
 		}
 		return true
 	case KeyX:
-		if t.hasSelection() {
+		if t.hasSelection() && !t.Password {
 			if !t.beforeInput("cut", "") {
 				return true
 			}
@@ -1580,11 +1582,12 @@ func (t *Input) resetBlink() {
 	t.cursorBlinkMS = time.Now().UnixMilli()
 }
 
-// NotifyTextChanged implements qui.TextChangeNotifier: publish the current
-// text as a user-equivalent change. SetText itself stays silent (a
-// programmatic set must not re-enter the app's handler), so the agent's Type
-// action calls this after its bulk set to make the two paths behave alike.
-func (t *Input) NotifyTextChanged() { t.fireChange() }
+// NotifyTextChanged implements qui.TextChangeNotifier: mark the current
+// text as a user-equivalent change. Unlike TextArea's, Input's SetText
+// already fires OnChange, so calling fireChange here would run the app's
+// handler twice for one agent Type; only the "user typed it" flag is
+// missing, and that's what this sets.
+func (t *Input) NotifyTextChanged() { t.lastChangeUser = true }
 
 func (t *Input) fireChange() {
 	t.lastChangeUser = true

@@ -425,7 +425,9 @@ func (cb *Select) SetItems(items []string) bool {
 	if cb.isOpen {
 		cb.closeDropdown()
 	}
-	cb.Invalidate()
+	// Measure sizes the trigger from the widest item, so new items can
+	// change the widget's size, not just its pixels.
+	cb.InvalidateLayout()
 	return true
 }
 

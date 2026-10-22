@@ -281,7 +281,9 @@ func (a *golangAudio) HostTime() time.Duration {
 
 func (a *golangAudio) OnEnded(fn func()) {
 	a.mu.Lock()
-	a.endedFns = append(a.endedFns, fn)
+	// Replace, per the audioRenderer contract (and the darwin backend):
+	// appending made a re-registration fire the end handler twice.
+	a.endedFns = []func(){fn}
 	a.mu.Unlock()
 }
 

@@ -262,6 +262,18 @@ func ParseCSSViewport(src string, viewportW float32) *Stylesheet {
 		if p.eof() {
 			break
 		}
+		// A statement at-rule (@charset, @import, `@layer a, b;`) ends at
+		// its ';' and has no block. Without this, readSelector would run
+		// on to the NEXT rule's '{' and swallow that rule's selector.
+		if p.src[p.pos] == '@' {
+			rest := p.src[p.pos:]
+			if semi := strings.IndexByte(rest, ';'); semi >= 0 {
+				if brace := strings.IndexByte(rest, '{'); brace < 0 || semi < brace {
+					p.pos += semi + 1
+					continue
+				}
+			}
+		}
 		selText := strings.TrimSpace(p.readSelector())
 		if p.eof() {
 			break
@@ -287,6 +299,13 @@ func ParseCSSViewport(src string, viewportW float32) *Stylesheet {
 				sheet.stateSels = append(sheet.stateSels, inner.stateSels...)
 				sheet.hasSiblingStateSel = sheet.hasSiblingStateSel || inner.hasSiblingStateSel
 			}
+			continue
+		}
+		if strings.HasPrefix(selText, "@") {
+			// Other block at-rules (@keyframes, @supports, @font-face)
+			// are skipped whole; their blocks may nest, so a plain
+			// readUntil('}') would stop at the first inner rule's end.
+			p.readBalancedBlock()
 			continue
 		}
 		body := p.readUntil('}')

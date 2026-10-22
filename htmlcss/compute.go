@@ -1478,7 +1478,7 @@ func parsePercentFraction(v string) (float32, bool) {
 // the 1–4 value shorthand (top/right/bottom/left) plus longhand overrides.
 func marginAutoFlags(m map[string]string) (top, right, bottom, left bool) {
 	if v, ok := m["margin"]; ok {
-		f := strings.Fields(strings.ToLower(v))
+		f := fieldsTopLevel(strings.ToLower(v))
 		isAuto := func(i int) bool { return i < len(f) && f[i] == "auto" }
 		switch len(f) {
 		case 1:
@@ -1512,7 +1512,8 @@ func marginAutoFlags(m map[string]string) (top, right, bottom, left bool) {
 func parseBox(m map[string]string, prop string, fs float32) qui.Insets {
 	var ins qui.Insets
 	if v, ok := m[prop]; ok {
-		fields := strings.Fields(v)
+		// Top-level split: `calc(1rem + 4px) 8px` is two values, not four.
+		fields := fieldsTopLevel(v)
 		vals := make([]float32, 0, 4)
 		for _, f := range fields {
 			px, _ := parseLength(f, fs, 0)

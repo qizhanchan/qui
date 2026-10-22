@@ -74,7 +74,7 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if selector != "" {
-		nodes, err := s.window.FindNodes(selector)
+		nodes, err := s.window.FindNodesSynced(selector)
 		if err != nil {
 			http.Error(w, "bad selector: "+err.Error(), http.StatusBadRequest)
 			return
@@ -181,13 +181,22 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, diags)
 }
 
+// maxScreenshotScale caps /screenshot?scale — 8× a 4K window is already
+// a ~2 GB image.
+const maxScreenshotScale = 8
+
 func (s *Server) handleScreenshot(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	scale := float32(1)
 	if v := q.Get("scale"); v != "" {
-		if f, err := strconv.ParseFloat(v, 32); err == nil && f > 0 {
-			scale = float32(f)
+		f, err := strconv.ParseFloat(v, 32)
+		// The resample allocates W*scale × H*scale on the UI thread, so an
+		// unbounded scale is a one-request OOM / frozen UI.
+		if err != nil || !(f > 0 && f <= maxScreenshotScale) {
+			http.Error(w, fmt.Sprintf("bad scale: want a number in (0, %d]", maxScreenshotScale), http.StatusBadRequest)
+			return
 		}
+		scale = float32(f)
 	}
 	annotate := q.Get("annotate") == "1" || q.Get("annotate") == "true"
 	// Typed so a nil snapshot (no frame yet, or a blocked main loop) is

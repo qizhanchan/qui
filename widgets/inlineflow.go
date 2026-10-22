@@ -209,7 +209,10 @@ type inlineLayoutKey struct {
 	maxW float32
 	// fontGen invalidates the cache when the font REGISTRY changes (see
 	// qui.FontRegistryGeneration): same font spec, different faces behind it.
-	fontGen            uint64
+	fontGen uint64
+	// localeGen does the same for a locale switch, which changes the
+	// shaping language (and so the glyphs) of the same text.
+	localeGen          uint64
 	wrap               bool
 	align              TextAlign
 	lineHeightScale    float32
@@ -227,7 +230,7 @@ type inlineLayoutKey struct {
 func (b *InlineBox) layoutKeyFor(maxW float32) inlineLayoutKey {
 	f := b.Style().Font
 	return inlineLayoutKey{
-		maxW: maxW, fontGen: FontRegistryGeneration(),
+		maxW: maxW, fontGen: FontRegistryGeneration(), localeGen: LocaleGeneration(),
 		wrap: b.Wrap, align: b.Align,
 		lineHeightScale:    b.LineHeightScale,
 		preserveWhitespace: b.PreserveWhitespace,
