@@ -231,6 +231,9 @@ func (r *Runtime) syncBoundNode(node *instance) {
 		}
 	}
 	r.runPendingEffects()
+	// Layout effects of rows this sync mounted (scroll-into-view, measure)
+	// run after the next layout pass, exactly as after a full Flush.
+	r.scheduleLayoutEffects()
 
 	if window != nil {
 		// Style any freshly-mounted host elements now (same job) so a list

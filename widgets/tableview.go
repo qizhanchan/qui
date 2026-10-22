@@ -443,6 +443,9 @@ func resolveColumnWidths(columns []TableColumn, avail float32) []float32 {
 
 // visibleRange returns rows in [start, end) intersecting the body.
 func (tv *TableView) visibleRange() (int, int) {
+	// Live model: re-clamp a scroll offset a shrunken model left past
+	// the end (see ListView.visibleRange).
+	tv.scrollY = ClampScroll(tv.scrollY, tv.contentHeight(), tv.bodyRect().H)
 	return fixedRowVisibleRange(tv.RowCount(), tv.RowHeight, tv.scrollY, tv.bodyRect())
 }
 

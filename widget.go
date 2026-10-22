@@ -1011,6 +1011,9 @@ func (b *BaseWidget) InvalidateLayout() {
 func (b *BaseWidget) markLayoutDirty() {
 	b.measureMemo.invalidate()
 	if b.parent != nil {
+		if o, ok := b.parent.(ChildLayoutObserver); ok {
+			o.ChildLayoutDirty()
+		}
 		if m, ok := b.parent.(interface{ markLayoutDirty() }); ok {
 			m.markLayoutDirty()
 			return

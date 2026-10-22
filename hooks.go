@@ -57,6 +57,15 @@ type LayoutDirtyMarker interface {
 	MarkLayoutDirty()
 }
 
+// ChildLayoutObserver is implemented by a parent that caches layout derived
+// from its children's sizes beyond the measure memo the framework already
+// drops — an inline flow holding a shaped paragraph with atomic boxes in
+// it. ChildLayoutDirty runs when a direct child's layout is invalidated,
+// before the invalidation continues up the tree.
+type ChildLayoutObserver interface {
+	ChildLayoutDirty()
+}
+
 // widgetDebugEnabled turns on QUI_DEBUG_WIDGETS=1 structural checks: after
 // each layout pass the tree is walked and every child whose Parent() is not
 // the widget listing it is logged once. That mismatch is almost always a

@@ -1542,6 +1542,15 @@ func (w *Window) SetCustomRender(fn func(Canvas)) {
 	w.onRender = fn
 }
 
+// PlatformBacked reports whether w was created on a real windowing
+// backend (true even after Destroy) as opposed to a headless test window.
+// Unlike IsHeadless it is safe from any goroutine: the flag is fixed at
+// construction. Cross-goroutine code uses it to decide whether there is a
+// UI thread to hop to.
+func (w *Window) PlatformBacked() bool {
+	return w != nil && w.platformBacked
+}
+
 // IsHeadless reports whether this window has no OS window behind it —
 // true for the test windows NewTestWindow builds. Callers use it to skip
 // work that needs a real platform surface (animators, frame scheduling).

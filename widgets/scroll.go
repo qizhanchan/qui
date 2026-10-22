@@ -269,6 +269,11 @@ func (s *ScrollView) viewportRect() Rect {
 
 // barSlot is the cross-axis space the scrollbar takes from the content: its
 // thickness for a classic bar, nothing for an overlay one (or none).
+// takesBarSlot reports whether an overflowing ScrollView's bar would take
+// cross-axis space (barSlot without the overflow check, which needs the
+// content size being computed).
+func (s *ScrollView) takesBarSlot() bool { return !s.HideBar && !s.OverlayBar }
+
 func (s *ScrollView) barSlot() float32 {
 	if !s.hasBar() || s.OverlayBar {
 		return 0
@@ -557,6 +562,11 @@ func (s *ScrollView) ensureContentSize(rect Rect) {
 		}
 		s.sizeAuto = true
 		nat := MeasureChild(s.Content, Size{W: 0, H: rect.H})
+		if nat.W > rect.W && s.takesBarSlot() {
+			// Overflow brings in a classic bar, and contentRect lays the
+			// content out that much shorter: measure at that height.
+			nat = MeasureChild(s.Content, Size{W: 0, H: rect.H - scrollBarThickness})
+		}
 		s.ContentSize.W = nat.W
 		if s.ContentSize.H <= 0 {
 			s.ContentSize.H = rect.H
@@ -567,6 +577,12 @@ func (s *ScrollView) ensureContentSize(rect Rect) {
 		}
 		s.sizeAuto = true
 		nat := MeasureChild(s.Content, Size{W: rect.W, H: 0})
+		if nat.H > rect.H && s.takesBarSlot() {
+			// Overflow brings in a classic bar, and contentRect lays the
+			// content out that much narrower — wrapped text is then taller,
+			// so measure at the width it will really get (as browsers do).
+			nat = MeasureChild(s.Content, Size{W: rect.W - scrollBarThickness, H: 0})
+		}
 		s.ContentSize.H = nat.H
 		if s.ContentSize.W <= 0 {
 			s.ContentSize.W = rect.W

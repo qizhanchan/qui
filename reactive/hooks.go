@@ -86,7 +86,8 @@ func depsEqual(a, b []any) bool {
 
 // setHostState commits a new state value into a specific host slot and
 // triggers a re-render via the captured requestRender. Safe to call from
-// any goroutine (e.g. an event handler) — it locks the runtime mutex.
+// any goroutine: the store is under the runtime mutex, and RequestRender
+// marshals the render onto the UI thread.
 func setHostState(rt *Runtime, host *hookHost, idx int, next any, requestRender func()) {
 	rt.mu.Lock()
 	if idx < 0 || idx >= len(host.hooks) || host.hooks[idx].kind != hookKindState {

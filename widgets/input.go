@@ -1161,6 +1161,26 @@ func (t *Input) handleKey(e KeyEvent) bool {
 		t.ensureCursorVisible()
 		t.resetBlink()
 		return true
+	case KeyDelete:
+		// Forward delete: the selection, else the grapheme cluster after
+		// the caret.
+		if !t.beforeInput("delete", "") {
+			return true
+		}
+		before := t.snapshot()
+		if t.hasSelection() {
+			t.deleteSelection()
+			t.pushUndo("delete", before)
+			t.fireChange()
+		} else if runes := []rune(t.Text); t.cursorPos < len(runes) {
+			target := NextClusterBoundary(runes, t.cursorPos)
+			t.Text = string(runes[:t.cursorPos]) + string(runes[target:])
+			t.pushUndo("delete", before)
+			t.fireChange()
+		}
+		t.ensureCursorVisible()
+		t.resetBlink()
+		return true
 	case KeyEnter:
 		if t.OnSubmit != nil {
 			t.OnSubmit(t.Text)

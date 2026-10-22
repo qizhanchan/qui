@@ -127,6 +127,12 @@ func (b *InlineBox) AddBox(w Widget, valign InlineVAlign) {
 	b.haveLay = false
 }
 
+// ChildLayoutDirty implements qui.ChildLayoutObserver: an atomic child
+// whose size changed (an image that finished loading, an inline-block
+// whose text changed) invalidates the cached paragraph, which positions
+// boxes by the sizes measured when it was built.
+func (b *InlineBox) ChildLayoutDirty() { b.haveLay = false }
+
 // AddBreak appends a forced line break (CSS <br>).
 func (b *InlineBox) AddBreak() {
 	b.parts = append(b.parts, inlinePart{text: "\n"})

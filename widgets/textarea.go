@@ -980,6 +980,37 @@ func (t *TextArea) handleKeyDown(e KeyEvent) bool {
 		t.scrollToCursor()
 		return true
 
+	case KeyDelete:
+		// Forward delete: the selection, else the grapheme cluster after
+		// the caret.
+		hasSel := t.selStart >= 0 && t.selStart != t.selEnd
+		if !hasSel && t.cursorPos >= len(runes) {
+			return true // nothing after the caret
+		}
+		if !t.beforeInput("delete", "") {
+			return true
+		}
+		before := t.snapshot()
+		if hasSel {
+			start, end := t.selStart, t.selEnd
+			if start > end {
+				start, end = end, start
+			}
+			t.Text = string(runes[:start]) + string(runes[end:])
+			t.cursorPos = start
+			t.selStart = -1
+		} else {
+			target := NextClusterBoundary(runes, t.cursorPos)
+			t.Text = string(runes[:t.cursorPos]) + string(runes[target:])
+		}
+		t.pushUndo("delete", before)
+		t.invalidateLayoutIfAutoSize()
+		if t.OnChange != nil {
+			t.fireChange()
+		}
+		t.scrollToCursor()
+		return true
+
 	case KeyLeft:
 		t.moveCursorWithSelection(t.visualHorizontalTarget(-1), shift)
 		t.history.breakCoalesce()
@@ -993,13 +1024,13 @@ func (t *TextArea) handleKeyDown(e KeyEvent) bool {
 		return true
 
 	case KeyUp:
-		t.moveCursorVertically(-1)
+		t.moveCursorVertically(-1, shift)
 		t.history.breakCoalesce()
 		t.scrollToCursor()
 		return true
 
 	case KeyDown:
-		t.moveCursorVertically(1)
+		t.moveCursorVertically(1, shift)
 		t.history.breakCoalesce()
 		t.scrollToCursor()
 		return true
@@ -1199,7 +1230,10 @@ func (t *TextArea) handleScroll(e MouseEvent) {
 	t.clampScroll(content)
 }
 
-func (t *TextArea) moveCursorVertically(direction int) {
+// moveCursorVertically moves the caret one visual line up or down,
+// keeping its x position; extend (Shift) grows the selection instead of
+// collapsing it.
+func (t *TextArea) moveCursorVertically(direction int, extend bool) {
 	runes := []rune(t.Text)
 	content, _, _ := t.visibleContentRect(t.Bounds())
 	lines := t.visualLines(runes, content.W)
@@ -1234,8 +1268,7 @@ func (t *TextArea) moveCursorVertically(direction int) {
 		targetIdx = len(lines) - 1
 	}
 	targetLine := lines[targetIdx]
-	t.cursorPos = t.closestPosInLine(runes, targetLine.start, targetLine.end, targetX)
-	t.selStart = -1
+	t.moveCursorWithSelection(t.closestPosInLine(runes, targetLine.start, targetLine.end, targetX), extend)
 }
 
 func (t *TextArea) visualHorizontalTarget(delta int) int {

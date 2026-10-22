@@ -214,8 +214,15 @@ func (r *Runtime) Render() {
 }
 
 // RequestRender batches updates and schedules one render on the next frame.
+// Safe to call from any goroutine: off a live window's UI thread it hops
+// there with PostJob, since scheduling registers an animator and a render
+// touches widgets — both UI-thread-only.
 func (r *Runtime) RequestRender() {
 	if r == nil {
+		return
+	}
+	if w := r.window; w.PlatformBacked() && !w.OnUIThread() {
+		w.PostJob(r.RequestRender)
 		return
 	}
 
