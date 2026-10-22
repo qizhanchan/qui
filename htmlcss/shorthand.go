@@ -19,6 +19,51 @@ func expandShorthands(m map[string]string) {
 	}
 }
 
+// shorthandLonghands lists, per shorthand, every property it resets —
+// longhands and sub-shorthands alike (`border` covers `border-top`,
+// `border-width` and `border-top-width`). mergedDecls uses it to keep
+// cascade order between a shorthand and its longhands.
+var shorthandLonghands = func() map[string][]string {
+	sides := []string{"top", "right", "bottom", "left"}
+	m := map[string][]string{
+		"background": {"background-color", "background-image", "background-position",
+			"background-size", "background-repeat", "background-attachment",
+			"background-origin", "background-clip"},
+		"font": {"font-style", "font-variant", "font-weight", "font-stretch",
+			"font-size", "line-height", "font-family"},
+		"flex":            {"flex-grow", "flex-shrink", "flex-basis"},
+		"flex-flow":       {"flex-direction", "flex-wrap"},
+		"inset":           {"top", "right", "bottom", "left"},
+		"outline":         {"outline-width", "outline-style", "outline-color"},
+		"overflow":        {"overflow-x", "overflow-y"},
+		"gap":             {"row-gap", "column-gap"},
+		"text-decoration": {"text-decoration-line", "text-decoration-style", "text-decoration-color", "text-decoration-thickness"},
+		"list-style":      {"list-style-type", "list-style-position", "list-style-image"},
+		"border-radius": {"border-top-left-radius", "border-top-right-radius",
+			"border-bottom-right-radius", "border-bottom-left-radius"},
+	}
+	var border []string
+	for _, box := range []string{"margin", "padding"} {
+		for _, s := range sides {
+			m[box] = append(m[box], box+"-"+s)
+		}
+	}
+	for _, part := range []string{"width", "style", "color"} {
+		for _, s := range sides {
+			m["border-"+part] = append(m["border-"+part], "border-"+s+"-"+part)
+		}
+		border = append(border, "border-"+part)
+		border = append(border, m["border-"+part]...)
+	}
+	for _, s := range sides {
+		side := "border-" + s
+		m[side] = []string{side + "-width", side + "-style", side + "-color"}
+		border = append(border, side)
+	}
+	m["border"] = border
+	return m
+}()
+
 func setIfAbsent(m map[string]string, key, val string) {
 	if val == "" {
 		return

@@ -544,8 +544,15 @@ func mergedDecls(n *Node, sheet *Stylesheet, st selectorState) map[string]string
 		return cascadeKey(decls[i]) < cascadeKey(decls[j])
 	})
 
+	// Fold in cascade order. A shorthand evicts every longhand (and
+	// sub-shorthand) of its family that an EARLIER declaration set, so a
+	// longhand surviving next to its shorthand is known to come later —
+	// which is what lets the interpreter always prefer the longhand.
 	merged := map[string]string{}
 	for _, m := range decls {
+		for _, lh := range shorthandLonghands[m.decl.Property] {
+			delete(merged, lh)
+		}
 		merged[m.decl.Property] = m.decl.Value
 	}
 	return merged
@@ -840,11 +847,8 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	}
 
 	// --- background ---
-	if v, ok := m["background-color"]; ok {
-		if c, ok := parseColor(v); ok {
-			cs.Background, cs.HasBackground = c, true
-		}
-	}
+	// The shorthand first, then the longhand: when both survive the
+	// cascade the longhand was declared later (mergedDecls), so it wins.
 	if v, ok := m["background"]; ok {
 		// Simplification: treat `background` as a color if it parses as one. Try the whole
 		// value first (so functional colors like rgb()/hsl() with internal
@@ -855,6 +859,11 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 			if c, ok := parseColor(fields[0]); ok {
 				cs.Background, cs.HasBackground = c, true
 			}
+		}
+	}
+	if v, ok := m["background-color"]; ok {
+		if c, ok := parseColor(v); ok {
+			cs.Background, cs.HasBackground = c, true
 		}
 	}
 	// linear/radial-gradient or url() in background / background-image.

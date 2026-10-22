@@ -193,3 +193,29 @@ func TestStylesheetStringsAreOpaque(t *testing.T) {
 		}
 	}
 }
+
+// Shorthand vs longhand follows cascade order, whichever is which.
+func TestShorthandLonghandCascadeOrder(t *testing.T) {
+	sheet := ParseCSS(`
+.btn { background: #ffffff; padding-top: 40px; border-left: 2px solid red }
+.btn.primary { background-color: #0000ff; padding: 4px; border: none }
+.box { margin: 10px }
+.box.tight { margin-left: 1px }`)
+	doc := ParseHTML(`<div><a id="b" class="btn primary"></a><p id="x" class="box tight"></p></div>`)
+	b := findByID(doc, "b")
+	cs := interpret(b, mergedDecls(b, sheet, selectorState{}), nil)
+	if cs.Background.B != 1 || cs.Background.R != 0 {
+		t.Errorf("background = %+v, want the later background-color blue", cs.Background)
+	}
+	if cs.Padding.Top != 4 {
+		t.Errorf("padding-top = %v, want 4 from the later padding shorthand", cs.Padding.Top)
+	}
+	if cs.SideWidths.Left != 0 {
+		t.Errorf("border-left width = %v, want 0 after the later border: none", cs.SideWidths.Left)
+	}
+	x := findByID(doc, "x")
+	cs = interpret(x, mergedDecls(x, sheet, selectorState{}), nil)
+	if cs.Margin.Left != 1 || cs.Margin.Top != 10 {
+		t.Errorf("margin = %+v, want left 1 (later longhand) and top 10", cs.Margin)
+	}
+}
