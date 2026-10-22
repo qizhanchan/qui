@@ -104,6 +104,9 @@ type FlexItem struct {
 	Basis    float32
 	Align    AlignCross
 	NoShrink bool
+	// BasisAuto: with Grow > 0, start from the measured content size
+	// rather than 0 (CSS flex-basis: auto). See Style.BasisAuto.
+	BasisAuto bool
 	// Order is the CSS `order` value: FlexLayout places items in ascending
 	// Order (stable within equal values), independent of DOM/child order.
 	// Zero is the default (source order preserved).
@@ -457,6 +460,9 @@ func widgetFlexItem(w Widget) FlexItem {
 		if fx.Basis == 0 && s.Basis != 0 {
 			fx.Basis = s.Basis
 		}
+		if s.BasisAuto {
+			fx.BasisAuto = true
+		}
 		if fx.Align == AlignDefault && s.AlignSelf != AlignDefault {
 			fx.Align = s.AlignSelf
 		}
@@ -524,7 +530,7 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 			}
 		}
 		if basis <= 0 {
-			if fx.Grow > 0 {
+			if fx.Grow > 0 && !fx.BasisAuto {
 				basis = 0
 			} else if l.Direction == Horizontal {
 				basis = nat.W

@@ -485,6 +485,7 @@ func applyCommonStyle(st *qui.Style, cs *ComputedStyle) {
 	if cs.HasFlexBasis {
 		st.Basis = cs.FlexBasis
 	}
+	st.BasisAuto = cs.FlexBasisAuto
 	if cs.HasShadow {
 		st.Shadow = cs.Shadow
 		st.ExtraShadows = cs.ExtraShadows

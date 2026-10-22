@@ -115,6 +115,27 @@ func (n *Node) appendChild(c *Node) {
 	n.Children = append(n.Children, c)
 }
 
+// nextElementSibling returns the nearest following element sibling, or nil.
+func nextElementSibling(n *Node) *Node {
+	p := siblingParent(n)
+	if p == nil {
+		return nil
+	}
+	sibs := p.Children
+	for i, c := range sibs {
+		if c != n {
+			continue
+		}
+		for _, s := range sibs[i+1:] {
+			if s.Type == ElementNode {
+				return s
+			}
+		}
+		break
+	}
+	return nil
+}
+
 // prevElementSibling returns the nearest preceding sibling that is an
 // element (text nodes are skipped, matching CSS sibling combinators
 // `+`/`~`). Returns nil when n has no parent or no element precedes it.
@@ -269,25 +290,59 @@ func isEmptyElement(n *Node) bool {
 	return true
 }
 
-// hasMatchingDescendant reports whether any descendant element of n matches the
-// simple selector (CSS :has, restricted to a single simple descendant selector).
-func hasMatchingDescendant(n *Node, sel *simpleSelector, st selectorState) bool {
+// hasRelativeMatch reports whether some element related to anchor n
+// matches the relative selector rel (one :has() argument). Candidates are
+// n's descendants for a descendant/child lead, and n's following siblings
+// plus their descendants for a sibling lead (`:has(+ .x .y)`).
+func hasRelativeMatch(n *Node, rel Selector, st selectorState) bool {
 	var walk func(*Node) bool
 	walk = func(p *Node) bool {
 		for _, c := range p.Children {
 			if c.Type != ElementNode {
 				continue
 			}
-			if sel.matches(c, st) {
-				return true
-			}
-			if walk(c) {
+			if rel.matchesAnchored(c, st, n) || walk(c) {
 				return true
 			}
 		}
 		return false
 	}
-	return walk(n)
+	switch rel.parts[0].comb {
+	case combAdjacent, combSibling:
+		for sib := nextElementSibling(n); sib != nil; sib = nextElementSibling(sib) {
+			if rel.matchesAnchored(sib, st, n) || walk(sib) {
+				return true
+			}
+		}
+		return false
+	default:
+		return walk(n)
+	}
+}
+
+// relatedTo reports whether cur stands in relation comb to anchor:
+// a descendant, a child, the next element sibling, or a later sibling.
+func relatedTo(cur, anchor *Node, comb combinator) bool {
+	switch comb {
+	case combChild:
+		return cur.Parent == anchor
+	case combAdjacent:
+		return prevElementSibling(cur) == anchor
+	case combSibling:
+		for sib := prevElementSibling(cur); sib != nil; sib = prevElementSibling(sib) {
+			if sib == anchor {
+				return true
+			}
+		}
+		return false
+	default:
+		for p := cur.Parent; p != nil; p = p.Parent {
+			if p == anchor {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 // isRootElement reports whether n is the document root element (matches

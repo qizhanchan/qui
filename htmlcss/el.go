@@ -70,7 +70,7 @@ type El struct {
 	// a <label>'s checkbox are boxes in that run, so this element must not
 	// adopt them into a run of its own.
 	folded bool
-	node       *Node // mirror used for selector matching / cascade
+	node   *Node // mirror used for selector matching / cascade
 
 	// elParent is the adopting parent element (set by the parent's
 	// SetElementChildren, cleared on Unmount). It is the ELEMENT-tree
@@ -2920,6 +2920,7 @@ func (e *El) hoistControlLayout(cs *ComputedStyle) {
 	if cs.HasFlexBasis {
 		est.Basis = cs.FlexBasis
 	}
+	est.BasisAuto = cs.FlexBasisAuto
 	est.AlignSelf = cs.AlignSelf
 	qui.UpdateFlexItem(e, func(f *qui.FlexItem) {
 		f.Order = cs.Order
@@ -3539,7 +3540,7 @@ func (e *El) ensureScroll() {
 	}
 	e.scrollInner = widgets.NewBox(qui.FlowLayout{})
 	sv := widgets.NewScrollView()
-	sv.OverlayBar = true // a browser's (macOS) overlay scrollbar: no gutter
+	sv.OverlayBar = true                // a browser's (macOS) overlay scrollbar: no gutter
 	sv.Style().Background = qui.Color{} // transparent viewport
 	st := sv.Style()
 	st.Grow = 1

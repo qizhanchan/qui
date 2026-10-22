@@ -160,6 +160,12 @@ type ComputedStyle struct {
 	HasFlexShrink bool
 	FlexBasis     float32
 	HasFlexBasis  bool
+	// FlexBasisAuto: flex-basis is EXPLICITLY auto/content (`flex: auto`,
+	// `flex-basis: auto`) — a growing item then starts from its content
+	// size. Left unset, a bare flex-grow keeps the engine's basis-0
+	// default: scroll containers measure at the available size, so a
+	// content basis would claim all of it.
+	FlexBasisAuto bool
 	Order         int
 
 	// Effects (Wave 1: box-shadow / opacity / transform / gradient).
@@ -182,12 +188,12 @@ type ComputedStyle struct {
 	// InsetPct holds percentage insets (top, right, bottom, left) as
 	// fractions of the containing block, resolved at layout time; the
 	// matching Has* is set and the px field stays 0.
-	InsetPct [4]float32
-	ZIndex                               int  // paint order among siblings (0 = default)
-	OverflowClip                         bool // overflow: hidden / clip
-	OverflowClipX, OverflowClipY         bool // per-axis hidden / clip
-	OverflowScroll                       bool // overflow: auto / scroll
-	OverflowScrollX                      bool // horizontal scroll axis
+	InsetPct                     [4]float32
+	ZIndex                       int  // paint order among siblings (0 = default)
+	OverflowClip                 bool // overflow: hidden / clip
+	OverflowClipX, OverflowClipY bool // per-axis hidden / clip
+	OverflowScroll               bool // overflow: auto / scroll
+	OverflowScrollX              bool // horizontal scroll axis
 
 	// AppRegion is CSS `app-region` (Electron's `-webkit-app-region`, also
 	// accepted): "drag" makes pressing the element move the OS window,
@@ -1037,7 +1043,9 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		}
 	}
 	if v, ok := m["flex-basis"]; ok {
-		if s := strings.ToLower(strings.TrimSpace(v)); s != "" && s != "auto" {
+		if s := strings.ToLower(strings.TrimSpace(v)); s == "auto" || s == "content" {
+			cs.FlexBasisAuto = true
+		} else if s != "" {
 			if px, ok := parseLength(s, fs, 0); ok {
 				cs.FlexBasis, cs.HasFlexBasis = px, true
 			}

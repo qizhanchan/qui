@@ -66,8 +66,8 @@ const (
 	pseudoReadWrite                      // :read-write (editable control)
 	pseudoNthLastChild                   // :nth-last-child(An+B) — from the end
 	pseudoEmpty                          // :empty (no element/text children)
-	pseudoHas                            // :has(inner) — descendant match
-	pseudoNot                            // :not(simple)   — uses inner
+	pseudoHas                            // :has(rel, …) — relative selectors in args
+	pseudoNot                            // :not(sel, …)  — uses args
 	pseudoUnsupported                    // parsed but not evaluable → never matches
 )
 
@@ -75,10 +75,13 @@ const (
 // match time; state pseudos (hover/focus/active) participate only when the
 // corresponding state flag is set during resolution.
 type pseudoSelector struct {
-	kind  pseudoKind
-	a, b  int             // :nth-child An+B coefficients
-	inner *simpleSelector // :not() argument (single simple selector)
-	raw   string          // original name, for diagnostics
+	kind pseudoKind
+	a, b int // :nth-child An+B coefficients
+	// args is the selector list of :not() / :has(). For :has each entry is
+	// a RELATIVE selector: parts[0].comb is its relation to the anchor
+	// element (descendant unless written `> x`, `+ x`, `~ x`).
+	args []Selector
+	raw  string // original name, for diagnostics
 }
 
 // simpleSelector is one compound selector part (e.g. "div.card#main[type=x]:hover"):
@@ -439,8 +442,10 @@ func (s Selector) addStructKeys(k *structKeys) {
 				pseudoNthOfType, pseudoNthLastChild, pseudoEmpty:
 				structural = true
 			}
-			if ps.inner != nil && (Selector{parts: []compound{{sel: *ps.inner}}}).hasStructuralPseudo() {
-				structural = true
+			for _, a := range ps.args {
+				if a.hasStructuralPseudo() {
+					structural = true
+				}
 			}
 		}
 		if structural {
@@ -479,8 +484,15 @@ func (s Selector) hasPseudo(kind pseudoKind) bool {
 	var hasInSimple func(simpleSelector) bool
 	hasInSimple = func(simple simpleSelector) bool {
 		for _, ps := range simple.pseudos {
-			if ps.kind == kind || (ps.inner != nil && hasInSimple(*ps.inner)) {
+			if ps.kind == kind {
 				return true
+			}
+			for _, a := range ps.args {
+				for _, part := range a.parts {
+					if hasInSimple(part.sel) {
+						return true
+					}
+				}
 			}
 		}
 		return false
@@ -499,6 +511,9 @@ func (p *cssParser) readBalancedBlock() string {
 	start := p.pos
 	depth := 1
 	for p.pos < len(p.src) {
+		if p.skipString() {
+			continue
+		}
 		switch p.src[p.pos] {
 		case '{':
 			depth++
@@ -515,11 +530,33 @@ func (p *cssParser) readBalancedBlock() string {
 	return p.src[start:p.pos]
 }
 
-// mediaMatches evaluates a media query condition against viewportW. Supports
-// `screen`/`all` (match), `print` (no), and `(min-width: N)` / `(max-width: N)`
-// joined by `and`. Unknown features fail the term (conservative).
+// mediaMatches evaluates a media query list against viewportW: it matches
+// when any comma-separated query does. Each query may start with `only`
+// (ignored, as browsers do) or `not` (negates the whole query).
 func mediaMatches(cond string, viewportW float32) bool {
 	cond = strings.ToLower(strings.TrimSpace(cond))
+	if cond == "" {
+		return true
+	}
+	for _, q := range splitTopLevel(cond, ',') {
+		q = strings.TrimSpace(q)
+		negate := false
+		if rest, ok := strings.CutPrefix(q, "not "); ok {
+			negate, q = true, strings.TrimSpace(rest)
+		} else if rest, ok := strings.CutPrefix(q, "only "); ok {
+			q = strings.TrimSpace(rest)
+		}
+		if mediaQueryMatches(q, viewportW) != negate {
+			return true
+		}
+	}
+	return false
+}
+
+// mediaQueryMatches evaluates one media query. Supports `screen`/`all`
+// (match), `print` (no), and `(min-width: N)` / `(max-width: N)` joined by
+// `and`. Unknown features fail the term (conservative).
+func mediaQueryMatches(cond string, viewportW float32) bool {
 	if cond == "" {
 		return true
 	}
@@ -558,6 +595,31 @@ func mediaMatches(cond string, viewportW float32) bool {
 		}
 	}
 	return true
+}
+
+// parseRelativeSelectorList parses :has()'s argument: comma-separated
+// selectors that may each start with a combinator (`> .x`, `+ li`). The
+// leading combinator (descendant when absent) lands in parts[0].comb.
+func parseRelativeSelectorList(s string) []Selector {
+	var out []Selector
+	for _, group := range splitTopLevel(s, ',') {
+		group = strings.TrimSpace(group)
+		lead := combDescendant
+		if group != "" {
+			if c, ok := combinatorFor(group[:1]); ok {
+				lead = c
+				group = strings.TrimSpace(group[1:])
+			}
+		}
+		if group == "" {
+			continue
+		}
+		if sel, ok := parseComplexSelector(group); ok {
+			sel.parts[0].comb = lead
+			out = append(out, sel)
+		}
+	}
+	return out
 }
 
 // parseSelectorList splits a comma-separated selector list, then parses
@@ -913,11 +975,15 @@ func classifyPseudo(name, arg string) pseudoSelector {
 	case "empty":
 		ps.kind = pseudoEmpty
 	case "has":
-		inner := parseSimple(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(arg), ">")))
-		ps.kind, ps.inner = pseudoHas, &inner
+		ps.kind, ps.args = pseudoHas, parseRelativeSelectorList(arg)
+		if len(ps.args) == 0 {
+			ps.kind = pseudoUnsupported
+		}
 	case "not":
-		inner := parseSimple(strings.TrimSpace(arg))
-		ps.kind, ps.inner = pseudoNot, &inner
+		ps.kind, ps.args = pseudoNot, parseSelectorList(arg)
+		if len(ps.args) == 0 {
+			ps.kind = pseudoUnsupported
+		}
 	default:
 		ps.kind = pseudoUnsupported
 	}
@@ -1052,11 +1118,18 @@ func (ss simpleSelector) specificity() (ids, classes, types int) {
 		types++
 	}
 	for _, ps := range ss.pseudos {
-		if ps.kind == pseudoNot && ps.inner != nil {
-			i, c, t := ps.inner.specificity()
-			ids += i
-			classes += c
-			types += t
+		if (ps.kind == pseudoNot || ps.kind == pseudoHas) && len(ps.args) > 0 {
+			// Selectors 4: the specificity of its most specific argument.
+			var bi, bc, bt int
+			for _, a := range ps.args {
+				i, c, t := a.specificity()
+				if i > bi || (i == bi && (c > bc || (c == bc && t > bt))) {
+					bi, bc, bt = i, c, t
+				}
+			}
+			ids += bi
+			classes += bc
+			types += bt
 			continue
 		}
 		classes++ // structural / state pseudos count as a class
@@ -1085,6 +1158,13 @@ func selectorMatchesIgnoringPseudoElem(s Selector, n *Node) bool {
 }
 
 func (s Selector) matchesElement(n *Node, st selectorState) bool {
+	return s.matchesAnchored(n, st, nil)
+}
+
+// matchesAnchored is matchesElement for a relative selector when anchor is
+// non-nil (a :has() argument): the leftmost compound must also stand in
+// parts[0].comb's relation to anchor.
+func (s Selector) matchesAnchored(n *Node, st selectorState, anchor *Node) bool {
 	if len(s.parts) == 0 {
 		return false
 	}
@@ -1117,49 +1197,42 @@ func (s Selector) matchesElement(n *Node, st selectorState) bool {
 	if !s.parts[last].sel.matches(n, st) {
 		return false
 	}
-	cur := n
-	for i := last; i >= 1; i-- {
-		comb := s.parts[i].comb // combinator joining parts[i] to parts[i-1]
+	// matchLeft reports whether parts[:i] match given parts[i] matched at
+	// cur. Descendant and general-sibling steps try EVERY candidate, not
+	// just the nearest: in `.menu > li a` the nearest li may be a nested
+	// one whose parent isn't .menu while an outer li's is. Child and
+	// adjacent steps have one candidate each, so the search only branches
+	// on ` ` and `~`, and real selectors are a handful of compounds deep.
+	var matchLeft func(i int, cur *Node) bool
+	matchLeft = func(i int, cur *Node) bool {
+		if i == 0 {
+			return anchor == nil || relatedTo(cur, anchor, s.parts[0].comb)
+		}
 		prev := s.parts[i-1].sel
-		switch comb {
+		switch s.parts[i].comb { // combinator joining parts[i] to parts[i-1]
 		case combChild:
-			cur = cur.Parent
-			if cur == nil || !prev.matches(cur, compState(st, cur, true)) {
-				return false
-			}
+			p := cur.Parent
+			return p != nil && prev.matches(p, compState(st, p, true)) && matchLeft(i-1, p)
 		case combAdjacent:
 			sib := prevElementSibling(cur)
-			if sib == nil || !prev.matches(sib, compState(st, sib, false)) {
-				return false
-			}
-			cur = sib
+			return sib != nil && prev.matches(sib, compState(st, sib, false)) && matchLeft(i-1, sib)
 		case combSibling:
-			matched := false
 			for sib := prevElementSibling(cur); sib != nil; sib = prevElementSibling(sib) {
-				if prev.matches(sib, compState(st, sib, false)) {
-					cur, matched = sib, true
-					break
+				if prev.matches(sib, compState(st, sib, false)) && matchLeft(i-1, sib) {
+					return true
 				}
 			}
-			if !matched {
-				return false
-			}
+			return false
 		default: // combDescendant
-			cur = cur.Parent
-			matched := false
-			for cur != nil {
-				if prev.matches(cur, compState(st, cur, true)) {
-					matched = true
-					break
+			for p := cur.Parent; p != nil; p = p.Parent {
+				if prev.matches(p, compState(st, p, true)) && matchLeft(i-1, p) {
+					return true
 				}
-				cur = cur.Parent
 			}
-			if !matched {
-				return false
-			}
+			return false
 		}
 	}
-	return true
+	return matchLeft(last, n)
 }
 
 // nonSubjectStateGates reports which interactive-state pseudos appear on
@@ -1341,9 +1414,19 @@ func (ps pseudoSelector) matches(n *Node, st selectorState) bool {
 	case pseudoEmpty:
 		return isEmptyElement(n)
 	case pseudoHas:
-		return ps.inner != nil && hasMatchingDescendant(n, ps.inner, st)
+		for _, a := range ps.args {
+			if hasRelativeMatch(n, a, st) {
+				return true
+			}
+		}
+		return false
 	case pseudoNot:
-		return ps.inner == nil || !ps.inner.matches(n, st)
+		for _, a := range ps.args {
+			if a.matchesElement(n, st) {
+				return false
+			}
+		}
+		return true
 	default: // pseudoUnsupported
 		return false
 	}
@@ -1367,17 +1450,59 @@ func nthMatches(pos, a, b int) bool {
 
 // stripComments removes /* ... */ blocks.
 func stripComments(s string) string {
-	for {
-		start := strings.Index(s, "/*")
-		if start < 0 {
-			return s
-		}
-		end := strings.Index(s[start+2:], "*/")
-		if end < 0 {
-			return s[:start]
-		}
-		s = s[:start] + s[start+2+end+2:]
+	if !strings.Contains(s, "/*") {
+		return s
 	}
+	// One pass: `/*` inside a string (`content:"/*"`) is text, not a
+	// comment — and rebuilding the string per comment was quadratic.
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c == '"' || c == '\'' {
+			end := stringEnd(s, i)
+			b.WriteString(s[i:end])
+			i = end
+			continue
+		}
+		if c == '/' && i+1 < len(s) && s[i+1] == '*' {
+			end := strings.Index(s[i+2:], "*/")
+			if end < 0 {
+				break
+			}
+			i += 2 + end + 2
+			continue
+		}
+		b.WriteByte(c)
+		i++
+	}
+	return b.String()
+}
+
+// stringEnd returns the index just past the CSS string literal opening at
+// s[i] (a quote), honoring backslash escapes; len(s) if unterminated.
+func stringEnd(s string, i int) int {
+	q := s[i]
+	for j := i + 1; j < len(s); j++ {
+		switch s[j] {
+		case '\\':
+			j++ // skip the escaped character
+		case q:
+			return j + 1
+		}
+	}
+	return len(s)
+}
+
+// skipString advances past a string literal at the cursor, reporting
+// whether there was one — so block scanning never takes a quoted `}` or
+// `{` (`content:"}"`) for structure.
+func (p *cssParser) skipString() bool {
+	if c := p.src[p.pos]; c == '"' || c == '\'' {
+		p.pos = stringEnd(p.src, p.pos)
+		return true
+	}
+	return false
 }
 
 type cssParser struct {
@@ -1396,7 +1521,9 @@ func (p *cssParser) skipSpaces() {
 func (p *cssParser) readUntil(delim byte) string {
 	start := p.pos
 	for !p.eof() && p.src[p.pos] != delim {
-		p.pos++
+		if !p.skipString() {
+			p.pos++
+		}
 	}
 	return p.src[start:p.pos]
 }
@@ -1408,6 +1535,9 @@ func (p *cssParser) readSelector() string {
 	start := p.pos
 	depth := 0
 	for !p.eof() {
+		if p.skipString() {
+			continue
+		}
 		c := p.src[p.pos]
 		if c == '[' {
 			depth++

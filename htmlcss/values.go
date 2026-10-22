@@ -311,6 +311,11 @@ func parseLength(s string, fontSize, pctRef float32) (float32, bool) {
 	if strings.HasPrefix(s, "calc(") {
 		return parseCalc(s, fontSize, pctRef)
 	}
+	if strings.HasPrefix(s, "(") {
+		// A calc() nested in min()/max() reaches here with its "calc"
+		// already rewritten to a bare paren by the outer parseCalc.
+		return parseCalc(s, fontSize, pctRef)
+	}
 	if strings.HasPrefix(s, "min(") || strings.HasPrefix(s, "max(") || strings.HasPrefix(s, "clamp(") {
 		return parseMinMaxClamp(s, fontSize, pctRef)
 	}
@@ -518,6 +523,17 @@ func (p *calcParser) factor() (float32, bool) {
 	if p.pos >= len(p.src) {
 		return 0, false
 	}
+	// Unary sign: `calc(-1 * 8px)`, `calc(100% - -4px)`. A sign directly
+	// before a number/paren/function is part of the operand, never an
+	// operator (binary +/- need whitespace around them in CSS).
+	if c := p.src[p.pos]; (c == '-' || c == '+') && p.pos+1 < len(p.src) && p.src[p.pos+1] != ' ' {
+		p.pos++
+		v, ok := p.factor()
+		if c == '-' {
+			v = -v
+		}
+		return v, ok
+	}
 	if p.src[p.pos] == '(' {
 		p.pos++
 		v, ok := p.expr()
@@ -542,6 +558,24 @@ func (p *calcParser) factor() (float32, bool) {
 done:
 	tok := p.src[start:p.pos]
 	if tok == "" {
+		return 0, false
+	}
+	if p.pos < len(p.src) && p.src[p.pos] == '(' {
+		// A nested math function — min(10px, 2em) — evaluated whole by
+		// parseLength once its balanced argument list is read.
+		depth := 0
+		for p.pos < len(p.src) {
+			switch p.src[p.pos] {
+			case '(':
+				depth++
+			case ')':
+				depth--
+			}
+			p.pos++
+			if depth == 0 {
+				return parseLength(p.src[start:p.pos], p.fontSize, p.pctRef)
+			}
+		}
 		return 0, false
 	}
 	return parseLength(tok, p.fontSize, p.pctRef)
