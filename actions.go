@@ -401,6 +401,16 @@ func (w *Window) synchronously(fn func() error) error {
 	return w.onUIThread(fn, false)
 }
 
+// RunSynced runs fn on the window's UI goroutine and waits for it — the
+// building block of the *Synced read APIs, for subpackages (htmlcss's DOM
+// inspector, the agent) whose reads of live widget state must not race the
+// frame loop. Inline in test windows. Do not call it from the UI goroutine
+// of a platform-backed window: the job would wait behind its own caller
+// until ErrActionTimeout.
+func (w *Window) RunSynced(fn func() error) error {
+	return w.synchronously(fn)
+}
+
 // synchronouslyAfterFrame is synchronously for work that reads the
 // finished frame — screenshots. Its job is queued the same way, but fn
 // runs at the end of the Step that drains it: after every job drained

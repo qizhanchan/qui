@@ -10,6 +10,7 @@ package agent
 // untouched and remains the tool for low-level render debugging.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -155,8 +156,11 @@ func (s *Server) handleDOMStyles(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "selector param required", http.StatusBadRequest)
 		return
 	}
-	dom := htmlcss.InspectWindow(s.window)
-	styles, err := dom.Styles(selector)
+	var styles []*htmlcss.ElementStyles
+	err := htmlcss.InspectWindowDo(s.window, func(dom *htmlcss.DOMTree) (err error) {
+		styles, err = dom.Styles(selector)
+		return err
+	})
 	if err != nil {
 		http.Error(w, "bad selector: "+err.Error(), http.StatusBadRequest)
 		return
@@ -189,8 +193,12 @@ func domActWaitTimeout(ms *int) time.Duration {
 	if *ms <= 0 {
 		return 0
 	}
-	return time.Duration(*ms) * time.Millisecond
+	return min(time.Duration(*ms)*time.Millisecond, maxWaitTimeout)
 }
+
+// maxWaitTimeout caps every client-supplied wait: each poll is a UI-thread
+// hop, and an abandoned request must not keep polling for days.
+const maxWaitTimeout = time.Minute
 
 // resolveWithWait resolves target to a live widget, retrying until a
 // VISIBLE match appears or timeout elapses. It only retries the safe
@@ -202,8 +210,15 @@ func domActWaitTimeout(ms *int) time.Duration {
 func (s *Server) resolveWithWait(target string, timeout time.Duration) (qui.Widget, *htmlcss.DOMNode, error) {
 	deadline := time.Now().Add(timeout)
 	for {
-		dom := htmlcss.InspectWindow(s.window)
-		widget, node, err := dom.ResolveWidget(target)
+		var widget qui.Widget
+		var node *htmlcss.DOMNode
+		var err error
+		if runErr := htmlcss.InspectWindowDo(s.window, func(dom *htmlcss.DOMTree) error {
+			widget, node, err = dom.ResolveWidget(target)
+			return nil
+		}); runErr != nil {
+			return nil, nil, runErr // the window closed or never answered
+		}
 		switch {
 		case err == nil && node.Visible:
 			return widget, node, nil
@@ -352,11 +367,15 @@ var domActions = map[string]bool{
 // waitDOM blocks until a CSS selector matches a visible element (appear)
 // or matches nothing (gone), confirmed on two consecutive samples like
 // Window.WaitFor. A selector that doesn't parse fails at once.
-func (s *Server) waitDOM(selector string, appear bool, timeout time.Duration) error {
+func (s *Server) waitDOM(ctx context.Context, selector string, appear bool, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	streak := 0
 	for {
-		nodes, err := htmlcss.InspectWindow(s.window).Query(selector)
+		var nodes []*htmlcss.DOMNode
+		err := htmlcss.InspectWindowDo(s.window, func(dom *htmlcss.DOMTree) (err error) {
+			nodes, err = dom.Query(selector)
+			return err
+		})
 		if err != nil {
 			return err
 		}
@@ -380,6 +399,10 @@ func (s *Server) waitDOM(selector string, appear bool, timeout time.Duration) er
 		if !time.Now().Before(deadline) {
 			return qui.ErrWaitTimeout
 		}
-		time.Sleep(16 * time.Millisecond)
+		select {
+		case <-ctx.Done(): // the client went away
+			return ctx.Err()
+		case <-time.After(16 * time.Millisecond):
+		}
 	}
 }

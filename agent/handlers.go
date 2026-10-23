@@ -244,7 +244,7 @@ func (s *Server) handleWait(w http.ResponseWriter, r *http.Request) {
 	if timeoutMs <= 0 {
 		timeoutMs = 2000
 	}
-	timeout := time.Duration(timeoutMs) * time.Millisecond
+	timeout := min(time.Duration(timeoutMs)*time.Millisecond, maxWaitTimeout)
 	what := q.Get("for")
 	var err, widgetErr error
 	var via string
@@ -269,7 +269,7 @@ func (s *Server) handleWait(w http.ResponseWriter, r *http.Request) {
 		// when the widget grammar can't parse it (tag, .class, combinators).
 		if what == "dom" || errors.Is(err, qui.ErrInvalidSelector) {
 			widgetErr = err
-			err = s.waitDOM(sel, appear, timeout)
+			err = s.waitDOM(r.Context(), sel, appear, timeout)
 			via = "dom"
 		}
 	case "stable":

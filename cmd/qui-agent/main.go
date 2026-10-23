@@ -577,7 +577,9 @@ func waitFor(c *http.Client, kind string, args []string) error {
 func cmdShot(c *http.Client, args []string) error {
 	scale := "1"
 	annotate := false
-	outfile := "/tmp/qui-shot.png"
+	// os.TempDir is per-user on macOS; writeFileReplacing never follows a
+	// link planted at the path in a shared /tmp.
+	outfile := filepath.Join(os.TempDir(), "qui-shot.png")
 
 	for _, a := range args {
 		switch {
@@ -600,10 +602,35 @@ func cmdShot(c *http.Client, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(outfile, body, 0o644); err != nil {
+	if err := writeFileReplacing(outfile, body); err != nil {
 		return fmt.Errorf("writing %s: %w", outfile, err)
 	}
 	fmt.Println(outfile)
+	return nil
+}
+
+// writeFileReplacing writes data to a fresh private file next to path and
+// renames it into place: an existing file or symlink at path is replaced,
+// never written through.
+func writeFileReplacing(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".qui-shot-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
 	return nil
 }
 
@@ -1021,7 +1048,7 @@ Commands:
   wait <selector> [--gone] [--timeout=ms]
                          wait until selector appears (or is gone); default 5000ms
   shot [outfile] [--scale=N] [--annotate]
-                         save a screenshot PNG (default /tmp/qui-shot.png)
+                         save a screenshot PNG (default $TMPDIR/qui-shot.png)
   health                 GET /health
   diagnostics            GET /diagnostics
   raw <METHOD> <path> [body]

@@ -151,15 +151,36 @@ func (a *webApp) watchDevicePixelRatio() {
 // listen adds an event listener whose handler runs in the JS callback.
 // passive=false lets the handler call preventDefault on wheel/touch.
 func (a *webApp) listen(target js.Value, event string, passive bool, fn func(e js.Value)) {
+	a.funcs = append(a.funcs, addListener(target, event, passive, fn))
+}
+
+// listen is webApp.listen for a listener on the window's own canvas: it is
+// removed and released in Destroy, so a closed secondary window doesn't
+// keep its funcs (and itself, through their closures) alive.
+func (w *webWindow) listen(event string, passive bool, fn func(e js.Value)) {
+	f := addListener(w.canvas, event, passive, fn)
+	w.listeners = append(w.listeners, webListener{event: event, f: f})
+}
+
+type webListener struct {
+	event string
+	f     js.Func
+}
+
+func addListener(target js.Value, event string, passive bool, fn func(e js.Value)) js.Func {
 	f := js.FuncOf(func(_ js.Value, args []js.Value) any {
 		fn(args[0])
 		return nil
 	})
-	a.funcs = append(a.funcs, f)
 	opts := js.Global().Get("Object").New()
 	opts.Set("passive", passive)
 	target.Call("addEventListener", event, f, opts)
+	return f
 }
+
+// ignoreRejection is the shared no-op .catch handler for fire-and-forget
+// promises; one func for the process instead of one leaked per call.
+var ignoreRejection = js.FuncOf(func(js.Value, []js.Value) any { return nil })
 
 // post queues fn for the UI goroutine and wakes the pump.
 func (a *webApp) post(fn func()) {
@@ -248,6 +269,8 @@ type webWindow struct {
 	cursorCSS  string
 
 	dropEnabled bool
+	// listeners are the canvas's event handlers, released in Destroy.
+	listeners []webListener
 	// rAF pacing (Ready): rafPending while a requestAnimationFrame is
 	// outstanding, frameReady once it fired and before a frame used it.
 	rafPending bool
@@ -586,7 +609,7 @@ func (w *webWindow) installListeners() {
 		r := c.Call("getBoundingClientRect")
 		return e.Get("clientX").Float() - r.Get("left").Float(), e.Get("clientY").Float() - r.Get("top").Float()
 	}
-	a.listen(c, "pointermove", true, func(e js.Value) {
+	w.listen("pointermove", true, func(e js.Value) {
 		x, y, mods := 0.0, 0.0, modsOf(e)
 		x, y = pos(e)
 		a.post(func() {
@@ -597,7 +620,7 @@ func (w *webWindow) installListeners() {
 			}
 		})
 	})
-	a.listen(c, "pointerdown", false, func(e js.Value) {
+	w.listen("pointerdown", false, func(e js.Value) {
 		btn, ok := domButton(e.Get("button").Int())
 		if !ok {
 			return
@@ -616,7 +639,7 @@ func (w *webWindow) installListeners() {
 			}
 		})
 	})
-	a.listen(c, "pointerup", false, func(e js.Value) {
+	w.listen("pointerup", false, func(e js.Value) {
 		btn, ok := domButton(e.Get("button").Int())
 		if !ok {
 			return
@@ -631,8 +654,8 @@ func (w *webWindow) installListeners() {
 			}
 		})
 	})
-	a.listen(c, "contextmenu", false, func(e js.Value) { e.Call("preventDefault") })
-	a.listen(c, "wheel", false, func(e js.Value) {
+	w.listen("contextmenu", false, func(e js.Value) { e.Call("preventDefault") })
+	w.listen("wheel", false, func(e js.Value) {
 		e.Call("preventDefault")
 		x, y := pos(e)
 		mods := modsOf(e)
@@ -657,8 +680,8 @@ func (w *webWindow) installListeners() {
 			}
 		})
 	})
-	a.listen(c, "focus", true, func(js.Value) { a.focusWindow(w) })
-	a.listen(c, "dragover", false, func(e js.Value) {
+	w.listen("focus", true, func(js.Value) { a.focusWindow(w) })
+	w.listen("dragover", false, func(e js.Value) {
 		e.Call("preventDefault")
 		if dt := e.Get("dataTransfer"); dt.Truthy() {
 			if w.dropEnabled {
@@ -668,7 +691,7 @@ func (w *webWindow) installListeners() {
 			}
 		}
 	})
-	a.listen(c, "drop", false, func(e js.Value) {
+	w.listen("drop", false, func(e js.Value) {
 		e.Call("preventDefault")
 		if !w.dropEnabled {
 			return
@@ -852,6 +875,11 @@ func (w *webWindow) SetShouldClose(v bool) { w.closing = v }
 
 func (w *webWindow) Destroy() {
 	w.handler = nil
+	for _, l := range w.listeners {
+		w.canvas.Call("removeEventListener", l.event, l.f)
+		l.f.Release()
+	}
+	w.listeners = nil
 	if !w.main {
 		w.canvas.Call("remove")
 	}
@@ -908,7 +936,7 @@ func (w *webWindow) SetClipboardText(text string) {
 		// Asynchronous and permission-gated; the cache above keeps paste
 		// inside the app working even when the browser refuses.
 		p := cb.Call("writeText", text)
-		p.Call("catch", js.FuncOf(func(js.Value, []js.Value) any { return nil }))
+		p.Call("catch", ignoreRejection)
 	}
 }
 

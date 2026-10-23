@@ -242,9 +242,19 @@ func (b *Bundle) pluralForm(loc qui.Locale, n float64) plural.Form {
 		tag = parseTag(loc)
 	}
 
+	if math.IsNaN(n) || math.IsInf(n, 0) {
+		// No operands exist; int() of these is MinInt64, which x/text
+		// indexes with and panics.
+		return plural.Other
+	}
 	neg := n < 0
 	if neg {
 		n = -n // CLDR operands are defined on the absolute value.
+	}
+	if n >= 1e15 {
+		// Past exact float integers, and at 2^63 int() overflows: keep the
+		// low nine digits (all CLDR rules look at) and stay a large number.
+		n = math.Mod(math.Floor(n), 1e9) + 1e9
 	}
 	i := int(math.Floor(n))
 	frac := n - math.Floor(n)

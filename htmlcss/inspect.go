@@ -76,11 +76,32 @@ type DOMTree struct {
 // nodes, reparenting El descendants across any non-El plumbing to their
 // nearest El ancestor. Windows with no htmlcss content yield a tree
 // whose #document root simply has no children.
+//
+// The projection is built on the UI goroutine (it reads live elements), so
+// the returned tree is a safe snapshot to serialize. Query, Styles and
+// ResolveWidget read the live elements again: run those through
+// InspectWindowDo instead when calling off the UI goroutine.
 func InspectWindow(w *qui.Window) *DOMTree {
-	if w == nil {
-		return &DOMTree{}
+	var out *DOMTree
+	_ = InspectWindowDo(w, func(t *DOMTree) error { out = t; return nil })
+	if out == nil {
+		return &DOMTree{} // the loop never answered (timeout)
 	}
-	ax := w.AccessibilityTreeSynced()
+	return out
+}
+
+// InspectWindowDo builds the window's DOMTree and calls fn with it, both on
+// the UI goroutine, so fn may Query / Styles / ResolveWidget safely from an
+// HTTP handler. Returns fn's error, or the window's if the job never ran.
+func InspectWindowDo(w *qui.Window, fn func(*DOMTree) error) error {
+	if w == nil {
+		return fn(&DOMTree{})
+	}
+	return w.RunSynced(func() error { return fn(inspectWindow(w)) })
+}
+
+func inspectWindow(w *qui.Window) *DOMTree {
+	ax := w.AccessibilityTree()
 	out := &DOMTree{
 		DevicePixelRatio: ax.DevicePixelRatio,
 		WindowSize:       qui.Rect{X: ax.WindowSize.X, Y: ax.WindowSize.Y, W: ax.WindowSize.W, H: ax.WindowSize.H},

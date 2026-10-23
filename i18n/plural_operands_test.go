@@ -1,6 +1,7 @@
 package i18n
 
 import (
+	"math"
 	"testing"
 
 	"golang.org/x/text/feature/plural"
@@ -14,5 +15,15 @@ func TestPluralOperandsUseDisplayedFraction(t *testing.T) {
 		if got := b.pluralForm("hr", n); got != want {
 			t.Errorf("hr %v: %v, want %v", n, got, want)
 		}
+	}
+}
+
+// Non-finite and huge counts pick a form instead of panicking in x/text.
+func TestPluralFormNonFiniteAndHuge(t *testing.T) {
+	b := NewBundle()
+	for _, n := range []float64{math.NaN(), math.Inf(1), math.Inf(-1), math.MaxInt64, 1e300, -1e20} {
+		b.pluralForm("en", n)
+		b.pluralForm("fr", n)
+		b.pluralForm("ru", n)
 	}
 }
