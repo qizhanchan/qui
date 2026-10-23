@@ -69,3 +69,26 @@ func TestSetterAfterUnmountIsNoop(t *testing.T) {
 		t.Fatalf("unmounted component re-rendered (%d → %d)", before, renders)
 	}
 }
+
+// A different pointer is a different dependency, even when its contents
+// match (Object.is semantics): the effect re-subscribes to the new store.
+func TestEffectDepsComparePointersByIdentity(t *testing.T) {
+	type store struct{ n int }
+	window := qui.NewTestWindow(qui.Size{W: 400, H: 300})
+	runs := 0
+	var setStore func(*store)
+	rt := reactive.NewRuntime(window, func() reactive.Element {
+		s, set := reactive.UseState(&store{})
+		setStore = set
+		reactive.UseEffect(func() func() { runs++; return nil }, s)
+		return uiLabel("x").Build()
+	})
+	rt.Render()
+	rt.Flush()
+	before := runs
+	setStore(&store{}) // deep-equal, different object
+	rt.Flush()
+	if runs != before+1 {
+		t.Fatalf("effect ran %d more times, want 1", runs-before)
+	}
+}

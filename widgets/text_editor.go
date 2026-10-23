@@ -45,8 +45,6 @@ type textEditor struct {
 	// commitBaseline is the value as of focus-in / the last commit, so
 	// OnCommit fires only when the value actually moved.
 	commitBaseline string
-	// committing is set while OnCommit runs, so a SetText from it rebases.
-	committing bool
 
 	caretVisible bool
 	blinkMS      int64
@@ -479,11 +477,11 @@ func (e *textEditor) setText(h textEditorHost, s string) bool {
 		source = "program-overwrite"
 	}
 	e.lastChangeUser = false
-	if e.committing {
-		// OnCommit normalizing the value ("12" → "12.00"): that is the
-		// committed value now, or the next blur would commit it back.
-		e.commitBaseline = s
-	}
+	// A programmatic value is not the user's edit, so it never commits —
+	// as setting an HTML control's value fires no change event. Rebasing
+	// also keeps an OnCommit that normalizes ("12" → "12.00") from having
+	// its own value committed back on blur.
+	e.commitBaseline = s
 	if w := h.Window(); w != nil {
 		w.RecordInputChange(h, before.text, s, source)
 	}
@@ -512,8 +510,6 @@ func (e *textEditor) fireCommit(h textEditorHost) {
 	changed := text != e.commitBaseline
 	e.commitBaseline = text
 	if fn != nil && changed {
-		e.committing = true
-		defer func() { e.committing = false }()
 		fn(text)
 	}
 }

@@ -211,7 +211,7 @@ Two engines, one runtime (see [reactive/README.md](../reactive/README.md) for th
 - Hooks: `UseState(Fn)` / `UseRef` / `UseMemo` / `UseCallback` / `UseReducer` / `UseEffect(Once)` / `UseSignal` — positional per fiber; order must be stable.
 - Signals: `Signal[T]`, `Map`/`Computed` (auto-tracked via Get interception; `Peek` reads untracked), `BindWidget` (signal → setter, burst-coalesced, no reconcile). Signal identity must be stable for the widget's lifetime.
 - `Show`/`For` mount/unmount subtrees straight from a signal via a reconcile scoped to that node. `For` rows need stable keys.
-- Props equality is `valuesEqual` (funcs compare by code pointer), so handlers must read fresh state via functional updaters or props, never captured render-locals.
+- Props equality is `valuesEqual` (values by content, pointers by identity, non-nil funcs never equal); a MemoComponent's comparator decides its own bailout, so handlers must read fresh state via functional updaters or props, never captured render-locals.
 - **Host-layer state rides on the Runtime:** `Runtime.SetHostData`/`HostData` + `reactive.CurrentRuntime()` (set during every render/reconcile/scoped-sync pass). This is how element Create hooks resolve per-runtime backends — never a package global (that breaks multi-window).
 
 ### reactive/html

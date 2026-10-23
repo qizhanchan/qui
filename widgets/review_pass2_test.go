@@ -37,7 +37,8 @@ func TestInputCommitNormalizingSetTextCommitsOnce(t *testing.T) {
 		in.SetText(s + ".00")
 	}
 	win.SetFocus(in)
-	in.SetText("12")
+	win.DispatchTestEvent(NewCharEvent('1', 0))
+	win.DispatchTestEvent(NewCharEvent('2', 0))
 	win.DispatchTestEvent(NewKeyEvent(EventKeyDown, KeyEnter, 0))
 	win.SetFocus(nil)
 	if len(commits) != 1 || commits[0] != "12" {

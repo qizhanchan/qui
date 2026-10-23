@@ -99,7 +99,7 @@ reactive.MemoComponent("Row", key, props,
 )
 ```
 
-比较器就是 memo 合约：它必须涵盖会影响渲染和事件处理器语义的所有数据。Go 函数值没有可用的闭包相等性——代码地址不包含捕获值——因此框架不会再默认推断它。`valuesEqual` 供 Signal、hook deps 和 Context 使用，遵循安全规则：非 nil 函数不相等。
+比较器就是 memo 合约：它必须涵盖会影响渲染和事件处理器语义的所有数据。Go 函数值没有可用的闭包相等性——代码地址不包含捕获值——因此框架不会再默认推断它。`valuesEqual` 供 Signal、hook deps 和 Context 使用：值（struct、数组、slice、map）按内容比较，指针按身份比较（同 Go 的 `==` 与 JS 的 `Object.is`——新的 `*Store` 即使字段相同也是新依赖），非 nil 函数不相等。
 
 ### 3.4 作用域重渲染：childDirty + visitDirty
 

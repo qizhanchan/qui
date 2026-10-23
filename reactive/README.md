@@ -97,7 +97,7 @@ reactive.MemoComponent("Row", key, props,
 )
 ```
 
-The comparator *is* the memo contract: it must cover everything that affects rendered output and handler semantics. Go function values have no usable closure equality — a code address does not include captured values — so the framework no longer tries to infer it. `valuesEqual` is used by Signals, hook deps and Context and follows the safe rule: non-nil functions are never equal.
+The comparator *is* the memo contract: it must cover everything that affects rendered output and handler semantics. Go function values have no usable closure equality — a code address does not include captured values — so the framework no longer tries to infer it. `valuesEqual` is used by Signals, hook deps and Context: values (structs, arrays, slices, maps) compare by content, pointers by identity (like Go's `==` and JS's `Object.is` — a new `*Store` is a new dependency even when its fields match), and non-nil functions are never equal.
 
 ### 3.4 Scoped re-render: childDirty + visitDirty
 

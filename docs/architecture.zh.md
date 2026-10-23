@@ -211,7 +211,7 @@ CSS 引擎（解析 → 层叠 → `ComputedStyle`）和唯一的控件装配体
 - Hooks：`UseState(Fn)` / `UseRef` / `UseMemo` / `UseCallback` / `UseReducer` / `UseEffect(Once)` / `UseSignal` —— 按 fiber 位置确定，顺序必须稳定。
 - Signals：`Signal[T]`、`Map`/`Computed`（通过拦截 Get 自动追踪；`Peek` 不追踪）、`BindWidget`（signal → setter，突发合并，不 reconcile）。signal 的标识必须在控件整个生命周期内稳定。
 - `Show`/`For` 直接从 signal 挂载 / 卸载子树，其 reconcile 只作用于该节点。`For` 的行需要稳定的 key。
-- Props 相等性是 `valuesEqual`（函数按代码指针比较），因此处理器必须通过函数式更新器或 props 读取最新状态，绝不能捕获 render 时的局部变量。
+- Props 相等性是 `valuesEqual`（值按内容、指针按身份比较，非 nil 函数不相等）；MemoComponent 的比较器自行决定是否跳过，因此处理器必须通过函数式更新器或 props 读取最新状态，绝不能捕获 render 时的局部变量。
 - **宿主层状态搭载在 Runtime 上：** `Runtime.SetHostData`/`HostData` + `reactive.CurrentRuntime()`（在每次 render/reconcile/scoped-sync 过程中设置）。元素 Create 钩子就是这样解析每个 runtime 的后端 —— 绝不用包级全局（会破坏多窗口）。
 
 ### reactive/html

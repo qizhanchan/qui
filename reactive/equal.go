@@ -6,7 +6,8 @@ import (
 )
 
 // valuesEqual is the equality used for signal values, hook dependencies,
-// and context values. Function values intentionally follow Go's safe
+// and context values: values (structs, arrays, slices, maps) compare by
+// content, pointers by identity. Function values intentionally follow Go's safe
 // reflect.DeepEqual semantics: non-nil functions are never equal. Component
 // memoization is separate and requires an explicit comparator
 // (MemoComponent), so callback closures can never accidentally keep stale
@@ -61,7 +62,7 @@ func deepValueEqual(a, b reflect.Value, visited map[visitPair]bool) bool {
 
 	// Cycle detection for reference kinds that can recurse.
 	switch a.Kind() {
-	case reflect.Pointer, reflect.Map, reflect.Slice:
+	case reflect.Map, reflect.Slice:
 		if !a.IsNil() && !b.IsNil() {
 			ap := unsafe.Pointer(a.Pointer())
 			bp := unsafe.Pointer(b.Pointer())
@@ -85,13 +86,11 @@ func deepValueEqual(a, b reflect.Value, visited map[visitPair]bool) bool {
 		}
 		return false
 	case reflect.Pointer:
-		if a.Pointer() == b.Pointer() {
-			return true
-		}
-		if a.IsNil() || b.IsNil() {
-			return false
-		}
-		return deepValueEqual(a.Elem(), b.Elem(), visited)
+		// Identity, as Go's == and JS's Object.is: a different object is a
+		// different dependency even when its contents match (a fresh *Store
+		// must re-run the effect that subscribes to it), and the pointee
+		// graph isn't walked on every render.
+		return a.Pointer() == b.Pointer()
 	case reflect.Interface:
 		if a.IsNil() || b.IsNil() {
 			return a.IsNil() == b.IsNil()

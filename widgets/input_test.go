@@ -392,9 +392,14 @@ func TestInputOnCommitFiresOnEnterAndBlur(t *testing.T) {
 	var commits []string
 	in.OnCommit = func(s string) { commits = append(commits, s) }
 
+	typeText := func(s string) {
+		for _, r := range s {
+			win.DispatchTestEvent(NewCharEvent(r, 0))
+		}
+	}
 	// Enter commits.
 	win.SetFocus(in)
-	in.SetText("12")
+	typeText("12")
 	win.DispatchTestEvent(NewKeyEvent(EventKeyDown, KeyEnter, 0))
 	if len(commits) != 1 || commits[0] != "12" {
 		t.Fatalf("commits after Enter = %v", commits)
@@ -405,9 +410,9 @@ func TestInputOnCommitFiresOnEnterAndBlur(t *testing.T) {
 		t.Errorf("unchanged value committed twice: %v", commits)
 	}
 	// An edit followed by blur commits.
-	in.SetText("34")
+	typeText("34")
 	win.SetFocus(nil)
-	if len(commits) != 2 || commits[1] != "34" {
+	if len(commits) != 2 || commits[1] != "1234" {
 		t.Fatalf("commits after blur = %v", commits)
 	}
 	// Focusing and blurring without editing commits nothing.
@@ -415,6 +420,14 @@ func TestInputOnCommitFiresOnEnterAndBlur(t *testing.T) {
 	win.SetFocus(nil)
 	if len(commits) != 2 {
 		t.Errorf("blur without an edit committed: %v", commits)
+	}
+	// A programmatic SetText is not an edit: no commit on blur, as
+	// setting an <input>'s value fires no change event.
+	win.SetFocus(in)
+	in.SetText("99")
+	win.SetFocus(nil)
+	if len(commits) != 2 {
+		t.Errorf("SetText committed on blur: %v", commits)
 	}
 }
 
