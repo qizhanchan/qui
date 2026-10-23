@@ -1099,6 +1099,7 @@ func (cb *Select) openDropdown() {
 	st.ApplyColors(cb.DropdownColors)
 
 	items := make([]*MenuItem, 0, len(cb.Items))
+	selRow := -1 // the menu row of SelectedIdx (group headings shift rows)
 	group := ""
 	for i, val := range cb.Items {
 		idx := i
@@ -1121,6 +1122,9 @@ func (cb *Select) openDropdown() {
 		}
 		if idx < len(cb.ItemColors) {
 			item.Foreground = cb.ItemColors[idx]
+		}
+		if idx == cb.SelectedIdx {
+			selRow = len(items)
 		}
 		if cb.RenderOption != nil {
 			selected := idx == cb.SelectedIdx
@@ -1166,6 +1170,11 @@ func (cb *Select) openDropdown() {
 		return
 	}
 	cb.list = list
+	// Open on the current option, as a browser does: Enter keeps it,
+	// arrows move from it, and a long list scrolls it into view.
+	if selRow >= 0 && list.selectable(selRow) {
+		list.setFocused(selRow)
+	}
 	cb.holdPopup(popup, func() {
 		cb.isOpen = false
 		cb.list = nil

@@ -818,7 +818,11 @@ func (lv *ListView) HitTest(p Point) Widget {
 				if !rowRect.Contains(p) {
 					continue
 				}
-				row.Layout(rowRect)
+				// Rows are normally laid out at this rect already; relayout
+				// only a stale one rather than on every pointer move.
+				if row.Bounds() != rowRect {
+					row.Layout(rowRect)
+				}
 				if hit := row.HitTest(p); hit != nil {
 					return hit
 				}

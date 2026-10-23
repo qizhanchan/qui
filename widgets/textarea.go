@@ -850,15 +850,29 @@ func (t *TextArea) handleBarDrag(e MouseEvent) {
 
 // OffsetAt returns the rune offset into Text nearest window point p (the
 // caret position a click there would place), accounting for scrolling.
-func (t *TextArea) OffsetAt(p Point) int { return t.positionFromPoint(p) }
+// It is a pure query: the caret's line affinity is left alone.
+func (t *TextArea) OffsetAt(p Point) int {
+	off, _ := t.offsetAndAffinityAt(p)
+	return off
+}
 
+// positionFromPoint is OffsetAt for the press / drag paths, which place the
+// caret there and so adopt the point's line affinity.
 func (t *TextArea) positionFromPoint(p Point) int {
+	off, nextLine := t.offsetAndAffinityAt(p)
+	t.caretNextLine = nextLine
+	return off
+}
+
+// offsetAndAffinityAt maps p to a rune offset, plus whether that offset
+// sits at the start of a soft-wrapped line rather than the previous end.
+func (t *TextArea) offsetAndAffinityAt(p Point) (int, bool) {
 	content, _, _ := t.visibleContentRect(t.Bounds())
 	runes := t.textRunes()
 	lineHeight := t.lineHeight()
 	lines := t.visualLines(content.W)
 	if len(lines) == 0 {
-		return 0
+		return 0, false
 	}
 
 	clickX := p.X - content.X
@@ -879,8 +893,8 @@ func (t *TextArea) positionFromPoint(p Point) int {
 	}
 
 	line := lines[lineIndex]
-	t.caretNextLine = lineIndex > 0 && line.start == lines[lineIndex-1].end && clickX <= line.offset
-	return t.closestPosInLine(runes, line.start, line.end, clickX-line.offset)
+	nextLine := lineIndex > 0 && line.start == lines[lineIndex-1].end && clickX <= line.offset
+	return t.closestPosInLine(runes, line.start, line.end, clickX-line.offset), nextLine
 }
 
 func (t *TextArea) runesWidth(runes []rune) float32 {
@@ -907,12 +921,14 @@ func (t *TextArea) handleKeyDown(e KeyEvent) bool {
 		return t.ed.handleKey(t, e)
 	}
 	if IsCommandMod(e.Mods) {
-		if t.OnSubmit != nil {
-			t.OnSubmit(t.Text)
-		}
+		// Commit before submit, as Input does.
+		submitted := t.Text
 		t.ed.fireCommit(t)
+		if t.OnSubmit != nil {
+			t.OnSubmit(submitted)
+		}
 		if w := t.Window(); w != nil {
-			w.RecordInputSubmit(t, t.Text)
+			w.RecordInputSubmit(t, submitted)
 		}
 		return true
 	}
@@ -1132,6 +1148,10 @@ func (t *TextArea) scrollToCursor() {
 			// Keep autosize/fit-content scenarios anchored at x=0 so we
 			// never hide leading glyphs before true overflow begins.
 			t.scrollX = 0
+		} else if t.scrollX > maxScrollX+4 {
+			// The text shrank (or the box widened): don't keep scrolling
+			// past its end. +4 matches the caret margin above.
+			t.scrollX = maxScrollX + 4
 		}
 	}
 }

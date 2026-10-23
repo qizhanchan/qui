@@ -1056,12 +1056,16 @@ func (t *Input) handleKey(e KeyEvent) bool {
 	if e.Key != KeyEnter {
 		return t.ed.handleKey(t, e)
 	}
-	if t.OnSubmit != nil {
-		t.OnSubmit(t.Text)
-	}
+	// Commit before submit (a browser fires change before the implicit
+	// submission): a submit handler that clears the field must not hide
+	// the value it was handed from OnCommit.
+	submitted := t.Text
 	t.ed.fireCommit(t)
+	if t.OnSubmit != nil {
+		t.OnSubmit(submitted)
+	}
 	if w := t.Window(); w != nil {
-		w.RecordInputSubmit(t, t.Text)
+		w.RecordInputSubmit(t, submitted)
 	}
 	// Without a submit handler Enter keeps bubbling — the HTML
 	// "implicit submission": a dialog's default action presses on
@@ -1089,12 +1093,11 @@ func (t *Input) runeCount() int { return utf8.RuneCountInString(t.Text) }
 // widthUpToRune returns the pixel width of Text[:runeIdx] using the
 // widget's font metrics. Used to position cursor + selection.
 func (t *Input) widthUpToRune(runeIdx int) float32 {
-	runes := []rune(t.Text)
 	if runeIdx < 0 {
 		runeIdx = 0
 	}
-	if runeIdx > len(runes) {
-		runeIdx = len(runes)
+	if n := utf8.RuneCountInString(t.Text); runeIdx > n {
+		runeIdx = n
 	}
 	if t.Password {
 		return float32(runeIdx) * t.maskPitch()
@@ -1225,6 +1228,12 @@ func (t *Input) ensureCursorVisible() {
 	}
 	if cursorAbsX > t.scrollX+content.W-4 {
 		t.scrollX = cursorAbsX - content.W + 4
+	}
+	// Never scroll past the text's end: after the text shrinks (Backspace
+	// at the end) or the field widens, the hidden start comes back instead
+	// of blank space growing on the right.
+	if maxScroll := t.widthUpToRune(utf8.RuneCountInString(t.Text)) - content.W + 4; t.scrollX > maxScroll {
+		t.scrollX = maxScroll
 	}
 	if t.scrollX < 0 {
 		t.scrollX = 0

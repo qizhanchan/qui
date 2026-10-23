@@ -45,6 +45,8 @@ type textEditor struct {
 	// commitBaseline is the value as of focus-in / the last commit, so
 	// OnCommit fires only when the value actually moved.
 	commitBaseline string
+	// committing is set while OnCommit runs, so a SetText from it rebases.
+	committing bool
 
 	caretVisible bool
 	blinkMS      int64
@@ -477,6 +479,11 @@ func (e *textEditor) setText(h textEditorHost, s string) bool {
 		source = "program-overwrite"
 	}
 	e.lastChangeUser = false
+	if e.committing {
+		// OnCommit normalizing the value ("12" → "12.00"): that is the
+		// committed value now, or the next blur would commit it back.
+		e.commitBaseline = s
+	}
 	if w := h.Window(); w != nil {
 		w.RecordInputChange(h, before.text, s, source)
 	}
@@ -505,6 +512,8 @@ func (e *textEditor) fireCommit(h textEditorHost) {
 	changed := text != e.commitBaseline
 	e.commitBaseline = text
 	if fn != nil && changed {
+		e.committing = true
+		defer func() { e.committing = false }()
 		fn(text)
 	}
 }
@@ -660,6 +669,9 @@ func (e *textEditor) clipboardShortcut(h textEditorHost, k Key) {
 			return
 		}
 		e.selStart, e.selEnd, e.cursor = 0, n, n
+		// A selection move seals the typing group, like every other caret
+		// move: typing over the selection is a new undo step.
+		e.history.breakCoalesce()
 		h.editorRevealCaret()
 		e.resetBlink()
 	case KeyC:
