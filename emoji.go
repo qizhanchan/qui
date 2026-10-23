@@ -47,6 +47,12 @@ var (
 // SetEmojiProvider installs the provider used by DrawText for color
 // emoji. Pass nil to disable emoji rendering entirely.
 func SetEmojiProvider(p EmojiProvider) {
+	// Text layouts and measured sizes embed emoji advances too; drop them
+	// the way SetTextFallback does, after releasing emojiMu.
+	defer func() {
+		fontRegistryGen.Add(1)
+		invalidateTextLayoutCache()
+	}()
 	emojiMu.Lock()
 	defer emojiMu.Unlock()
 	emojiProvider = p

@@ -287,57 +287,61 @@ func (f BlurImageFilter) ApplyImage(src *image.RGBA) *image.RGBA {
 		return src
 	}
 	r := int(f.Radius + 0.5)
-	buf := src
-	for pass := 0; pass < 3; pass++ {
-		buf = boxBlurPass(buf, r, true)
-		buf = boxBlurPass(buf, r, false)
+	b := src.Bounds()
+	// Ping-pong between two scratch images; src itself is never written.
+	a, c := image.NewRGBA(b), image.NewRGBA(b)
+	boxBlurPass(src, a, r, true)
+	boxBlurPass(a, c, r, false)
+	for pass := 1; pass < 3; pass++ {
+		boxBlurPass(c, a, r, true)
+		boxBlurPass(a, c, r, false)
 	}
-	return buf
+	return c
 }
 
-// boxBlurPass averages each pixel over a [-r, r] window along one axis.
-// Premultiplied averaging keeps edges from bleeding wrong colors.
-func boxBlurPass(src *image.RGBA, r int, horizontal bool) *image.RGBA {
+// boxBlurPass averages each pixel over a [-r, r] window along one axis,
+// clamping at the edges, with a running sum so the cost is O(1) per
+// pixel whatever the radius. Channels are premultiplied on both sides,
+// so they are averaged as-is: weighting by alpha again (or
+// un-premultiplying the result) made blurred edges keep full colour.
+// src and dst must share the same bounds.
+func boxBlurPass(src, dst *image.RGBA, r int, horizontal bool) {
 	b := src.Bounds()
-	dst := image.NewRGBA(b)
 	w, h := b.Dx(), b.Dy()
-	get := func(x, y int) (rr, gg, bb, aa int) {
-		i := src.PixOffset(b.Min.X+x, b.Min.Y+y)
-		a := int(src.Pix[i+3])
-		// premultiply
-		return int(src.Pix[i]) * a / 255, int(src.Pix[i+1]) * a / 255, int(src.Pix[i+2]) * a / 255, a
+	if w == 0 || h == 0 {
+		return
+	}
+	lines, n := h, w
+	if !horizontal {
+		lines, n = w, h
 	}
 	win := 2*r + 1
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			var sr, sg, sb, sa int
-			for k := -r; k <= r; k++ {
-				px, py := x, y
-				if horizontal {
-					px = clampInt(x+k, 0, w-1)
-				} else {
-					py = clampInt(y+k, 0, h-1)
-				}
-				cr, cg, cb, ca := get(px, py)
-				sr += cr
-				sg += cg
-				sb += cb
-				sa += ca
+	at := func(line, k int) int {
+		if horizontal {
+			return src.PixOffset(b.Min.X+k, b.Min.Y+line)
+		}
+		return src.PixOffset(b.Min.X+line, b.Min.Y+k)
+	}
+	for line := 0; line < lines; line++ {
+		var sum [4]int
+		for k := -r; k <= r; k++ {
+			i := at(line, clampInt(k, 0, n-1))
+			for ch := 0; ch < 4; ch++ {
+				sum[ch] += int(src.Pix[i+ch])
 			}
-			a := sa / win
-			di := dst.PixOffset(b.Min.X+x, b.Min.Y+y)
-			if a == 0 {
-				dst.Pix[di], dst.Pix[di+1], dst.Pix[di+2], dst.Pix[di+3] = 0, 0, 0, 0
-				continue
+		}
+		for k := 0; k < n; k++ {
+			di := at(line, k)
+			for ch := 0; ch < 4; ch++ {
+				dst.Pix[di+ch] = uint8(sum[ch] / win)
 			}
-			// un-premultiply
-			dst.Pix[di] = uint8(clampInt((sr/win)*255/a, 0, 255))
-			dst.Pix[di+1] = uint8(clampInt((sg/win)*255/a, 0, 255))
-			dst.Pix[di+2] = uint8(clampInt((sb/win)*255/a, 0, 255))
-			dst.Pix[di+3] = uint8(a)
+			out := at(line, clampInt(k-r, 0, n-1))
+			in := at(line, clampInt(k+r+1, 0, n-1))
+			for ch := 0; ch < 4; ch++ {
+				sum[ch] += int(src.Pix[in+ch]) - int(src.Pix[out+ch])
+			}
 		}
 	}
-	return dst
 }
 
 func clampInt(v, lo, hi int) int {

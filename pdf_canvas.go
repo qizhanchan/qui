@@ -219,6 +219,9 @@ func (c *pdfCanvas) DrawImage(img image.Image, rect Rect) {
 		return
 	}
 	c.page.useImage(entry.name)
+	// /ca is sticky and applies to image XObjects too: reset it, or the
+	// picture inherits the last translucent fill's alpha.
+	c.applyAlpha(1)
 	c.emit("q\n%s 0 0 %s %s %s cm\n/%s Do\nQ\n",
 		pdfNum(float64(rect.W)), pdfNum(float64(-rect.H)),
 		pdfNum(float64(rect.X)), pdfNum(float64(rect.Y+rect.H)),

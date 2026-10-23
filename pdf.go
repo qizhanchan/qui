@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 )
@@ -268,6 +269,11 @@ func (d *PDFDoc) PageCount() int { return len(d.pages) }
 // pdfNum formats a float for a PDF content stream: fixed notation (never
 // scientific), trailing zeros trimmed, up to 4 decimals.
 func pdfNum(f float64) string {
+	// NaN / ±Inf have no PDF syntax; one stray 0/0 from layout would
+	// otherwise make the whole page unreadable in strict viewers.
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return "0"
+	}
 	s := strconv.FormatFloat(f, 'f', 4, 64)
 	// Trim trailing zeros and a dangling dot.
 	if bytes.ContainsRune([]byte(s), '.') {

@@ -99,6 +99,11 @@ type Window struct {
 	pressFocus    pendingPressFocus
 	dragCandidate Widget
 	dragging      bool
+	// dragEnding is set while handleDragEnd dispatches Drop / DragEnd. A
+	// drop handler that moves the source ("remove the card here, add it
+	// there") must not cancel the drag being finished: it ends normally,
+	// Accepted as the target said.
+	dragEnding bool
 	// dragCancelled marks a drag Escape cancelled while the button was
 	// still down: the release that follows ends that gesture, so it is
 	// flagged AfterDrag rather than read as a click where it lands.
@@ -1738,6 +1743,10 @@ func (w *Window) Step() {
 	// in this frame. New jobs posted during drain land in the next
 	// Step — keeps frame time bounded.
 	w.runJobs()
+	// A job may have closed this window (app.CloseWindow / Destroy).
+	if w.plat == nil {
+		return
+	}
 	// Raw-mode wishes can change in any handler or job; keep the system
 	// key tap in step.
 	w.syncKeyCapture()
@@ -1789,6 +1798,10 @@ func (w *Window) Step() {
 	// retained GL draws anyway, so only a frame with nothing dirty needs
 	// the GL-only path.
 	glOnly := w.glRedraw.Swap(false)
+	// An animator, Tick or layout callback may have closed the window.
+	if w.plat == nil {
+		return
+	}
 	if w.dirtyRegion.IsEmpty() {
 		if glOnly {
 			w.redrawGLOnly()

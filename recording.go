@@ -92,7 +92,10 @@ func (w *Window) RemoveEventListener(tok EventListenerToken) {
 	}
 	w.recordersMu.Lock()
 	defer w.recordersMu.Unlock()
-	out := w.recorders[:0]
+	// Copy, never compact in place: publishers iterate a snapshot of the
+	// slice header outside the lock, so rewriting the shared backing
+	// array would make them skip or double-call listeners.
+	out := make([]recorderEntry, 0, len(w.recorders))
 	for _, e := range w.recorders {
 		if e.id != tok.id {
 			out = append(out, e)

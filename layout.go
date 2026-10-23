@@ -781,8 +781,50 @@ func (l FlexLayout) resolveMainSizes(items []flexItem, mainAvail float32) {
 			growSum += it.flex.Grow
 		}
 		if growSum > 0 {
+			// CSS flex grow: a grow-factor sum below 1 hands out only that
+			// fraction of the free space, and an item clamped at its max
+			// size freezes so its surplus goes to its siblings.
+			active := make([]bool, n)
 			for i := range items {
-				items[i].size = items[i].basis + free*items[i].flex.Grow/growSum
+				items[i].size = items[i].basis
+				active[i] = items[i].flex.Grow > 0
+			}
+			remaining := free
+			for remaining > 0 {
+				var gs float32
+				for i := range items {
+					if active[i] {
+						gs += items[i].flex.Grow
+					}
+				}
+				if gs <= 0 {
+					break
+				}
+				dist := remaining
+				if gs < 1 && free*gs < dist {
+					dist = free * gs
+				}
+				frozeAny := false
+				for i := range items {
+					if !active[i] || items[i].maxMain <= 0 {
+						continue
+					}
+					if items[i].size+dist*items[i].flex.Grow/gs > items[i].maxMain {
+						remaining -= max(items[i].maxMain-items[i].size, 0)
+						items[i].size = max(items[i].maxMain, items[i].size)
+						active[i] = false
+						frozeAny = true
+					}
+				}
+				if frozeAny {
+					continue
+				}
+				for i := range items {
+					if active[i] {
+						items[i].size += dist * items[i].flex.Grow / gs
+					}
+				}
+				break
 			}
 		} else {
 			for i := range items {

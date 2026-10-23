@@ -264,6 +264,16 @@ func (r *AcceleratorRegistry) Len() int {
 func ParseShortcut(s string) (Key, Modifiers, error) {
 	var mods Modifiers
 	parts := strings.Split(s, "+")
+	if strings.HasSuffix(s, "+") {
+		// The key is '+' itself ("Cmd++", "+"): Split leaves empty
+		// tokens where the separator and the key meet.
+		head := strings.TrimSuffix(strings.TrimSuffix(s, "+"), "+")
+		parts = nil
+		if strings.TrimSpace(head) != "" {
+			parts = strings.Split(head, "+")
+		}
+		parts = append(parts, "+")
+	}
 	if len(parts) == 0 {
 		return KeyUnknown, 0, fmt.Errorf("empty shortcut")
 	}

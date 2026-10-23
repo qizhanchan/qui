@@ -216,17 +216,33 @@ func (w *Window) SetFocus(target Widget) {
 		return
 	}
 	prevFocused := w.focused
-	if w.focused != nil {
-		if client, ok := w.focused.(IMEClient); ok {
+	// Nothing is focused while the old widget blurs (DOM: activeElement is
+	// body during blur). A blur hook that removes the widget or moves
+	// focus itself then sees no stale owner, so it can't blur it twice
+	// or recurse.
+	w.focused = nil
+	if prevFocused != nil {
+		if client, ok := prevFocused.(IMEClient); ok {
 			client.SetPreedit("", 0)
 		}
-		if prev, ok := w.focused.(registerFocusable); ok {
+		if prev, ok := prevFocused.(registerFocusable); ok {
 			prev.SetFocused(false)
 		}
 	}
 	// The old focus blurs completely — widget and hooks — before the new
 	// one hears anything (DOM order: blur, then focus).
 	runFocusHooks(prevFocused, false)
+	if w.focused != nil {
+		// A blur hook moved focus; that move wins over this one.
+		if prevFocused != nil {
+			w.InvalidateRect(PaintBoundsInWindow(prevFocused))
+		}
+		return
+	}
+	if target != nil && !w.validFocusTarget(target) {
+		// A blur hook removed the target from the tree.
+		target = nil
+	}
 	w.focused = target
 	if target != nil {
 		if f, ok := target.(registerFocusable); ok {
@@ -359,7 +375,9 @@ func (w *Window) releaseSubtreeInteractions(root Widget) {
 		w.gestureRotation = 0
 	}
 	if widgetIsDescendant(w.dragCandidate, root) {
-		w.cancelDrag()
+		if !w.dragEnding {
+			w.cancelDrag()
+		}
 	} else if widgetIsDescendant(w.drag.over, root) {
 		w.drag.over = nil
 	}

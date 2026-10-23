@@ -148,7 +148,8 @@ func droppableFor(hit Widget, data *DragData) Widget {
 }
 
 func (w *Window) handleDragMove(me MouseEvent) {
-	if w.dragCandidate == nil {
+	src := w.dragCandidate
+	if src == nil {
 		return
 	}
 	at := Point{X: me.X, Y: me.Y}
@@ -174,11 +175,19 @@ func (w *Window) handleDragMove(me MouseEvent) {
 		}
 		w.drag = dragSession{data: data, pos: at}
 		w.dragCandidate.Handle(w.dragEventFor(w.dragCandidate, EventDragStart, at))
+		// A handler that detaches the source cancels the drag (see
+		// releaseSubtreeInteractions); stop before touching it again.
+		if w.dragCandidate != src {
+			return
+		}
 		w.startDragImage(data.Image)
 	}
 	w.drag.pos = at
 	w.moveDragImage()
 	w.dragCandidate.Handle(w.dragEventFor(w.dragCandidate, EventDragMove, at))
+	if w.dragCandidate != src {
+		return
+	}
 	over := droppableFor(w.hitTestAll(at), w.drag.data)
 	if over != w.drag.over {
 		if prev := w.drag.over; prev != nil {
@@ -187,6 +196,9 @@ func (w *Window) handleDragMove(me MouseEvent) {
 		w.drag.over = over
 		if over != nil {
 			over.Handle(w.dragEventFor(over, EventDragEnter, at))
+		}
+		if w.dragCandidate != src {
+			return
 		}
 	}
 	// Notify the droppable under the cursor (standard DnD dragover) so a
@@ -202,6 +214,8 @@ func (w *Window) handleDragEnd(me MouseEvent) {
 		return
 	}
 	if w.dragging {
+		w.dragEnding = true
+		defer func() { w.dragEnding = false }()
 		at := Point{X: me.X, Y: me.Y}
 		target := droppableFor(w.hitTestAll(at), w.drag.data)
 		if prev := w.drag.over; prev != nil && prev != target {

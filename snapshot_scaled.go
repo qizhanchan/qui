@@ -191,7 +191,10 @@ func (w *Window) snapshotAnnotatedInline(opts AnnotateOptions) *image.RGBA {
 	// Resolve highlight set (if any).
 	var highlightSet map[*AXNode]bool
 	if opts.Highlight != "" {
-		if nodes, err := w.FindNodes(opts.Highlight); err == nil {
+		// Match against the same tree we annotate: FindNodes would build
+		// a fresh tree whose node pointers never equal these.
+		if sel, err := parseSelector(opts.Highlight); err == nil {
+			nodes := sel.matchNodes(tree)
 			highlightSet = make(map[*AXNode]bool, len(nodes))
 			for _, n := range nodes {
 				highlightSet[n] = true

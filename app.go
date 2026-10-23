@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -144,12 +145,10 @@ func (a *App) CloseWindow(w *Window) {
 	if a == nil || w == nil {
 		return
 	}
-	for i, existing := range a.windows {
-		if existing == w {
-			a.windows = append(a.windows[:i], a.windows[i+1:]...)
-			break
-		}
-	}
+	// Build a new slice rather than splicing in place: CloseWindow can
+	// run from inside App.step's range over a.windows (a job or timer of
+	// another window), which would then see a shifted backing array.
+	a.windows = slices.DeleteFunc(slices.Clone(a.windows), func(x *Window) bool { return x == w })
 	w.Destroy()
 }
 
@@ -310,7 +309,9 @@ func (a *App) step(timeout time.Duration) bool {
 	}
 	alive := 0
 	for _, w := range a.windows {
-		if w == nil {
+		// Skip windows already destroyed this pass (closed by another
+		// window's callback): their close handlers have run.
+		if w == nil || w.plat == nil {
 			continue
 		}
 		if w.ShouldClose() && w.closeVetoed() {

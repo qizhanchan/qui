@@ -648,6 +648,12 @@ func (c imageCanvas) DrawShape(shape Shape, paint Paint) {
 		return
 	}
 	top := c.topCopy()
+	// The clip starts as the surface bounds, so an empty one means
+	// "clipped away entirely". Stop here: the GPU backend reads a
+	// zero-size clip as "no clip" and would paint the whole shape.
+	if top.clip.IsEmpty() {
+		return
+	}
 	s := top.matrix.avgScale()
 	axisAligned := top.matrix.IsAxisAligned()
 	// Fill primitives with a shader route through the path rasterizer so
