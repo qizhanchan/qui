@@ -24,10 +24,13 @@ func (k hookKind) String() string {
 }
 
 type hookSlot struct {
-	kind   hookKind
-	state  any
-	memo   memoState
-	effect effectState
+	kind  hookKind
+	state any
+	// stateVer counts writes to state, so a functional update computed
+	// outside the lock can tell another write landed meanwhile.
+	stateVer uint64
+	memo     memoState
+	effect   effectState
 }
 
 type memoState struct {
@@ -89,6 +92,11 @@ func depsEqual(a, b []any) bool {
 // any goroutine: the store is under the runtime mutex, and RequestRender
 // marshals the render onto the UI thread.
 func setHostState(rt *Runtime, host *hookHost, idx int, next any, requestRender func()) {
+	if host.dead.Load() {
+		// The component unmounted: a leftover goroutine or timer calling
+		// its setter must not schedule renders for state nobody reads.
+		return
+	}
 	rt.mu.Lock()
 	if idx < 0 || idx >= len(host.hooks) || host.hooks[idx].kind != hookKindState {
 		rt.mu.Unlock()
@@ -99,6 +107,7 @@ func setHostState(rt *Runtime, host *hookHost, idx int, next any, requestRender 
 		return
 	}
 	host.hooks[idx].state = next
+	host.hooks[idx].stateVer++
 	rt.mu.Unlock()
 	if requestRender != nil {
 		requestRender()
@@ -139,26 +148,42 @@ func UseStateFn[T any](initial T) (value T, set func(T), update func(func(T) T))
 	}
 
 	update = func(fn func(T) T) {
-		if fn == nil {
+		if fn == nil || host.dead.Load() {
 			return
 		}
-		rt.mu.Lock()
-		if idx < 0 || idx >= len(host.hooks) || host.hooks[idx].kind != hookKindState {
+		// fn is user code: run it without rt.mu held, so it can call other
+		// setters (which take the lock) and a panic in it can't leave the
+		// runtime locked. Retry when another write lands in between.
+		for {
+			rt.mu.Lock()
+			if idx < 0 || idx >= len(host.hooks) || host.hooks[idx].kind != hookKindState {
+				rt.mu.Unlock()
+				return
+			}
+			ver := host.hooks[idx].stateVer
+			current, ok := host.hooks[idx].state.(T)
 			rt.mu.Unlock()
-			return
-		}
-		current, ok := host.hooks[idx].state.(T)
-		if !ok {
+			if !ok {
+				panic(fmt.Sprintf("reactive: state hook type mismatch at index %d", idx))
+			}
+			nextVal := fn(current)
+			if valuesEqual(current, nextVal) {
+				return
+			}
+			rt.mu.Lock()
+			if idx >= len(host.hooks) || host.hooks[idx].kind != hookKindState {
+				rt.mu.Unlock()
+				return
+			}
+			if host.hooks[idx].stateVer != ver {
+				rt.mu.Unlock()
+				continue
+			}
+			host.hooks[idx].state = nextVal
+			host.hooks[idx].stateVer++
 			rt.mu.Unlock()
-			panic(fmt.Sprintf("reactive: state hook type mismatch at index %d", idx))
+			break
 		}
-		nextVal := fn(current)
-		if valuesEqual(current, nextVal) {
-			rt.mu.Unlock()
-			return
-		}
-		host.hooks[idx].state = nextVal
-		rt.mu.Unlock()
 		if requestRender != nil {
 			requestRender()
 		} else {
@@ -336,7 +361,7 @@ func (r *Runtime) runEffectQueue(pending *[]effectRef) {
 	queue := make([]queuedEffect, 0, len(refs))
 	for _, ref := range refs {
 		host := ref.host
-		if host == nil || host.dead || ref.index < 0 || ref.index >= len(host.hooks) {
+		if host == nil || host.dead.Load() || ref.index < 0 || ref.index >= len(host.hooks) {
 			continue
 		}
 		slot := &host.hooks[ref.index]
@@ -363,7 +388,7 @@ func (r *Runtime) runEffectQueue(pending *[]effectRef) {
 		// cleanup was taken out of the slot above, so it ran here rather
 		// than in unmount; the effect itself must not run on a dead host.
 		r.mu.Lock()
-		dead := item.host.dead
+		dead := item.host.dead.Load()
 		r.mu.Unlock()
 		if dead {
 			continue
@@ -373,7 +398,7 @@ func (r *Runtime) runEffectQueue(pending *[]effectRef) {
 			continue
 		}
 		r.mu.Lock()
-		if !item.host.dead && item.index < len(item.host.hooks) &&
+		if !item.host.dead.Load() && item.index < len(item.host.hooks) &&
 			item.host.hooks[item.index].kind == hookKindEffect &&
 			item.host.hooks[item.index].effect.revision == item.revision {
 			item.host.hooks[item.index].effect.cleanup = newCleanup

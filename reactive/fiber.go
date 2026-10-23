@@ -1,6 +1,9 @@
 package reactive
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 // hookHost stores the positional hook slots for ONE render scope — either
 // the Runtime's root render function or a single component instance.
@@ -15,8 +18,10 @@ type hookHost struct {
 	hooks      []hookSlot
 	hookCursor int
 	// dead marks a host whose component unmounted; effects still queued
-	// for it (a layout effect waiting for the next layout) are dropped.
-	dead bool
+	// for it (a layout effect waiting for the next layout) are dropped,
+	// and its state setters become no-ops. Atomic: setters may run on any
+	// goroutine.
+	dead atomic.Bool
 }
 
 // begin resets the cursor at the start of a render pass.
@@ -45,7 +50,7 @@ func (h *hookHost) finish() []func() {
 // Each cleanup is handed out once: the slots are cleared, so a second
 // call returns nothing.
 func (h *hookHost) cleanupAll() []func() {
-	h.dead = true
+	h.dead.Store(true)
 	var cleanups []func()
 	for i := range h.hooks {
 		slot := &h.hooks[i]

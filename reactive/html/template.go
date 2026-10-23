@@ -234,11 +234,22 @@ func (t *Template) Names() []string { return append([]string(nil), t.names...) }
 // the same way a bad tag argument does — an almost-right UI with nothing
 // to chase is the worse failure.
 func (t *Template) Bind(scope Scope) Node {
+	if len(t.roots) == 1 {
+		if n := t.roots[0].bind(t, scope); n != nil {
+			return n
+		}
+		return Nothing()
+	}
+	// Several roots: a root that binds to nothing (a false :if, an empty
+	// slot) keeps its slot, so the roots after it keep their positions and
+	// the reconciler doesn't remount them (losing focus, caret, input).
 	out := make([]Node, 0, len(t.roots))
 	for _, r := range t.roots {
-		if n := r.bind(t, scope); n != nil {
-			out = append(out, n)
+		n := r.bind(t, scope)
+		if n == nil {
+			n = Nothing()
 		}
+		out = append(out, n)
 	}
 	switch len(out) {
 	case 0:

@@ -2,6 +2,7 @@ package reactive
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/qizhanchan/qui"
@@ -673,13 +674,17 @@ func visitDirty(node *instance, pass *reconcilePass) Flags {
 		defer pass.popProvider(node.prov)
 	}
 	var flags Flags
-	if node.widget != nil && !node.isPortal {
+	// A Show/For container is a plain widget the style engine can't see
+	// through; like reconcileNode's bound branch, its children keep the
+	// enclosing host as their style parent, so it isn't pushed.
+	pushes := node.widget != nil && !node.isPortal && node.bnd == nil
+	if pushes {
 		pass.pushHost(node.widget)
 	}
 	for _, child := range node.children {
 		flags |= visitDirty(child, pass)
 	}
-	if node.widget != nil && !node.isPortal {
+	if pushes {
 		pass.popHost()
 	}
 	flags |= syncChildWidgets(node)
@@ -987,16 +992,13 @@ func isPureReorder(prev, next []*instance) bool {
 	if len(prev) < 2 || len(prev) != len(next) {
 		return false
 	}
-	allSamePos := true
+	// The common case is no move at all: settle it before allocating.
+	if slices.Equal(prev, next) {
+		return false
+	}
 	pool := make(map[*instance]int, len(prev))
 	for i := range prev {
 		pool[prev[i]]++
-		if prev[i] != next[i] {
-			allSamePos = false
-		}
-	}
-	if allSamePos {
-		return false
 	}
 	for _, n := range next {
 		if pool[n] == 0 {

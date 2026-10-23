@@ -523,6 +523,10 @@ func (h *bindingHolder) release() {
 
 // Build lowers the builder to a reactive.Element backed by an htmlcss.El.
 func (b *Builder) Build() reactive.Element {
+	if b == nil {
+		// A typed-nil *Builder returned as a Node (`var b *Builder; return b`).
+		return reactive.Empty()
+	}
 	bb := *b // snapshot so later mutation of the builder can't leak in
 	holder := &bindingHolder{}
 
