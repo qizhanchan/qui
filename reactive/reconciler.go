@@ -28,6 +28,11 @@ type RenderMetrics struct {
 	// Bailouts counts MemoComponent instances skipped because their explicit
 	// comparator matched and they had no pending state update.
 	Bailouts int
+
+	// ScopedRenders counts passes that skipped the root render function and
+	// re-rendered only the components with pending state (a component
+	// setState with nothing else dirty).
+	ScopedRenders int
 }
 
 func (m RenderMetrics) MountHitRate() float64 {
@@ -60,6 +65,7 @@ func (m *RenderMetrics) add(other RenderMetrics) {
 	m.Reorders += other.Reorders
 	m.ReorderChecks += other.ReorderChecks
 	m.Bailouts += other.Bailouts
+	m.ScopedRenders += other.ScopedRenders
 }
 
 // ProfilerSnapshot contains last-pass and accumulated reconcile metrics.
@@ -282,6 +288,21 @@ func (r *Reconciler) Render(next Element) (qui.Widget, Flags) {
 		return nil, flags
 	}
 	return instanceWidget(root), flags
+}
+
+// renderDirty is Render without a new root element: it walks the mounted
+// tree and re-renders only the dirty component fibers (and, below memo
+// bailouts, the dirty descendants), keeping everything else as committed.
+func (r *Reconciler) renderDirty() (qui.Widget, Flags) {
+	if r == nil || r.root == nil {
+		return nil, FlagNone
+	}
+	pass := &reconcilePass{metrics: &RenderMetrics{Renders: 1, ScopedRenders: 1}, runtime: r.runtime}
+	flags := visitDirty(r.root, pass)
+	r.unmountCleanups = pass.cleanups
+	pass.metrics.Nodes = pass.metrics.Mounts + pass.metrics.Reuses
+	r.setProfile(*pass.metrics)
+	return instanceWidget(r.root), flags
 }
 
 type instance struct {
@@ -662,7 +683,7 @@ func visitDirty(node *instance, pass *reconcilePass) Flags {
 	}
 
 	if node.boundary != nil {
-		return visitDirty(node.child, pass)
+		return visitBoundaryDirty(node, pass)
 	}
 
 	// Host / grouping node: descend, then re-sync the child widget list

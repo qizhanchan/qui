@@ -107,6 +107,8 @@ reactive.MemoComponent("Row", key, props,
 
 解法：每个 fiber 带 `parent` 链和 `childDirty` 标记。setState 时沿 parent 链把 `childDirty` 一路标到根；bailout 遇到 `childDirty` 就走 `visitDirty` 遍历 instance 子树，只重渲染真正 dirty 的 fiber，并沿途重新同步 host 的子控件列表。（标记走链时**绝不提前返回**——上面一个被清过的祖先会切断后续 pass 的链路。）
 
+调度也走这条路。**组件**的 setState 只标记自己的 fiber，下一个 pass 完全跳过根 render 函数，从顶部跑 `visitDirty`：只重渲染 dirty 的 fiber，在每个干净的组件处剪枝，根和所有兄弟都不动（1,100 个组件的树里更新一个叶子：整树渲染约 470 µs、2.1 万次分配，作用域渲染约 3 µs、22 次分配）。只有 pass 是 **root-dirty** 时才运行根 render 函数：根自身的 state 变了、`Bind` 的 signal 触发了，或调用了 `Render` / `SetRender` / `RequestRender`。一批里两种都有就是一次完整 pass。作用域 pass 保留完整 pass 的所有保证——provider 会重新入栈，`Context.Use` 照常解析；重渲染时 panic 的组件由它的 `ErrorBoundary` 接住；根组件换了 widget 时窗口拿到新的根。这样的 pass 中 `Profile().Last.ScopedRenders` 为 1。
+
 ### 3.5 子节点同步按 widget 列表，不按 instance 指针
 
 `syncChildWidgets` 收集一个 host 节点最终贡献的 widget 列表（穿透 component / fragment / provider 展开），只在这个**扁平 widget 列表真的变了**时才调 `SetChildren`。这样组件实例复用但换了根 widget（render 换了根 kind）也能正确传播给父容器。
@@ -255,7 +257,7 @@ theme := ThemeCtx.Use()           // 任意深度消费（订阅，值变时标�
 
 ## 8. 心智模型小结
 
-- **写骨架/条件结构**：普通 render + hooks，React 的写法。
+- **写骨架/条件结构**：普通 render + hooks，React 的写法。只有某一块 UI 读的 state 放在渲染它的组件里：它的 setState 只重渲染这个组件，而根 state 会重跑根 render 函数。
 - **高频值更新**：`Signal` + `.BindText`/`.BindClass`/`BindWidget`，绕开 VDOM。
 - **高频结构更新**（大列表、频繁增删）：`For`/`Show`，局部 diff，绕开根 render。
 - **组件 memo**：默认不启用；确有必要时用 `MemoComponent`，并在比较器中完整表达渲染与回调所依赖的数据。

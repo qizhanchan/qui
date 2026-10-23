@@ -19,6 +19,12 @@ type Runtime struct {
 	pending   bool
 	scheduled bool
 	rendering bool
+	// rootDirty says the next pass must run the root render function: its
+	// own state changed, a Bind signal fired, or Render / SetRender /
+	// RequestRender asked for it. A pass without it re-renders only the
+	// component fibers a setState marked dirty (visitDirty), leaving the
+	// root and every clean component alone.
+	rootDirty bool
 
 	// scheduleFn enqueues one animator tick. Return false when scheduling
 	// is unavailable so Runtime can fall back to immediate Flush.
@@ -154,7 +160,7 @@ func (r *Runtime) adoptHostRoot(root qui.Widget) {
 
 // NewRuntime creates a runtime without rendering immediately.
 func NewRuntime(window *qui.Window, renderFn func() Element) *Runtime {
-	r := &Runtime{window: window, renderFn: renderFn}
+	r := &Runtime{window: window, renderFn: renderFn, rootDirty: true}
 	r.scheduleFn = r.defaultSchedule
 	r.reconciler.runtime = r
 	registerRuntime(window, r)
@@ -232,6 +238,7 @@ func (r *Runtime) SetRender(renderFn func() Element) {
 	}
 	r.mu.Lock()
 	r.renderFn = renderFn
+	r.rootDirty = true
 	r.mu.Unlock()
 }
 
@@ -281,20 +288,26 @@ func (r *Runtime) Render() {
 	}
 	r.mu.Lock()
 	r.pending = true
+	r.rootDirty = true
 	r.mu.Unlock()
 	r.Flush()
 }
 
-// RequestRender batches updates and schedules one render on the next frame.
-// Safe to call from any goroutine: off a live window's UI thread it hops
-// there with PostJob, since scheduling registers an animator and a render
-// touches widgets — both UI-thread-only.
-func (r *Runtime) RequestRender() {
+// RequestRender batches updates and schedules one render on the next frame,
+// running the root render function. Safe to call from any goroutine: off a
+// live window's UI thread it hops there with PostJob, since scheduling
+// registers an animator and a render touches widgets — both UI-thread-only.
+func (r *Runtime) RequestRender() { r.requestRender(true) }
+
+// requestRender schedules a pass. root says it must run the root render
+// function; a component's setState passes false, so only the fibers it
+// marked dirty re-render.
+func (r *Runtime) requestRender(root bool) {
 	if r == nil {
 		return
 	}
 	if w := r.window; w.PlatformBacked() && !w.OnUIThread() {
-		w.PostJob(r.RequestRender)
+		w.PostJob(func() { r.requestRender(root) })
 		return
 	}
 
@@ -302,6 +315,9 @@ func (r *Runtime) RequestRender() {
 	if r.unmounted {
 		r.mu.Unlock()
 		return
+	}
+	if root {
+		r.rootDirty = true
 	}
 	r.pending = true
 	if r.rendering {
@@ -342,10 +358,12 @@ func (r *Runtime) Flush() {
 			return
 		}
 		r.pending = false
+		full := r.rootDirty || r.reconciler.root == nil
+		r.rootDirty = false
 		r.rendering = true
 		r.mu.Unlock()
 
-		r.flushOnePass()
+		r.flushOnePass(full)
 
 		r.mu.Lock()
 		r.rendering = false
@@ -358,7 +376,10 @@ func (r *Runtime) Flush() {
 	panic("reactive: exceeded max flush passes; probable render loop")
 }
 
-func (r *Runtime) flushOnePass() {
+// flushOnePass runs one render + commit. full runs the root render function
+// and reconciles from the top; otherwise only the dirty component fibers
+// re-render, found by walking the mounted tree (visitDirty).
+func (r *Runtime) flushOnePass(full bool) {
 	var removedCleanups []func()
 
 	// CurrentRuntime and scopeStack are process-global compatibility context
@@ -390,13 +411,18 @@ func (r *Runtime) flushOnePass() {
 		// component renders triggered during reconcile) lock r.mu themselves,
 		// so holding it here would deadlock. The rendering=true gate set by
 		// Flush already serializes passes against each other.
-		r.rootHost.begin()
-		pushScope(&renderScope{runtime: r, host: &r.rootHost, requestRender: r.RequestRender})
-		element := renderFn()
-		popScope()
-		removedCleanups = r.rootHost.finish()
-
-		root, flags := r.reconciler.Render(element)
+		var root qui.Widget
+		var flags Flags
+		if full {
+			r.rootHost.begin()
+			pushScope(&renderScope{runtime: r, host: &r.rootHost, requestRender: r.RequestRender})
+			element := renderFn()
+			popScope()
+			removedCleanups = r.rootHost.finish()
+			root, flags = r.reconciler.Render(element)
+		} else {
+			root, flags = r.reconciler.renderDirty()
+		}
 		removedCleanups = append(removedCleanups, r.reconciler.TakeUnmountCleanups()...)
 
 		if window != nil {
@@ -488,7 +514,8 @@ func (s *runtimeScheduler) Tick(time.Time) (qui.Rect, bool) {
 	s.runtime.mu.Unlock()
 
 	if needsReschedule {
-		s.runtime.RequestRender()
+		// rootDirty is still whatever the requests that landed mid-pass set.
+		s.runtime.requestRender(false)
 	}
 	return qui.Rect{}, true
 }

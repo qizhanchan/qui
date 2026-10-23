@@ -41,10 +41,12 @@ type boundaryData struct {
 	fallback func(err any, retry func()) Element
 }
 
-// boundaryState is the mounted boundary's error latch.
+// boundaryState is the mounted boundary's error latch, plus the element it
+// last reconciled (its fallback serves a panic in a scoped re-render too).
 type boundaryState struct {
 	err     any
 	tripped bool
+	data    *boundaryData
 }
 
 // reconcileBoundaryChild reconciles the boundary's ACTIVE element
@@ -52,9 +54,38 @@ type boundaryState struct {
 // child instance; on a fresh panic it flips the latch and re-runs with
 // the fallback.
 func reconcileBoundaryChild(node *instance, data *boundaryData, pass *reconcilePass) Flags {
-	rt := pass.runtime
+	node.boundary.data = data
+	elem := data.child
+	if node.boundary.tripped {
+		elem = data.fallback(node.boundary.err, boundaryRetry(node, pass.runtime))
+	}
 
-	retry := func() {
+	var child *instance
+	var flags Flags
+	panicked, err := guardReconcile(pass, func() { child, flags = reconcileNode(node.child, elem, pass) })
+	if panicked {
+		return tripBoundary(node, err, pass)
+	}
+	node.child = child
+	return flags
+}
+
+// visitBoundaryDirty is visitDirty for a boundary: a dirty component that
+// re-renders below it (a scoped pass, or under a memo bailout) is guarded
+// exactly like a full reconcile of the boundary's child.
+func visitBoundaryDirty(node *instance, pass *reconcilePass) Flags {
+	var flags Flags
+	panicked, err := guardReconcile(pass, func() { flags = visitDirty(node.child, pass) })
+	if panicked {
+		return tripBoundary(node, err, pass)
+	}
+	return flags
+}
+
+// boundaryRetry is the fallback's retry: clear the latch and re-render
+// from the root, which reconciles the boundary's child again.
+func boundaryRetry(node *instance, rt *Runtime) func() {
+	return func() {
 		if node.boundary != nil {
 			node.boundary.tripped = false
 			node.boundary.err = nil
@@ -63,39 +94,32 @@ func reconcileBoundaryChild(node *instance, data *boundaryData, pass *reconcileP
 			rt.RequestRender()
 		}
 	}
-
-	elem := data.child
-	if node.boundary.tripped {
-		elem = data.fallback(node.boundary.err, retry)
-	}
-
-	child, flags, panicked, err := reconcileGuarded(node.child, elem, pass)
-	if panicked {
-		if node.boundary.tripped {
-			// Fallback itself panicked — do not loop, propagate.
-			panic(err)
-		}
-		node.boundary.tripped = true
-		node.boundary.err = err
-		// The partially-built subtree was never attached; drop the old
-		// child reference and mount the fallback fresh.
-		if node.child != nil {
-			unmountInstance(node.child, pass)
-			node.child = nil
-		}
-		fbElem := data.fallback(err, retry)
-		fb, fbFlags := reconcileNode(nil, fbElem, pass)
-		node.child = fb
-		return fbFlags | FlagLayout
-	}
-	node.child = child
-	return flags
 }
 
-// reconcileGuarded runs reconcileNode under recover. On panic it trims
-// the fiber / provider / render-scope stacks back to this frame's depth
-// — the aborted subtree pushed frames it never got to pop.
-func reconcileGuarded(prev *instance, elem Element, pass *reconcilePass) (child *instance, flags Flags, panicked bool, err any) {
+// tripBoundary latches err and swaps the boundary's subtree for its
+// fallback. A panic while already tripped (the fallback itself) propagates.
+func tripBoundary(node *instance, err any, pass *reconcilePass) Flags {
+	if node.boundary.tripped || node.boundary.data == nil {
+		panic(err)
+	}
+	node.boundary.tripped = true
+	node.boundary.err = err
+	// The partially-built subtree was never attached; drop the old child
+	// reference and mount the fallback fresh.
+	if node.child != nil {
+		unmountInstance(node.child, pass)
+		node.child = nil
+	}
+	fbElem := node.boundary.data.fallback(err, boundaryRetry(node, pass.runtime))
+	fb, fbFlags := reconcileNode(nil, fbElem, pass)
+	node.child = fb
+	return fbFlags | FlagLayout
+}
+
+// guardReconcile runs fn under recover. On panic it trims the fiber /
+// provider / host / render-scope stacks back to this frame's depth — the
+// aborted subtree pushed frames it never got to pop.
+func guardReconcile(pass *reconcilePass, fn func()) (panicked bool, err any) {
 	fiberDepth := len(pass.fiberStack)
 	hostDepth := len(pass.hosts)
 	scopeSnapshot := renderScopeDepth()
@@ -122,6 +146,6 @@ func reconcileGuarded(prev *instance, elem Element, pass *reconcilePass) (child 
 		}
 	}()
 
-	child, flags = reconcileNode(prev, elem, pass)
-	return child, flags, false, nil
+	fn()
+	return false, nil
 }

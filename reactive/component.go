@@ -129,7 +129,7 @@ func renderFiber(pass *reconcilePass, fiber *componentFiber) Element {
 				p.childDirty = true
 			}
 			rt.mu.Unlock()
-			rt.RequestRender()
+			rt.requestRender(false) // this fiber only, not the root
 		},
 	}
 	fiber.host.begin()

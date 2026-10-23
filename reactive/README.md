@@ -105,6 +105,8 @@ When a component's props did not change and it is not itself dirty, it bails out
 
 The fix: every fiber carries a `parent` chain and a `childDirty` flag. On setState, walk the parent chain marking `childDirty` up to the root; a bailout that sees `childDirty` runs `visitDirty`, walking the instance subtree and re-rendering only the genuinely dirty fibers, re-syncing host child widget lists along the way. (The mark walk **never returns early** — an ancestor that was cleared would cut the chain for later passes.)
 
+The same walk is how a pass is scheduled. A **component's** setState marks only its fiber, so the next pass skips the root render function entirely and runs `visitDirty` from the top: it re-renders the dirty fibers, prunes at every clean component, and leaves the root and all siblings untouched (a leaf update in a 1,100-component tree: ~470 µs and 21k allocations as a full render, ~3 µs and 22 allocations scoped). The root render function runs only when the pass is **root-dirty**: the root's own state changed, a `Bind` signal fired, or `Render` / `SetRender` / `RequestRender` was called. A batch containing both kinds is one full pass. A scoped pass keeps every guarantee of a full one — providers re-push so `Context.Use` resolves, a component that panics re-rendering is caught by its `ErrorBoundary`, and a root component that swaps its widget hands the window the new root. `Profile().Last.ScopedRenders` is 1 for such a pass.
+
 ### 3.5 Child sync is by widget list, not instance pointer
 
 `syncChildWidgets` collects the widget list a host node ultimately contributes (flattening through component/fragment/provider), and only calls `SetChildren` when that **flat widget list actually changed**. This way, a reused component instance whose root widget kind changed still propagates correctly to its parent container.
@@ -248,7 +250,7 @@ focus       .Autofocus(); El.RequestFocus()
 
 ## 8. Mental model summary
 
-- **Skeleton / conditional structure:** ordinary render + hooks, React style.
+- **Skeleton / conditional structure:** ordinary render + hooks, React style. State that only one part of the UI reads belongs in the component that renders it: its setState re-renders that component alone, while root state re-runs the root render function.
 - **High-frequency value updates:** `Signal` + `.BindText`/`.BindClass`/`BindWidget`, bypassing the VDOM.
 - **High-frequency structural updates** (large lists, frequent add/remove): `For`/`Show`, local diff, bypassing the root render.
 - **Component memo:** off by default; when truly necessary use `MemoComponent` and fully express in the comparator the data that rendering and callbacks depend on.
