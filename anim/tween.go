@@ -26,6 +26,7 @@ type Tween[T any] struct {
 
 	started   bool
 	stopped   bool
+	done      bool
 	startTime time.Time
 }
 
@@ -36,6 +37,11 @@ func (tw *Tween[T]) Tick(now time.Time) (qui.Rect, bool) {
 		return qui.Rect{}, true
 	}
 	if tw.Apply == nil || tw.Lerp == nil {
+		return qui.Rect{}, true
+	}
+	if tw.done {
+		// Finished already (registered twice, or ticked again after the
+		// window dropped it): OnDone fired once; Restart replays.
 		return qui.Rect{}, true
 	}
 	if !tw.started {
@@ -57,10 +63,22 @@ func (tw *Tween[T]) Tick(now time.Time) (qui.Rect, bool) {
 	}
 	tw.Apply(tw.Lerp(tw.From, tw.To, easing(p)))
 	done := p >= 1
-	if done && tw.OnDone != nil {
-		tw.OnDone()
+	if done {
+		tw.done = true
+		if tw.OnDone != nil {
+			tw.OnDone()
+		}
 	}
 	return tw.dirty(), done
+}
+
+// Restart rewinds the tween so the next Tick starts it over from From
+// (re-register it with the window if it already finished).
+func (tw *Tween[T]) Restart() {
+	if tw == nil {
+		return
+	}
+	tw.started, tw.stopped, tw.done = false, false, false
 }
 
 // Stop halts the tween before completion. OnDone will not fire.

@@ -230,44 +230,23 @@ func buildTransform(name string, args []float32) (*Transform, error) {
 	return nil, fmt.Errorf("svg: transform %s: wrong arg count %d", name, len(args))
 }
 
-// parseNumberList splits an argument string on whitespace and commas
-// and parses each token as a float32. Shared by transform / points /
-// viewBox parsing — SVG uses the same number-list grammar everywhere.
+// parseNumberList parses an SVG number list into float32s. Shared by
+// transform / points / viewBox parsing — SVG uses the same number grammar
+// everywhere, path data's included, so it reuses the path tokenizer: a
+// sign or a second '.' starts a new number ("10-5", "1.5.5", which
+// minifiers emit), and only SVG numbers parse (no NaN / Inf / hex).
 func parseNumberList(s string) ([]float32, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil, nil
-	}
+	t := pathTokenizer{s: strings.TrimSpace(s)}
 	var out []float32
-	start := -1
-	flush := func(end int) error {
-		if start < 0 {
-			return nil
+	for {
+		t.skipSep()
+		if t.i >= len(t.s) {
+			return out, nil
 		}
-		tok := s[start:end]
-		v, err := strconv.ParseFloat(tok, 32)
+		v, err := t.number()
 		if err != nil {
-			return fmt.Errorf("bad number %q", tok)
+			return nil, err
 		}
-		out = append(out, float32(v))
-		start = -1
-		return nil
+		out = append(out, v)
 	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch c {
-		case ' ', '\t', '\n', '\r', ',':
-			if err := flush(i); err != nil {
-				return nil, err
-			}
-		default:
-			if start < 0 {
-				start = i
-			}
-		}
-	}
-	if err := flush(len(s)); err != nil {
-		return nil, err
-	}
-	return out, nil
 }

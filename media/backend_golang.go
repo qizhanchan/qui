@@ -468,6 +468,10 @@ type golangScrub struct {
 	dec     *videoDecoder
 	started bool
 	lastPTS time.Duration
+	// lastEnd is lastPTS plus that frame's duration: the frame already
+	// handed out covers [lastPTS, lastEnd), so only a pts at or past
+	// lastEnd can continue forward from the decoder's position.
+	lastEnd time.Duration
 	closed  bool
 }
 
@@ -481,7 +485,7 @@ func (d *golangScrub) DecodeAt(pts time.Duration) (VideoFrame, error) {
 	s := v.s
 	idx := s.r.SeekKeyframe(s.vt, pts)
 	// Continue forward within the same GOP instead of restarting.
-	if !d.started || pts < d.lastPTS || idx >= v.next || s.r.SeekKeyframe(s.vt, d.lastPTS) != idx {
+	if !d.started || pts < d.lastEnd || idx >= v.next || s.r.SeekKeyframe(s.vt, d.lastPTS) != idx {
 		v.start(idx, 0, false)
 		d.started = true
 	}
@@ -498,8 +502,9 @@ func (d *golangScrub) DecodeAt(pts time.Duration) (VideoFrame, error) {
 		}
 		h264.Recycle(best)
 		best, bestPTS = f, fpts
-		d.lastPTS = fpts
-		if fpts+s.r.SampleDuration(s.vt, int(f.Tag)) > pts {
+		end := fpts + s.r.SampleDuration(s.vt, int(f.Tag))
+		d.lastPTS, d.lastEnd = fpts, end
+		if end > pts {
 			break
 		}
 	}

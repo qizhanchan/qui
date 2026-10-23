@@ -63,19 +63,12 @@ func parseSVGRoot(dec *xml.Decoder, start xml.StartElement, doc *Document) error
 			doc.Height = parseDimension(a.Value)
 		case "xmlns":
 			doc.XMLNS = a.Value
-		case "id":
-			doc.Root.ID = a.Value
-		case "transform":
-			t, err := parseTransformAttr(a.Value)
-			if err != nil {
-				return err
-			}
-			doc.Root.Transform = t
-		case "style":
-			applyStyleString(&doc.Root.Style, a.Value)
-		default:
-			applyPresentationAttr(&doc.Root.Style, a.Name.Local, a.Value)
 		}
+	}
+	// id / transform / style / presentation attributes as on any element:
+	// style="…" must beat a presentation attribute in either order.
+	if err := applyBaseAttrs(&doc.Root.elementBase, start.Attr); err != nil {
+		return err
 	}
 	children, err := parseChildren(dec, start.End())
 	if err != nil {

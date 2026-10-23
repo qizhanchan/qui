@@ -137,8 +137,16 @@ func (p *AudioPlayer) Play() error {
 		p.mu.Unlock()
 		return ErrNoTrack
 	}
+	replay := p.state == StateEnded
 	p.state = StatePlaying
 	p.mu.Unlock()
+	if replay {
+		// Play after the natural end starts over, on every backend (the Go
+		// backend otherwise stays parked at EOF with its clock running).
+		if err := r.SeekTo(0); err != nil {
+			return err
+		}
+	}
 	return r.Play()
 }
 

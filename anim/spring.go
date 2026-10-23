@@ -102,14 +102,17 @@ func (s *Spring) Stop() {
 	s.stopped = true
 }
 
-// SetTarget updates the rest position. The spring wakes up and starts
-// pulling toward the new target, carrying its current velocity.
+// SetTarget updates the rest position. The spring wakes up (a Stop is
+// undone too) and starts pulling toward the new target, carrying its
+// current velocity. A spring that had settled has been dropped by the
+// window: register it again for it to move.
 func (s *Spring) SetTarget(target float32) {
 	if s == nil {
 		return
 	}
 	s.Target = target
 	s.done = false
+	s.stopped = false
 }
 
 func (s *Spring) dirty() qui.Rect {

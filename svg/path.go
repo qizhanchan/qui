@@ -213,6 +213,13 @@ func feedPathCommands(ad rasterx.Adder, cmds []PathCommand) {
 		}
 	}
 	for _, c := range cmds {
+		// A drawing command with no open subpath (after Z, or a path not
+		// starting with M) begins one at the current point — which after Z
+		// is the closed subpath's start (SVG 1.1 §8.3.3).
+		if !started && c.Op != OpMoveTo && c.Op != OpClose {
+			ad.Start(rasterx.ToFixedP(curX, curY))
+			started = true
+		}
 		switch c.Op {
 		case OpMoveTo:
 			stopOpen()

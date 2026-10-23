@@ -472,6 +472,11 @@ func (v *VideoView) SeekTo(t time.Duration) error {
 	}
 	src := v.src
 	v.resumeSeek = false
+	if v.state == StateEnded {
+		// Seeking off the end parks the view there: a following Play
+		// resumes from t instead of replaying from 0.
+		v.state = StatePaused
+	}
 	if v.currentFrame != nil {
 		v.currentFrame.Release()
 		v.currentFrame = nil
@@ -870,7 +875,7 @@ func (v *VideoView) pumpLoop(ctx context.Context, src Source, done chan struct{}
 				}
 			}
 			vvDebugf("pumpLoop error: %v", err)
-			v.fail(err)
+			v.failFromPump(ctx, err)
 			return
 		}
 		if vvSample("pump_next", 30) {
@@ -1150,9 +1155,15 @@ func (v *VideoView) Draw(canvas qui.Canvas) {
 func (v *VideoView) glDraw(state qui.GLState) {
 	v.mu.Lock()
 	frame, src, dst := v.currentFrame, v.glSrc, v.glDst
+	// Hold a reference across the draw: Destroy / SeekTo may release the
+	// current frame from another goroutine while its texture is in use.
+	if frame != nil {
+		frame.Retain()
+	}
 	v.mu.Unlock()
 	if frame != nil {
 		drawVideoFrame(state, frame, src, dst)
+		frame.Release()
 	}
 }
 
@@ -1277,18 +1288,41 @@ func fitDstRect(fit FitMode, bounds qui.Rect, frameW, frameH float32) qui.Rect {
 // lock. The pump goroutine has stopped by the time this returns, so only a
 // successful Open leaves the state again.
 func (v *VideoView) fail(err error) {
+	if fn := v.setFailed(err); fn != nil {
+		fn(err)
+	}
+}
+
+// failFromPump is fail for the decoder goroutine. A pump whose context was
+// cancelled (Open of a new source, a seek, Destroy) no longer speaks for
+// the view, and OnError runs on the UI thread like the other callbacks, so
+// a handler may update widgets.
+func (v *VideoView) failFromPump(ctx context.Context, err error) {
+	if ctx.Err() != nil {
+		return
+	}
+	fn := v.setFailed(err)
+	if fn == nil {
+		return
+	}
+	if w := v.Window(); w != nil {
+		w.PostJob(func() { fn(err) })
+		return
+	}
+	fn(err)
+}
+
+// setFailed moves the view to StateError and returns the OnError callback.
+func (v *VideoView) setFailed(err error) func(error) {
 	v.mu.Lock()
+	defer v.mu.Unlock()
 	v.state = StateError
 	v.lastErr = err
 	v.resumeSeek = false
 	if v.clock != nil {
 		v.clock.Pause()
 	}
-	fn := v.onError
-	v.mu.Unlock()
-	if fn != nil {
-		fn(err)
-	}
+	return v.onError
 }
 
 // terminalErrLocked returns the error that put the view in StateError, if
