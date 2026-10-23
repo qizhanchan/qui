@@ -1075,7 +1075,7 @@ func (e *El) inheritParent() *El {
 // the topmost of those, so it is styled from a known parent. :has() widens
 // it like restyleScope. Detached elements return nil.
 func (e *El) selfScope() *El {
-	if e.engine != nil && e.engine.sheet != nil && e.engine.sheet.HasHas {
+	if e.engine != nil && e.engine.hasHasRule() {
 		return e.restyleScope()
 	}
 	s := e
@@ -1104,7 +1104,7 @@ func (e *El) restyleScope() *El {
 	// isolated document/portal root so all of those ancestors (and inherited
 	// descendants) are recomputed correctly. The common case, without :has,
 	// retains the narrower parent scope below.
-	if e.engine != nil && e.engine.sheet != nil && e.engine.sheet.HasHas {
+	if e.engine != nil && e.engine.hasHasRule() {
 		root := e
 		for root.elParent != nil {
 			root = root.elParent

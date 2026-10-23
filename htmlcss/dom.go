@@ -84,18 +84,24 @@ func (n *Node) Classes() []string {
 // ID returns the element id attribute.
 func (n *Node) ID() string { return n.AttrOr("id", "") }
 
-// hasClass reports whether the node carries the given class.
-// Iterates the attribute in place: selector matching calls this per
-// element per rule, so a []string per call adds up.
-func (n *Node) hasClass(name string) bool {
+// classFields is Classes without the allocation: the split list is cached
+// against the attribute's current value. Callers must not modify it.
+func (n *Node) classFields() []string {
 	c, ok := n.Attr("class")
 	if !ok || c == "" {
-		return false
+		return nil
 	}
 	if c != n.classSrc || n.classList == nil {
 		n.classSrc, n.classList = c, strings.Fields(c)
 	}
-	for _, x := range n.classList {
+	return n.classList
+}
+
+// hasClass reports whether the node carries the given class.
+// Iterates the attribute in place: selector matching calls this per
+// element per rule, so a []string per call adds up.
+func (n *Node) hasClass(name string) bool {
+	for _, x := range n.classFields() {
 		if x == name {
 			return true
 		}

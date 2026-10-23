@@ -346,34 +346,57 @@ func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedSty
 	// hovered / focused / pressed. Each variant inherits from the parent's
 	// resting style, matching how the base does.
 	fwHover, fwFocus, fwFocusVisible, fwActive := frameworkStateWants(n)
+	if !(sheet.HasHover || fwHover || sheet.HasFocus || fwFocus || sheet.HasFocusVisible ||
+		fwFocusVisible || sheet.HasActive || fwActive || sheet.HasAncestorHover ||
+		sheet.HasAncestorFocus || sheet.HasAncestorActive) {
+		return base
+	}
+	// Which state pseudos n's candidate rules use at all. A variant whose
+	// state none of them mention matches exactly the resting rules, so it
+	// is a copy of base rather than another cascade + interpret — most
+	// elements of a sheet with a few :hover rules are in that case.
+	// Framework rules are not in the mask; their fw* wants force the
+	// cascade instead.
+	mask := sheet.stateMask(n)
+	resting := *base
+	variant := func(need bool, st selectorState) *ComputedStyle {
+		if !need {
+			cp := resting
+			return &cp
+		}
+		return interpret(n, mergedDecls(n, sheet, st), parent)
+	}
+	hover, focus := mask&stateHover != 0, mask&stateFocus != 0
 	if sheet.HasHover || fwHover {
 		// The subject's hover propagates to ancestor compounds in matching
 		// (hovering an element hovers its ancestors), so `.row:hover .del`
 		// also lands in .del's own Hover variant — and `.a:hover .b:hover`
 		// works when the cursor is on .b.
-		base.Hover = interpret(n, mergedDecls(n, sheet, selectorState{hover: true}), parent)
+		base.Hover = variant(hover || fwHover, selectorState{hover: true})
 	}
 	if sheet.HasFocus || fwFocus {
-		focusDecls := mergedDecls(n, sheet, selectorState{focus: true})
-		base.Focus = interpret(n, focusDecls, parent)
+		base.Focus = variant(focus || fwFocus, selectorState{focus: true})
 		base.FocusOptIn = true
 		if sheet.HasFocusWithin {
 			// Only when a :focus-within rule exists can it be the sole
-			// reason for the focus variant.
-			base.FocusOptIn = !maps.Equal(
+			// reason for the focus variant. With no focus rule among n's
+			// candidates both cascades are the resting one.
+			base.FocusOptIn = (focus || fwFocus) && !maps.Equal(
 				mergedDecls(n, sheet, selectorState{focus: true, noFocusWithin: true}),
 				mergedDecls(n, sheet, selectorState{}))
 		}
 	}
 	if sheet.HasFocusVisible || fwFocusVisible {
-		base.FocusVisible = interpret(n, mergedDecls(n, sheet, selectorState{focus: true, focusVisible: true}), parent)
+		base.FocusVisible = variant(focus || mask&stateFocusVisible != 0 || fwFocusVisible,
+			selectorState{focus: true, focusVisible: true})
 	}
 	if sheet.HasActive || fwActive {
 		// A pressed element is conventionally also hovered; both states
 		// propagate to ancestor compounds in matching, keeping `.btn:hover`
 		// under an `.btn:active` press and `.row:hover .btn:active` while
 		// the row is hovered.
-		base.Active = interpret(n, mergedDecls(n, sheet, selectorState{hover: true, active: true}), parent)
+		base.Active = variant(hover || mask&stateActive != 0 || fwActive,
+			selectorState{hover: true, active: true})
 	}
 	// The ancestor-state UNION variants: only NON-subject compounds are
 	// treated as hovered / focused / pressed, so `.row:hover .del` lands here
@@ -381,13 +404,15 @@ func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedSty
 	// such rule matches this node, so their delta is a no-op — see
 	// hasStateBoxVariant / textStateDiffers / El.linkAncestorState.
 	if sheet.HasAncestorHover {
-		base.AncestorHover = interpret(n, mergedDecls(n, sheet, selectorState{ancestorHover: true}), parent)
+		base.AncestorHover = variant(hover || fwHover, selectorState{ancestorHover: true})
 	}
 	if sheet.HasAncestorFocus {
-		base.AncestorFocus = interpret(n, mergedDecls(n, sheet, selectorState{ancestorFocus: true}), parent)
+		// On a non-subject compound :focus-visible acts as :focus.
+		base.AncestorFocus = variant(focus || mask&stateFocusVisible != 0 || fwFocus || fwFocusVisible,
+			selectorState{ancestorFocus: true})
 	}
 	if sheet.HasAncestorActive {
-		base.AncestorActive = interpret(n, mergedDecls(n, sheet, selectorState{ancestorActive: true}), parent)
+		base.AncestorActive = variant(mask&stateActive != 0 || fwActive, selectorState{ancestorActive: true})
 	}
 	return base
 }
@@ -427,8 +452,12 @@ func pseudoStyle(n *Node, sheet *Stylesheet, which string, parent *ComputedStyle
 		return nil, ""
 	}
 	sort.SliceStable(decls, func(i, j int) bool { return cascadeKey(decls[i]) < cascadeKey(decls[j]) })
+	// Fold like mergedDecls: a later shorthand evicts earlier longhands.
 	merged := map[string]string{}
 	for _, m := range decls {
+		for _, lh := range shorthandLonghands[m.decl.Property] {
+			delete(merged, lh)
+		}
 		merged[m.decl.Property] = m.decl.Value
 	}
 	content, ok := merged["content"]

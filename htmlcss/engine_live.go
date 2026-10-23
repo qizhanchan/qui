@@ -311,6 +311,13 @@ func (eng *StyleEngine) sheetFlags() (has, siblingComb, structural bool) {
 	return
 }
 
+// hasHasRule reports whether the author sheet or a framework sheet uses
+// :has(), which makes a mutation able to restyle any ancestor.
+func (eng *StyleEngine) hasHasRule() bool {
+	has, _, _ := eng.sheetFlags()
+	return has
+}
+
 // structRelevant reports whether a structural or sibling-combinator rule
 // (author or framework) can concern n.
 func (eng *StyleEngine) structRelevant(n *Node) bool {

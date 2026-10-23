@@ -430,7 +430,7 @@ func (k *structKeys) relevant(n *Node) bool {
 		return true
 	}
 	if len(k.classes) > 0 {
-		for _, c := range n.Classes() {
+		for _, c := range n.classFields() {
 			if k.classes[c] {
 				return true
 			}
@@ -903,8 +903,12 @@ func parseAttrSelector(clause string) (attrSelector, bool) {
 		{"^=", attrPrefix}, {"$=", attrSuffix}, {"*=", attrSubstr},
 		{"~=", attrWord}, {"|=", attrDashHyph}, {"=", attrEquals},
 	}
+	// The operator is at the FIRST '=' (plus the byte before it): searching
+	// for each operator anywhere would find `*=` inside `[v="a*=b"]`.
+	eq := strings.IndexByte(clause, '=')
 	for _, o := range ops {
-		if idx := strings.Index(clause, o.sym); idx > 0 {
+		idx := eq - (len(o.sym) - 1)
+		if eq > 0 && idx > 0 && clause[idx:eq+1] == o.sym {
 			name := strings.TrimSpace(clause[:idx])
 			val := strings.TrimSpace(clause[idx+len(o.sym):])
 			// A trailing flag token (`"val" i` / `val i`) must be stripped
@@ -1067,9 +1071,13 @@ func parseDeclarations(body string) []Declaration {
 		}
 		val := strings.TrimSpace(chunk[colon+1:])
 		important := false
-		if idx := strings.LastIndex(strings.ToLower(val), "!important"); idx >= 0 {
-			important = true
-			val = strings.TrimSpace(val[:idx])
+		if idx := strings.LastIndex(strings.ToLower(val), "important"); idx >= 0 &&
+			strings.TrimSpace(val[idx+len("important"):]) == "" {
+			// `!important`, `! important`: whitespace may follow the bang.
+			if head := strings.TrimSpace(val[:idx]); strings.HasSuffix(head, "!") {
+				important = true
+				val = strings.TrimSpace(head[:len(head)-1])
+			}
 		}
 		if prop != "" && val != "" {
 			out = append(out, Declaration{Property: prop, Value: val, Important: important})
@@ -1588,10 +1596,21 @@ type ruleIndex struct {
 	first                *Rule // &Rules[0] when built (a replaced slice rebuilds)
 	byClass, byID, byTag map[string][]int
 	any                  []int
+	// states[i] is the interactive-state pseudos rule i uses anywhere in
+	// any selector (stateHover | …), for stateMask.
+	states []uint8
 }
 
+const (
+	stateHover uint8 = 1 << iota
+	stateFocus
+	stateFocusVisible
+	stateActive
+)
+
 func buildRuleIndex(rules []Rule) *ruleIndex {
-	ix := &ruleIndex{n: len(rules), byClass: map[string][]int{}, byID: map[string][]int{}, byTag: map[string][]int{}}
+	ix := &ruleIndex{n: len(rules), byClass: map[string][]int{}, byID: map[string][]int{}, byTag: map[string][]int{},
+		states: make([]uint8, len(rules))}
 	if len(rules) > 0 {
 		ix.first = &rules[0]
 	}
@@ -1604,6 +1623,15 @@ func buildRuleIndex(rules []Rule) *ruleIndex {
 		for _, sel := range r.Selectors {
 			if len(sel.parts) == 0 {
 				continue
+			}
+			for _, st := range [...]struct {
+				kind pseudoKind
+				bit  uint8
+			}{{pseudoHover, stateHover}, {pseudoFocus, stateFocus},
+				{pseudoFocusVisible, stateFocusVisible}, {pseudoActive, stateActive}} {
+				if sel.hasPseudo(st.kind) {
+					ix.states[i] |= st.bit
+				}
 			}
 			sub := sel.parts[len(sel.parts)-1].sel
 			switch {
@@ -1636,6 +1664,18 @@ func (s *Stylesheet) ruleIndex() *ruleIndex {
 	return s.idx
 }
 
+// stateMask ORs the state pseudos of the author rules that may match n. A
+// state absent from it cannot change which of those rules match, so that
+// state's variant of n is its resting style.
+func (s *Stylesheet) stateMask(n *Node) uint8 {
+	ix := s.ruleIndex()
+	var m uint8
+	for _, i := range s.candidateRules(n) {
+		m |= ix.states[i]
+	}
+	return m
+}
+
 // candidateRules lists, in source order, the indexes of the rules that
 // may match n: those whose subject keys off one of n's classes, its id or
 // its tag, plus the rules keyed off nothing.
@@ -1653,14 +1693,9 @@ func (s *Stylesheet) candidateRules(n *Node) []int {
 			lists = append(lists, l)
 		}
 	}
-	if c, ok := n.Attr("class"); ok && c != "" {
-		if c != n.classSrc || n.classList == nil {
-			n.classSrc, n.classList = c, strings.Fields(c)
-		}
-		for _, cl := range n.classList {
-			if l := ix.byClass[cl]; len(l) > 0 {
-				lists = append(lists, l)
-			}
+	for _, cl := range n.classFields() {
+		if l := ix.byClass[cl]; len(l) > 0 {
+			lists = append(lists, l)
 		}
 	}
 	switch len(lists) {
