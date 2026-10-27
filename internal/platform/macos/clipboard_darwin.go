@@ -9,6 +9,7 @@ void quiPasteboardRich(char **plain, char **html);
 void *quiPasteboardImage(int *len, char **ext);
 void quiSetPasteboardImage(const void *png, int len, const char *plain);
 char **quiPasteboardFiles(int *n);
+void quiSetPasteboardFiles(char **paths, int n);
 */
 import "C"
 
@@ -77,4 +78,20 @@ func PasteboardFiles() []string {
 		C.free(unsafe.Pointer(p))
 	}
 	return out
+}
+
+// SetPasteboardFiles publishes paths as file URLs (one pasteboard item
+// each, as Finder's Copy does) plus the paths as plain text.
+func SetPasteboardFiles(paths []string) {
+	if len(paths) == 0 {
+		return
+	}
+	base := (**C.char)(C.malloc(C.size_t(len(paths)) * C.size_t(unsafe.Sizeof((*C.char)(nil)))))
+	defer C.free(unsafe.Pointer(base))
+	arr := unsafe.Slice(base, len(paths))
+	for i, p := range paths {
+		arr[i] = C.CString(p)
+		defer C.free(unsafe.Pointer(arr[i]))
+	}
+	C.quiSetPasteboardFiles(base, C.int(len(paths)))
 }

@@ -169,6 +169,30 @@ func GetClipboardFiles() []string {
 	return nil
 }
 
+// FileClipboardWriter is an optional capability of a Clipboard provider:
+// putting files on the clipboard, as a file manager's Copy does.
+type FileClipboardWriter interface {
+	// SetFiles publishes the files plus a plain-text flavor: the paths,
+	// one per line.
+	SetFiles(paths []string)
+}
+
+// SetClipboardFiles puts files on the clipboard, so a file manager pastes
+// the files themselves and a text editor their paths (one per line).
+// Where files cannot be written, only the paths are, as text.
+func SetClipboardFiles(paths []string) {
+	if len(paths) == 0 {
+		return
+	}
+	clipboardMu.RLock()
+	defer clipboardMu.RUnlock()
+	if fw, ok := activeClipboard.(FileClipboardWriter); ok {
+		fw.SetFiles(paths)
+		return
+	}
+	activeClipboard.Set(strings.Join(paths, "\n"))
+}
+
 // withCharsetMeta prepends a UTF-8 declaration to a clipboard HTML
 // fragment.
 //

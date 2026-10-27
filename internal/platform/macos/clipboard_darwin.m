@@ -176,3 +176,33 @@ char **quiPasteboardFiles(int *n) {
         return out;
     }
 }
+
+// quiSetPasteboardFiles publishes file URLs the way Finder's Copy does —
+// one pasteboard item per file, so Finder (and any app reading file URLs)
+// pastes the files themselves — and the paths, one per line, as the first
+// item's plain-text flavor, so a text editor pastes the paths rather than
+// file:// URLs.
+void quiSetPasteboardFiles(char **paths, int n) {
+    @autoreleasepool {
+        NSMutableArray<NSPasteboardItem *> *items = [NSMutableArray arrayWithCapacity:n];
+        NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithCapacity:n];
+        NSFileManager *fm = [NSFileManager defaultManager];
+        for (int i = 0; i < n; i++) {
+            NSString *p = [fm stringWithFileSystemRepresentation:paths[i] length:strlen(paths[i])];
+            if (!p) {
+                continue;
+            }
+            NSPasteboardItem *it = [[NSPasteboardItem alloc] init];
+            [it setString:[[NSURL fileURLWithPath:p] absoluteString] forType:NSPasteboardTypeFileURL];
+            [items addObject:it];
+            [lines addObject:p];
+        }
+        if ([items count] == 0) {
+            return;
+        }
+        [items[0] setString:[lines componentsJoinedByString:@"\n"] forType:NSPasteboardTypeString];
+        NSPasteboard *pb = [NSPasteboard generalPasteboard];
+        [pb clearContents];
+        [pb writeObjects:items];
+    }
+}

@@ -36,6 +36,9 @@ func (c darwinClipboard) SetImage(png []byte, plain string) { macos.SetPasteboar
 // GetFiles returns the paths of the files on the pasteboard.
 func (c darwinClipboard) GetFiles() []string { return macos.PasteboardFiles() }
 
+// SetFiles publishes file URLs, which Finder pastes as the files.
+func (c darwinClipboard) SetFiles(paths []string) { macos.SetPasteboardFiles(paths) }
+
 func newOSClipboard(win platformWindow) Clipboard {
 	return darwinClipboard{platformClipboard{win: win}}
 }
