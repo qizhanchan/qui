@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/qizhanchan/qui/internal/platform/contract"
+	"github.com/qizhanchan/qui/internal/typeset"
 )
 
 // Backend selection.
@@ -35,7 +36,7 @@ func installPlatformHost() {
 	contract.Host.NativeCursor = nativeCursorForBackend
 	contract.Host.ImageCursor = imageCursorForBackend
 	contract.Host.RawKeyCaptured = rawKeyCapturedHook()
-	contract.Host.SetTextFallback = setTextFallback
+	contract.Host.SetTextFallback = typeset.SetTextFallback
 	contract.Host.SetMacKeyboard = setMacKeyboard
 }
 

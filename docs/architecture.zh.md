@@ -11,9 +11,18 @@
 ```
 htmlcss ──► widgets ──► 根 qui ◄── 其他所有包
 reactive/html ──► reactive ──► 根 qui
+                                 │
+                ┌────────────────┼──────────────────┐
+                ▼                ▼                  ▼
+         internal/render   internal/platform/*   （pdf、svg 导出）
+                │
+                ▼
+         internal/typeset ──► internal/gfx
 ```
 
-子包 import 根引擎；根引擎绝不 import 子包。根↔子包的耦合通过根包定义的接口进行（`qui.Animator`、`qui.IMEClient`、`qui.VectorSource`、`qui.Translator`，以及 focusable/tickable 约定）。`widgets` 除根包外什么都不 import；`reactive` 只 import 根包，与后端无关。允许的跨子包边很少且固定（`scene3d`→`widgets`，`htmlcss`→`widgets`+`svg`，`reactive/html`→`reactive`+`htmlcss`+`widgets`，`icons`→`svg`）。如果根包看起来需要某个子包符号，解法是把符号移过去，或在根包定义接口。
+根包之下有三个内部层，每层只 import 更低的层：`internal/gfx`（几何、颜色、画笔、路径、着色器、滤镜与 `Canvas` 契约）、`internal/typeset`（字体、整形、文字与行内排版）以及 `internal/render`（CPU/GPU 光栅器与渲染器）。根包在 `gfx.go`、`typeset.go`、`render.go` 中以类型别名和包装函数重新导出它们的公开名字，因此公开 API 仍是 `qui.Rect`、`qui.BuildTextLayout`、`qui.GLRenderer`。底层需要只有引擎才知道的东西时，由引擎注入：默认 locale 通过 `typeset.SetLocaleSource` 传给文字引擎，窗口通过 `internal/render/renderer_caps.go` 中的能力接口驱动渲染器。导出器 `pdf` 与 `svg` 直接构建在 `gfx` + `typeset` 之上。`internal/archtest` 在每种构建配置下按 README 中的规则检查整张依赖图。
+
+子包 import 根引擎；根引擎绝不 import 公开子包。根↔子包的耦合通过根包定义的接口进行（`qui.Animator`、`qui.IMEClient`、`qui.VectorSource`、`qui.Translator`，以及 focusable/tickable 约定）。`widgets` 除根包外什么都不 import；`reactive` 只 import 根包，与后端无关。允许的跨子包边很少且固定（`scene3d`→`widgets`，`htmlcss`→`widgets`+`svg`，`reactive/html`→`reactive`+`htmlcss`+`widgets`，`icons`→`svg`）。如果根包看起来需要某个子包符号，解法是把符号移过去，或在根包定义接口。
 
 ## 帧循环
 
@@ -26,7 +35,7 @@ reactive/html ──► reactive ──► 根 qui
 5. 只清除并重绘脏区域；
 6. 只把重绘过的像素上传到 GPU（`GLRenderer.SetDamage`），然后 swap buffers。
 
-帧是按需调度的（`idle.go`），而不是由固定时钟驱动。每轮迭代之间，`App.Run` 询问每个窗口距离下一次 `Step` 还有多久，并在平台的事件等待中恰好阻塞这么长时间：
+帧是按需调度的（`window_idle.go`），而不是由固定时钟驱动。每轮迭代之间，`App.Run` 询问每个窗口距离下一次 `Step` 还有多久，并在平台的事件等待中恰好阻塞这么长时间：
 
 - **正在变化**——上一帧有绘制，或存在动画器、待处理 job、脏绘制区域或脏布局：按显示节奏（1/60 秒）唤醒。由于一次绘制会换来下一帧，靠每帧返回脏矩形来做动画的 `Tickable` 无需额外代码就能持续运行，并在其 `Tick` 不再报告变化时停止；
 - **等待某个时刻**——在一段静默后才变化的 `Tickable`（光标闪烁）在 `Tick` 中调用 `Window.RequestTickAt(t)`；tooltip 的延迟也按同样方式跟踪：在最早的那个时刻唤醒；
@@ -46,10 +55,10 @@ AppKit 可能在等待期间、没有任何输入事件的情况下投递的平�
 
 - `Invalidate` / `InvalidateRect` 标记纯视觉变化。
 - `InvalidateLayout` 标记影响尺寸的变化。它只把调用者的绘制范围标脏（而非整个窗口），并向根冒泡一个标志。布局过程随后仅当某个控件的包围盒真的改变时才提升为全量重绘（`BaseWidget.Layout` → `noteBoundsChange`）。`boundsEpsilon` 以下的亚像素抖动保持作用域内；在布局过程之外调用 `Layout` 会直接标脏新旧范围。
-- 测量结果带缓存（`measure_cache.go`）。布局引擎通过 `MeasureChild` 测量子控件，它按可用尺寸记忆每个控件的 `Measure` 结果。`InvalidateLayout` 会清掉该控件及其所有祖先的缓存，因此一次变化只会重新测量它的祖先链，未变化的兄弟子树直接用缓存作答；主题、字体、语言、窗口尺寸变化以及 `Window.InvalidateLayout` 会清掉全部缓存。约定是：影响尺寸的状态变化时，控件要对**自己**调用 `InvalidateLayout`——只改子控件却只让祖先失效，会让子控件的缓存尺寸过期。`QUI_DEBUG_LAYOUT_CACHE=1` 会在每次命中缓存时重新测量，并记录违反约定的控件。
+- 测量结果带缓存（`layout_measure_cache.go`）。布局引擎通过 `MeasureChild` 测量子控件，它按可用尺寸记忆每个控件的 `Measure` 结果。`InvalidateLayout` 会清掉该控件及其所有祖先的缓存，因此一次变化只会重新测量它的祖先链，未变化的兄弟子树直接用缓存作答；主题、字体、语言、窗口尺寸变化以及 `Window.InvalidateLayout` 会清掉全部缓存。约定是：影响尺寸的状态变化时，控件要对**自己**调用 `InvalidateLayout`——只改子控件却只让祖先失效，会让子控件的缓存尺寸过期。`QUI_DEBUG_LAYOUT_CACHE=1` 会在每次命中缓存时重新测量，并记录违反约定的控件。
 - 一次测量结果不变的文字 tick 只重绘自己的矩形，因此窗口在两次更新之间真正空闲，`WaitIdle` 也能对持续更新的应用工作。设 `QUI_DEBUG_PAINT=1` 可记录全量重绘提升以及第一个移动的控件。
 
-文字测量是带缓存的（`text.go` 中的 `BuildTextLayout` 缓存，在字体注册表变化时失效），因此任何布局失效触发的全树重新布局，对未变化的文字而言只是 map 查找，而不是重新测量。
+文字测量是带缓存的（`internal/typeset/text.go` 中的 `BuildTextLayout` 缓存，在字体注册表变化时失效），因此任何布局失效触发的全树重新布局，对未变化的文字而言只是 map 查找，而不是重新测量。
 
 ## 控件树与 `BaseWidget.self`
 
@@ -80,15 +89,15 @@ AppKit 可能在等待期间、没有任何输入事件的情况下投递的平�
 
 渲染是 Skia 形状的，分为两层。
 
-**Canvas 前端**（`render.go`、`canvas_state.go`、`canvas_paint.go`、`canvas_layer.go`、`path.go`）：Save/Restore 状态栈（裁剪 + 2×3 仿射矩阵），`DrawShape(Shape, Paint)` 是唯一入口（便捷方法是包装），`Path` 支持二次 / 三次贝塞尔、抗锯齿的 winding/even-odd 填充、描边 cap/join/miter，`SaveLayer` 支持混合模式与 `Paint.Alpha`，`ClipPath`（在 Restore 时遮罩），`Paint.Shader`（线性 / 径向渐变），`ColorFilter`/`ImageFilter`（投影、模糊），以及用于 elevaton 阴影的 `DrawShadow`。
+**Canvas 前端**（`internal/gfx/render.go`、`internal/gfx/canvas_state.go`、`internal/gfx/canvas_paint.go`、`internal/render/canvas_layer.go`、`internal/gfx/path.go`）：Save/Restore 状态栈（裁剪 + 2×3 仿射矩阵），`DrawShape(Shape, Paint)` 是唯一入口（便捷方法是包装），`Path` 支持二次 / 三次贝塞尔、抗锯齿的 winding/even-odd 填充、描边 cap/join/miter，`SaveLayer` 支持混合模式与 `Paint.Alpha`，`ClipPath`（在 Restore 时遮罩），`Paint.Shader`（线性 / 径向渐变），`ColorFilter`/`ImageFilter`（投影、模糊），以及用于 elevaton 阴影的 `DrawShadow`。
 
-**RasterBackend**（`backend.go`）：前端之下产出像素的抽象。所有坐标都已是物理坐标，每个方法都收到一个它必须遵守的裁剪。`backend_cpu.go` 是参考实现；`backend_gpu.go`（FBO + 着色器，`QUI_GPU_RASTER=1`）接入同一个位置，并按图元与 CPU 路径交替。`renderer_gl.go` 负责 GL 窗口 blit。
+**RasterBackend**（`internal/render/backend.go`）：前端之下产出像素的抽象。所有坐标都已是物理坐标，每个方法都收到一个它必须遵守的裁剪。`internal/render/backend_cpu.go` 是参考实现；`internal/render/backend_gpu.go`（FBO + 着色器，`QUI_GPU_RASTER=1`）接入同一个位置，并按图元与 CPU 路径交替。`internal/render/renderer_gl.go` 负责 GL 窗口 blit。
 
 ### 文字
 
-文字使用 `go-text/typesetting` 的字形串整形（`text_shaping.go`），支持 OpenType GSUB/GPOS、Unicode bidi、UAX #14 换行和 UAX #29 字素簇边界。测量、CPU/GL 绘制、PDF 输出、换行、命中测试、选区和编辑器 caret 共享同一套整形簇。`RuneAdvance` 仅作为独立 rune 工具的兼容助手保留。带样式的 run 在仅绘制边界的跨越中保持整形上下文。
+文字使用 `go-text/typesetting` 的字形串整形（`internal/typeset/text_shaping.go`），支持 OpenType GSUB/GPOS、Unicode bidi、UAX #14 换行和 UAX #29 字素簇边界。测量、CPU/GL 绘制、PDF 输出、换行、命中测试、选区和编辑器 caret 共享同一套整形簇。`RuneAdvance` 仅作为独立 rune 工具的兼容助手保留。带样式的 run 在仅绘制边界的跨越中保持整形上下文。
 
-行内流 —— 文字与原子行内盒在同一行上按基线对齐共享 —— 位于 `inline.go`，并以 `widgets.InlineBox` 的形式暴露。
+行内流 —— 文字与原子行内盒在同一行上按基线对齐共享 —— 位于 `internal/typeset/inline.go`，并以 `widgets.InlineBox` 的形式暴露。
 
 GL 控件通过 `GPUCanvas.QueueGLDraw` + `ActiveGLRenderer().DrawTexture` 合成（`scene3d` 与 `media` 使用）；`qui.PhysicalScissor` 把逻辑裁剪转换成 GL scissor 盒。
 
@@ -112,7 +121,7 @@ GL 控件通过 `GPUCanvas.QueueGLDraw` + `ActiveGLRenderer().DrawTexture` 合�
 1. **`Window.Size()` 是内容视口**，不是操作系统窗口。每个控件侧的调用者（对话框居中、弹出测量、菜单夹紧、CSS 的 `vw` 单位）想要的是它所在的空间。只有当你指的是窗口本身时（把它放到某台显示器、持久化几何）才用 `WindowSize()`。100% 时两者相等。`DevicePixelRatio()` 仍是显示器的真实比例；`EffectiveScale()` 是 `dpr × zoom`，负责把控件坐标转换成像素。
 2. **缩放是可选开启的**，用 `SetViewportZoomEnabled(true)` 打开 Cmd/Ctrl+`=`/`-`/`0`、触控板捏合和双指双击。默认关闭，因为已经自行解释捏合的应用（图表缩放某个轴、画布应用缩放内容）否则会得到第二个互相竞争的缩放。消费掉手势的控件获胜；只有无人认领的捏合才缩放页面。
 
-输入会在 `window_handler.go` 中一次性转换成视口空间，因此分发、命中测试、`actions.go` 和 agent 都看不到缩放。缩放吸附到 2.5% 的步长 —— 文字测量按字号缓存，连续的捏合否则会每帧错过缓存。
+输入会在 `window_handler.go` 中一次性转换成视口空间，因此分发、命中测试、`inspect_actions.go` 和 agent 都看不到缩放。缩放吸附到 2.5% 的步长 —— 文字测量按字号缓存，连续的捏合否则会每帧错过缓存。
 
 ## 主题
 
@@ -156,34 +165,34 @@ h.Button("Save").T("qui.save")                   // reactive/html DSL
 
 操作系统窗口层是一个接缝：`internal/platform/contract` 定义后端要实现的东西（App / Window / Monitor / Surface / Handler、Caps、后端注册表，以及 `Host` —— 后端回调引擎的少数服务），并持有输入词汇（`Key`、`Modifiers`、`MouseButton`、`CursorShape`、`GesturePhase`、`WindowKind`），`qui` 以类型别名重新导出。每个后端都是 `internal/platform/` 下的叶子包 —— `cocoa`（AppKit）、`x11`（Xlib）、`web`（canvas，GOOS=js）、`headless`（内存）、`glfw`（Windows / `-tags qui_glfw`）—— 从不 import 根包；根包在 `platform_backends*.go` 中按 GOOS 空白导入它们，`platform_adapter.go` 把 contract 对象包装成引擎对接缝的非导出视图（`platform.go`），因此引擎调用点和测试替身都看不到后端如何组织。已注册后端中优先级最高的（原生 > GLFW > headless）为默认，`QUI_PLATFORM` 可在运行时覆盖。
 
-呈现有两条路径（`contract.Surface`）：`Present` 交换 `GLRenderer` 画好的 GL 后缓冲；`PresentCPU(img, damage)` 把完成的 CPU 帧交给合成器 —— XPutImage、putImageData，headless 则什么都不做 —— 且只处理脏矩形；在 `cocoa` 上，窗口收到第一个 CPU 帧后永久切换到 CALayer 呈现（保留位图的写时复制 CGImage），并启动 CVDisplayLink，其标志由 `Ready()` 消费，使绘制与显示器同步。需要 GPU 上下文的渲染器始终通过缓冲交换呈现。表面通过 `Caps.GPUContext` 声明是否有 GL 上下文；设置在无 GL 上下文窗口上的 `GLRenderer` 会被替换为 `CPURenderer`（`renderer_caps.go`），即同一个光栅化器，停在 `*image.RGBA`。无 cgo、wasm 或 `-tags qui_nogl` 的构建不含 OpenGL：此时 `GLRenderer` 是 `CPURenderer` 的别名。
+呈现有两条路径（`contract.Surface`）：`Present` 交换 `GLRenderer` 画好的 GL 后缓冲；`PresentCPU(img, damage)` 把完成的 CPU 帧交给合成器 —— XPutImage、putImageData，headless 则什么都不做 —— 且只处理脏矩形；在 `cocoa` 上，窗口收到第一个 CPU 帧后永久切换到 CALayer 呈现（保留位图的写时复制 CGImage），并启动 CVDisplayLink，其标志由 `Ready()` 消费，使绘制与显示器同步。需要 GPU 上下文的渲染器始终通过缓冲交换呈现。表面通过 `Caps.GPUContext` 声明是否有 GL 上下文；设置在无 GL 上下文窗口上的 `GLRenderer` 会被替换为 `CPURenderer`（`internal/render/renderer_caps.go`），即同一个光栅化器，停在 `*image.RGBA`。无 cgo、wasm 或 `-tags qui_nogl` 的构建不含 OpenGL：此时 `GLRenderer` 是 `CPURenderer` 的别名。
 
-已加载字体画不出的文本可以交给平台自己的文字引擎：后端安装 `contract.TextFallback`（web 后端就是这样 —— wasm 构建只能看到内嵌的拉丁字体，而浏览器自带中日韩字体），任何已加载字体都不覆盖的字素簇会像彩色 emoji 一样成为原子字形，采用平台给出的 advance，并以文字颜色着色的覆盖遮罩绘制（`text_fallback.go`）。换行、光标、选区与命中测试不受影响；加载真正覆盖这些字符的字体（`LoadFallbackFontFromBytes`）优先。以文本形式接收输入法组字的后端调用 `Handler.OnPreedit` / `OnCommitText`，并用 `Handler.IMECaretRect` 定位候选窗。
+已加载字体画不出的文本可以交给平台自己的文字引擎：后端安装 `contract.TextFallback`（web 后端就是这样 —— wasm 构建只能看到内嵌的拉丁字体，而浏览器自带中日韩字体），任何已加载字体都不覆盖的字素簇会像彩色 emoji 一样成为原子字形，采用平台给出的 advance，并以文字颜色着色的覆盖遮罩绘制（`internal/typeset/text_fallback.go`）。换行、光标、选区与命中测试不受影响；加载真正覆盖这些字符的字体（`LoadFallbackFontFromBytes`）优先。以文本形式接收输入法组字的后端调用 `Handler.OnPreedit` / `OnCommitText`，并用 `Handler.IMECaretRect` 定位候选窗。
 
-离屏渲染即 `QUI_PLATFORM=headless` 加 `QUI_SNAPSHOT=out.png`（`snapshot_env.go`）：运行任意应用，等首帧稳定后写出帧并退出 —— 无需显示器、GPU 或改代码。
+离屏渲染即 `QUI_PLATFORM=headless` 加 `QUI_SNAPSHOT=out.png`（`window_snapshot_env.go`）：运行任意应用，等首帧稳定后写出帧并退出 —— 无需显示器、GPU 或改代码。
 
 ## 平台桥
 
-平台代码按 build tag 拆分为 `*_darwin.go`（+ `.m`/`.cc`）与 `*_other.go` —— IME（`NSTextInputClient` → `IMEClient` 控件）、原生对话框、emoji（Core Text 位图）、剪贴板、系统托盘、原生菜单。各平台 API 必须一致；非 darwin 得到可编译的 stub。`IsCommandMod` 抽象 Cmd 与 Ctrl 的区别。
+平台代码按 build tag 拆分为 `*_darwin.go` 与 `*_other.go` —— IME（`NSTextInputClient` → `IMEClient` 控件）、原生对话框、emoji（Core Text 位图）、剪贴板、系统托盘、原生菜单。Objective-C 与 cgo 都在 `internal/platform/macos` 中，对外是纯 Go 函数加一个回调 `Host`（菜单动作、热键、IME 与 raw 键盘钩子、按键捕获 tap）；根包的 `native_*_darwin.go` / `keyboard_*_darwin.go` 是基于它的纯 Go 代码，`native_macos_host_darwin.go` 实现该 host。各平台 API 必须一致；非 darwin 得到可编译的 stub。`IsCommandMod` 抽象 Cmd 与 Ctrl 的区别。
 
 **客户端标题栏**（`window_titlebar*.go`）：`Window.SetTitlebarStyle(TitlebarOverlay)` 把内容区延伸到透明的系统标题栏之下（macOS `FullSizeContentView`，因此缩放边缘 / 红绿灯按钮 / 全屏都保持原生）。`TitlebarInsets()` 报告系统窗口按钮所需的留白，`BeginWindowDrag()` 把进行中的按下交给窗口管理器（绝不要用鼠标位移来移动窗口 —— 那会丢失吸附，在 Wayland 上也不可能）。在不支持处各自返回 false / 零值，因此应用会保留原生标题栏而不是崩掉。htmlcss 把 CSS `app-region: drag|no-drag` 映射到它上面；`examples/chrome-tabs` 就建立在两者之上。
 
-**浮层面板**（`window_overlay.go`）：`App.NewOverlayPanel(w, h)` 创建一个 `WindowOverlayPanel` —— 无边框、透明、始终置顶、且**永不获取键盘焦点**的操作系统窗口。这是一种独立的 `WindowKind`，不是关掉系统装饰的普通窗口，因为三个属性共同承担关键作用：不激活（点击它不得让用户正在输入的应用失去激活）、透明帧缓冲（面板画自己的圆角卡片，其余部分透出合成）、以及在所有 Space（包括全屏应用）之上置顶。面板初始隐藏；`ShowAt(x, y)` 先定位**再**显示（反过来的顺序会在旧位置闪一帧），`Hide()` 只是 ordered out 而不销毁 —— IME 候选条每敲一个键就切换一次，而这个频率下重建 OS 窗口加 GPU 上下文太慢。窗口的 kind 驱动 `Window.Step` 中的透明清除和 `GLRenderer.SetTransparent`（后者还切换到 `BlendFuncSeparate`，避免直通 alpha 在合成时被平方）。只有 `cocoa` 后端实现它（`NSPanel` + `NSWindowStyleMaskNonactivatingPanel`）；GLFW 返回 `ErrOverlayPanelUnsupported`，而不是悄悄交回一个会抢焦点的窗口。`examples/overlay-panel` 是示例。
+**浮层面板**（`overlay_window.go`）：`App.NewOverlayPanel(w, h)` 创建一个 `WindowOverlayPanel` —— 无边框、透明、始终置顶、且**永不获取键盘焦点**的操作系统窗口。这是一种独立的 `WindowKind`，不是关掉系统装饰的普通窗口，因为三个属性共同承担关键作用：不激活（点击它不得让用户正在输入的应用失去激活）、透明帧缓冲（面板画自己的圆角卡片，其余部分透出合成）、以及在所有 Space（包括全屏应用）之上置顶。面板初始隐藏；`ShowAt(x, y)` 先定位**再**显示（反过来的顺序会在旧位置闪一帧），`Hide()` 只是 ordered out 而不销毁 —— IME 候选条每敲一个键就切换一次，而这个频率下重建 OS 窗口加 GPU 上下文太慢。窗口的 kind 驱动 `Window.Step` 中的透明清除和 `GLRenderer.SetTransparent`（后者还切换到 `BlendFuncSeparate`，避免直通 alpha 在合成时被平方）。只有 `cocoa` 后端实现它（`NSPanel` + `NSWindowStyleMaskNonactivatingPanel`）；GLFW 返回 `ErrOverlayPanelUnsupported`，而不是悄悄交回一个会抢焦点的窗口。`examples/overlay-panel` 是示例。
 
 ## AI 原生内省与可操作性
 
 根包文件：
 
-- `roles.go` —— 角色常量，以及可选的 `Roled`/`Named`/`Valued` 接口；
-- `accessibility.go` —— AX 树（浮层是平级的顶层子树）；
-- `selector.go` —— CSS 属性风格的选择器语法（`#id`、`[role=]`、`[name*=]`、`:nth`、`:visible`、`:focused`、`:layer(modal)`）；
+- `inspect_roles.go` —— 角色常量，以及可选的 `Roled`/`Named`/`Valued` 接口；
+- `inspect_accessibility.go` —— AX 树（浮层是平级的顶层子树）；
+- `inspect_selector.go` —— CSS 属性风格的选择器语法（`#id`、`[role=]`、`[name*=]`、`:nth`、`:visible`、`:focused`、`:layer(modal)`）；
 - `snapshot*.go` —— 缩放与带标注的 PNG；`SnapshotScaled/Region/Annotated` 通过主线程任务队列串行化，因此 agent goroutine 的截图绝不会与进行中的帧竞争；并且在取出该任务的那一次 Step 结束时（该帧的任务、布局与绘制都完成之后）才读取缓冲区，所以截图不会比请求时的状态更旧（不要在活动窗口的主 goroutine 里调用它们）；
-- `actions.go` —— 按选择器定位的同步 Click/Type/Drag/…，遵守模态阻塞与滚动到可见；
-- `wait.go` —— `WaitIdle`、`WaitOverlay`；
-- `recording.go` —— 事件监听器；
-- `jobs.go` —— `PostJob` 主线程队列。
+- `inspect_actions.go` —— 按选择器定位的同步 Click/Type/Drag/…，遵守模态阻塞与滚动到可见；
+- `inspect_wait.go` —— `WaitIdle`、`WaitOverlay`；
+- `inspect_recording.go` —— 事件监听器；
+- `window_jobs.go` —— `PostJob` 主线程队列。
 
-在任意 qui 应用中按 `Cmd/Ctrl+Shift+A` 可切换 agent 叠加层，无需改代码。`SetRoot` 之后调用 `agent.BindEnv(window)`，当 `QUI_AGENT=1` 时启动协议服务（覆盖进程内所有窗口）；`GET /llm.txt` 教会 agent 使用这套界面，`GET /json/protocol` 是 schema。协议的各个域在根包里（`protocol*.go`：`RegisterProtocolDomain`、带类型的 `NewProtocolCommand`、`EmitProtocolEvent`）；htmlcss 注册自己的 DOM 投影和 CSS 域，reactive 注册 Reactive 域，`agent` 只负责传输。节点身份是 `NodeID`（`nodeid.go`）：进程级、按控件懒分配、永不复用，在选择器里写作 `@N`。新的控件 AX 覆写放在各子包的 `accessibility.go` 中。
+在任意 qui 应用中按 `Cmd/Ctrl+Shift+A` 可切换 agent 叠加层，无需改代码。`SetRoot` 之后调用 `agent.BindEnv(window)`，当 `QUI_AGENT=1` 时启动协议服务（覆盖进程内所有窗口）；`GET /llm.txt` 教会 agent 使用这套界面，`GET /json/protocol` 是 schema。协议的各个域在根包里（`protocol*.go`：`RegisterProtocolDomain`、带类型的 `NewProtocolCommand`、`EmitProtocolEvent`）；htmlcss 注册自己的 DOM 投影和 CSS 域，reactive 注册 Reactive 域，`agent` 只负责传输。节点身份是 `NodeID`（`inspect_nodeid.go`）：进程级、按控件懒分配、永不复用，在选择器里写作 `@N`。新的控件 AX 覆写放在各子包的 `inspect_accessibility.go` 中。
 
 ## 应用开发界面：htmlcss 与 reactive
 

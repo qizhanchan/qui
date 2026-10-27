@@ -48,9 +48,9 @@
 
 - `Canvas` 前端：Save/Restore 状态栈（裁剪 + 2×3 仿射矩阵）、`Path` 支持二次 / 三次贝塞尔、抗锯齿 winding/even-odd 填充、描边 cap/join/miter。
 - `SaveLayer` 支持混合模式与 `Paint.Alpha`；`ClipPath`；线性 / 径向渐变着色器；`ColorFilter` / `ImageFilter`（投影、模糊）；`DrawShadow`。
-- `RasterBackend` 接缝：纯 Go 的 CPU 参考实现（`backend_cpu.go`）与可选 GPU 后端（`QUI_GPU_RASTER=1`，`backend_gpu.go`）。
+- `RasterBackend` 接缝：纯 Go 的 CPU 参考实现（`internal/render/backend_cpu.go`）与可选 GPU 后端（`QUI_GPU_RASTER=1`，`internal/render/backend_gpu.go`）。
 - 脏区域绘制，`Invalidate` / `InvalidateRect` / `InvalidateLayout` 及包围盒变化提升。
-- 离屏渲染与回读；PDF 画布后端；SVG 画布辅助。
+- 离屏渲染与回读；通过 `pdf.NewDoc`（以画布形式输出 PDF 页面，另有 `pdf.Print`）与 `svg.NewCanvas`（输出 SVG 文档）进行矢量导出。
 - GL 逃生舱：`GPUCanvas.QueueGLDraw`、`GLState`、`ActiveGLRenderer().DrawTexture`、`PhysicalScissor`。
 - 保留式 GL 绘制：`RetainedGLCanvas.QueueRetainedGLDraw` 让 GL 内容在窗口其他部分局部重绘时保持显示（某帧重绘其区域而未重新登记时丢弃）；`Window.RequestGLRedraw`（任意 goroutine）只重放这些绘制，不重新光栅化、不上传 2D 层。
 - 光标：内置形状之外还有 `CursorHidden` 与图像光标（`NewImageCursor`、2× 图像用 `NewImageCursorScaled`、`ReleaseCursor`），macOS 两个后端均支持，与其他形状一样经 `SetCursorShape` / `CursorProvider` / `CursorAtProvider` 解析。
@@ -59,9 +59,9 @@
 
 - `go-text/typesetting` 字形串整形：OpenType GSUB/GPOS、Unicode bidi、UAX #14 换行、UAX #29 字素簇边界。
 - 测量、绘制、PDF、换行、命中测试、选择和编辑器 caret 共享同一套整形簇。
-- 行内流（`inline.go`、`widgets.InlineBox`）：文字与原子行内盒在共享行上按基线对齐。
-- 富样式 run（`text_rich.go`）、跨控件文字选择、CJK 换行与 emoji。
-- 拼写检查（`spell.go`）：`SpellChecker`（`Check` 返回按 rune 偏移的 `SpellRange`、`Suggestions`、`Learn`/`Unlearn`），`SystemSpellChecker`（macOS 上为 NSSpellChecker，可在非 UI 线程调用；其他平台不可用），`SetSpellChecker` 覆盖；`DrawDecorationLine` 绘制波浪线等装饰线。
+- 行内流（`internal/typeset/inline.go`、`widgets.InlineBox`）：文字与原子行内盒在共享行上按基线对齐。
+- 富样式 run（`internal/typeset/text_rich.go`）、跨控件文字选择、CJK 换行与 emoji。
+- 拼写检查（`native_spell.go`）：`SpellChecker`（`Check` 返回按 rune 偏移的 `SpellRange`、`Suggestions`、`Learn`/`Unlearn`），`SystemSpellChecker`（macOS 上为 NSSpellChecker，可在非 UI 线程调用；其他平台不可用），`SetSpellChecker` 覆盖；`DrawDecorationLine` 绘制波浪线等装饰线。
 
 **主题**
 

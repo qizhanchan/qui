@@ -1,6 +1,10 @@
 package qui
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/qizhanchan/qui/internal/typeset"
+)
 
 // stubTranslator is a minimal Translator: an exact locale -> key -> text
 // map, with no fallback logic of its own. That is deliberate — walking
@@ -157,17 +161,17 @@ func TestLocaleChangeInvalidatesTextLayoutCache(t *testing.T) {
 
 	SetDefaultLocale("en")
 	BuildTextLayout("hello", Font{Size: 14}, TextLayoutOptions{})
-	textLayoutCacheMu.Lock()
-	before := len(textLayoutCache)
-	textLayoutCacheMu.Unlock()
+	typeset.TextLayoutCacheMu.Lock()
+	before := len(typeset.TextLayoutCache)
+	typeset.TextLayoutCacheMu.Unlock()
 	if before == 0 {
 		t.Fatal("precondition: expected the layout to be memoized")
 	}
 
 	SetDefaultLocale("ja")
-	textLayoutCacheMu.Lock()
-	after := len(textLayoutCache)
-	textLayoutCacheMu.Unlock()
+	typeset.TextLayoutCacheMu.Lock()
+	after := len(typeset.TextLayoutCache)
+	typeset.TextLayoutCacheMu.Unlock()
 	if after != 0 {
 		t.Errorf("text layout cache survived a locale change (%d entries)", after)
 	}
@@ -183,7 +187,7 @@ func TestShapingLanguageFollowsLocale(t *testing.T) {
 		{"ar-EG", "ar-eg"},
 	} {
 		SetDefaultLocale(Locale(c.loc))
-		if got := string(shapingLanguage()); got != c.want {
+		if got := string(typeset.ShapingLanguage()); got != c.want {
 			t.Errorf("locale %s -> shaping language %q, want %q", c.loc, got, c.want)
 		}
 	}

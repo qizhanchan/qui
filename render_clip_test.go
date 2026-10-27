@@ -1,12 +1,16 @@
 package qui
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/qizhanchan/qui/internal/gfx"
+)
 
 // State-stack clip tests. They push state on a RecordingCanvas and
 // assert on the recorded effective rects.
 
 func newRecorderWithClip(clip Rect) *RecordingCanvas {
-	r := &RecordingCanvas{canvasState: newCanvasState(clip)}
+	r := &RecordingCanvas{CanvasState: gfx.NewCanvasState(clip)}
 	return r
 }
 

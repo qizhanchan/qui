@@ -2,30 +2,7 @@
 
 package qui
 
-/*
-#cgo CFLAGS: -x objective-c -fobjc-arc
-#cgo LDFLAGS: -framework Cocoa
-#import <Cocoa/Cocoa.h>
-
-static int quiWindowIsFullscreen(void* nsWindowPtr) {
-	NSWindow* win = (__bridge NSWindow*)nsWindowPtr;
-	return ([win styleMask] & NSWindowStyleMaskFullScreen) ? 1 : 0;
-}
-
-// quiWindowSetFullscreen toggles native fullscreen toward the desired
-// state. toggleFullScreen: enters/exits a real macOS fullscreen Space, so
-// the auto-hidden menu bar and window traffic-light controls remain
-// reachable by moving the pointer to the top of the screen — unlike GLFW's
-// monitor-fullscreen, which hides them entirely.
-static void quiWindowSetFullscreen(void* nsWindowPtr, int on) {
-	NSWindow* win = (__bridge NSWindow*)nsWindowPtr;
-	int isFs = ([win styleMask] & NSWindowStyleMaskFullScreen) ? 1 : 0;
-	if (isFs != on) {
-		[win toggleFullScreen:nil];
-	}
-}
-*/
-import "C"
+import "github.com/qizhanchan/qui/internal/platform/macos"
 
 // SetFullscreen enters native macOS fullscreen on the given monitor, or
 // exits fullscreen when m is the zero Monitor. macOS animates into a
@@ -57,11 +34,7 @@ func (w *Window) SetFullscreen(m Monitor) {
 		// right where it is.
 		w.plat.setPos(int(m.Position.X)+40, int(m.Position.Y)+40)
 	}
-	v := C.int(0)
-	if on {
-		v = C.int(1)
-	}
-	C.quiWindowSetFullscreen(ns, v)
+	macos.WindowSetFullscreen(ns, on)
 }
 
 // IsFullscreen reports whether the window is in a native fullscreen Space.
@@ -80,5 +53,5 @@ func (w *Window) IsFullscreen() bool {
 	if ns == nil {
 		return false
 	}
-	return C.quiWindowIsFullscreen(ns) != 0
+	return macos.WindowIsFullscreen(ns)
 }

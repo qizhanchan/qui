@@ -3,6 +3,8 @@ package qui
 import (
 	"reflect"
 	"testing"
+
+	"github.com/qizhanchan/qui/internal/gfx"
 )
 
 // FlexLayout must honor Grow declared in Style, not just in
@@ -322,21 +324,21 @@ func TestStyleMergeTransparentColorPreservesBase(t *testing.T) {
 func TestFontMergeFieldWise(t *testing.T) {
 	base := Font{Family: "Roboto", Size: 14, Weight: FontWeightNormal, Italic: false}
 	// Empty override.
-	if got := mergeFont(base, Font{}); !reflect.DeepEqual(got, base) {
+	if got := gfx.MergeFont(base, Font{}); !reflect.DeepEqual(got, base) {
 		t.Errorf("empty font override changed base: %+v", got)
 	}
 	// Weight-only override keeps family/size.
-	if got := mergeFont(base, Font{Weight: FontWeightBold}); got.Family != "Roboto" || got.Size != 14 || got.Weight != FontWeightBold {
+	if got := gfx.MergeFont(base, Font{Weight: FontWeightBold}); got.Family != "Roboto" || got.Size != 14 || got.Weight != FontWeightBold {
 		t.Errorf("weight-only override wrong: %+v", got)
 	}
 	// Italic true wins; italic false in override can't distinguish
 	// "keep base" from "explicit not-italic".
-	if got := mergeFont(base, Font{Italic: true}); !got.Italic {
+	if got := gfx.MergeFont(base, Font{Italic: true}); !got.Italic {
 		t.Errorf("italic override should have propagated")
 	}
 	baseItalic := base
 	baseItalic.Italic = true
-	if got := mergeFont(baseItalic, Font{Italic: false}); !got.Italic {
+	if got := gfx.MergeFont(baseItalic, Font{Italic: false}); !got.Italic {
 		t.Errorf("italic=false override should not clobber base's italic=true")
 	}
 }

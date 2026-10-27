@@ -265,7 +265,7 @@ func ancestorsToWindow(w Widget, r Rect) Rect {
 // should call SetSelf(outer) right after construction. Unset self is
 // treated as "not a subclass, return the embedded widget as-is".
 type BaseWidget struct {
-	// nodeID is the lazily-allocated process-wide identity (see nodeid.go);
+	// nodeID is the lazily-allocated process-wide identity (see inspect_nodeid.go);
 	// accessed atomically. synthIDs holds the IDs of non-widget nodes this
 	// widget publishes (self-drawn accessible children).
 	nodeID   uint64
@@ -287,10 +287,10 @@ type BaseWidget struct {
 	tooltipKey string
 	// axName overrides the widget's accessible name (SetAccessibleName).
 	axName    string
-	cursor    CursorShape // declared pointer shape (CSS `cursor`); see cursor.go
+	cursor    CursorShape // declared pointer shape (CSS `cursor`); see native_cursor.go
 	hasCursor bool        // whether cursor was declared at all
 	// pointerThrough declines pointer targeting so events reach whatever is
-	// behind (CSS pointer-events: none). See pointer_events.go.
+	// behind (CSS pointer-events: none). See event_pointer.go.
 	pointerThrough bool
 	flex           FlexItem
 	grid           GridItem
@@ -299,7 +299,7 @@ type BaseWidget struct {
 	absCB          bool         // establishes a containing block for out-of-flow descendants
 	collapsed      bool         // removed from layout AND paint entirely (CSS display:none)
 	layoutDirty    bool         // only the root's flag is consulted; set via InvalidateLayout
-	measureMemo    measureCache // MeasureChild's memo; see measure_cache.go
+	measureMemo    measureCache // MeasureChild's memo; see layout_measure_cache.go
 	hooks          *widgetHooks // OnFocus / OnBlur / OnKeyDown; see widget_hooks.go
 }
 

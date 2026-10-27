@@ -3,13 +3,15 @@ package qui
 import (
 	"image"
 	"testing"
+
+	"github.com/qizhanchan/qui/internal/render"
 )
 
 // A stroke wider than the corner radius is a ring with square inner
 // corners, not a solid block (3px border on a 2px radius).
 func TestStrokeRoundedRectThickerThanRadiusIsRing(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 40, 30))
-	canvas := newImageCanvasForTest(img)
+	canvas := render.NewImageCanvasForTest(img)
 	black := Color{A: 1}
 	canvas.StrokeRoundedRect(Rect{X: 5, Y: 5, W: 30, H: 20}, 2, black, 3)
 
@@ -35,7 +37,7 @@ func TestStrokeRoundedRectThickerThanRadiusIsRing(t *testing.T) {
 // A box narrower than twice the stroke has no hole; it is simply filled.
 func TestStrokeRoundedRectThickStrokeNoHole(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 30, 30))
-	canvas := newImageCanvasForTest(img)
+	canvas := render.NewImageCanvasForTest(img)
 	canvas.StrokeRoundedRect(Rect{X: 5, Y: 5, W: 6, H: 20}, 1, Color{A: 1}, 3)
 	if a := img.RGBAAt(8, 15).A; a < 250 {
 		t.Errorf("center of a thin box = alpha %d, want solid", a)
@@ -45,7 +47,7 @@ func TestStrokeRoundedRectThickStrokeNoHole(t *testing.T) {
 // A translucent thick stroke must not double up where its bands meet.
 func TestStrokeRoundedRectThickTranslucentUniform(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 40, 30))
-	canvas := newImageCanvasForTest(img)
+	canvas := render.NewImageCanvasForTest(img)
 	canvas.StrokeRoundedRect(Rect{X: 5, Y: 5, W: 30, H: 20}, 2, Color{A: 0.5}, 3)
 	want := img.RGBAAt(20, 6).A
 	for _, p := range [][2]int{{6, 15}, {20, 23}, {33, 15}, {7, 7}, {20, 7}} {
@@ -58,7 +60,7 @@ func TestStrokeRoundedRectThickTranslucentUniform(t *testing.T) {
 // A stroke no thicker than the radius keeps its round inner corner.
 func TestStrokeRoundedRectThinStrokeKeepsRoundInner(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 60, 60))
-	canvas := newImageCanvasForTest(img)
+	canvas := render.NewImageCanvasForTest(img)
 	canvas.StrokeRoundedRect(Rect{X: 5, Y: 5, W: 50, H: 50}, 12, Color{A: 1}, 2)
 	if a := img.RGBAAt(20, 6).A; a < 250 {
 		t.Errorf("top edge alpha %d, want solid", a)

@@ -9,6 +9,8 @@ import (
 	"os"
 
 	"github.com/qizhanchan/qui"
+	"github.com/qizhanchan/qui/pdf"
+	"github.com/qizhanchan/qui/svg"
 )
 
 // RenderOptions controls headless document rendering and export.
@@ -134,7 +136,7 @@ func WriteSVG(w io.Writer, doc *Document, opt RenderOptions) error {
 	if !ok {
 		bg, _ = ParseColor(theme.Background)
 	}
-	canvas := qui.NewSVGCanvas(float32(width), float32(height))
+	canvas := svg.NewCanvas(float32(width), float32(height))
 	canvas.FillRect(qui.Rect{X: 0, Y: 0, W: float32(width), H: float32(height)}, bg)
 	viewDoc := doc
 	if page != doc.Active() {
@@ -198,8 +200,8 @@ func WritePDF(w io.Writer, doc *Document, opt RenderOptions) error {
 	if !ok {
 		bg, _ = ParseColor(theme.Background)
 	}
-	pdf := qui.NewPDFDoc()
-	canvas := pdf.NewPage(float64(width), float64(height))
+	out := pdf.NewDoc()
+	canvas := out.NewPage(float64(width), float64(height))
 	canvas.FillRect(qui.Rect{X: 0, Y: 0, W: float32(width), H: float32(height)}, bg)
 	viewDoc := doc
 	if page != doc.Active() {
@@ -222,7 +224,7 @@ func WritePDF(w io.Writer, doc *Document, opt RenderOptions) error {
 		Clip:  Rect{X: 0, Y: 0, W: float32(width), H: float32(height)},
 		Theme: theme, Shapes: opt.Shapes, Grid: false, Selected: map[string]bool{},
 	})
-	data, err := pdf.Bytes()
+	data, err := out.Bytes()
 	if err != nil {
 		return err
 	}

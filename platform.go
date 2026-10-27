@@ -60,7 +60,7 @@ type platformWindowConfig struct {
 	// kind: WindowOverlayPanel's whole point is not taking focus, and
 	// quietly substituting a normal window turns a missing feature into
 	// the user's keystrokes going somewhere they didn't intend. See
-	// window_overlay.go.
+	// overlay_window.go.
 	Kind WindowKind
 }
 

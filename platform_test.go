@@ -391,7 +391,7 @@ func (p *eventProbe) Focusable() bool { return true }
 // a GPU context.
 type glFrameRenderer struct{ cpuFrameRenderer }
 
-func (glFrameRenderer) requiresGPUContext() bool { return true }
+func (glFrameRenderer) RequiresGPUContext() bool { return true }
 
 func TestPresentKeepsGLRenderersOnTheSwap(t *testing.T) {
 	f := newFakePlatformWindow()

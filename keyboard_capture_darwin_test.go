@@ -10,12 +10,12 @@ import (
 
 func TestCaptureKeyCodeInverse(t *testing.T) {
 	for _, k := range []Key{KeyEscape, KeyA, KeyTab, KeyF12, KeyGrave, KeyEnter} {
-		code := cocoaKeyCodeFor(k)
+		code := darwinkeys.CodeFor(k)
 		if code < 0 || darwinkeys.Map(code) != k {
-			t.Errorf("cocoaKeyCodeFor(%v) = %#x", k, code)
+			t.Errorf("darwinkeys.CodeFor(%v) = %#x", k, code)
 		}
 	}
-	if nsModsMask(ModControl|ModAlt) != 6 || mapNSMods(6) != ModControl|ModAlt {
+	if darwinkeys.ModsMask(ModControl|ModAlt) != 6 || darwinkeys.Mods(6) != ModControl|ModAlt {
 		t.Fatal("nsModsMask is not mapNSMods' inverse")
 	}
 }

@@ -11,9 +11,18 @@ This document describes how the engine works internally. For the high-level pict
 ```
 htmlcss ──► widgets ──► root qui ◄── everything else
 reactive/html ──► reactive ──► root qui
+                                  │
+                 ┌────────────────┼──────────────────┐
+                 ▼                ▼                  ▼
+          internal/render   internal/platform/*   (pdf, svg export)
+                 │
+                 ▼
+          internal/typeset ──► internal/gfx
 ```
 
-Subpackages import the root engine; the root never imports a subpackage. Root↔subpackage coupling goes through interfaces defined in root (`qui.Animator`, `qui.IMEClient`, `qui.VectorSource`, `qui.Translator`, focusable/tickable contracts). `widgets` imports nothing but root; `reactive` imports only root and is backend-agnostic. Allowed cross-subpackage edges are narrow and fixed (`scene3d`→`widgets`, `htmlcss`→`widgets`+`svg`, `reactive/html`→`reactive`+`htmlcss`+`widgets`, `icons`→`svg`). If root appears to need a subpackage symbol, the fix is to move the symbol or define an interface in root.
+Below root sit three internal layers, each importing only the ones beneath it: `internal/gfx` (geometry, color, paint, path, shaders, filters and the `Canvas` contract), `internal/typeset` (fonts, shaping, text and inline layout) and `internal/render` (the CPU/GPU rasterizers and the renderers). Root re-exports their public names as type aliases and wrapper functions in `gfx.go`, `typeset.go` and `render.go`, so the public API is still `qui.Rect`, `qui.BuildTextLayout`, `qui.GLRenderer`. Where a lower layer needs something only the engine knows, the engine injects it: the default locale reaches the text engine through `typeset.SetLocaleSource`, and the window drives a renderer through the capability interfaces in `internal/render/renderer_caps.go`. The exporters `pdf` and `svg` build directly on `gfx` + `typeset`. `internal/archtest` checks the whole graph, in every build configuration, against the rules in the README.
+
+Subpackages import the root engine; the root never imports a public subpackage. Root↔subpackage coupling goes through interfaces defined in root (`qui.Animator`, `qui.IMEClient`, `qui.VectorSource`, `qui.Translator`, focusable/tickable contracts). `widgets` imports nothing but root; `reactive` imports only root and is backend-agnostic. Allowed cross-subpackage edges are narrow and fixed (`scene3d`→`widgets`, `htmlcss`→`widgets`+`svg`, `reactive/html`→`reactive`+`htmlcss`+`widgets`, `icons`→`svg`). If root appears to need a subpackage symbol, the fix is to move the symbol or define an interface in root.
 
 ## Frame loop
 
@@ -26,7 +35,7 @@ The engine runs a single-threaded loop pinned to the OS main thread (`runtime.Lo
 5. clear and redraw only the dirty region;
 6. upload only the redrawn pixels to the GPU (`GLRenderer.SetDamage`) and swap buffers.
 
-Frames are paced on demand (`idle.go`), not by a fixed clock. Between iterations `App.Run` asks each window how soon it needs the next `Step` and blocks in the platform's event wait for exactly that long:
+Frames are paced on demand (`window_idle.go`), not by a fixed clock. Between iterations `App.Run` asks each window how soon it needs the next `Step` and blocks in the platform's event wait for exactly that long:
 
 - **changing** — it painted last frame, or has animators, pending jobs, dirty paint or dirty layout: wake at display cadence (1/60 s). Because a paint buys the next frame, a `Tickable` that animates by returning a dirty rect each frame keeps running with no extra code and stops when its `Tick` reports nothing;
 - **waiting on a moment** — a `Tickable` that changes after a quiet stretch (the caret blink) calls `Window.RequestTickAt(t)` from `Tick`; tooltip delays are tracked the same way: wake at the earliest such moment;
@@ -46,10 +55,10 @@ The core invariant is that **nothing paints unless something invalidated**.
 
 - `Invalidate` / `InvalidateRect` mark pure visual changes.
 - `InvalidateLayout` marks size-affecting changes. It dirty-rects only the caller's paint extent (not the whole window) and bubbles a flag to the root. The layout pass then promotes to a full repaint only if some widget's bounds actually changed (`BaseWidget.Layout` → `noteBoundsChange`). Sub-pixel jitter under `boundsEpsilon` stays scoped; out-of-pass `Layout` calls invalidate old+new extents directly.
-- Measurement is cached (`measure_cache.go`). Layout engines measure children through `MeasureChild`, which memoizes each widget's `Measure` per available size. `InvalidateLayout` drops the cache of the widget and every ancestor, so a change re-measures only its ancestor chain while clean sibling subtrees answer from their caches; theme, font, locale, window-size changes and `Window.InvalidateLayout` drop every cache. The contract is that a widget whose size-affecting state changes invalidates **itself** — changing a child and invalidating only an ancestor leaves the child's cached size stale. `QUI_DEBUG_LAYOUT_CACHE=1` re-measures every cache hit and logs widgets that break it.
+- Measurement is cached (`layout_measure_cache.go`). Layout engines measure children through `MeasureChild`, which memoizes each widget's `Measure` per available size. `InvalidateLayout` drops the cache of the widget and every ancestor, so a change re-measures only its ancestor chain while clean sibling subtrees answer from their caches; theme, font, locale, window-size changes and `Window.InvalidateLayout` drop every cache. The contract is that a widget whose size-affecting state changes invalidates **itself** — changing a child and invalidating only an ancestor leaves the child's cached size stale. `QUI_DEBUG_LAYOUT_CACHE=1` re-measures every cache hit and logs widgets that break it.
 - A text tick that measures to the same size repaints just its own rect, so the window genuinely idles between updates and `WaitIdle` works against continuously-updating apps. Set `QUI_DEBUG_PAINT=1` to log full-repaint promotions and the first widget that moved.
 
-Text measurement is memoized (the `BuildTextLayout` cache in `text.go`, invalidated on font-registry changes), so the full-tree relayout that any layout invalidation triggers costs map lookups for unchanged text rather than re-measurement.
+Text measurement is memoized (the `BuildTextLayout` cache in `internal/typeset/text.go`, invalidated on font-registry changes), so the full-tree relayout that any layout invalidation triggers costs map lookups for unchanged text rather than re-measurement.
 
 ## Widget tree and `BaseWidget.self`
 
@@ -80,15 +89,15 @@ Cross the boundary with `WindowPointToLocal` / `LocalPointToWindow` / `Interacti
 
 Rendering is Skia-shaped and split into two layers.
 
-**Canvas frontend** (`render.go`, `canvas_state.go`, `canvas_paint.go`, `canvas_layer.go`, `path.go`): a Save/Restore state stack (clip + 2×3 affine matrix), `DrawShape(Shape, Paint)` as the single entry point (convenience methods are wrappers), `Path` with quad/cubic Béziers, anti-aliased winding/even-odd fill, stroke cap/join/miter, `SaveLayer` with blend modes and `Paint.Alpha`, `ClipPath` (masked at Restore), `Paint.Shader` (linear/radial gradients), `ColorFilter`/`ImageFilter` (drop shadow, blur), and `DrawShadow` for elevation shadows.
+**Canvas frontend** (`internal/gfx/render.go`, `internal/gfx/canvas_state.go`, `internal/gfx/canvas_paint.go`, `internal/render/canvas_layer.go`, `internal/gfx/path.go`): a Save/Restore state stack (clip + 2×3 affine matrix), `DrawShape(Shape, Paint)` as the single entry point (convenience methods are wrappers), `Path` with quad/cubic Béziers, anti-aliased winding/even-odd fill, stroke cap/join/miter, `SaveLayer` with blend modes and `Paint.Alpha`, `ClipPath` (masked at Restore), `Paint.Shader` (linear/radial gradients), `ColorFilter`/`ImageFilter` (drop shadow, blur), and `DrawShadow` for elevation shadows.
 
-**RasterBackend** (`backend.go`): the pixel-producing abstraction below the frontend. All coordinates are already physical, and every method receives a clip it must honor. `backend_cpu.go` is the reference implementation; `backend_gpu.go` (FBO + shaders, `QUI_GPU_RASTER=1`) swaps into the same slot and interleaves with the CPU path per primitive. `renderer_gl.go` owns the GL window blit.
+**RasterBackend** (`internal/render/backend.go`): the pixel-producing abstraction below the frontend. All coordinates are already physical, and every method receives a clip it must honor. `internal/render/backend_cpu.go` is the reference implementation; `internal/render/backend_gpu.go` (FBO + shaders, `QUI_GPU_RASTER=1`) swaps into the same slot and interleaves with the CPU path per primitive. `internal/render/renderer_gl.go` owns the GL window blit.
 
 ### Text
 
-Text uses `go-text/typesetting` glyph-run shaping (`text_shaping.go`) with OpenType GSUB/GPOS, Unicode bidi, UAX #14 line breaking and UAX #29 grapheme boundaries. Measurement, CPU/GL drawing, PDF output, wrapping, hit testing, selection and editor carets all share the same shaped clusters. `RuneAdvance` remains only as a compatibility helper for standalone-rune utilities. Styled runs preserve shaping context across paint-only boundaries.
+Text uses `go-text/typesetting` glyph-run shaping (`internal/typeset/text_shaping.go`) with OpenType GSUB/GPOS, Unicode bidi, UAX #14 line breaking and UAX #29 grapheme boundaries. Measurement, CPU/GL drawing, PDF output, wrapping, hit testing, selection and editor carets all share the same shaped clusters. `RuneAdvance` remains only as a compatibility helper for standalone-rune utilities. Styled runs preserve shaping context across paint-only boundaries.
 
-Inline flow — text and atomic inline boxes sharing lines with baseline alignment — lives in `inline.go` and is surfaced as `widgets.InlineBox`.
+Inline flow — text and atomic inline boxes sharing lines with baseline alignment — lives in `internal/typeset/inline.go` and is surfaced as `widgets.InlineBox`.
 
 GL widgets composite via `GPUCanvas.QueueGLDraw` + `ActiveGLRenderer().DrawTexture` (used by `scene3d` and `media`); `qui.PhysicalScissor` converts logical clips to GL scissor boxes.
 
@@ -112,7 +121,7 @@ Two things to know:
 1. **`Window.Size()` is the content viewport**, not the OS window. Every widget-side caller (dialog centering, popup measurement, menu clamping, the CSS `vw` unit) wants the space it lives in. Use `WindowSize()` only when you mean the window itself — placing it on a monitor, persisting geometry. They are equal at 100%. `DevicePixelRatio()` stays the display's true ratio; `EffectiveScale()` is `dpr × zoom` and is what converts a widget coordinate to a pixel.
 2. **Zoom is opt-in** via `SetViewportZoomEnabled(true)`, which turns on Cmd/Ctrl+`=`/`-`/`0`, trackpad pinch and two-finger double-tap. It is off by default because apps that already interpret pinch (a chart zooming an axis, a canvas app zooming its content) would otherwise get a second, competing zoom. A widget that consumes the gesture wins; only an unclaimed one zooms the page.
 
-Input is converted to viewport space once, in `window_handler.go`, so dispatch, hit-testing, `actions.go` and the agent never see zoom. Zoom snaps to 2.5% steps — text measurement is memoized by font size, and a continuous pinch would otherwise miss the cache every frame.
+Input is converted to viewport space once, in `window_handler.go`, so dispatch, hit-testing, `inspect_actions.go` and the agent never see zoom. Zoom snaps to 2.5% steps — text measurement is memoized by font size, and a continuous pinch would otherwise miss the cache every frame.
 
 ## Theme
 
@@ -156,34 +165,34 @@ Tooling: `go run ./cmd/qui-i18n extract` scans Go source (`i18n.T`, `SetTextKey`
 
 The OS windowing layer is a seam: `internal/platform/contract` defines what a backend implements (App / Window / Monitor / Surface / Handler, Caps, the backend registry, and `Host` — the few engine services a backend calls back into) and owns the input vocabulary that `qui` re-exports as type aliases (`Key`, `Modifiers`, `MouseButton`, `CursorShape`, `GesturePhase`, `WindowKind`). Each backend is a leaf package under `internal/platform/` — `cocoa` (AppKit), `x11` (Xlib), `web` (canvas, GOOS=js), `headless` (in-memory), `glfw` (Windows / `-tags qui_glfw`) — that never imports root; root blank-imports them per GOOS in `platform_backends*.go`, and `platform_adapter.go` wraps contract objects in the engine's unexported view of the seam (`platform.go`), so engine call sites and test fakes never see how backends are packaged. The registered backend with the highest priority (native > GLFW > headless) is the default; `QUI_PLATFORM` overrides it at runtime.
 
-Presentation has two paths (`contract.Surface`): `Present` swaps a GL backbuffer the `GLRenderer` drew; `PresentCPU(img, damage)` hands a finished CPU frame to the compositor — XPutImage, putImageData, or nothing at all for headless — over just the damaged rectangle; on `cocoa` a window's first CPU frame moves it to CALayer presentation for good (copy-on-write CGImage of a retained bitmap) and starts a CVDisplayLink whose flag `Ready()` consumes, so its painting paces to the display. A renderer that requires a GPU context is always presented by the swap. Surfaces report `Caps.GPUContext`; a `GLRenderer` set on a window without one is replaced by `CPURenderer` (`renderer_caps.go`), the same rasterizer stopping at the `*image.RGBA`. Builds without cgo, for wasm, or with `-tags qui_nogl` contain no OpenGL: `GLRenderer` is then an alias of `CPURenderer`.
+Presentation has two paths (`contract.Surface`): `Present` swaps a GL backbuffer the `GLRenderer` drew; `PresentCPU(img, damage)` hands a finished CPU frame to the compositor — XPutImage, putImageData, or nothing at all for headless — over just the damaged rectangle; on `cocoa` a window's first CPU frame moves it to CALayer presentation for good (copy-on-write CGImage of a retained bitmap) and starts a CVDisplayLink whose flag `Ready()` consumes, so its painting paces to the display. A renderer that requires a GPU context is always presented by the swap. Surfaces report `Caps.GPUContext`; a `GLRenderer` set on a window without one is replaced by `CPURenderer` (`internal/render/renderer_caps.go`), the same rasterizer stopping at the `*image.RGBA`. Builds without cgo, for wasm, or with `-tags qui_nogl` contain no OpenGL: `GLRenderer` is then an alias of `CPURenderer`.
 
-Text the loaded fonts cannot draw can come from the platform's own text engine: a backend installs a `contract.TextFallback` (the web backend does — a wasm build sees only its embedded Latin fonts, while the browser has CJK), and any grapheme cluster no loaded face covers becomes an atomic glyph like a color emoji, with the platform's advance and a coverage mask tinted in the text color (`text_fallback.go`). Wrapping, carets, selection and hit testing are unchanged; loading a real covering font (`LoadFallbackFontFromBytes`) takes precedence. Backends that receive input-method composition as text call `Handler.OnPreedit` / `OnCommitText` and anchor the candidate window with `Handler.IMECaretRect`.
+Text the loaded fonts cannot draw can come from the platform's own text engine: a backend installs a `contract.TextFallback` (the web backend does — a wasm build sees only its embedded Latin fonts, while the browser has CJK), and any grapheme cluster no loaded face covers becomes an atomic glyph like a color emoji, with the platform's advance and a coverage mask tinted in the text color (`internal/typeset/text_fallback.go`). Wrapping, carets, selection and hit testing are unchanged; loading a real covering font (`LoadFallbackFontFromBytes`) takes precedence. Backends that receive input-method composition as text call `Handler.OnPreedit` / `OnCommitText` and anchor the candidate window with `Handler.IMECaretRect`.
 
-Offscreen rendering is `QUI_PLATFORM=headless` plus `QUI_SNAPSHOT=out.png` (`snapshot_env.go`): run any app, wait for the first paint to settle, write the frame, exit — no display, GPU or code change.
+Offscreen rendering is `QUI_PLATFORM=headless` plus `QUI_SNAPSHOT=out.png` (`window_snapshot_env.go`): run any app, wait for the first paint to settle, write the frame, exit — no display, GPU or code change.
 
 ## Platform bridges
 
-Platform code is split by build tag into `*_darwin.go` (+ `.m`/`.cc`) and `*_other.go` — IME (`NSTextInputClient` → `IMEClient` widgets), native dialogs, emoji (Core Text bitmaps), clipboard, system tray, native menus. APIs must stay identical across platforms; non-darwin gets compiling stubs. `IsCommandMod` abstracts Cmd-vs-Ctrl.
+Platform code is split by build tag into `*_darwin.go` and `*_other.go` — IME (`NSTextInputClient` → `IMEClient` widgets), native dialogs, emoji (Core Text bitmaps), clipboard, system tray, native menus. The Objective-C and cgo live in `internal/platform/macos`, which exposes plain Go functions plus a callback `Host` (menu actions, hotkeys, IME and raw-keyboard hooks, the key-capture tap); root's `native_*_darwin.go` / `keyboard_*_darwin.go` files are pure Go over it, and `native_macos_host_darwin.go` implements the host. APIs must stay identical across platforms; non-darwin gets compiling stubs. `IsCommandMod` abstracts Cmd-vs-Ctrl.
 
 **Client-side title bars** (`window_titlebar*.go`): `Window.SetTitlebarStyle(TitlebarOverlay)` extends the content area under a transparent system title bar (macOS `FullSizeContentView`, so resize edges / traffic lights / fullscreen stay native). `TitlebarInsets()` reports the room the system's own window buttons need, and `BeginWindowDrag()` hands an in-flight press to the window manager (never move the window from mouse deltas — that loses snapping and is impossible on Wayland). Each returns false / zero where unsupported, so the app keeps its native title bar instead of breaking. htmlcss maps CSS `app-region: drag|no-drag` onto it; `examples/chrome-tabs` is built on both.
 
-**Overlay panels** (`window_overlay.go`): `App.NewOverlayPanel(w, h)` creates a `WindowOverlayPanel` — a borderless, transparent, always-on-top OS window that **never takes keyboard focus**. This is a distinct `WindowKind`, not a normal window with its chrome switched off, because three properties are load-bearing together: non-activating (clicking it must not deactivate the app the user is typing into), transparent framebuffer (the panel draws its own rounded card, the rest composites through), and above everything on every Space including fullscreen apps. Panels start hidden; `ShowAt(x, y)` positions **then** shows (the reverse order flickers at the old position for a frame), and `Hide()` orders out without destroying — an IME candidate bar toggles per keystroke, and rebuilding an OS window plus GPU context at that rate is far too slow. The window's kind drives the transparent clear in `Window.Step` and `GLRenderer.SetTransparent` (which also switches to `BlendFuncSeparate` so straight alpha is not squared during the composite). Only the `cocoa` backend implements it (`NSPanel` + `NSWindowStyleMaskNonactivatingPanel`); GLFW and X11 return `ErrOverlayPanelUnsupported` rather than silently handing back a focus-stealing window. `examples/overlay-panel` is the demo.
+**Overlay panels** (`overlay_window.go`): `App.NewOverlayPanel(w, h)` creates a `WindowOverlayPanel` — a borderless, transparent, always-on-top OS window that **never takes keyboard focus**. This is a distinct `WindowKind`, not a normal window with its chrome switched off, because three properties are load-bearing together: non-activating (clicking it must not deactivate the app the user is typing into), transparent framebuffer (the panel draws its own rounded card, the rest composites through), and above everything on every Space including fullscreen apps. Panels start hidden; `ShowAt(x, y)` positions **then** shows (the reverse order flickers at the old position for a frame), and `Hide()` orders out without destroying — an IME candidate bar toggles per keystroke, and rebuilding an OS window plus GPU context at that rate is far too slow. The window's kind drives the transparent clear in `Window.Step` and `GLRenderer.SetTransparent` (which also switches to `BlendFuncSeparate` so straight alpha is not squared during the composite). Only the `cocoa` backend implements it (`NSPanel` + `NSWindowStyleMaskNonactivatingPanel`); GLFW and X11 return `ErrOverlayPanelUnsupported` rather than silently handing back a focus-stealing window. `examples/overlay-panel` is the demo.
 
 ## AI-native introspection and operability
 
 Root files:
 
-- `roles.go` — role constants plus the optional `Roled`/`Named`/`Valued` interfaces;
-- `accessibility.go` — the AX tree (overlays are peer top-level subtrees);
-- `selector.go` — the CSS-attribute selector grammar (`#id`, `[role=]`, `[name*=]`, `:nth`, `:visible`, `:focused`, `:layer(modal)`);
+- `inspect_roles.go` — role constants plus the optional `Roled`/`Named`/`Valued` interfaces;
+- `inspect_accessibility.go` — the AX tree (overlays are peer top-level subtrees);
+- `inspect_selector.go` — the CSS-attribute selector grammar (`#id`, `[role=]`, `[name*=]`, `:nth`, `:visible`, `:focused`, `:layer(modal)`);
 - `snapshot*.go` — scaled and annotated PNGs; `SnapshotScaled/Region/Annotated` serialize through the main-thread job queue so agent-goroutine captures never race a frame in progress, and read the buffer at the end of the Step that drains them — after that frame's jobs, layout and paint — so a capture is never older than the state it was requested against (do not call them from the main goroutine of a live window);
-- `actions.go` — selector-targeted synchronous Click/Type/Drag/… that respect modal blocking and scroll-into-view;
-- `wait.go` — `WaitIdle`, `WaitOverlay`;
-- `recording.go` — event listeners;
-- `jobs.go` — the `PostJob` main-thread queue.
+- `inspect_actions.go` — selector-targeted synchronous Click/Type/Drag/… that respect modal blocking and scroll-into-view;
+- `inspect_wait.go` — `WaitIdle`, `WaitOverlay`;
+- `inspect_recording.go` — event listeners;
+- `window_jobs.go` — the `PostJob` main-thread queue.
 
-`Cmd/Ctrl+Shift+A` toggles the agent overlay in ANY qui app with no code change. `agent.BindEnv(window)` after `SetRoot` starts the protocol server (every window of the process) when `QUI_AGENT=1`; `GET /llm.txt` teaches an agent the surface and `GET /json/protocol` is the schema. The protocol's domains live in root (`protocol*.go`: `RegisterProtocolDomain`, typed `NewProtocolCommand`, `EmitProtocolEvent`); htmlcss registers its DOM projector and the CSS domain, reactive the Reactive domain, and `agent` is only the transport. Identity is `NodeID` (`nodeid.go`): process-wide, lazily allocated per widget, never reused, `@N` in selectors. New widget AX overrides go in each subpackage's `accessibility.go`.
+`Cmd/Ctrl+Shift+A` toggles the agent overlay in ANY qui app with no code change. `agent.BindEnv(window)` after `SetRoot` starts the protocol server (every window of the process) when `QUI_AGENT=1`; `GET /llm.txt` teaches an agent the surface and `GET /json/protocol` is the schema. The protocol's domains live in root (`protocol*.go`: `RegisterProtocolDomain`, typed `NewProtocolCommand`, `EmitProtocolEvent`); htmlcss registers its DOM projector and the CSS domain, reactive the Reactive domain, and `agent` is only the transport. Identity is `NodeID` (`inspect_nodeid.go`): process-wide, lazily allocated per widget, never reused, `@N` in selectors. New widget AX overrides go in each subpackage's `inspect_accessibility.go`.
 
 ## App-dev surface: htmlcss and reactive
 

@@ -2,25 +2,18 @@
 
 package qui
 
-/*
-#cgo CFLAGS: -x objective-c -fobjc-arc
-#cgo LDFLAGS: -framework Cocoa -framework ApplicationServices
+import (
+	"github.com/qizhanchan/qui/internal/platform/darwinkeys"
+	"github.com/qizhanchan/qui/internal/platform/macos"
+)
 
-#include <stdint.h>
-
-int  quiTapPrepare(void);
-void quiTapSetActive(uintptr_t handle, int active, int escCode, int escMods);
-void quiTapAck(uint64_t seq);
-*/
-import "C"
-
-// keyCapture is the CGEventTap backend (keyboard_capture_darwin.m).
+// keyCapture is the CGEventTap backend (internal/platform/macos).
 var keyCapture keyCaptureBackend = darwinKeyCapture{}
 
 type darwinKeyCapture struct{}
 
 func (darwinKeyCapture) prepare() error {
-	if C.quiTapPrepare() == 0 {
+	if !macos.TapPrepare() {
 		return ErrAccessibilityPermission
 	}
 	return nil
@@ -29,27 +22,9 @@ func (darwinKeyCapture) prepare() error {
 func (darwinKeyCapture) setActive(w *Window, active bool) {
 	code, mods := -1, 0
 	if k, m := w.raw.chord(); k != KeyUnknown {
-		code, mods = cocoaKeyCodeFor(k), nsModsMask(m)
+		code, mods = darwinkeys.CodeFor(k), darwinkeys.ModsMask(m)
 	}
-	C.quiTapSetActive(C.uintptr_t(w.nativeID), cBool(active), C.int(code), C.int(mods))
-}
-
-// quiTapKeyEvent runs on the tap thread: hand the key to the UI thread,
-// in order, and return immediately.
-//
-//export quiTapKeyEvent
-func quiTapKeyEvent(id C.uintptr_t, kind, keyCode, repeat C.int, flags C.uint64_t, mods C.int, chars *C.char, seq C.uint64_t) {
-	w := lookupIMEWindow(uintptr(id))
-	if w == nil {
-		C.quiTapAck(seq)
-		return
-	}
-	text := C.GoString(chars)
-	k, code, rep, fl, md, s := int(kind), int(keyCode), repeat != 0, uint64(flags), mapNSMods(mods), seq
-	w.PostPriorityJob(func() {
-		w.injectCapturedKey(k, code, rep, fl, md, text)
-		C.quiTapAck(s)
-	})
+	macos.TapSetActive(w.nativeID, active, code, mods)
 }
 
 // injectCapturedKey delivers a key the tap swallowed, exactly as the
@@ -58,10 +33,10 @@ func quiTapKeyEvent(id C.uintptr_t, kind, keyCode, repeat C.int, flags C.uint64_
 func (w *Window) injectCapturedKey(kind, code int, repeat bool, flags uint64, mods Modifiers, text string) {
 	// A key queued just before capture ended is still delivered: the
 	// system never saw it either. Dispatch routes it like any key.
-	key := mapCocoaKey(code)
+	key := darwinkeys.Map(code)
 	switch kind {
 	case 2: // flagsChanged
-		down, ok := cocoaModifierKeyDown(code, flags)
+		down, ok := darwinkeys.ModifierKeyDown(code, flags)
 		if !ok {
 			return
 		}

@@ -48,9 +48,9 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 
 - `Canvas` frontend: Save/Restore state stack (clip + 2×3 affine matrix), `Path` with quad/cubic Béziers, anti-aliased winding/even-odd fill, stroke cap/join/miter.
 - `SaveLayer` with blend modes and `Paint.Alpha`; `ClipPath`; linear/radial gradient shaders; `ColorFilter` / `ImageFilter` (drop shadow, blur); `DrawShadow`.
-- `RasterBackend` seam: pure-Go CPU reference (`backend_cpu.go`) and optional GPU backend (`QUI_GPU_RASTER=1`, `backend_gpu.go`).
+- `RasterBackend` seam: pure-Go CPU reference (`internal/render/backend_cpu.go`) and optional GPU backend (`QUI_GPU_RASTER=1`, `internal/render/backend_gpu.go`).
 - Dirty-region painting, `Invalidate` / `InvalidateRect` / `InvalidateLayout` with bounds-change promotion.
-- Offscreen rendering and readback; PDF canvas backend; SVG canvas helper.
+- Offscreen rendering and readback; vector export through `pdf.NewDoc` (PDF pages as canvases, plus `pdf.Print`) and `svg.NewCanvas` (SVG documents).
 - GL escape hatch: `GPUCanvas.QueueGLDraw`, `GLState`, `ActiveGLRenderer().DrawTexture`, `PhysicalScissor`.
 - Retained GL draws: `RetainedGLCanvas.QueueRetainedGLDraw` keeps GL content on screen through partial repaints of the rest of the window (dropped by the first frame that repaints its area without a re-queue); `Window.RequestGLRedraw` (any goroutine) replays them without re-rasterizing or uploading the 2D layer.
 - Cursors: built-in shapes plus `CursorHidden` and image cursors (`NewImageCursor`, `NewImageCursorScaled` for 2× images, `ReleaseCursor`) on both macOS backends, resolved like any shape (`SetCursorShape`, `CursorProvider`, `CursorAtProvider`).
@@ -59,9 +59,9 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 
 - `go-text/typesetting` glyph-run shaping: OpenType GSUB/GPOS, Unicode bidi, UAX #14 line breaking, UAX #29 grapheme boundaries.
 - Shared shaped clusters across measurement, drawing, PDF, wrapping, hit testing, selection and editor carets.
-- Inline flow (`inline.go`, `widgets.InlineBox`): text and atomic inline boxes on shared lines with baseline alignment.
-- Rich styled runs (`text_rich.go`), text selection across widgets, CJK line breaking and emoji.
-- Spell checking (`spell.go`): `SpellChecker` (`Check` → rune-offset `SpellRange`s, `Suggestions`, `Learn`/`Unlearn`), `SystemSpellChecker` (NSSpellChecker on macOS, safe off the UI thread; unavailable elsewhere), `SetSpellChecker` override; `DrawDecorationLine` paints wavy squiggles and other decoration lines.
+- Inline flow (`internal/typeset/inline.go`, `widgets.InlineBox`): text and atomic inline boxes on shared lines with baseline alignment.
+- Rich styled runs (`internal/typeset/text_rich.go`), text selection across widgets, CJK line breaking and emoji.
+- Spell checking (`native_spell.go`): `SpellChecker` (`Check` → rune-offset `SpellRange`s, `Suggestions`, `Learn`/`Unlearn`), `SystemSpellChecker` (NSSpellChecker on macOS, safe off the UI thread; unavailable elsewhere), `SetSpellChecker` override; `DrawDecorationLine` paints wavy squiggles and other decoration lines.
 
 **Theme**
 

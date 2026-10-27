@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/qizhanchan/qui/internal/platform/contract"
+	"github.com/qizhanchan/qui/internal/typeset"
 )
 
 // fakeTextFallback stands in for a platform text engine: every cluster is
@@ -31,11 +32,11 @@ const uncoveredRune = ''
 
 func withTextFallback(t *testing.T, tf contract.TextFallback) {
 	t.Helper()
-	if textFacesHaveGlyph(uncoveredRune) {
+	if typeset.TextFacesHaveGlyph(uncoveredRune) {
 		t.Skip("a system font covers U+E000; cannot exercise the fallback")
 	}
-	setTextFallback(tf)
-	t.Cleanup(func() { setTextFallback(nil) })
+	typeset.SetTextFallback(tf)
+	t.Cleanup(func() { typeset.SetTextFallback(nil) })
 }
 
 func TestTextFallbackSuppliesAdvanceForUncoveredRunes(t *testing.T) {
@@ -122,12 +123,12 @@ func (*fakeColorFallback) ColorImage(cluster string, d contract.FontDesc) (*imag
 }
 
 func TestColorGlyphFallbackBecomesTheEmojiProvider(t *testing.T) {
-	prev := currentEmojiProvider()
+	prev := typeset.CurrentEmojiProvider()
 	SetEmojiProvider(nil)
-	setTextFallback(&fakeColorFallback{})
-	t.Cleanup(func() { setTextFallback(nil); SetEmojiProvider(prev) })
-	if _, ok := currentEmojiProvider().(colorGlyphEmoji); !ok {
-		t.Fatalf("emoji provider = %T, want the color-glyph adapter", currentEmojiProvider())
+	typeset.SetTextFallback(&fakeColorFallback{})
+	t.Cleanup(func() { typeset.SetTextFallback(nil); SetEmojiProvider(prev) })
+	if _, ok := typeset.CurrentEmojiProvider().(typeset.ColorGlyphEmoji); !ok {
+		t.Fatalf("emoji provider = %T, want the color-glyph adapter", typeset.CurrentEmojiProvider())
 	}
 	spec := Font{Size: 14}
 	if w := BuildTextLayout("a😀b", spec, TextLayoutOptions{}).Width - BuildTextLayout("ab", spec, TextLayoutOptions{}).Width; w < 10 {

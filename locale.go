@@ -6,7 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	shapinglang "github.com/go-text/typesetting/language"
+	"github.com/qizhanchan/qui/internal/typeset"
 )
 
 // i18nStrictEnabled turns on QUI_I18N_STRICT=1 diagnostics: unresolved
@@ -329,7 +329,7 @@ func bumpLocale() {
 	localeGen.Add(1)
 	// Resolved-text and shaped-glyph caches embed locale-dependent
 	// results; a language switch invalidates them wholesale.
-	invalidateTextLayoutCache()
+	typeset.InvalidateTextLayoutCache()
 }
 
 // Translate resolves a message key in loc through the installed
@@ -491,43 +491,10 @@ func (w *Window) Locale() Locale {
 func (w *Window) TextDirection() TextDirection { return w.Locale().Direction() }
 
 // shapingLanguageCache memoizes the go-text language tag for the active
-// locale. shapeParagraph asks for it on every run, so the conversion
+// locale. ShapeParagraph asks for it on every run, so the conversion
 // must not re-parse a string each time.
-var shapingLanguageCache struct {
-	mu   sync.RWMutex
-	gen  uint64
-	lang shapinglang.Language
-}
-
-// shapingLanguage returns the OpenType language tag handed to the
-// shaper for the active locale.
-//
-// This is what makes Han unification render correctly. U+9AA8 (骨) has a
-// different standard glyph in Simplified Chinese, Traditional Chinese
-// and Japanese, and a font covering all three ships all three behind a
-// `locl` feature keyed on the language tag. Without a language, the
-// shaper takes the font's default — which is right for at most one of
-// the three audiences. Same mechanism covers Turkish dotted/dotless i
-// and Serbian Cyrillic italic forms.
-//
-// Note this necessarily makes shaped output locale-dependent, which is
-// why LocaleGeneration is part of every text-layout cache key.
-func shapingLanguage() shapinglang.Language {
-	gen := localeGen.Load()
-	shapingLanguageCache.mu.RLock()
-	if shapingLanguageCache.gen == gen {
-		l := shapingLanguageCache.lang
-		shapingLanguageCache.mu.RUnlock()
-		return l
-	}
-	shapingLanguageCache.mu.RUnlock()
-
-	lang := shapinglang.NewLanguage(string(DefaultLocale()))
-	shapingLanguageCache.mu.Lock()
-	shapingLanguageCache.gen = gen
-	shapingLanguageCache.lang = lang
-	shapingLanguageCache.mu.Unlock()
-	return lang
+func init() {
+	typeset.SetLocaleSource(func() string { return string(DefaultLocale()) }, LocaleGeneration)
 }
 
 func missingMessage(key string) string {

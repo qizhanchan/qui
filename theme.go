@@ -148,15 +148,6 @@ type PopupTokens struct {
 	DialogOnAccent Color   // default-button label (AccentText)
 }
 
-// ElevationSpec is one component of a drop shadow: offset, blur, spread
-// and an opacity that blends with Theme.Shadow. Two of them make one
-// elevation level — a tight "key" shadow plus a wider, softer "ambient"
-// one, which is what makes a raised surface read as lifted rather than
-// outlined.
-type ElevationSpec struct {
-	X, Y, Blur, Spread, Opacity float32
-}
-
 // ElevationLevel groups the key+ambient pair for one elevation level.
 type ElevationLevel struct {
 	Key, Ambient ElevationSpec

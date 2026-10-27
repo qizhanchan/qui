@@ -4,21 +4,23 @@ import (
 	"image"
 	"testing"
 	"time"
+
+	"github.com/qizhanchan/qui/internal/render"
 )
 
 func TestRetainedGLSetSurvivesUnrelatedDamage(t *testing.T) {
-	var s retainedGLSet
+	var s render.RetainedGLSet
 	ran := 0
-	s.put("video", Rect{X: 100, Y: 100, W: 200, H: 100}, func(GLState) { ran++ })
+	s.Put("video", Rect{X: 100, Y: 100, W: 200, H: 100}, func(GLState) { ran++ })
 	// Frame 1: the owner queued it; it is already in the deferred queue,
-	// so carryOver must not replay it a second time.
-	if got := s.carryOver(image.Rect(100, 100, 300, 200), false); len(got) != 0 {
+	// so CarryOver must not replay it a second time.
+	if got := s.CarryOver(image.Rect(100, 100, 300, 200), false); len(got) != 0 {
 		t.Fatalf("seen entry replayed: %d", len(got))
 	}
-	s.endFrame()
+	s.EndFrame()
 
 	// Frame 2: a caret blinks far away — the draw survives and replays.
-	replay := s.carryOver(image.Rect(0, 0, 10, 10), false)
+	replay := s.CarryOver(image.Rect(0, 0, 10, 10), false)
 	if len(replay) != 1 {
 		t.Fatalf("want 1 replay for unrelated damage, got %d", len(replay))
 	}
@@ -26,53 +28,53 @@ func TestRetainedGLSetSurvivesUnrelatedDamage(t *testing.T) {
 	if ran != 1 {
 		t.Fatalf("replayed fn not the registered one")
 	}
-	s.endFrame()
+	s.EndFrame()
 
 	// Frame 3: a GL-only frame (no CPU damage at all) replays it too.
-	if got := s.carryOver(image.Rectangle{}, true); len(got) != 1 {
+	if got := s.CarryOver(image.Rectangle{}, true); len(got) != 1 {
 		t.Fatalf("GL-only frame must replay, got %d", len(got))
 	}
-	s.endFrame()
+	s.EndFrame()
 
 	// Frame 4: the area is repainted but the owner did not re-queue —
 	// it was unmounted / hidden / moved. Drop it.
-	if got := s.carryOver(image.Rect(150, 150, 160, 160), false); len(got) != 0 {
+	if got := s.CarryOver(image.Rect(150, 150, 160, 160), false); len(got) != 0 {
 		t.Fatalf("overlapping damage without re-queue must drop, got %d replays", len(got))
 	}
-	if s.len() != 0 {
-		t.Fatalf("entry not dropped: %d left", s.len())
+	if s.Len() != 0 {
+		t.Fatalf("entry not dropped: %d left", s.Len())
 	}
 }
 
 func TestRetainedGLSetUnknownDamageDrops(t *testing.T) {
-	var s retainedGLSet
-	s.put(1, Rect{X: 0, Y: 0, W: 10, H: 10}, func(GLState) {})
-	s.endFrame()
+	var s render.RetainedGLSet
+	s.Put(1, Rect{X: 0, Y: 0, W: 10, H: 10}, func(GLState) {})
+	s.EndFrame()
 	// Empty damage without damageNone means "unknown" = full repaint.
-	if got := s.carryOver(image.Rectangle{}, false); len(got) != 0 || s.len() != 0 {
-		t.Fatalf("unknown damage must drop unseen entries (replays=%d left=%d)", len(got), s.len())
+	if got := s.CarryOver(image.Rectangle{}, false); len(got) != 0 || s.Len() != 0 {
+		t.Fatalf("unknown damage must drop unseen entries (replays=%d left=%d)", len(got), s.Len())
 	}
 }
 
 func TestRetainedGLSetRequeueReplaces(t *testing.T) {
-	var s retainedGLSet
+	var s render.RetainedGLSet
 	first, second := 0, 0
-	s.put("k", Rect{W: 10, H: 10}, func(GLState) { first++ })
-	s.endFrame()
-	s.put("k", Rect{X: 50, W: 10, H: 10}, func(GLState) { second++ })
-	if s.len() != 1 {
-		t.Fatalf("re-queue must replace, have %d entries", s.len())
+	s.Put("k", Rect{W: 10, H: 10}, func(GLState) { first++ })
+	s.EndFrame()
+	s.Put("k", Rect{X: 50, W: 10, H: 10}, func(GLState) { second++ })
+	if s.Len() != 1 {
+		t.Fatalf("re-queue must replace, have %d entries", s.Len())
 	}
-	s.endFrame()
-	for _, fn := range s.carryOver(image.Rect(0, 0, 10, 10), false) {
+	s.EndFrame()
+	for _, fn := range s.CarryOver(image.Rect(0, 0, 10, 10), false) {
 		fn(GLState{})
 	}
 	if first != 0 || second != 1 {
 		t.Fatalf("want only the replacement to run (first=%d second=%d)", first, second)
 	}
-	s.forget("k")
-	if s.len() != 0 {
-		t.Fatalf("forget left %d entries", s.len())
+	s.Forget("k")
+	if s.Len() != 0 {
+		t.Fatalf("forget left %d entries", s.Len())
 	}
 }
 

@@ -1,23 +1,28 @@
 package qui
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/qizhanchan/qui/internal/render"
+	"github.com/qizhanchan/qui/internal/typeset"
+)
 
 // TestUIKeyboardSymbolsMatchTextSize: ⌘ ⇧ ⌥ in a shortcut resolve to the
 // platform UI face (drawn at cap height), not the small-em general symbol
 // font; other runes never resolve to the UI-symbol face.
 func TestUIKeyboardSymbolsMatchTextSize(t *testing.T) {
 	faces := GetFontFacesFor(Font{Size: 100})
-	if uiSymbolFallback.Load() == nil {
+	if typeset.UISymbolFallback.Load() == nil {
 		t.Skip("no platform UI-symbol face on this system")
 	}
-	hb, _, ok := faceForRune('H', faces).GlyphBounds('H')
+	hb, _, ok := render.FaceForRune('H', faces).GlyphBounds('H')
 	if !ok {
 		t.Fatal("primary has no H")
 	}
 	capH := (hb.Max.Y - hb.Min.Y).Ceil()
 	for _, r := range "⌘⇧⌥" {
-		f := faceForRune(r, faces)
-		if _, isUI := f.(uiSymbolFace); !isUI {
+		f := render.FaceForRune(r, faces)
+		if _, isUI := f.(typeset.UISymbolFace); !isUI {
 			t.Errorf("%c resolved to %T, want the UI-symbol face", r, f)
 		}
 		b, _, ok := f.GlyphBounds(r)
@@ -30,35 +35,35 @@ func TestUIKeyboardSymbolsMatchTextSize(t *testing.T) {
 		}
 	}
 	for _, r := range "A‹⟳✓" {
-		if _, isUI := faceForRune(r, faces).(uiSymbolFace); isUI {
+		if _, isUI := render.FaceForRune(r, faces).(typeset.UISymbolFace); isUI {
 			t.Errorf("%c must not resolve to the UI-symbol face", r)
 		}
 	}
 	// The PDF chain applies the same restriction.
-	chain := fontChainForSpec(Font{Size: 100})
-	if f, _, _ := resolveRune(chain, '⌘', nil); f != uiSymbolFallback.Load() {
+	chain := typeset.FontChainForSpec(Font{Size: 100})
+	if f, _, _ := typeset.ResolveRune(chain, '⌘', nil); f != typeset.UISymbolFallback.Load() {
 		t.Errorf("pdf chain: ⌘ not on the UI-symbol face")
 	}
-	if f, _, _ := resolveRune(chain, 'A', nil); f == uiSymbolFallback.Load() {
+	if f, _, _ := typeset.ResolveRune(chain, 'A', nil); f == typeset.UISymbolFallback.Load() {
 		t.Errorf("pdf chain: A on the UI-symbol face")
 	}
 }
 
 func TestUIKeyboardSymbolsShapingChain(t *testing.T) {
 	GetFontFacesFor(Font{Size: 14})
-	ui := uiSymbolFallback.Load()
+	ui := typeset.UISymbolFallback.Load()
 	if ui == nil {
 		t.Skip("no platform UI-symbol face on this system")
 	}
-	p, ok := shapeParagraph([]rune("⌘B ‹"), Font{Size: 14}, TextDirectionAuto)
+	p, ok := typeset.ShapeParagraph([]rune("⌘B ‹"), Font{Size: 14}, TextDirectionAuto)
 	if !ok {
 		t.Fatal("shape failed")
 	}
-	for _, run := range p.runs {
-		src := sourceFontForShapingFace(run.Face)
+	for _, run := range p.Runs {
+		src := typeset.SourceFontForShapingFace(run.Face)
 		for _, g := range run.Glyphs {
-			r := p.text[g.ClusterIndex]
-			if (src == ui) != isUIKeyboardSymbol(r) {
+			r := p.Text[g.ClusterIndex]
+			if (src == ui) != typeset.IsUIKeyboardSymbol(r) {
 				t.Errorf("rune %c shaped with UI face=%v", r, src == ui)
 			}
 		}
@@ -95,7 +100,7 @@ func inkSpan(t *testing.T, text string, f Font) (top, bottom, left int) {
 // is not compared.)
 func TestUIKeyboardSymbolsShareBaselineAndSize(t *testing.T) {
 	GetFontFacesFor(Font{Size: 28})
-	if uiSymbolFallback.Load() == nil {
+	if typeset.UISymbolFallback.Load() == nil {
 		t.Skip("no platform UI-symbol face on this system")
 	}
 	f := Font{Size: 28}
