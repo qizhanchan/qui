@@ -58,9 +58,13 @@ type HookInfo struct {
 
 // ReactiveNode is one node of the reactive tree snapshot.
 type ReactiveNode struct {
-	Kind string `json:"kind"`           // component | host | fragment | provider | boundary | bound:show | bound:for | portal
-	Name string `json:"name,omitempty"` // component name (for kind=component)
-	Key  string `json:"key,omitempty"`
+	// NodeID is the process-wide identity (see qui.NodeID). For a host node
+	// it is the backing widget's NodeID — the same ID the AX and DOM views
+	// report for that element — so the three views join on it.
+	NodeID qui.NodeID `json:"nodeId"`
+	Kind   string     `json:"kind"`           // component | host | fragment | provider | boundary | bound:show | bound:for | portal
+	Name   string     `json:"name,omitempty"` // component name (for kind=component)
+	Key    string     `json:"key,omitempty"`
 	// Dirty is true when the node (or a descendant) has a pending re-render
 	// scheduled — answers "is this waiting to update?".
 	Dirty bool `json:"dirty,omitempty"`
@@ -144,6 +148,15 @@ func inspectInstance(node *instance) *ReactiveNode {
 		return nil
 	}
 	rn := &ReactiveNode{Key: node.key}
+	if node.comp == nil && node.widget != nil && !node.isPortal && !strings.HasPrefix(node.kind, "#") && node.kind != fragmentKind {
+		rn.NodeID = qui.WidgetNodeID(node.widget)
+	}
+	if rn.NodeID == 0 {
+		if node.nodeID == 0 {
+			node.nodeID = qui.NewNodeID()
+		}
+		rn.NodeID = node.nodeID
+	}
 	switch {
 	case node.comp != nil:
 		rn.Kind = "component"

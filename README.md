@@ -21,7 +21,8 @@
 | [docs/features.md](docs/features.md) | Feature catalog across the engine, widgets, htmlcss, reactive, i18n and the auxiliary packages |
 | [reactive/README.md](reactive/README.md) | Deep dive into the reactive runtime |
 | [htmlcss/COVERAGE.md](htmlcss/COVERAGE.md) | The authoritative HTML/CSS coverage matrix |
-| [agent/llm.txt](agent/llm.txt) | The agent wire spec (also served live at `/llm.txt`) |
+| [agent/llm.txt](agent/llm.txt) | The agent guide (served live at `/llm.txt`, followed by the method reference generated from the schema) |
+| [docs/rfc/0001-agent-protocol.zh.md](docs/rfc/0001-agent-protocol.zh.md) | Design of the CDP-shaped inspection protocol (Chinese) |
 
 Chinese versions of the top-level documents live alongside the English ones with a `.zh.md` suffix.
 
@@ -89,7 +90,7 @@ rt := h.Mount(window, css, func() h.Node {
 | `htmlcss` | HTML + CSS engine (details below) |
 | `reactive`, `reactive/html` | Declarative runtime + web-like DSL (details below) |
 | `icons` | Optional icon set: ~135 curated 24px outlined glyphs (Material Symbols, Apache 2.0) parsed into `*svg.Document`, usable anywhere a `qui.VectorSource` is accepted. Asset-only — nothing in root or `widgets` depends on it |
-| `agent` + `cmd/qui-agent` | HTTP/SSE wire layer over root's introspection primitives (UDS by default, TCP + bearer opt-in) and a CLI client for it. Keep `agent` thin — every primitive lives in root |
+| `agent` + `cmd/qui-agent` | The inspection protocol's transport: CDP-shaped JSON-RPC over WebSocket and `POST /rpc` (UDS by default, TCP + bearer opt-in), discovery, sessions, events, Chrome DevTools compatibility; `agent/client` is a stdlib-only client, and `cmd/qui-agent` a CLI + MCP server on it. Keep `agent` thin — domains live in root's protocol registry (`protocol*.go`), subpackages register their own |
 | `scene3d` | 3D math + scene graph + `Viewport` widget (offscreen FBO composited via `QueueGLDraw`); `Vec3Field` integrates with widgets, so `scene3d` may import `widgets` |
 | `anim` | `Tween[T]` / `Spring` / `Timeline` + easing catalog; all satisfy `qui.Animator` |
 | `graphs` | Stable scale/data primitives plus two native solutions: `graphs/chart` (ECharts-shaped declarative charting) and `graphs/diagram` (draw.io-class rendering/editing with pages, layers, groups, routing, undo/redo, AX, JSON/draw.io XML and PNG/SVG/PDF export) |
@@ -135,13 +136,14 @@ GOOS=js GOARCH=wasm go build -o examples/web/app.wasm ./examples/reactive-html
 
 # Drive a running app from outside (AI-native operability)
 QUI_AGENT=1 go run ./examples/reactive-html &
-go run ./cmd/qui-agent tree                 # discovers the socket; also:
-go run ./cmd/qui-agent click '[role=button][name="New"]'
-go run ./cmd/qui-agent shot /tmp/ui.png
-# or raw: curl --unix-socket $TMPDIR/qui-agent-*.sock http://./llm.txt
+go run ./cmd/qui-agent snapshot             # the UI as text, one [ref=@N] per node
+go run ./cmd/qui-agent click @14            # or any selector: 'button.save', '[role=button][name="New"]'
+go run ./cmd/qui-agent shot /tmp/ui.png -annotate
+go run ./cmd/qui-agent mcp                  # the same surface as MCP tools on stdio
+# or raw JSON-RPC: curl --unix-socket $TMPDIR/qui-agent-<pid>.sock http://localhost/rpc -d '{"method":"Agent.snapshot"}'
 ```
 
-Useful env vars: `QUI_PLATFORM=cocoa|x11|web|headless|glfw` (windowing backend — see below), `QUI_SNAPSHOT=out.png` (render, wait for the UI to settle, write the frame, exit; `QUI_SNAPSHOT_SETTLE` / `QUI_SNAPSHOT_TIMEOUT` tune it), `QUI_HEADLESS_SCALE=2` (headless display scale), `QUI_X11_SCALE` (override Xft.dpi-derived scale), `QUI_GPU_RASTER=1` (GPU raster backend), `QUI_GLYPH_CACHE=0` (disable the glyph coverage-mask cache; `exact` keys sub-pixel x exactly), `QUI_AGENT=1` / `QUI_AGENT_TCP=:port` / `QUI_AGENT_TOKEN` / `QUI_AGENT_SOCK` (agent server), `QUI_DEBUG_LAYOUT=1` (flex overflow logging), `QUI_DEBUG_PAINT=1` (log full-repaint promotions + first moved widget), `QUI_DEBUG_DRAW=1` (fail-fast when Draw mutates the widget tree or invalidates layout), `QUI_DEBUG_LAYOUT_CACHE=1` (re-measure every measure-cache hit and log widgets whose size changed without `InvalidateLayout` on themselves), `QUI_DEBUG_THREAD=1` (fail-fast UI-thread ownership checks), `QUI_DEBUG_WIDGETS=1` (log children whose Parent() mismatches — a missing `SetSelf`), `QUI_DEBUG_GESTURE=1` (log which gesture selectors the macOS bridge installed, incl. whether GLFW's scrollWheel: was preserved), `QUI_I18N_STRICT=1` (render unresolved message keys as ⟦key⟧ and log each once), `QUI_GOLDEN=1` (write golden snapshots), `QUI_HTMLCSS_SNAPSHOT=1` (htmlcss snapshot PNGs).
+Useful env vars: `QUI_PLATFORM=cocoa|x11|web|headless|glfw` (windowing backend — see below), `QUI_SNAPSHOT=out.png` (render, wait for the UI to settle, write the frame, exit; `QUI_SNAPSHOT_SETTLE` / `QUI_SNAPSHOT_TIMEOUT` tune it), `QUI_HEADLESS_SCALE=2` (headless display scale), `QUI_X11_SCALE` (override Xft.dpi-derived scale), `QUI_GPU_RASTER=1` (GPU raster backend), `QUI_GLYPH_CACHE=0` (disable the glyph coverage-mask cache; `exact` keys sub-pixel x exactly), `QUI_AGENT=1` / `QUI_AGENT_TCP=:port` / `QUI_AGENT_TOKEN` / `QUI_AGENT_SOCK` / `QUI_AGENT_DEVTOOLS=1` (agent server), `QUI_DEBUG_LAYOUT=1` (flex overflow logging), `QUI_DEBUG_PAINT=1` (log full-repaint promotions + first moved widget), `QUI_DEBUG_DRAW=1` (fail-fast when Draw mutates the widget tree or invalidates layout), `QUI_DEBUG_LAYOUT_CACHE=1` (re-measure every measure-cache hit and log widgets whose size changed without `InvalidateLayout` on themselves), `QUI_DEBUG_THREAD=1` (fail-fast UI-thread ownership checks), `QUI_DEBUG_WIDGETS=1` (log children whose Parent() mismatches — a missing `SetSelf`), `QUI_DEBUG_GESTURE=1` (log which gesture selectors the macOS bridge installed, incl. whether GLFW's scrollWheel: was preserved), `QUI_I18N_STRICT=1` (render unresolved message keys as ⟦key⟧ and log each once), `QUI_GOLDEN=1` (write golden snapshots), `QUI_HTMLCSS_SNAPSHOT=1` (htmlcss snapshot PNGs).
 
 **Windowing backends (`QUI_PLATFORM`).** The OS windowing layer sits behind the platform seam. Each backend is a leaf package under `internal/platform/` implementing `internal/platform/contract` (which documents the seam); `platform_adapter.go` wraps it for the engine. Several can be compiled in; the highest-priority one is the default and `QUI_PLATFORM` picks another at *runtime*:
 
@@ -177,7 +179,7 @@ See [docs/features.md](docs/features.md) for the feature catalog and [reactive/R
 
 ## AI-native introspection + operability
 
-Every qui app has a built-in accessibility + operability surface: read the widget tree (role / name / value / bounds) and dispatch real click / type / scroll events by selector — from inside the process or over HTTP + SSE via `agent.BindEnv(window)`. The `agent` server is UDS by default (TCP + bearer opt-in) and serves the full wire spec at `/llm.txt`.
+Every qui app has a built-in accessibility + operability surface: read the UI (AX tree, DOM, computed styles, reactive components) and dispatch real click / type / scroll events — from inside the process, or over a CDP-shaped protocol (Chrome DevTools Protocol: `Domain.method` JSON-RPC over WebSocket or `POST /rpc`) via `agent.BindEnv(window)`. Every node has a process-wide, never-reused `nodeId`, addressable as `@N` in any selector; the `Agent` domain adds a compact text snapshot and auto-waiting actions for LLMs. The server is UDS by default (TCP + bearer opt-in), covers every window of the process, and serves its guide at `/llm.txt` and its schema at `/json/protocol`.
 
 ```go
 import "github.com/qizhanchan/qui/agent"
@@ -187,13 +189,13 @@ if srv, err := agent.BindEnv(window); err == nil && srv != nil {
 }
 ```
 
-Run with `QUI_AGENT=1` and drive it with `cmd/qui-agent` (`tree`, `click`, `type`, `wait`, `shot`, …). `Cmd/Ctrl+Shift+A` toggles an in-window overlay that labels every widget with its ID / role / name in ANY qui app, with no code change.
+Run with `QUI_AGENT=1` and drive it with `cmd/qui-agent` (`snapshot`, `click`, `fill`, `press`, `wait`, `shot`, `pick`, `call`, …) or `qui-agent mcp`. With `QUI_AGENT_DEVTOOLS=1` (plus TCP + token) Chrome's DevTools can attach for the Elements / Styles panes and a screencast. `Cmd/Ctrl+Shift+A` toggles an in-window overlay that labels every widget with its ID / role / name in ANY qui app, with no code change.
 
 ## Conventions
 
 - **Where new code goes:** engine changes → root (only when it affects the engine, not one widget). New widget → `widgets/` (file named after the widget). CSS features → `htmlcss` (implement in the shared appliers so BOTH paths get it; add both an engine test and, when visual, a snapshot test).
 - **User-facing strings:** never hard-code one in `widgets/`, `htmlcss` or the engine. Use `qui.TOr(key, literal)` so an app without catalogs is unaffected, and give any new text-bearing widget a `TextKey`-style field resolved in Measure/Draw (see `widgets/i18n.go`). Widgets whose caption comes from a key must implement `AccessibleNameKey()` — otherwise `[key=]` selectors silently stop covering them.
-- **Locale-dependent caches:** anything memoizing measured or shaped text must include `LocaleGeneration()` in its key, exactly like `FontRegistryGeneration()`. Reactive runtime → `reactive`; DSL surface → `reactive/html`. AX overrides → each subpackage's `accessibility.go`. HTTP endpoints → `agent/` (primitives themselves go in root). Platform code follows the `_darwin.go`/`_other.go` split — never spread darwin code across a tagged and a generic file. Windowing goes in a backend under `internal/platform/` — never in root; if the engine needs something new from the OS, add it to `internal/platform/contract` and implement it in every backend.
+- **Locale-dependent caches:** anything memoizing measured or shaped text must include `LocaleGeneration()` in its key, exactly like `FontRegistryGeneration()`. Reactive runtime → `reactive`; DSL surface → `reactive/html`. AX overrides → each subpackage's `accessibility.go`. Protocol domains → root `protocol*.go`, or the owning subpackage's `protocol.go` (htmlcss, reactive); `agent/` is transport only. Platform code follows the `_darwin.go`/`_other.go` split — never spread darwin code across a tagged and a generic file. Windowing goes in a backend under `internal/platform/` — never in root; if the engine needs something new from the OS, add it to `internal/platform/contract` and implement it in every backend.
 - `widgets/` files use `import . "github.com/qizhanchan/qui"` (dot import) — the one blessed place; qualify normally everywhere else. The dot import does NOT bypass unexported fields: use accessors (`Bounds()`, `Style()`, `Enabled()`).
 - Container subclasses must call `SetSelf` after construction.
 - Tests use root `testhelpers.go` fixtures: `NewTestWindow`, `NewMouseEvent`/`NewKeyEvent`/`NewCharEvent`/`NewScrollEvent`, `RecordingCanvas`, `NewImageCanvas`, `DrainJobsForTest`. Test-mode windows run actions inline (no frame pump needed).

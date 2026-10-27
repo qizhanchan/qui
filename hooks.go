@@ -2,7 +2,6 @@ package qui
 
 import (
 	"log"
-	"os"
 )
 
 // Optional widget interfaces.
@@ -62,7 +61,7 @@ type LayoutDirtyMarker interface {
 // the widget listing it is logged once. That mismatch is almost always a
 // custom Container subclass that forgot SetSelf(outer) — which silently
 // breaks hit testing, focus order and invalidation for its children.
-var widgetDebugEnabled = os.Getenv("QUI_DEBUG_WIDGETS") == "1"
+var widgetDebugEnabled = envFlag("QUI_DEBUG_WIDGETS")
 
 var widgetDebugReported = map[Widget]bool{}
 

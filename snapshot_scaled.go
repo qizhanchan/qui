@@ -284,13 +284,18 @@ func annotationLabel(n *AXNode) string {
 	if n == nil {
 		return ""
 	}
+	// The @ref leads: it is what an agent copies into its next action.
+	ref := ""
+	if n.NodeID != 0 {
+		ref = n.NodeID.String() + " "
+	}
 	if n.ID != "" {
-		return "#" + n.ID
+		return ref + "#" + n.ID
 	}
 	if n.Name != "" {
-		return n.Role + ":" + n.Name
+		return ref + n.Role + ":" + n.Name
 	}
-	return n.Role
+	return ref + n.Role
 }
 
 func annotationColor(depth int, highlight bool) color.RGBA {

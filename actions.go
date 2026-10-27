@@ -531,7 +531,7 @@ func (w *Window) runFocus(target string) error {
 		return err
 	}
 	if widget == nil {
-		return ErrNoMatch
+		return noMatchFor(target)
 	}
 	// A form element hands focus to the control it wraps, so focusing
 	// `#email` lands on the editor that a following sendkey needs.
@@ -655,9 +655,11 @@ func (w *Window) runSendKey(target string, key Key, mods Modifiers) error {
 			return err
 		}
 		if widget == nil {
-			return ErrNoMatch
+			return noMatchFor(target)
 		}
-		w.SetFocus(widget)
+		// A form element hands the key to the control it wraps, so Enter
+		// on an <input> submits instead of landing on the element.
+		w.SetFocus(textActionTarget(widget))
 	}
 	now := time.Now()
 	w.dispatch(KeyEvent{
@@ -833,7 +835,7 @@ func (w *Window) resolveActionTarget(target string, override *Point, scrollIntoV
 		return nil, Point{}, err
 	}
 	if len(nodes) == 0 || nodes[0].Widget() == nil {
-		return nil, Point{}, ErrNoMatch
+		return nil, Point{}, noMatchFor(target)
 	}
 	node := nodes[0]
 	if !node.Visible {

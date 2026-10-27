@@ -21,7 +21,8 @@
 | [docs/features.zh.md](docs/features.zh.md) | 引擎、widgets、htmlcss、reactive、i18n 以及各辅助包的功能清单 |
 | [reactive/README.zh.md](reactive/README.zh.md) | reactive 运行时深入解析 |
 | [htmlcss/COVERAGE.zh.md](htmlcss/COVERAGE.zh.md) | 权威的 HTML/CSS 能力矩阵 |
-| [agent/llm.txt](agent/llm.txt) | agent 线缆规范（运行中的应用也会在 `/llm.txt` 提供） |
+| [agent/llm.txt](agent/llm.txt) | agent 使用指南（运行中的应用在 `/llm.txt` 提供，后附由 schema 生成的方法参考） |
+| [docs/rfc/0001-agent-protocol.zh.md](docs/rfc/0001-agent-protocol.zh.md) | CDP 形态调试协议的设计文档 |
 
 顶层文档都同时提供英文版；中文版与英文版并列，文件名以 `.zh.md` 结尾。
 
@@ -89,7 +90,7 @@ rt := h.Mount(window, css, func() h.Node {
 | `htmlcss` | HTML + CSS 引擎（详见下文） |
 | `reactive`、`reactive/html` | 声明式运行时 + 类 Web DSL（详见下文） |
 | `icons` | 可选图标集：约 135 个精选 24px 描边字形（Material Symbols，Apache 2.0），解析为 `*svg.Document`，可传给任何接受 `qui.VectorSource` 的位置。纯资源 —— 根包与 `widgets` 都不依赖它 |
-| `agent` + `cmd/qui-agent` | 基于根包内省原语的 HTTP/SSE 线缆层（默认 UDS，可选 TCP + bearer）以及配套命令行客户端。`agent` 保持轻薄 —— 所有原语都在根包 |
+| `agent` + `cmd/qui-agent` | 调试协议的传输层：CDP 形态的 JSON-RPC，走 WebSocket 和 `POST /rpc`（默认 UDS，可选 TCP + bearer），含发现、会话、事件与 Chrome DevTools 兼容；`agent/client` 是只依赖标准库的客户端，`cmd/qui-agent` 是基于它的 CLI 和 MCP server。保持 `agent` 精简——各个域在根包的协议注册表里（`protocol*.go`），子包注册自己的域 |
 | `scene3d` | 3D 数学 + 场景图 + `Viewport` 控件（离屏 FBO，经 `QueueGLDraw` 合成）；`Vec3Field` 与 widgets 集成，因此 `scene3d` 可以 import `widgets` |
 | `anim` | `Tween[T]` / `Spring` / `Timeline` + 缓动目录；都满足 `qui.Animator` |
 | `graphs` | 稳定的 scale/data 基础能力，以及两个原生方案：`graphs/chart`（ECharts 形状的声明式图表）和 `graphs/diagram`（draw.io 级渲染/编辑，支持页面、图层、分组、路由、撤销/重做、AX、JSON/draw.io XML 与 PNG/SVG/PDF 导出） |
@@ -134,13 +135,14 @@ GOOS=js GOARCH=wasm go build -o examples/web/app.wasm ./examples/reactive-html
 
 # 从外部驱动运行中的应用（AI 原生可操作性）
 QUI_AGENT=1 go run ./examples/reactive-html &
-go run ./cmd/qui-agent tree                 # 自动发现 socket；另有：
-go run ./cmd/qui-agent click '[role=button][name="New"]'
-go run ./cmd/qui-agent shot /tmp/ui.png
-# 或者直接：curl --unix-socket $TMPDIR/qui-agent-*.sock http://./llm.txt
+go run ./cmd/qui-agent snapshot             # 文本形式的界面，每个节点一个 [ref=@N]
+go run ./cmd/qui-agent click @14            # 也可以用任意选择器：'button.save'、'[role=button][name="New"]'
+go run ./cmd/qui-agent shot /tmp/ui.png -annotate
+go run ./cmd/qui-agent mcp                  # 以 MCP 工具形式（stdio）提供同一套能力
+# 或者直接发 JSON-RPC：curl --unix-socket $TMPDIR/qui-agent-<pid>.sock http://localhost/rpc -d '{"method":"Agent.snapshot"}'
 ```
 
-常用环境变量：`QUI_PLATFORM=cocoa|x11|web|headless|glfw`（窗口后端 —— 见下）、`QUI_SNAPSHOT=out.png`（渲染、等待界面稳定、写出帧后退出；`QUI_SNAPSHOT_SETTLE` / `QUI_SNAPSHOT_TIMEOUT` 可调）、`QUI_HEADLESS_SCALE=2`（headless 显示缩放）、`QUI_X11_SCALE`（覆盖由 Xft.dpi 推出的缩放）、`QUI_GPU_RASTER=1`（GPU 光栅后端）、`QUI_AGENT=1` / `QUI_AGENT_TCP=:port` / `QUI_AGENT_TOKEN` / `QUI_AGENT_SOCK`（agent 服务）、`QUI_DEBUG_LAYOUT=1`（flex 溢出日志）、`QUI_DEBUG_PAINT=1`（记录全量重绘提升 + 第一个移动的控件）、`QUI_DEBUG_DRAW=1`（Draw 期间修改控件树或触发重新布局时快速失败）、`QUI_DEBUG_LAYOUT_CACHE=1`（每次命中测量缓存都重新测量，并记录未对自身调用 `InvalidateLayout` 就改变了尺寸的控件）、`QUI_DEBUG_THREAD=1`（UI 线程归属快速失败检查）、`QUI_DEBUG_GESTURE=1`（记录 macOS 桥装了哪些手势选择器，含是否保留 GLFW 的 scrollWheel:）、`QUI_I18N_STRICT=1`（未解析的 key 渲染为 ⟦key⟧ 并各记录一次）、`QUI_GOLDEN=1`（写入 golden 截图）、`QUI_HTMLCSS_SNAPSHOT=1`（htmlcss 快照 PNG）。
+常用环境变量：`QUI_PLATFORM=cocoa|x11|web|headless|glfw`（窗口后端 —— 见下）、`QUI_SNAPSHOT=out.png`（渲染、等待界面稳定、写出帧后退出；`QUI_SNAPSHOT_SETTLE` / `QUI_SNAPSHOT_TIMEOUT` 可调）、`QUI_HEADLESS_SCALE=2`（headless 显示缩放）、`QUI_X11_SCALE`（覆盖由 Xft.dpi 推出的缩放）、`QUI_GPU_RASTER=1`（GPU 光栅后端）、`QUI_AGENT=1` / `QUI_AGENT_TCP=:port` / `QUI_AGENT_TOKEN` / `QUI_AGENT_SOCK` / `QUI_AGENT_DEVTOOLS=1`（agent 服务）、`QUI_DEBUG_LAYOUT=1`（flex 溢出日志）、`QUI_DEBUG_PAINT=1`（记录全量重绘提升 + 第一个移动的控件）、`QUI_DEBUG_DRAW=1`（Draw 期间修改控件树或触发重新布局时快速失败）、`QUI_DEBUG_LAYOUT_CACHE=1`（每次命中测量缓存都重新测量，并记录未对自身调用 `InvalidateLayout` 就改变了尺寸的控件）、`QUI_DEBUG_THREAD=1`（UI 线程归属快速失败检查）、`QUI_DEBUG_GESTURE=1`（记录 macOS 桥装了哪些手势选择器，含是否保留 GLFW 的 scrollWheel:）、`QUI_I18N_STRICT=1`（未解析的 key 渲染为 ⟦key⟧ 并各记录一次）、`QUI_GOLDEN=1`（写入 golden 截图）、`QUI_HTMLCSS_SNAPSHOT=1`（htmlcss 快照 PNG）。
 
 **窗口后端（`QUI_PLATFORM`）。** 操作系统窗口层位于平台接缝之后。每个后端都是 `internal/platform/` 下的一个叶子包，实现 `internal/platform/contract`（接缝的设计说明也在那里）；`platform_adapter.go` 把它包装给引擎使用。可以同时编译进多个后端，优先级最高的为默认，`QUI_PLATFORM` 在*运行时*选择其他后端：
 
@@ -176,7 +178,7 @@ go run ./cmd/qui-agent shot /tmp/ui.png
 
 ## AI 原生内省 + 可操作性
 
-每个 qui 应用都内置一套无障碍 + 可操作的界面：读出控件树（角色 / 名称 / 值 / 包围盒），并按选择器派发真实的点击 / 输入 / 滚动事件 —— 既可以在进程内调用，也可以通过 `agent.BindEnv(window)` 走 HTTP + SSE。`agent` 服务默认使用 UDS（可选 TCP + bearer），并在 `/llm.txt` 提供完整线缆规范。
+每个 qui 应用都内置一套无障碍 + 可操作的界面：读出界面（AX 树、DOM、计算样式、reactive 组件），并派发真实的点击 / 输入 / 滚动事件——既可以在进程内调用，也可以通过 `agent.BindEnv(window)` 走 CDP 形态的协议（Chrome DevTools Protocol：`Domain.method` 形式的 JSON-RPC，走 WebSocket 或 `POST /rpc`）。每个节点都有进程级、永不复用的 `nodeId`，在任何选择器里都能写成 `@N`；`Agent` 域为 LLM 提供紧凑的文本快照和自动等待的动作。服务默认走 UDS（可选 TCP + bearer），覆盖进程内所有窗口，在 `/llm.txt` 提供使用指南，在 `/json/protocol` 提供 schema。
 
 ```go
 import "github.com/qizhanchan/qui/agent"
@@ -186,13 +188,13 @@ if srv, err := agent.BindEnv(window); err == nil && srv != nil {
 }
 ```
 
-带 `QUI_AGENT=1` 运行，用 `cmd/qui-agent` 驱动（`tree`、`click`、`type`、`wait`、`shot` 等）。在任意 qui 应用中按 `Cmd/Ctrl+Shift+A` 可切换窗口内叠加层，显示每个控件的 ID / 角色 / 名称，无需改代码。
+带 `QUI_AGENT=1` 运行，用 `cmd/qui-agent` 驱动（`snapshot`、`click`、`fill`、`press`、`wait`、`shot`、`pick`、`call` 等），或用 `qui-agent mcp`。设置 `QUI_AGENT_DEVTOOLS=1`（再加 TCP + token）后，Chrome DevTools 可以连上来使用 Elements / Styles 面板和屏幕投屏。在任意 qui 应用中按 `Cmd/Ctrl+Shift+A` 可切换窗口内叠加层，显示每个控件的 ID / 角色 / 名称，无需改代码。
 
 ## 约定
 
 - **新代码放哪里：** 引擎改动 → 根包（仅当它影响引擎而非单个控件时）。新控件 → `widgets/`（文件以控件命名）。CSS 特性 → `htmlcss`（在共享 applier 中实现，让两条路径都受益；同时补一个引擎测试，视觉相关时再补快照测试）。
 - **面向用户的字符串：** 绝不在 `widgets/`、`htmlcss` 或引擎中硬编码。用 `qui.TOr(key, literal)`，这样没有目录的应用不受影响；给任何带文字的控件加一个在 Measure/Draw 时解析的 `TextKey` 式字段（见 `widgets/i18n.go`）。标题来自 key 的控件必须实现 `AccessibleNameKey()` —— 否则 `[key=]` 选择器会悄悄漏掉它。
-- **依赖 locale 的缓存：** 任何缓存测量 / 整形结果的代码，key 里都要带上 `LocaleGeneration()`，就像 `FontRegistryGeneration()` 那样。reactive 运行时 → `reactive`；DSL 界面 → `reactive/html`。AX 覆写 → 各子包的 `accessibility.go`。HTTP 端点 → `agent/`（原语本身放根包）。平台代码遵循 `_darwin.go`/`_other.go` 拆分 —— 绝不把 darwin 代码散落到带 tag 和通用的文件里。窗口相关代码放进 `internal/platform/` 下的后端 —— 绝不放进根包；引擎需要 OS 的新能力时，加到 `internal/platform/contract` 并在每个后端实现。
+- **依赖 locale 的缓存：** 任何缓存测量 / 整形结果的代码，key 里都要带上 `LocaleGeneration()`，就像 `FontRegistryGeneration()` 那样。reactive 运行时 → `reactive`；DSL 界面 → `reactive/html`。AX 覆写 → 各子包的 `accessibility.go`。协议域 → 根包的 `protocol*.go`，或所属子包的 `protocol.go`（htmlcss、reactive）；`agent/` 只做传输。平台代码遵循 `_darwin.go`/`_other.go` 拆分 —— 绝不把 darwin 代码散落到带 tag 和通用的文件里。窗口相关代码放进 `internal/platform/` 下的后端 —— 绝不放进根包；引擎需要 OS 的新能力时，加到 `internal/platform/contract` 并在每个后端实现。
 - `widgets/` 文件使用 `import . "github.com/qizhanchan/qui"`（点 import）—— 这是唯一被允许的位置，其他位置一律正常限定包名。点 import 不会绕过未导出字段：用访问器（`Bounds()`、`Style()`、`Enabled()`）。
 - Container 子类构造后必须调用 `SetSelf`。
 - 测试使用根包 `testhelpers.go` 的 fixture：`NewTestWindow`、`NewMouseEvent`/`NewKeyEvent`/`NewCharEvent`/`NewScrollEvent`、`RecordingCanvas`、`NewImageCanvas`、`DrainJobsForTest`。测试模式窗口内联执行动作（无需帧泵）。

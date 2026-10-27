@@ -3,14 +3,13 @@ package qui
 import (
 	"fmt"
 	"log"
-	"os"
 	"reflect"
 	"strings"
 )
 
 // flexDebugLayoutEnabled gates the optional FlexLayout overflow log.
 // Read once at package init to keep the hot path branch cheap.
-var flexDebugLayoutEnabled = os.Getenv("QUI_DEBUG_LAYOUT") == "1"
+var flexDebugLayoutEnabled = envFlag("QUI_DEBUG_LAYOUT")
 
 // logFlexOverflow prints the items, their basis, and a hint when a
 // FlexLayout.Apply overflows the main axis. Called from layout.go

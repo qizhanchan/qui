@@ -2,14 +2,13 @@ package qui
 
 import (
 	"fmt"
-	"os"
 )
 
 // UI-thread checks are diagnostics, not synchronization. Production windows
 // are driven by the process main OS thread; retaining that native thread
 // identity lets qui fail at the first unsupported access instead of surfacing
 // later as a race, stale tree pointer, or renderer corruption.
-var uiThreadChecksByDefault = os.Getenv("QUI_DEBUG_THREAD") == "1"
+var uiThreadChecksByDefault = envFlag("QUI_DEBUG_THREAD")
 var processUIThreadID = currentUIThreadID()
 
 type uiThreadOwnership struct {
@@ -39,7 +38,7 @@ func (v UIThreadViolation) Error() string {
 }
 
 func (w *Window) initUIThreadOwnership() {
-	if w == nil || !uiThreadChecksByDefault {
+	if w == nil || !uiThreadChecksByDefault.Load() {
 		return
 	}
 	w.uiThread.owner = currentUIThreadID()
@@ -124,7 +123,7 @@ func (w *Window) assertUIThread(operation string) {
 }
 
 func assertProcessUIThread(operation string) {
-	if !uiThreadChecksByDefault {
+	if !uiThreadChecksByDefault.Load() {
 		return
 	}
 	current := currentUIThreadID()

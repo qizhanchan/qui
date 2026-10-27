@@ -31,14 +31,16 @@ import (
 type EventRecord struct {
 	Timestamp time.Time `json:"-"`
 	Kind      string    `json:"kind"`
-	TargetID  string    `json:"targetId,omitempty"`
-	Target    string    `json:"target,omitempty"` // path
-	X         float32   `json:"x,omitempty"`
-	Y         float32   `json:"y,omitempty"`
-	DX        float32   `json:"dx,omitempty"`
-	DY        float32   `json:"dy,omitempty"`
-	Key       string    `json:"key,omitempty"`
-	Rune      rune      `json:"rune,omitempty"`
+	// NodeID is the target widget's identity (see nodeid.go).
+	NodeID   NodeID  `json:"nodeId,omitempty"`
+	TargetID string  `json:"targetId,omitempty"`
+	Target   string  `json:"target,omitempty"` // path
+	X        float32 `json:"x,omitempty"`
+	Y        float32 `json:"y,omitempty"`
+	DX       float32 `json:"dx,omitempty"`
+	DY       float32 `json:"dy,omitempty"`
+	Key      string  `json:"key,omitempty"`
+	Rune     rune    `json:"rune,omitempty"`
 	// Scale / Rotation carry a gesture record's cumulative magnification
 	// and rotation (degrees). Zero for non-gesture records.
 	Scale     float32    `json:"scale,omitempty"`
@@ -134,9 +136,9 @@ func (w *Window) publishEventRecord(ev Event, target Widget) {
 // RecordInputChange publishes a semantic "Input" record: a text-editing
 // widget's value changed to newVal (oldVal may be "" on the incremental
 // typing path where the previous value isn't cheaply available). Widgets
-// call this alongside firing OnChange so the agent's /console and /events
-// show the input lifecycle, not just raw keystrokes. Cheap when no
-// listener is registered.
+// call this alongside firing OnChange so the protocol's
+// Agent.valueChanged events show the input lifecycle, not just raw
+// keystrokes. Cheap when no listener is registered.
 func (w *Window) RecordInputChange(target Widget, oldVal, newVal, source string) {
 	if w != nil {
 		w.assertUIThread("Window.RecordInputChange")
@@ -168,6 +170,7 @@ func (w *Window) publishSemantic(target Widget, kind, oldVal, newVal, source str
 	if target != nil {
 		rec.Target = widgetPath(target)
 		rec.TargetID = WidgetID(target)
+		rec.NodeID = WidgetNodeID(target)
 	}
 	for _, e := range listeners {
 		safeCallListener(e.fn, rec)
@@ -188,6 +191,7 @@ func buildEventRecord(ev Event, target Widget) EventRecord {
 	if target != nil {
 		rec.Target = widgetPath(target)
 		rec.TargetID = WidgetID(target)
+		rec.NodeID = WidgetNodeID(target)
 	}
 	switch e := ev.(type) {
 	case MouseEvent:

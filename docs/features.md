@@ -130,9 +130,10 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 
 ## `agent` + `cmd/qui-agent`
 
-- HTTP + SSE server over the engine's introspection primitives; Unix socket by default, TCP + bearer token opt-in.
-- Endpoints: `GET /tree`, `/screenshot`, `/diagnostics`, `/health`, `/wait`, `/console`, `/events` (SSE), `POST /act`, plus `/llm.txt` and the DOM/reactive surfaces (`/dom`, `/dom/styles`, `/dom/act`, `/reactive`).
-- `agent.BindEnv(window)` env-gated binding; `cmd/qui-agent` CLI (`tree`, `click`, `rightclick`, `type`, `wait`, `pinch`, `shot`, `raw`).
+- A CDP-shaped inspection protocol: `Domain.method` JSON-RPC over WebSocket (`/devtools/browser/…`, `/devtools/page/<target>`) and one-shot `POST /rpc`; Unix socket by default, TCP + bearer token opt-in. Discovery at `/json/version`, `/json/list`, `/json/protocol`; a discovery file per app under `$TMPDIR/qui-agent/`.
+- Domains: `Agent` (text snapshot with `@ref`s, auto-waiting actions that report focus / overlay / tree changes, waits), `DOM`, `CSS`, `Accessibility`, `Input`, `Page` (screenshots, screencast), `Overlay` (highlight, inspect picker), `Log`, `Runtime` (panics), `Emulation`, `Animation`, `Debug` (diagnostics, live `QUI_DEBUG_*` flags), `Reactive`, `Target`. Domains register into root's registry (`protocol*.go`); the schema is reflected from Go types.
+- Process-wide `NodeID`s shared by the AX tree, DOM and reactive tree; `@N` works in every selector, and a vanished node reports `stale_node`. One selector string covers the widget grammar and CSS.
+- `agent.BindEnv(window)` serves every window of the process; `agent/client` is a stdlib-only Go client; `cmd/qui-agent` is a CLI (`snapshot`, `click`, `fill`, `press`, `select`, `wait`, `shot`, `html`, `styles`, `pick`, `events`, `flags`, `call`, …) and an MCP server (`qui-agent mcp`). Chrome DevTools can attach with `QUI_AGENT_DEVTOOLS=1`.
 
 ## Auxiliary packages
 
@@ -150,6 +151,6 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 
 ## Tooling
 
-- `cmd/qui-agent` — agent CLI client.
+- `cmd/qui-agent` — protocol CLI client and MCP server.
 - `cmd/qui-i18n` — catalog extraction, linting and pseudo-locale generation.
 - `examples/` — runnable demos, including the canonical `reactive-html`, the htmlcss showcase (`html-css`), i18n, chrome-tabs, overlay-panel, graphs, svg, media, frameview, scene3d and more.

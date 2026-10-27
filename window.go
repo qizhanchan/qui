@@ -4,7 +4,6 @@ import (
 	"errors"
 	"image"
 	"log"
-	"os"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -17,7 +16,7 @@ import (
 // frame's repaint is promoted from scoped dirty rects to a full-window
 // repaint because the layout pass moved a widget, naming the first mover.
 // Use it to find what keeps a supposedly-idle window repainting.
-var paintDebugEnabled = os.Getenv("QUI_DEBUG_PAINT") == "1"
+var paintDebugEnabled = envFlag("QUI_DEBUG_PAINT")
 
 // CursorShape is a semantic cursor style.
 type CursorShape = contract.CursorShape
@@ -53,6 +52,29 @@ const (
 // lives behind the platform seam (see platform.go), so nothing here knows
 // which windowing backend is in use.
 type Window struct {
+	// docNodeID / targetSeq are lazily allocated identities for the agent
+	// protocol: the DOM #document node and the window's target ID. See
+	// nodeid.go.
+	docNodeID uint64
+	targetSeq uint64
+	// Protocol state (see protocol_events.go): the painted-frame counter,
+	// the AX hash DOM.documentUpdated diffs against, the Overlay highlight
+	// and whether inspect mode owns the pointer. UI goroutine only.
+	frameSeq     uint64
+	lastDOMHash  string
+	highlight    *overlayHighlight
+	inspectMode  bool
+	inspectEatUp bool
+	// anim is the animators' clock (Animation domain); metricsBefore the
+	// size to restore after Emulation.setDeviceMetricsOverride.
+	anim          animClock
+	metricsBefore *Size
+	// title is the last title set (NewWindow / SetTitle), read by the agent
+	// protocol's target list. Guarded by titleMu: the list is read off the
+	// UI goroutine.
+	titleMu sync.Mutex
+	title   string
+
 	// uiThread is an opt-in diagnostic owner check. It deliberately does not
 	// synchronize UI state; PostJob remains the only cross-goroutine mutation
 	// primitive. See ui_thread.go.
@@ -428,6 +450,7 @@ func newWindowFromConfig(plat platformApp, cfg platformWindowConfig) (*Window, e
 
 	width, height := cfg.Width, cfg.Height
 	w := &Window{
+		title:          cfg.Title,
 		plat:           pw,
 		platformBacked: true,
 		renderer:       defaultRenderer(pw),
@@ -483,6 +506,7 @@ func newWindowFromConfig(plat platformApp, cfg platformWindowConfig) (*Window, e
 	// Install the platform-specific IME backend.
 	w.installIMEBackend()
 
+	registerLiveWindow(w)
 	return w, nil
 }
 
@@ -523,6 +547,7 @@ func (w *Window) resizeTo(size Size) {
 		return
 	}
 	w.lastSize = size
+	w.noteResizeProtocol(size)
 	w.Invalidate()
 	w.InvalidateLayout()
 	// Defer the overlay notification until AFTER this frame's layout pass:
@@ -627,7 +652,7 @@ func (w *Window) noteBoundsChange(oldPaint, newPaint Rect) {
 			w.InvalidateRect(newPaint)
 			return
 		}
-		if paintDebugEnabled && !w.boundsChanged {
+		if paintDebugEnabled.Load() && !w.boundsChanged {
 			log.Printf("qui: paint promoted to full repaint; first moved widget: %+v -> %+v", oldPaint, newPaint)
 		}
 		w.boundsChanged = true
@@ -875,6 +900,9 @@ func (w *Window) SetTitle(title string) {
 		return
 	}
 	w.assertUIThread("Window.SetTitle")
+	w.titleMu.Lock()
+	w.title = title
+	w.titleMu.Unlock()
 	if w.plat == nil {
 		return
 	}
@@ -1664,6 +1692,7 @@ func (w *Window) Destroy() {
 		return
 	}
 	w.assertUIThread("Window.Destroy")
+	defer unregisterLiveWindow(w)
 	// Run any OnClose handlers first — even if the user calls Destroy
 	// manually (rather than going through the ShouldClose path), they
 	// should still get a chance to clean up subsystem resources before
@@ -1723,6 +1752,7 @@ func (w *Window) Step() {
 	if w.plat == nil || w.inStep {
 		return
 	}
+	defer w.reportPanic("frame")
 	w.inStep = true
 	defer func() {
 		// Whatever path the frame took — painted, nothing to paint, ended
@@ -1767,7 +1797,7 @@ func (w *Window) Step() {
 	// Close a grace-pending tooltip before the overlay tick loop so
 	// removing it doesn't mutate the slice ranged below.
 	w.tickTooltip(now)
-	w.tickAnimators(now)
+	w.tickAnimators(w.anim.now(now))
 	if w.root != nil {
 		w.dirtyRegion = w.dirtyRegion.Union(tickWidget(w.root, now))
 	}
@@ -1910,11 +1940,13 @@ func (w *Window) Step() {
 		if w.debugOverlayEnabled {
 			w.drawDebugOverlay(drawCanvas)
 		}
+		w.drawHighlight(drawCanvas)
 		w.inPaint = false
 		drawCanvas.RestoreTo(dprID)
 	}
 	w.renderer.End()
 	w.present()
+	w.afterPaintProtocol(clip, fullRepaintClip(clip, viewport))
 	w.dirtyRegion = Rect{}
 	w.framePainted = true
 }
@@ -1989,6 +2021,10 @@ func (w *Window) dispatch(event Event) {
 	}
 	w.assertUIThread("Window.dispatch")
 	if w.root == nil {
+		return
+	}
+	defer w.reportPanic("dispatch")
+	if w.handleInspectEvent(event) {
 		return
 	}
 	if me, ok := event.(MouseEvent); ok && me.Clicks == 0 &&
@@ -2558,7 +2594,7 @@ func (w *Window) layoutPass() {
 			w.root.Layout(Rect{X: 0, Y: 0, W: w.lastSize.W, H: w.lastSize.H})
 			w.root.ClearLayoutDirty()
 			w.inLayoutPass = false
-			if widgetDebugEnabled {
+			if widgetDebugEnabled.Load() {
 				debugCheckTree(w.root)
 			}
 			if w.boundsChanged {

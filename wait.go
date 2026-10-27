@@ -173,7 +173,8 @@ func (w *Window) WaitOverlay(layerPattern string, appear bool, timeout time.Dura
 //
 // "appear" is satisfied when Find(selector) returns a non-nil widget
 // whose Bounds are non-empty (i.e. it is laid out and visible).
-// "!appear" is satisfied when Find(selector) returns nil. A malformed
+// "!appear" is satisfied when Find(selector) returns nil. CSS selectors
+// work too, through the registered SelectorEngine. A malformed
 // selector is reported immediately (wrapped ErrInvalidSelector).
 //
 // Returns ErrWaitTimeout if the deadline passes before the condition
@@ -183,13 +184,16 @@ func (w *Window) WaitFor(selector string, appear bool, timeout time.Duration) er
 		return errors.New("qui: nil window")
 	}
 	// Surface selector-parse errors up front rather than silently
-	// never matching.
-	compiled, err := parseSelector(selector)
-	if err != nil {
+	// never matching. A CSS selector (see FindNodes) is checked by its
+	// first resolution.
+	if _, err := w.FindNodesSynced(selector); err != nil {
 		return err
 	}
 	return w.waitUntil(timeout, func() bool {
-		nodes := compiled.matchNodes(w.AccessibilityTreeSynced())
+		nodes, err := w.FindNodesSynced(selector)
+		if err != nil {
+			return false
+		}
 		if appear {
 			for _, node := range nodes {
 				if node.Visible {

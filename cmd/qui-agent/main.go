@@ -1,1119 +1,644 @@
-// Command qui-agent is a small CLI client for the qui "agent" debugging
-// surface. It replaces ad-hoc `curl --unix-socket ... | python3` invocations
-// with a friendlier set of subcommands.
+// Command qui-agent drives a running qui app over its inspection protocol
+// (the agent server, started with QUI_AGENT=1).
 //
-// A running qui app started with QUI_AGENT=1 listens on a Unix domain socket
-// at $TMPDIR/qui-agent-<pid>.sock (and possibly /tmp/qui-agent-<pid>.sock).
-// This tool discovers that socket, speaks HTTP over it, and exposes the agent
-// endpoints (tree, act, wait, screenshot, health, diagnostics, raw) as
-// subcommands.
+// It finds the app through the discovery directory (pick one by name with
+// -app when several run), and turns subcommands into protocol calls:
 //
-// Usage:
+//	qui-agent snapshot                    the UI as text, one @ref per node
+//	qui-agent click @14                   act on a ref, or on any selector
+//	qui-agent fill 'input.search' hello
+//	qui-agent shot /tmp/ui.png -annotate
+//	qui-agent call DOM.getDocument '{"depth":-1}'
+//	qui-agent mcp                         serve the protocol to an MCP client
 //
-//	qui-agent [-sock PATH] <command> [args...]
-//
-// Pure stdlib only.
+// It imports only the standard library and the stdlib-only agent/client
+// package, so it builds anywhere and does not link the GUI engine.
 package main
 
 import (
-	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
-	"io"
-	"net"
-	"net/http"
 	"os"
-	"path/filepath"
-	"sort"
+	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/qizhanchan/qui/agent/client"
 )
 
-const baseURL = "http://qui"
+const usageText = `qui-agent — drive a running qui app (start it with QUI_AGENT=1)
+
+usage: qui-agent [-app NAME | -sock PATH | -tcp HOST:PORT] [-target ID] <command> [args]
+
+finding the app
+  -app NAME        the app's discovery name (default: the only running app)
+  -sock PATH       a Unix socket (also QUI_AGENT_SOCK)
+  -tcp HOST:PORT   a TCP listener; token from -token or QUI_AGENT_TOKEN
+  -target ID       the window (from 'targets') when the app has several
+
+observe
+  apps                          running apps
+  targets                       the app's windows
+  snapshot [ROOT] [-all] [-depth N] [-json]
+                                the UI as text, one [ref=@N] per node
+  html [TARGET]                 the live tree serialized as HTML
+  styles TARGET                 matched rules, computed values, box model
+  reactive                      the reactive component tree
+  shot FILE [-scale S] [-annotate] [-clip x,y,w,h]
+  events [-domains Log,Runtime] [-since SEQ] [-follow]
+  diagnostics                   layout warnings
+
+act (TARGET = @ref from snapshot, or a selector: CSS, [role=…][name=…], #id)
+  click TARGET [-right] [-double] [-mods cmd,shift]   |  click -at X,Y
+  hover TARGET | hover -at X,Y
+  focus TARGET    blur
+  fill TARGET VALUE             set a text field / pick a <select> option
+  type TARGET TEXT              key by key (IME, key handlers)
+  press [TARGET] KEY            Enter, Escape, Cmd+Shift+Z…
+  select TARGET LABEL [-value]  pick a choice-widget option
+  scroll TARGET DX DY           wheel notches; positive DY scrolls down
+  drag FROM TO | drag -at X,Y -to X2,Y2
+  pinch TARGET SCALE
+
+wait
+  wait SELECTOR [-state visible|hidden|attached|detached] [-timeout MS]
+  wait-idle [-timeout MS]   wait-stable [-timeout MS]   wait-overlay [PATTERN] [-gone]
+
+inspect
+  pick                          the user clicks a node in the window; prints it
+  highlight TARGET   unhighlight
+  flags [name=true|false ...]   engine debug switches (paint, layout, …)
+
+protocol
+  call METHOD [JSON]            any protocol method, e.g. call DOM.getDocument '{"depth":-1}'
+  schema                        the full method schema (JSON)
+  llm                           the guide + method reference for agents
+  mcp                           serve the protocol as an MCP server on stdio
+
+Every action auto-waits up to 1s for its target and prints what changed.
+`
+
+type globals struct {
+	app, sock, tcp, token, target string
+}
 
 func main() {
-	args := os.Args[1:]
+	g, rest := parseGlobals(os.Args[1:])
+	if len(rest) == 0 || rest[0] == "help" || rest[0] == "-h" || rest[0] == "--help" {
+		fmt.Print(usageText)
+		if len(rest) == 0 {
+			os.Exit(2)
+		}
+		return
+	}
+	cmd, args := rest[0], rest[1:]
+	if cmd == "apps" {
+		printJSON(client.RunningApps())
+		return
+	}
+	ep, err := client.FindEndpoint(g.sock, g.tcp, g.token, g.app)
+	if err != nil {
+		fail(err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	r := &runner{c: client.NewClient(ep), ctx: ctx, target: g.target}
+	if cmd == "mcp" {
+		if err := serveMCP(ctx, r, os.Stdin, os.Stdout); err != nil {
+			fail(err)
+		}
+		return
+	}
+	if err := r.run(cmd, args); err != nil {
+		fail(err)
+	}
+}
 
-	// Manual flag parsing so subcommand-specific flags (e.g. --gone) stay free.
-	sockOverride := os.Getenv("QUI_AGENT_SOCK")
-	var rest []string
+func parseGlobals(args []string) (globals, []string) {
+	var g globals
 	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "-sock" || a == "--sock":
+		a := strings.TrimPrefix(args[i], "-")
+		name, val, hasVal := strings.Cut(strings.TrimPrefix(a, "-"), "=")
+		ptr := map[string]*string{"app": &g.app, "sock": &g.sock, "tcp": &g.tcp, "token": &g.token, "target": &g.target}[name]
+		if !strings.HasPrefix(args[i], "-") || ptr == nil {
+			return g, args[i:]
+		}
+		if !hasVal {
 			if i+1 >= len(args) {
-				fatalf("flag %s requires a value", a)
+				fail(fmt.Errorf("flag -%s needs a value", name))
 			}
-			sockOverride = args[i+1]
 			i++
-		case strings.HasPrefix(a, "-sock="):
-			sockOverride = strings.TrimPrefix(a, "-sock=")
-		case strings.HasPrefix(a, "--sock="):
-			sockOverride = strings.TrimPrefix(a, "--sock=")
-		default:
-			rest = append(rest, a)
+			val = args[i]
 		}
+		*ptr = val
 	}
-
-	if len(rest) == 0 {
-		usage()
-		os.Exit(2)
-	}
-
-	cmd := rest[0]
-	cmdArgs := rest[1:]
-
-	// Subcommands that never need a socket.
-	switch cmd {
-	case "help", "-h", "--help":
-		usage()
-		return
-	}
-
-	sock, err := resolveSocket(sockOverride)
-	if err != nil {
-		errf("%v", err)
-		os.Exit(1)
-	}
-	errf("using socket: %s", sock)
-	client := newClient(sock)
-
-	if err := dispatch(client, cmd, cmdArgs); err != nil {
-		errf("%v", err)
-		os.Exit(1)
-	}
+	return g, nil
 }
 
-func dispatch(c *http.Client, cmd string, args []string) error {
-	switch cmd {
-	case "tree":
-		return cmdTree(c, args)
-	case "click", "rightclick", "doubleclick", "hover", "focus":
-		return cmdAction(c, cmd, args)
-	case "pinch":
-		return cmdPinch(c, args)
-	case "type":
-		return cmdType(c, args)
-	case "wait":
-		return cmdWait(c, args)
-	case "shot":
-		return cmdShot(c, args)
-	case "health":
-		return cmdGetPretty(c, "/health")
-	case "diagnostics":
-		return cmdGetPretty(c, "/diagnostics")
-	case "raw":
-		return cmdRaw(c, args)
-	case "dom":
-		return cmdDOM(c, args)
-	case "reactive":
-		return cmdReactive(c, args)
-	default:
-		usage()
-		return fmt.Errorf("unknown command: %s", cmd)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Socket discovery
-// ---------------------------------------------------------------------------
-
-func resolveSocket(override string) (string, error) {
-	if override != "" {
-		if _, err := os.Stat(override); err != nil {
-			return "", fmt.Errorf("socket %q: %w", override, err)
+func fail(err error) {
+	var re *client.RemoteError
+	if errors.As(err, &re) {
+		fmt.Fprintf(os.Stderr, "qui-agent: %s\n", re.Error())
+		if hint, _ := re.Data["hint"].(string); hint != "" {
+			fmt.Fprintf(os.Stderr, "  hint: %s\n", hint)
 		}
-		return override, nil
+	} else {
+		fmt.Fprintf(os.Stderr, "qui-agent: %v\n", err)
 	}
-
-	seen := map[string]bool{}
-	var candidates []string
-	for _, dir := range []string{os.TempDir(), "/tmp"} {
-		matches, _ := filepath.Glob(filepath.Join(dir, "qui-agent-*.sock"))
-		for _, m := range matches {
-			if !seen[m] {
-				seen[m] = true
-				candidates = append(candidates, m)
-			}
-		}
-	}
-
-	type live struct {
-		path string
-		mod  time.Time
-	}
-	var alive []live
-	for _, path := range candidates {
-		pid, ok := pidFromSock(path)
-		if !ok || !processAlive(pid) {
-			continue
-		}
-		info, err := os.Lstat(path)
-		if err != nil || !ownSocket(info) {
-			continue
-		}
-		alive = append(alive, live{path: path, mod: info.ModTime()})
-	}
-
-	if len(alive) == 0 {
-		return "", fmt.Errorf("no live qui-agent socket found.\n"+
-			"  Looked in: %s and /tmp for qui-agent-*.sock\n"+
-			"  Start an app with QUI_AGENT=1 (e.g. QUI_AGENT=1 ./app), or pass -sock PATH / set QUI_AGENT_SOCK.",
-			os.TempDir())
-	}
-
-	// Most recently modified live socket wins.
-	sort.Slice(alive, func(i, j int) bool {
-		return alive[i].mod.After(alive[j].mod)
-	})
-	return alive[0].path, nil
+	os.Exit(1)
 }
 
-// pidFromSock extracts the <pid> from a "qui-agent-<pid>.sock" filename.
-func pidFromSock(path string) (int, bool) {
-	base := filepath.Base(path)
-	base = strings.TrimSuffix(base, ".sock")
-	base = strings.TrimPrefix(base, "qui-agent-")
-	pid, err := strconv.Atoi(base)
-	if err != nil {
-		return 0, false
-	}
-	return pid, true
-}
-
-// processAlive reports whether pid refers to a running process we may
-// signal. Signal 0 is a no-op probe. EPERM means another user's process —
-// never a socket we should talk to, so it counts as not ours.
-func processAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	return syscall.Kill(pid, 0) == nil
-}
-
-// ownSocket reports whether info is a Unix socket owned by the current
-// user. /tmp is world-writable: without this check another user could
-// plant qui-agent-<pid>.sock and receive the next `type '#password' …`.
-func ownSocket(info os.FileInfo) bool {
-	if info.Mode()&os.ModeSocket == 0 {
-		return false
-	}
-	st, ok := info.Sys().(*syscall.Stat_t)
-	return ok && int(st.Uid) == os.Getuid()
-}
-
-// ---------------------------------------------------------------------------
-// HTTP over unix socket
-// ---------------------------------------------------------------------------
-
-func newClient(sock string) *http.Client {
-	dialer := &net.Dialer{}
-	return &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return dialer.DialContext(ctx, "unix", sock)
-			},
-		},
-	}
-}
-
-func httpGet(c *http.Client, path string) ([]byte, error) {
-	resp, err := c.Get(baseURL + path)
-	if err != nil {
-		return nil, fmt.Errorf("GET %s: %w", path, err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading GET %s: %w", path, err)
-	}
-	if resp.StatusCode >= 400 {
-		return body, fmt.Errorf("GET %s: HTTP %d: %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	return body, nil
-}
-
-func httpDo(c *http.Client, method, path string, body []byte) ([]byte, int, error) {
-	var rdr io.Reader
-	if body != nil {
-		rdr = bytes.NewReader(body)
-	}
-	req, err := http.NewRequest(method, baseURL+path, rdr)
-	if err != nil {
-		return nil, 0, err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := c.Do(req)
-	if err != nil {
-		return nil, 0, fmt.Errorf("%s %s: %w", method, path, err)
-	}
-	defer resp.Body.Close()
-	out, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, resp.StatusCode, fmt.Errorf("reading %s %s: %w", method, path, err)
-	}
-	return out, resp.StatusCode, nil
-}
-
-// ---------------------------------------------------------------------------
-// tree
-// ---------------------------------------------------------------------------
-
-type node struct {
-	Path     string  `json:"path"`
-	ID       string  `json:"id"`
-	Role     string  `json:"role"`
-	Name     string  `json:"name"`
-	Value    string  `json:"value"`
-	State    string  `json:"state"`
-	Shortcut string  `json:"shortcut"`
-	HasPopup bool    `json:"hasPopup"`
-	Bounds   bounds  `json:"bounds"`
-	Visible  bool    `json:"visible"`
-	Layer    string  `json:"layer"`
-	Children []*node `json:"children"`
-}
-
-type bounds struct {
-	X float64 `json:"x"`
-	Y float64 `json:"y"`
-	W float64 `json:"w"`
-	H float64 `json:"h"`
-}
-
-func cmdTree(c *http.Client, args []string) error {
-	path := "/tree"
-	if len(args) > 0 && args[0] != "" {
-		path += "?selector=" + queryEscape(args[0])
-	}
-	body, status, err := httpDo(c, "GET", path, nil)
-	if err != nil {
-		return err
-	}
-	if status == http.StatusBadRequest && bytes.Contains(body, []byte("invalid selector")) {
-		// Not widget grammar (tag, .class, combinators): show the DOM
-		// matches instead, the surface CSS selectors belong to.
-		errf("%q is not a widget selector; showing DOM matches (qui-agent dom query)", args[0])
-		return cmdDOMTree(c, args[:1])
-	}
-	if status >= 400 {
-		return fmt.Errorf("GET %s: HTTP %d: %s", path, status, strings.TrimSpace(string(body)))
-	}
-
-	trimmed := bytes.TrimSpace(body)
-	if len(trimmed) > 0 && trimmed[0] == '[' {
-		// Selector form: JSON array of matched subtrees.
-		var nodes []*node
-		if err := json.Unmarshal(trimmed, &nodes); err != nil {
-			return fmt.Errorf("decode tree array: %w", err)
-		}
-		if len(nodes) == 0 {
-			fmt.Println("(no matches)")
-			return nil
-		}
-		for _, n := range nodes {
-			printNode(n, 0)
-		}
-		return nil
-	}
-
-	// Object form: {root, overlays}.
-	var doc struct {
-		Root     *node   `json:"root"`
-		Overlays []*node `json:"overlays"`
-	}
-	if err := json.Unmarshal(trimmed, &doc); err != nil {
-		return fmt.Errorf("decode tree: %w", err)
-	}
-	if doc.Root != nil {
-		printNode(doc.Root, 0)
-	}
-	if len(doc.Overlays) > 0 {
-		fmt.Println("overlays:")
-		for _, o := range doc.Overlays {
-			printNode(o, 1)
-		}
-	}
-	return nil
-}
-
-func printNode(n *node, depth int) {
-	if n == nil {
-		return
-	}
-	indent := strings.Repeat("  ", depth)
-	line := fmt.Sprintf("%s%s", indent, n.Role)
-	if n.Name != "" {
-		line += fmt.Sprintf(" %q", n.Name)
-	}
-	if n.ID != "" {
-		line += fmt.Sprintf(" #%s", n.ID)
-	}
-	line += fmt.Sprintf(" (%g,%g,%g,%g)", n.Bounds.X, n.Bounds.Y, n.Bounds.W, n.Bounds.H)
-	if n.Value != "" {
-		line += fmt.Sprintf(" =%q", n.Value)
-	}
-	if n.Shortcut != "" {
-		line += " " + n.Shortcut
-	}
-	if n.HasPopup {
-		line += " >"
-	}
-	if n.State != "" {
-		line += " [" + n.State + "]"
-	}
-	// State already carries a "hidden" bit for zero-bounds widgets; only add
-	// the standalone marker when it doesn't, so nothing prints twice.
-	if !n.Visible && !strings.Contains(n.State, "hidden") {
-		line += " [hidden]"
-	}
-	fmt.Println(line)
-	for _, ch := range n.Children {
-		printNode(ch, depth+1)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// actions (click / rightclick / doubleclick / hover / focus / type)
-// ---------------------------------------------------------------------------
-
-func cmdAction(c *http.Client, action string, args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("%s requires a <selector>", action)
-	}
-	payload := map[string]any{
-		"action": action,
-		"target": args[0],
-	}
-	return postAct(c, payload)
-}
-
-// cmdPinch drives a two-finger magnify gesture on the target. scale is
-// the cumulative magnification to end at, so `pinch #doc 1.5` zooms the
-// document to 150% of where it was.
-func cmdPinch(c *http.Client, args []string) error {
-	if len(args) < 2 {
-		return fmt.Errorf("pinch requires <selector> <scale>  (e.g. pinch '#doc' 1.5)")
-	}
-	scale, err := strconv.ParseFloat(args[1], 32)
-	if err != nil {
-		return fmt.Errorf("pinch scale %q: %w", args[1], err)
-	}
-	if scale <= 0 {
-		return fmt.Errorf("pinch scale must be > 0, got %v", scale)
-	}
-	return postAct(c, map[string]any{
-		"action": "pinch",
-		"target": args[0],
-		"scale":  scale,
-	})
-}
-
-func cmdType(c *http.Client, args []string) error {
-	if len(args) < 2 {
-		return fmt.Errorf("type requires <selector> <text...>")
-	}
-	payload := map[string]any{
-		"action": "type",
-		"target": args[0],
-		"text":   strings.Join(args[1:], " "),
-	}
-	return postAct(c, payload)
-}
-
-func postAct(c *http.Client, payload map[string]any) error {
-	return postActTo(c, "/act", payload)
-}
-
-func postActTo(c *http.Client, path string, payload map[string]any) error {
-	body, _ := json.Marshal(payload)
-	out, status, err := httpDo(c, "POST", path, body)
-	if err != nil {
-		return err
-	}
-
-	var resp map[string]any
-	if jerr := json.Unmarshal(bytes.TrimSpace(out), &resp); jerr != nil {
-		// Not JSON — surface raw.
-		if status >= 400 {
-			return fmt.Errorf("HTTP %d: %s", status, strings.TrimSpace(string(out)))
-		}
-		fmt.Println(strings.TrimSpace(string(out)))
-		return nil
-	}
-
-	ok, _ := resp["ok"].(bool)
-	if !ok || status >= 400 {
-		if msg, has := resp["error"]; has {
-			if we, has := resp["widgetSelectorError"]; has {
-				msg = fmt.Sprintf("%v (tried as a CSS selector after the widget grammar rejected it: %v)", msg, we)
-			}
-			if hint, has := resp["hint"]; has {
-				msg = fmt.Sprintf("%v\nhint: %v", msg, hint)
-			}
-			return fmt.Errorf("action failed: %v", msg)
-		}
-		return fmt.Errorf("action failed (HTTP %d): %s", status, compact(resp))
-	}
-
-	parts := []string{"ok"}
-	if v, has := resp["via"]; has {
-		parts = append(parts, fmt.Sprintf("via=%v", v))
-	}
-	if v, has := resp["overlayCount"]; has {
-		parts = append(parts, fmt.Sprintf("overlayCount=%v", numStr(v)))
-	}
-	if v, has := resp["focusChange"]; has && v != nil && v != "" {
-		parts = append(parts, fmt.Sprintf("focusChange=%v", v))
-	}
-	if v, has := resp["target"]; has && v != nil && v != "" {
-		parts = append(parts, fmt.Sprintf("target=%v", v))
-	}
-	if m, has := resp["matched"].(map[string]any); has {
-		if sel, ok := m["selector"]; ok {
-			parts = append(parts, fmt.Sprintf("matched=%v", sel))
-		}
-	}
-	fmt.Println(strings.Join(parts, " "))
-	return nil
-}
-
-// ---------------------------------------------------------------------------
-// wait
-// ---------------------------------------------------------------------------
-
-func cmdWait(c *http.Client, args []string) error { return waitFor(c, "selector", args) }
-
-// waitFor polls GET /wait. kind "selector" takes a widget selector (and
-// the server retries a CSS one against the DOM); "dom" a CSS selector.
-func waitFor(c *http.Client, kind string, args []string) error {
-	var selector string
-	state := "appears"
-	timeoutMs := 5000
-
-	for _, a := range args {
-		switch {
-		case a == "--gone":
-			state = "gone"
-		case strings.HasPrefix(a, "--timeout="):
-			v := strings.TrimPrefix(a, "--timeout=")
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return fmt.Errorf("bad --timeout value %q", v)
-			}
-			timeoutMs = n
-		case strings.HasPrefix(a, "-"):
-			return fmt.Errorf("unknown wait flag %q", a)
-		default:
-			if selector == "" {
-				selector = a
-			}
-		}
-	}
-	if selector == "" {
-		return fmt.Errorf("wait requires a <selector>")
-	}
-
-	path := fmt.Sprintf("/wait?for=%s&selector=%s&state=%s&timeoutMs=%d",
-		kind, queryEscape(selector), state, timeoutMs)
-
-	// The server holds the request for up to timeoutMs; the client must
-	// outlast it or a long --timeout always fails client-side.
-	wc := *c
-	if d := time.Duration(timeoutMs)*time.Millisecond + 10*time.Second; d > wc.Timeout {
-		wc.Timeout = d
-	}
-	out, status, err := httpDo(&wc, "GET", path, nil)
-	if err != nil {
-		return err
-	}
-
-	var resp map[string]any
-	_ = json.Unmarshal(bytes.TrimSpace(out), &resp)
-
-	ok := status < 400
-	if v, has := resp["ok"].(bool); has {
-		ok = ok && v
-	}
-	timedOut := false
-	if v, has := resp["timedOut"].(bool); has {
-		timedOut = v
-	}
-
-	via := ""
-	if v, has := resp["via"].(string); has && v != "" {
-		via = " (via " + v + ")"
-	}
-	code, _ := resp["errorCode"].(string)
-	if !ok && code != "" && code != "timeout" {
-		// A selector that doesn't parse would otherwise read as a timeout.
-		msg, _ := resp["error"].(string)
-		if msg == "" {
-			msg = strings.TrimSpace(string(out))
-		}
-		return fmt.Errorf("wait failed: %s", msg)
-	}
-	if !ok || timedOut {
-		fmt.Printf("timeout: %q did not become %s within %dms%s\n", selector, state, timeoutMs, via)
-		if we, has := resp["widgetSelectorError"].(string); has {
-			fmt.Printf("  (not a widget selector: %s; it was tried as CSS against the DOM)\n", we)
-		}
-		return fmt.Errorf("wait failed")
-	}
-	fmt.Printf("ok: %q is %s%s\n", selector, state, via)
-	return nil
-}
-
-// ---------------------------------------------------------------------------
-// shot (screenshot)
-// ---------------------------------------------------------------------------
-
-func cmdShot(c *http.Client, args []string) error {
-	scale := "1"
-	annotate := false
-	// os.TempDir is per-user on macOS; writeFileReplacing never follows a
-	// link planted at the path in a shared /tmp.
-	outfile := filepath.Join(os.TempDir(), "qui-shot.png")
-
-	for _, a := range args {
-		switch {
-		case a == "--annotate":
-			annotate = true
-		case strings.HasPrefix(a, "--scale="):
-			scale = strings.TrimPrefix(a, "--scale=")
-		case strings.HasPrefix(a, "-"):
-			return fmt.Errorf("unknown shot flag %q", a)
-		default:
-			outfile = a
-		}
-	}
-
-	path := "/screenshot?scale=" + queryEscape(scale)
-	if annotate {
-		path += "&annotate=1"
-	}
-	body, err := httpGet(c, path)
-	if err != nil {
-		return err
-	}
-	if err := writeFileReplacing(outfile, body); err != nil {
-		return fmt.Errorf("writing %s: %w", outfile, err)
-	}
-	fmt.Println(outfile)
-	return nil
-}
-
-// writeFileReplacing writes data to a fresh private file next to path and
-// renames it into place: an existing file or symlink at path is replaced,
-// never written through.
-func writeFileReplacing(path string, data []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(path), ".qui-shot-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return nil
-}
-
-// ---------------------------------------------------------------------------
-// health / diagnostics (pretty-print JSON)
-// ---------------------------------------------------------------------------
-
-func cmdGetPretty(c *http.Client, path string) error {
-	body, err := httpGet(c, path)
-	if err != nil {
-		return err
-	}
-	return printJSON(body)
-}
-
-// ---------------------------------------------------------------------------
-// raw escape hatch
-// ---------------------------------------------------------------------------
-
-func cmdRaw(c *http.Client, args []string) error {
-	if len(args) < 2 {
-		return fmt.Errorf("raw requires <METHOD> <path> [body]")
-	}
-	method := strings.ToUpper(args[0])
-	path := args[1]
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	var body []byte
-	if len(args) >= 3 {
-		body = []byte(args[2])
-	}
-	out, status, err := httpDo(c, method, path, body)
-	if err != nil {
-		return err
-	}
-	if status >= 400 {
-		errf("HTTP %d", status)
-	}
-	os.Stdout.Write(out)
-	if len(out) > 0 && out[len(out)-1] != '\n' {
-		fmt.Println()
-	}
-	return nil
-}
-
-// ---------------------------------------------------------------------------
-// dom (HTML-level surface)
-// ---------------------------------------------------------------------------
-
-type domNode struct {
-	Path     string            `json:"path"`
-	Tag      string            `json:"tag"`
-	ID       string            `json:"id"`
-	Classes  []string          `json:"classes"`
-	Attrs    map[string]string `json:"attrs"`
-	Text     string            `json:"text"`
-	Role     string            `json:"role"`
-	Display  string            `json:"display"`
-	State    string            `json:"state"`
-	Bounds   bounds            `json:"bounds"`
-	Visible  bool              `json:"visible"`
-	Layer    string            `json:"layer"`
-	Children []*domNode        `json:"children"`
-}
-
-func cmdDOM(c *http.Client, args []string) error {
-	if len(args) == 0 {
-		return cmdDOMTree(c, nil)
-	}
-	sub, rest := args[0], args[1:]
-	switch sub {
-	case "tree":
-		return cmdDOMTree(c, rest)
-	case "query":
-		if len(rest) < 1 {
-			return fmt.Errorf("dom query requires a <selector>")
-		}
-		return cmdDOMTree(c, rest[:1])
-	case "styles":
-		if len(rest) < 1 {
-			return fmt.Errorf("dom styles requires a <selector>")
-		}
-		return cmdDOMStyles(c, rest[0])
-	case "click", "doubleclick", "rightclick", "hover", "focus", "scroll":
-		if len(rest) < 1 {
-			return fmt.Errorf("dom %s requires a <selector>", sub)
-		}
-		return postActTo(c, "/dom/act", map[string]any{"action": sub, "target": rest[0]})
-	case "blur":
-		return postActTo(c, "/dom/act", map[string]any{"action": "blur"})
-	case "wait":
-		return waitFor(c, "dom", rest)
-	case "type":
-		if len(rest) < 2 {
-			return fmt.Errorf("dom type requires <selector> <text...>")
-		}
-		return postActTo(c, "/dom/act", map[string]any{
-			"action": "type", "target": rest[0], "text": strings.Join(rest[1:], " "),
-		})
-	default:
-		return fmt.Errorf("unknown dom subcommand: %s (try tree|query|styles|click|type|hover|focus|scroll|blur|wait)", sub)
-	}
-}
-
-func cmdDOMTree(c *http.Client, args []string) error {
-	path := "/dom"
-	if len(args) > 0 && args[0] != "" {
-		path += "?selector=" + queryEscape(args[0])
-	}
-	body, err := httpGet(c, path)
-	if err != nil {
-		return err
-	}
-	trimmed := bytes.TrimSpace(body)
-	if len(trimmed) > 0 && trimmed[0] == '[' {
-		var nodes []*domNode
-		if err := json.Unmarshal(trimmed, &nodes); err != nil {
-			return fmt.Errorf("decode dom array: %w", err)
-		}
-		if len(nodes) == 0 {
-			fmt.Println("(no matches)")
-			return nil
-		}
-		for _, n := range nodes {
-			printDOMNode(n, 0)
-		}
-		return nil
-	}
-	var doc struct {
-		Root     *domNode   `json:"root"`
-		Overlays []*domNode `json:"overlays"`
-	}
-	if err := json.Unmarshal(trimmed, &doc); err != nil {
-		return fmt.Errorf("decode dom tree: %w", err)
-	}
-	if doc.Root != nil {
-		printDOMNode(doc.Root, 0)
-	}
-	for _, o := range doc.Overlays {
-		printDOMNode(o, 0)
-	}
-	return nil
-}
-
-func printDOMNode(n *domNode, depth int) {
-	if n == nil {
-		return
-	}
-	indent := strings.Repeat("  ", depth)
-	line := indent + domSelectorText(n)
-	if n.Display != "" && n.Display != "block" {
-		line += " {" + n.Display + "}"
-	}
-	if n.Text != "" {
-		t := n.Text
-		if len(t) > 40 {
-			t = t[:37] + "..."
-		}
-		line += fmt.Sprintf(" %q", t)
-	}
-	if n.State != "" {
-		line += " [" + n.State + "]"
-	}
-	if !n.Visible {
-		line += " [hidden]"
-	}
-	fmt.Println(line)
-	for _, ch := range n.Children {
-		printDOMNode(ch, depth+1)
-	}
-}
-
-func domSelectorText(n *domNode) string {
-	s := n.Tag
-	if n.ID != "" {
-		s += "#" + n.ID
-	}
-	for _, cl := range n.Classes {
-		s += "." + cl
-	}
-	return s
-}
-
-type domStyles struct {
-	Path         string            `json:"path"`
-	Selector     string            `json:"selector"`
-	Computed     map[string]string `json:"computed"`
-	MatchedRules []struct {
-		Selector     string `json:"selector"`
-		Origin       string `json:"origin"`
-		Specificity  [3]int `json:"specificity"`
-		Declarations []struct {
-			Property  string `json:"property"`
-			Value     string `json:"value"`
-			Important bool   `json:"important"`
-			Active    bool   `json:"active"`
-		} `json:"declarations"`
-	} `json:"matchedRules"`
-	BoxModel struct {
-		Content bounds `json:"content"`
-		Padding insets `json:"padding"`
-		Border  insets `json:"border"`
-		Margin  insets `json:"margin"`
-	} `json:"boxModel"`
-}
-
-type insets struct {
-	Top    float64 `json:"Top"`
-	Right  float64 `json:"Right"`
-	Bottom float64 `json:"Bottom"`
-	Left   float64 `json:"Left"`
-}
-
-func (i insets) str() string {
-	return fmt.Sprintf("%g %g %g %g", i.Top, i.Right, i.Bottom, i.Left)
-}
-
-func cmdDOMStyles(c *http.Client, selector string) error {
-	body, err := httpGet(c, "/dom/styles?selector="+queryEscape(selector))
-	if err != nil {
-		return err
-	}
-	var styles []*domStyles
-	if err := json.Unmarshal(bytes.TrimSpace(body), &styles); err != nil {
-		return fmt.Errorf("decode styles: %w", err)
-	}
-	if len(styles) == 0 {
-		fmt.Println("(no matches)")
-		return nil
-	}
-	for i, es := range styles {
-		if i > 0 {
-			fmt.Println()
-		}
-		fmt.Printf("%s\n", es.Selector)
-		bm := es.BoxModel
-		fmt.Printf("  box: content=(%g,%g,%g,%g) padding=[%s] border=[%s] margin=[%s]\n",
-			bm.Content.X, bm.Content.Y, bm.Content.W, bm.Content.H,
-			bm.Padding.str(), bm.Border.str(), bm.Margin.str())
-		fmt.Println("  rules (winning first):")
-		for _, r := range es.MatchedRules {
-			spec := ""
-			if r.Origin == "author" {
-				spec = fmt.Sprintf(" (%d,%d,%d)", r.Specificity[0], r.Specificity[1], r.Specificity[2])
-			}
-			fmt.Printf("    [%s] %s%s\n", r.Origin, r.Selector, spec)
-			for _, d := range r.Declarations {
-				mark := ""
-				if !d.Active {
-					mark = "  (overridden)"
-				}
-				imp := ""
-				if d.Important {
-					imp = " !important"
-				}
-				fmt.Printf("      %s: %s%s%s\n", d.Property, d.Value, imp, mark)
-			}
-		}
-	}
-	return nil
-}
-
-// ---------------------------------------------------------------------------
-// reactive (component-tree introspection)
-// ---------------------------------------------------------------------------
-
-type reactiveNode struct {
-	Kind       string `json:"kind"`
-	Name       string `json:"name"`
-	Key        string `json:"key"`
-	Dirty      bool   `json:"dirty"`
-	WidgetRole string `json:"widgetRole"`
-	WidgetID   string `json:"widgetId"`
-	Props      string `json:"props"`
-	Hooks      []struct {
-		Kind     string `json:"kind"`
-		Value    string `json:"value"`
-		Watchers int    `json:"watchers"`
-	} `json:"hooks"`
-	Children []*reactiveNode `json:"children"`
-}
-
-func cmdReactive(c *http.Client, _ []string) error {
-	out, status, err := httpDo(c, "GET", "/reactive", nil)
-	if err != nil {
-		return err
-	}
-	if status == 204 || len(bytes.TrimSpace(out)) == 0 {
-		fmt.Println("(this window is not driven by a reactive runtime)")
-		return nil
-	}
-	trimmed := bytes.TrimSpace(out)
-	if string(trimmed) == "null" {
-		fmt.Println("(reactive runtime present but nothing mounted yet)")
-		return nil
-	}
-	var root reactiveNode
-	if err := json.Unmarshal(trimmed, &root); err != nil {
-		return fmt.Errorf("decode reactive tree: %w", err)
-	}
-	printReactiveNode(&root, 0)
-	return nil
-}
-
-func printReactiveNode(n *reactiveNode, depth int) {
-	if n == nil {
-		return
-	}
-	indent := strings.Repeat("  ", depth)
-	label := n.Kind
-	if n.Name != "" {
-		label = "<" + n.Name + ">"
-	}
-	line := indent + label
-	if n.Key != "" {
-		line += "[" + n.Key + "]"
-	}
-	if n.WidgetRole != "" {
-		line += " " + n.WidgetRole
-		if n.WidgetID != "" {
-			line += "#" + n.WidgetID
-		}
-	}
-	if n.Props != "" {
-		line += " props=" + n.Props
-	}
-	if n.Dirty {
-		line += " *dirty*"
-	}
-	fmt.Println(line)
-	for _, h := range n.Hooks {
-		hl := fmt.Sprintf("%s· %s", strings.Repeat("  ", depth+1), h.Kind)
-		if h.Value != "" {
-			hl += " = " + h.Value
-		}
-		if h.Watchers > 0 {
-			hl += fmt.Sprintf(" (%d watchers)", h.Watchers)
-		}
-		fmt.Println(hl)
-	}
-	for _, ch := range n.Children {
-		printReactiveNode(ch, depth+1)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
-
-func printJSON(body []byte) error {
-	var v any
-	if err := json.Unmarshal(bytes.TrimSpace(body), &v); err != nil {
-		// Not JSON — print raw.
-		os.Stdout.Write(body)
-		if len(body) > 0 && body[len(body)-1] != '\n' {
-			fmt.Println()
-		}
-		return nil
-	}
+func printJSON(v any) {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	return enc.Encode(v)
+	_ = enc.Encode(v)
 }
 
-func compact(v any) string {
-	b, _ := json.Marshal(v)
-	return string(b)
-}
-
-// numStr formats a JSON number without a trailing ".0" for whole values.
-func numStr(v any) string {
-	if f, ok := v.(float64); ok && f == float64(int64(f)) {
-		return strconv.FormatInt(int64(f), 10)
+func printRaw(raw json.RawMessage) {
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		os.Stdout.Write(raw)
+		return
 	}
-	return fmt.Sprintf("%v", v)
+	printJSON(v)
 }
 
-// queryEscape escapes a value for use in a URL query string.
-func queryEscape(s string) string {
-	var b strings.Builder
-	for _, r := range []byte(s) {
-		switch {
-		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9',
-			r == '-', r == '_', r == '.', r == '~':
-			b.WriteByte(r)
-		default:
-			b.WriteString(fmt.Sprintf("%%%02X", r))
+type runner struct {
+	c      *client.Client
+	ctx    context.Context
+	target string
+}
+
+func (r *runner) call(method string, params any) (json.RawMessage, error) {
+	return r.c.Call(r.ctx, method, params, r.target)
+}
+
+// flags parses args with flags allowed anywhere among the positionals.
+func flags(name string, args []string, define func(fs *flag.FlagSet)) []string {
+	fs := flag.NewFlagSet(name, flag.ExitOnError)
+	define(fs)
+	var pos []string
+	for len(args) > 0 {
+		if err := fs.Parse(args); err != nil {
+			fail(err)
+		}
+		args = fs.Args()
+		if len(args) > 0 {
+			pos = append(pos, args[0])
+			args = args[1:]
 		}
 	}
-	return b.String()
+	return pos
 }
 
-func usage() {
-	fmt.Fprint(os.Stderr, `qui-agent — drive the qui agent debugging surface
-
-Usage:
-  qui-agent [-sock PATH] <command> [args...]
-
-Global:
-  -sock PATH              override socket (also env QUI_AGENT_SOCK)
-                          default: most-recently-modified live
-                          $TMPDIR/qui-agent-*.sock or /tmp/qui-agent-*.sock
-
-Commands:
-  tree [selector]        print the accessibility tree (optionally filtered by selector)
-  click <selector>       click the matched widget
-  rightclick <selector>  right-click the matched widget
-  doubleclick <selector> double-click the matched widget
-  hover <selector>       hover over the matched widget
-  focus <selector>       focus the matched widget
-  type <selector> <text> type text into the matched widget
-  pinch <selector> <scale>
-                         two-finger magnify gesture (1.5 = zoom to 150%)
-  wait <selector> [--gone] [--timeout=ms]
-                         wait until selector appears (or is gone); default 5000ms
-  shot [outfile] [--scale=N] [--annotate]
-                         save a screenshot PNG (default $TMPDIR/qui-shot.png)
-  health                 GET /health
-  diagnostics            GET /diagnostics
-  raw <METHOD> <path> [body]
-                         raw request; prints the response body verbatim
-  dom <subcommand>       HTML-level (DOM) surface — see below
-  reactive               print the reactive component tree (state, signals,
-                         props, pending-render) — like React DevTools
-  help                   show this help
-
-Widget selectors (CSS-attribute style, address the rendered widget tree):
-  #id  [role=button]  [name="Save"]  [name*="ave"]  [text="..."]
-  [key=qui.save]  :nth(N)  :visible  :focused  :layer(modal)
-
-  A selector the widget grammar can't parse — a tag, .class or combinator,
-  e.g. '.toolbar button.save' — is resolved against the DOM instead, so
-  click/type/hover/focus/doubleclick/rightclick/wait/tree also take CSS
-  selectors (output says "via=dom"). #id stays a widget ID. pinch is
-  widget-only.
-
-  In a localized app, [name=] matches the CURRENT language's caption and
-  breaks on a language switch. Use #id or [key=<message key>], both of
-  which are locale-independent. The tree reports each node's key as
-  "nameKey"; empty means the text is a literal, not a translation.
-
-DOM commands (address the app as HTML, with real CSS selectors — use these
-to debug htmlcss / reactive-html business UIs):
-  dom [tree] [selector]  print the DOM tree (optionally filtered by CSS selector)
-  dom query <selector>   print DOM nodes matching a CSS selector
-  dom styles <selector>  show computed style, matched rules (which won & why),
-                         and box model for matching elements (DevTools "Styles")
-  dom click <selector>   click the first element matching a CSS selector
-  dom type <selector> <text...>   type into the matching element
-  dom hover|focus|scroll|doubleclick|rightclick <selector>
-  dom blur               clear focus
-  dom wait <selector> [--gone] [--timeout=ms]
-                         wait until a CSS selector matches a visible element
-                         (or matches nothing)
-
-DOM CSS selectors are the full engine grammar: tag, #id, .class, [attr],
-:nth-child, and combinators (descendant, > + ~). Example: ".card > button.primary"
-Text locator (Playwright-style): :has-text("label") matches by visible text,
-e.g. 'button:has-text("Save")'. DOM actions auto-wait for the target to appear.
-
-Examples:
-  qui-agent tree
-  qui-agent tree '[role=button]'
-  qui-agent click '[role=button][name="New"]'
-  qui-agent type '#search' hello world
-  qui-agent wait ':layer(modal)' --timeout=3000
-  qui-agent shot /tmp/ui.png --scale=0.5 --annotate
-  qui-agent dom tree
-  qui-agent dom query '.card.active'
-  qui-agent dom styles '.card > button.primary'
-  qui-agent dom click '.toolbar button.save'
-  qui-agent dom click 'button:has-text("Save")'
-  qui-agent dom wait '.toast.success' --timeout=3000
-  qui-agent click '.toolbar button.save'      # CSS works top-level too
-`)
+func need(pos []string, n int, usage string) {
+	if len(pos) < n {
+		fail(fmt.Errorf("usage: qui-agent %s", usage))
+	}
 }
 
-func errf(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, format+"\n", a...)
+func point(s string) (*float64, *float64) {
+	xs, ys, ok := strings.Cut(s, ",")
+	x, err1 := strconv.ParseFloat(strings.TrimSpace(xs), 64)
+	y, err2 := strconv.ParseFloat(strings.TrimSpace(ys), 64)
+	if !ok || err1 != nil || err2 != nil {
+		fail(fmt.Errorf("bad point %q: want X,Y", s))
+	}
+	return &x, &y
 }
 
-func fatalf(format string, a ...any) {
-	errf(format, a...)
-	os.Exit(2)
+func mods(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, ",")
+}
+
+func (r *runner) act(method string, params map[string]any) error {
+	raw, err := r.call(method, params)
+	if err != nil {
+		return err
+	}
+	printRaw(raw)
+	return nil
+}
+
+func (r *runner) run(cmd string, args []string) error {
+	switch cmd {
+	case "targets":
+		return r.act("Target.getTargets", nil)
+	case "snapshot":
+		var all, asJSON bool
+		var depth int
+		pos := flags(cmd, args, func(fs *flag.FlagSet) {
+			fs.BoolVar(&all, "all", false, "keep hidden nodes and plumbing")
+			fs.IntVar(&depth, "depth", 0, "max depth")
+			fs.BoolVar(&asJSON, "json", false, "nested JSON tree")
+		})
+		p := map[string]any{"all": all, "maxDepth": depth}
+		if len(pos) > 0 {
+			p["root"] = pos[0]
+		}
+		if asJSON {
+			p["format"] = "json"
+		}
+		raw, err := r.call("Agent.snapshot", p)
+		if err != nil {
+			return err
+		}
+		if asJSON {
+			printRaw(raw)
+			return nil
+		}
+		var out struct{ Text string }
+		_ = json.Unmarshal(raw, &out)
+		fmt.Print(out.Text)
+		return nil
+	case "html":
+		p := map[string]any{}
+		if len(args) > 0 {
+			id, err := r.resolve(args[0])
+			if err != nil {
+				return err
+			}
+			p["nodeId"] = id
+		}
+		raw, err := r.call("DOM.getOuterHTML", p)
+		if err != nil {
+			return err
+		}
+		var out struct{ OuterHTML string }
+		_ = json.Unmarshal(raw, &out)
+		fmt.Println(out.OuterHTML)
+		return nil
+	case "styles":
+		need(args, 1, "styles TARGET")
+		if strings.HasPrefix(args[0], "@") {
+			id, err := r.resolve(args[0])
+			if err != nil {
+				return err
+			}
+			return r.act("CSS.getNodeStyles", map[string]any{"nodeId": id})
+		}
+		return r.act("CSS.getNodeStyles", map[string]any{"selector": args[0]})
+	case "reactive":
+		raw, err := r.call("Reactive.getComponentTree", nil)
+		if err != nil {
+			return err
+		}
+		var out struct{ Text string }
+		_ = json.Unmarshal(raw, &out)
+		if out.Text == "" {
+			fmt.Println("(no reactive runtime in this window)")
+		}
+		fmt.Print(out.Text)
+		return nil
+	case "diagnostics":
+		return r.act("Debug.getDiagnostics", nil)
+	case "shot":
+		var scale float64
+		var annotate bool
+		var clip string
+		pos := flags(cmd, args, func(fs *flag.FlagSet) {
+			fs.Float64Var(&scale, "scale", 1, "0.5 halves the size")
+			fs.BoolVar(&annotate, "annotate", false, "label every node with its @ref")
+			fs.StringVar(&clip, "clip", "", "x,y,w,h in window coordinates")
+		})
+		need(pos, 1, "shot FILE [-scale S] [-annotate] [-clip x,y,w,h]")
+		p := map[string]any{"scale": scale}
+		if annotate {
+			p["annotate"] = map[string]any{}
+		}
+		if clip != "" {
+			var x, y, w, h float64
+			if _, err := fmt.Sscanf(clip, "%g,%g,%g,%g", &x, &y, &w, &h); err != nil {
+				return fmt.Errorf("bad -clip %q: want x,y,w,h", clip)
+			}
+			p["clip"] = map[string]any{"x": x, "y": y, "width": w, "height": h}
+		}
+		raw, err := r.call("Page.captureScreenshot", p)
+		if err != nil {
+			return err
+		}
+		var out struct {
+			Data          string
+			Width, Height int
+		}
+		_ = json.Unmarshal(raw, &out)
+		img, err := base64.StdEncoding.DecodeString(out.Data)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(pos[0], img, 0o644); err != nil {
+			return err
+		}
+		fmt.Printf("wrote %s (%dx%d)\n", pos[0], out.Width, out.Height)
+		return nil
+	case "events":
+		return r.events(args)
+	case "click":
+		var right, double bool
+		var at, mod string
+		pos := flags(cmd, args, func(fs *flag.FlagSet) {
+			fs.BoolVar(&right, "right", false, "right button")
+			fs.BoolVar(&double, "double", false, "double click")
+			fs.StringVar(&at, "at", "", "X,Y window point instead of a target")
+			fs.StringVar(&mod, "mods", "", "cmd,shift,ctrl,alt")
+		})
+		p := map[string]any{"modifiers": mods(mod)}
+		if right {
+			p["button"] = "right"
+		}
+		if double {
+			p["clickCount"] = 2
+		}
+		if at != "" {
+			p["x"], p["y"] = point(at)
+		} else {
+			need(pos, 1, "click TARGET | click -at X,Y")
+			p["target"] = pos[0]
+		}
+		return r.act("Agent.click", p)
+	case "hover":
+		var at string
+		pos := flags(cmd, args, func(fs *flag.FlagSet) { fs.StringVar(&at, "at", "", "X,Y") })
+		p := map[string]any{}
+		if at != "" {
+			p["x"], p["y"] = point(at)
+		} else {
+			need(pos, 1, "hover TARGET | hover -at X,Y")
+			p["target"] = pos[0]
+		}
+		return r.act("Agent.hover", p)
+	case "focus":
+		need(args, 1, "focus TARGET")
+		return r.act("Agent.focus", map[string]any{"target": args[0]})
+	case "blur":
+		return r.act("Agent.blur", map[string]any{})
+	case "fill":
+		need(args, 2, "fill TARGET VALUE")
+		return r.act("Agent.fill", map[string]any{"target": args[0], "value": args[1]})
+	case "type":
+		need(args, 2, "type TARGET TEXT")
+		return r.act("Agent.type", map[string]any{"target": args[0], "text": args[1]})
+	case "press":
+		need(args, 1, "press [TARGET] KEY")
+		if len(args) == 1 {
+			return r.act("Agent.press", map[string]any{"key": args[0]})
+		}
+		return r.act("Agent.press", map[string]any{"target": args[0], "key": args[1]})
+	case "select":
+		var byValue bool
+		pos := flags(cmd, args, func(fs *flag.FlagSet) { fs.BoolVar(&byValue, "value", false, "match the option value, not its label") })
+		need(pos, 2, "select TARGET LABEL [-value]")
+		key := "label"
+		if byValue {
+			key = "value"
+		}
+		return r.act("Agent.selectOption", map[string]any{"target": pos[0], key: pos[1]})
+	case "scroll":
+		need(args, 3, "scroll TARGET DX DY")
+		dx, err1 := strconv.ParseFloat(args[1], 64)
+		dy, err2 := strconv.ParseFloat(args[2], 64)
+		if err1 != nil || err2 != nil {
+			return errors.New("usage: qui-agent scroll TARGET DX DY")
+		}
+		return r.act("Agent.scroll", map[string]any{"target": args[0], "dx": dx, "dy": dy})
+	case "drag":
+		var at, to string
+		var steps int
+		pos := flags(cmd, args, func(fs *flag.FlagSet) {
+			fs.StringVar(&at, "at", "", "X,Y start point")
+			fs.StringVar(&to, "to", "", "X2,Y2 end point")
+			fs.IntVar(&steps, "steps", 10, "intermediate moves")
+		})
+		p := map[string]any{"steps": steps}
+		if at != "" {
+			if to == "" {
+				fail(errors.New("usage: qui-agent drag -at X,Y -to X2,Y2"))
+			}
+			p["x"], p["y"] = point(at)
+			p["x2"], p["y2"] = point(to)
+		} else {
+			need(pos, 2, "drag FROM TO")
+			p["from"], p["to"] = pos[0], pos[1]
+		}
+		return r.act("Agent.drag", p)
+	case "pinch":
+		need(args, 2, "pinch TARGET SCALE")
+		s, err := strconv.ParseFloat(args[1], 64)
+		if err != nil {
+			return err
+		}
+		return r.act("Agent.pinch", map[string]any{"target": args[0], "scale": s})
+	case "wait":
+		var state string
+		var timeout int
+		pos := flags(cmd, args, func(fs *flag.FlagSet) {
+			fs.StringVar(&state, "state", "visible", "visible | hidden | attached | detached")
+			fs.IntVar(&timeout, "timeout", 2000, "ms")
+		})
+		need(pos, 1, "wait SELECTOR [-state …] [-timeout MS]")
+		return r.act("Agent.waitFor", map[string]any{"selector": pos[0], "state": state, "timeoutMs": timeout})
+	case "wait-idle", "wait-stable":
+		var timeout int
+		flags(cmd, args, func(fs *flag.FlagSet) { fs.IntVar(&timeout, "timeout", 2000, "ms") })
+		method := "Agent.waitForIdle"
+		if cmd == "wait-stable" {
+			method = "Agent.waitForStable"
+		}
+		return r.act(method, map[string]any{"timeoutMs": timeout})
+	case "wait-overlay":
+		var gone bool
+		var timeout int
+		pos := flags(cmd, args, func(fs *flag.FlagSet) {
+			fs.BoolVar(&gone, "gone", false, "wait for it to disappear")
+			fs.IntVar(&timeout, "timeout", 2000, "ms")
+		})
+		p := map[string]any{"timeoutMs": timeout, "state": "visible"}
+		if gone {
+			p["state"] = "hidden"
+		}
+		if len(pos) > 0 {
+			p["pattern"] = pos[0]
+		}
+		return r.act("Agent.waitForOverlay", p)
+	case "pick":
+		node, err := r.pick(r.ctx, 5*time.Minute)
+		if err != nil {
+			return err
+		}
+		printJSON(node)
+		return nil
+	case "highlight":
+		need(args, 1, "highlight TARGET")
+		if id, ok := refID(args[0]); ok {
+			return r.act("Overlay.highlightNode", map[string]any{"nodeId": id})
+		}
+		return r.act("Overlay.highlightNode", map[string]any{"selector": args[0]})
+	case "unhighlight":
+		return r.act("Overlay.hideHighlight", map[string]any{})
+	case "flags":
+		if len(args) == 0 {
+			return r.act("Debug.getFlags", nil)
+		}
+		p := map[string]any{}
+		for _, a := range args {
+			k, v, ok := strings.Cut(a, "=")
+			b, err := strconv.ParseBool(v)
+			if !ok || err != nil {
+				return fmt.Errorf("bad flag %q: want name=true|false", a)
+			}
+			p[k] = b
+		}
+		return r.act("Debug.setFlags", p)
+	case "call":
+		need(args, 1, "call METHOD [JSON]")
+		var params any
+		if len(args) > 1 {
+			if err := json.Unmarshal([]byte(args[1]), &params); err != nil {
+				return fmt.Errorf("params are not JSON: %w", err)
+			}
+		}
+		return r.act(args[0], toMap(params))
+	case "schema":
+		b, err := r.c.Get(r.ctx, "/json/protocol")
+		if err != nil {
+			return err
+		}
+		os.Stdout.Write(b)
+		return nil
+	case "llm":
+		b, err := r.c.Get(r.ctx, "/llm.txt")
+		if err != nil {
+			return err
+		}
+		os.Stdout.Write(b)
+		return nil
+	}
+	fmt.Fprint(os.Stderr, usageText)
+	return fmt.Errorf("unknown command %q", cmd)
+}
+
+func toMap(v any) map[string]any {
+	m, _ := v.(map[string]any)
+	return m
+}
+
+func refID(s string) (int64, bool) {
+	if !strings.HasPrefix(s, "@") {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(s[1:], 10, 64)
+	return n, err == nil && n > 0
+}
+
+// resolve turns a TARGET into a nodeId: a ref directly, a selector through
+// DOM.querySelector.
+func (r *runner) resolve(target string) (int64, error) {
+	if id, ok := refID(target); ok {
+		return id, nil
+	}
+	raw, err := r.call("DOM.querySelector", map[string]any{"selector": target})
+	if err != nil {
+		return 0, err
+	}
+	var out struct{ NodeID int64 }
+	_ = json.Unmarshal(raw, &out)
+	if out.NodeID == 0 {
+		return 0, fmt.Errorf("no_match: %s matched nothing", target)
+	}
+	return out.NodeID, nil
+}
+
+// events prints buffered events, and with -follow streams new ones.
+func (r *runner) events(args []string) error {
+	var domains string
+	var since int64
+	var follow bool
+	flags("events", args, func(fs *flag.FlagSet) {
+		fs.StringVar(&domains, "domains", "", "comma-separated: Log,Runtime,Agent,Target,Overlay")
+		fs.Int64Var(&since, "since", 0, "events after this seq")
+		fs.BoolVar(&follow, "follow", false, "keep streaming")
+	})
+	var ds []string
+	if domains != "" {
+		ds = strings.Split(domains, ",")
+	}
+	for {
+		raw, err := r.c.Call(r.ctx, "Target.getEvents", map[string]any{"since": since, "domains": ds}, "")
+		if err != nil {
+			return err
+		}
+		var out struct {
+			Events  []json.RawMessage
+			LastSeq int64
+		}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return err
+		}
+		for _, e := range out.Events {
+			fmt.Println(string(e))
+		}
+		since = out.LastSeq
+		if !follow {
+			return nil
+		}
+		select {
+		case <-r.ctx.Done():
+			return nil
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+// pick turns on inspect mode and waits for the user to click a node.
+func (r *runner) pick(ctx context.Context, timeout time.Duration) (map[string]any, error) {
+	conn, err := r.c.Dial(ctx, "/devtools/browser/qui-agent")
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	session := ""
+	if r.target != "" {
+		raw, err := conn.Call(ctx, "Target.attachToTarget", map[string]any{"targetId": r.target}, "")
+		if err != nil {
+			return nil, err
+		}
+		var att struct{ SessionID string }
+		_ = json.Unmarshal(raw, &att)
+		session = att.SessionID
+	}
+	if _, err := conn.Call(ctx, "Overlay.enable", nil, session); err != nil {
+		return nil, err
+	}
+	if _, err := conn.Call(ctx, "Overlay.setInspectMode", map[string]any{"mode": "searchForNode"}, session); err != nil {
+		return nil, err
+	}
+	fmt.Fprintln(os.Stderr, "click the node in the app window (Escape cancels)…")
+	deadline := time.After(timeout)
+	for {
+		select {
+		case ev, ok := <-conn.Events():
+			if !ok {
+				return nil, errors.New("connection closed")
+			}
+			if ev.Method == "Overlay.inspectNodeRequested" {
+				var picked map[string]any
+				_ = json.Unmarshal(ev.Params, &picked)
+				return picked, nil
+			}
+		case <-deadline:
+			_, _ = conn.Call(context.Background(), "Overlay.setInspectMode", map[string]any{"mode": "none"}, session)
+			return nil, errors.New("timeout: nothing was picked")
+		case <-ctx.Done():
+			_, _ = conn.Call(context.Background(), "Overlay.setInspectMode", map[string]any{"mode": "none"}, session)
+			return nil, ctx.Err()
+		}
+	}
 }

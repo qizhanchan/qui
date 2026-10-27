@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 // Selector grammar — CSS-attribute style, picked because LLMs already
@@ -13,6 +14,10 @@ import (
 // Supported forms (all may be combined in a single selector string;
 // criteria AND together):
 //
+//	@123                      — match by NodeID (process-wide identity;
+//	                            see nodeid.go). A reference that matches
+//	                            nothing is stale: actions report
+//	                            ErrStaleNode
 //	#id                       — match by Window-scoped ID
 //	[role=button]             — match by Role string (exact)
 //	[name="Save"]             — match by accessible name (exact)
@@ -78,15 +83,10 @@ func (w *Window) Find(selector string) (Widget, error) {
 // FindAll returns every widget matching the selector in tree order.
 // Returns an empty slice if nothing matches.
 func (w *Window) FindAll(selector string) ([]Widget, error) {
-	if w == nil {
-		return nil, nil
-	}
-	sel, err := parseSelector(selector)
+	nodes, err := w.FindNodes(selector)
 	if err != nil {
 		return nil, err
 	}
-	tree := w.AccessibilityTree()
-	nodes := sel.matchNodes(tree)
 	out := make([]Widget, 0, len(nodes))
 	for _, n := range nodes {
 		if n.widget != nil {
@@ -99,29 +99,82 @@ func (w *Window) FindAll(selector string) ([]Widget, error) {
 // FindNodes is like FindAll but returns the matched AXNodes
 // directly. Useful for the agent layer where path/role/name are
 // already serialized.
+//
+// A selector the widget grammar cannot parse — a tag, a .class, a
+// combinator — goes to the registered SelectorEngine (htmlcss registers its
+// CSS engine), so one selector string addresses both surfaces. The rule is
+// deterministic: whatever the widget grammar accepts means what it means
+// there (#id is the widget ID, [name=] the accessible name).
 func (w *Window) FindNodes(selector string) ([]*AXNode, error) {
 	if w == nil {
 		return nil, nil
 	}
+	return w.findNodesIn(w.AccessibilityTree(), selector)
+}
+
+func (w *Window) findNodesIn(tree *AccessibilityTree, selector string) ([]*AXNode, error) {
 	sel, err := parseSelector(selector)
-	if err != nil {
+	if err == nil {
+		return sel.matchNodes(tree), nil
+	}
+	if !errors.Is(err, ErrInvalidSelector) || strings.TrimSpace(selector) == "" {
 		return nil, err
 	}
-	return sel.matchNodes(w.AccessibilityTree()), nil
+	engine := selectorEngine.Load()
+	if engine == nil {
+		return nil, err
+	}
+	nodes, cssErr := (*engine)(w, tree, selector)
+	if cssErr != nil {
+		return nil, fmt.Errorf("%w: not a widget selector (%v) nor a CSS selector (%v)", ErrInvalidSelector, err, cssErr)
+	}
+	return nodes, nil
 }
 
 // FindNodesSynced is FindNodes for callers off the UI goroutine (the
-// agent's HTTP handlers): the tree is captured on the UI thread via
-// AccessibilityTreeSynced, then matched here.
+// agent's protocol handlers): capture and matching both run on the UI
+// thread, since a CSS selector engine reads live elements.
 func (w *Window) FindNodesSynced(selector string) ([]*AXNode, error) {
 	if w == nil {
 		return nil, nil
 	}
-	sel, err := parseSelector(selector)
-	if err != nil {
-		return nil, err
+	var nodes []*AXNode
+	err := w.synchronously(func() error {
+		var err error
+		nodes, err = w.FindNodes(selector)
+		return err
+	})
+	return nodes, err
+}
+
+// SelectorEngine resolves a selector the widget grammar rejects against the
+// window's already-captured AX tree, returning the matched nodes in document
+// order. It runs on the UI goroutine. Return an ErrInvalidSelector-wrapped
+// error when the selector is not valid in this engine's grammar either.
+type SelectorEngine func(w *Window, tree *AccessibilityTree, selector string) ([]*AXNode, error)
+
+var selectorEngine atomic.Pointer[SelectorEngine]
+
+// RegisterSelectorEngine installs the fallback engine FindNodes (and every
+// selector-addressed action) consults for selectors outside the widget
+// grammar. htmlcss registers its CSS engine from init; the last registration
+// wins.
+func RegisterSelectorEngine(fn SelectorEngine) {
+	if fn == nil {
+		selectorEngine.Store(nil)
+		return
 	}
-	return sel.matchNodes(w.AccessibilityTreeSynced()), nil
+	selectorEngine.Store(&fn)
+}
+
+// noMatchFor is the error for a selector that matched nothing: a pure node
+// reference ("@123") that misses is a stale handle, which an agent must
+// re-resolve rather than retry.
+func noMatchFor(selector string) error {
+	if _, ok := ParseNodeRef(strings.TrimSpace(selector)); ok {
+		return fmt.Errorf("%w: %s", ErrStaleNode, strings.TrimSpace(selector))
+	}
+	return ErrNoMatch
 }
 
 // -------------------------------------------------------------------
@@ -143,6 +196,7 @@ type attrPredicate struct {
 }
 
 type compiledSelector struct {
+	nodeID      NodeID // from @123; 0 = no reference
 	idEquals    string // from #foo or [id=foo]
 	attrs       []attrPredicate
 	wantFocused bool
@@ -201,6 +255,9 @@ func (s *compiledSelector) matchNodes(tree *AccessibilityTree) []*AXNode {
 
 func (s *compiledSelector) matchOne(n *AXNode) bool {
 	if n == nil {
+		return false
+	}
+	if s.nodeID != 0 && n.NodeID != s.nodeID {
 		return false
 	}
 	if s.idEquals != "" && n.ID != s.idEquals {
@@ -274,6 +331,17 @@ func parseSelector(s string) (*compiledSelector, error) {
 		}
 		c := p.peek()
 		switch c {
+		case '@':
+			start := p.pos
+			p.pos++
+			n, err := p.readInt()
+			if err != nil || n <= 0 {
+				return nil, fmt.Errorf("%w: node reference at pos %d must be @<positive id>", ErrInvalidSelector, start)
+			}
+			if out.nodeID != 0 && out.nodeID != NodeID(n) {
+				return nil, fmt.Errorf("%w: conflicting node references", ErrInvalidSelector)
+			}
+			out.nodeID = NodeID(n)
 		case '#':
 			p.pos++
 			id, err := p.readIdent()

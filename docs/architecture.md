@@ -183,7 +183,7 @@ Root files:
 - `recording.go` — event listeners;
 - `jobs.go` — the `PostJob` main-thread queue.
 
-`Cmd/Ctrl+Shift+A` toggles the agent overlay in ANY qui app with no code change. `agent.BindEnv(window)` after `SetRoot` starts the HTTP server when `QUI_AGENT=1`; `GET /llm.txt` teaches an agent the full wire surface. New widget AX overrides go in each subpackage's `accessibility.go`.
+`Cmd/Ctrl+Shift+A` toggles the agent overlay in ANY qui app with no code change. `agent.BindEnv(window)` after `SetRoot` starts the protocol server (every window of the process) when `QUI_AGENT=1`; `GET /llm.txt` teaches an agent the surface and `GET /json/protocol` is the schema. The protocol's domains live in root (`protocol*.go`: `RegisterProtocolDomain`, typed `NewProtocolCommand`, `EmitProtocolEvent`); htmlcss registers its DOM projector and the CSS domain, reactive the Reactive domain, and `agent` is only the transport. Identity is `NodeID` (`nodeid.go`): process-wide, lazily allocated per widget, never reused, `@N` in selectors. New widget AX overrides go in each subpackage's `accessibility.go`.
 
 ## App-dev surface: htmlcss and reactive
 

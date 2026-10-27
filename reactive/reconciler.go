@@ -308,6 +308,10 @@ func (r *Reconciler) renderDirty() (qui.Widget, Flags) {
 type instance struct {
 	kind string
 	key  string
+	// nodeID is the inspection identity of a non-host instance (component,
+	// provider, fragment…), allocated on first Inspect. Host instances use
+	// their widget's NodeID instead.
+	nodeID qui.NodeID
 
 	// Host instance fields (component instances leave these zero).
 	widget      qui.Widget

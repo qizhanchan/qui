@@ -130,9 +130,10 @@
 
 ## `agent` + `cmd/qui-agent`
 
-- 基于引擎内省原语的 HTTP + SSE 服务；默认 Unix socket，可选 TCP + bearer token。
-- 端点：`GET /tree`、`/screenshot`、`/diagnostics`、`/health`、`/wait`、`/console`、`/events`（SSE）、`POST /act`，以及 `/llm.txt` 和 DOM/reactive 界面（`/dom`、`/dom/styles`、`/dom/act`、`/reactive`）。
-- `agent.BindEnv(window)` 由环境变量门控；`cmd/qui-agent` CLI（`tree`、`click`、`rightclick`、`type`、`wait`、`pinch`、`shot`、`raw`）。
+- CDP 形态的调试协议：`Domain.method` 形式的 JSON-RPC，走 WebSocket（`/devtools/browser/…`、`/devtools/page/<target>`）或一次性的 `POST /rpc`；默认 Unix socket，可选 TCP + bearer token。发现入口为 `/json/version`、`/json/list`、`/json/protocol`；每个应用在 `$TMPDIR/qui-agent/` 下有一个发现文件。
+- 域：`Agent`（带 `@ref` 的文本快照、自动等待并报告焦点 / 浮层 / 树变化的动作、各类等待）、`DOM`、`CSS`、`Accessibility`、`Input`、`Page`（截图、投屏）、`Overlay`（高亮、点选拾取）、`Log`、`Runtime`（panic）、`Emulation`、`Animation`、`Debug`（诊断、运行时切换 `QUI_DEBUG_*`）、`Reactive`、`Target`。各域注册到根包的注册表（`protocol*.go`），schema 由 Go 类型反射生成。
+- AX 树、DOM 和 reactive 树共用进程级 `NodeID`；`@N` 可用于任何选择器，节点消失时报告 `stale_node`。同一个选择器字符串同时覆盖控件语法和 CSS。
+- `agent.BindEnv(window)` 覆盖进程内所有窗口；`agent/client` 是只依赖标准库的 Go 客户端；`cmd/qui-agent` 提供 CLI（`snapshot`、`click`、`fill`、`press`、`select`、`wait`、`shot`、`html`、`styles`、`pick`、`events`、`flags`、`call` 等）和 MCP server（`qui-agent mcp`）。设置 `QUI_AGENT_DEVTOOLS=1` 后 Chrome DevTools 可以连接。
 
 ## 辅助包
 
@@ -150,6 +151,6 @@
 
 ## 工具
 
-- `cmd/qui-agent` —— agent 命令行客户端。
+- `cmd/qui-agent` —— 协议命令行客户端与 MCP server。
 - `cmd/qui-i18n` —— 目录提取、检查与伪 locale 生成。
 - `examples/` —— 可运行的示例，包括范例 `reactive-html`、htmlcss 展示（`html-css`）、i18n、chrome-tabs、overlay-panel、graphs、svg、media、frameview、scene3d 等。

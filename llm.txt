@@ -43,46 +43,49 @@ In-process (Go API, always-on, zero overhead):
   tree := window.AccessibilityTree()
   _ = window.WaitIdle(2 * time.Second)
 
-Out-of-process (HTTP + JSON + Server-Sent Events):
+Out-of-process (a CDP-shaped protocol: JSON-RPC over WebSocket or
+POST /rpc; MCP via `qui-agent mcp`):
 
   import "github.com/qizhanchan/qui/agent"
 
   // In your main(), after window.SetRoot(...):
-  srv, _ := agent.BindEnv(window) // honors QUI_AGENT / QUI_AGENT_TCP env
+  srv, _ := agent.BindEnv(window) // honors QUI_AGENT / QUI_AGENT_TCP env;
+                                  // serves every window of the process
 
-Then run the app with `QUI_AGENT=1 ./my-app` and connect from any LLM
-that can curl:
+Then run the app with `QUI_AGENT=1 ./my-app` and drive it:
 
-  SOCK=$TMPDIR/qui-agent-*.sock
-  curl --unix-socket "$SOCK" http://./llm.txt   # detailed wire spec
-  curl --unix-socket "$SOCK" http://./tree | jq
-  curl --unix-socket "$SOCK" 'http://./screenshot?scale=0.4&annotate=1' > ui.png
-  curl --unix-socket "$SOCK" -X POST http://./act \
-    -H 'Content-Type: application/json' \
-    -d '{"action":"click","target":"[role=button][name=\"OK\"]"}'
+  qui-agent snapshot              # the UI as text, one [ref=@N] per node
+  qui-agent click @14             # act on a ref (or any selector)
+  qui-agent fill '#email' foo@bar.com
+  qui-agent shot ui.png -annotate -scale 0.5
+  qui-agent llm                   # the detailed guide + method reference
 
-The full wire reference (every endpoint, every selector form, every
-error code, every recipe) lives at `agent/llm.txt` in this repo and
-is also served by the running app at `/llm.txt`. That document is
-the canonical model-facing API; this file is the orientation guide.
+  # or any language over HTTP:
+  curl --unix-socket "$SOCK" http://localhost/rpc \
+    -d '{"method":"Agent.click","params":{"target":"[role=button][name=\"OK\"]"}}'
+
+The full guide (domains, selector forms, error reasons, recipes) lives
+at `agent/llm.txt` and is served by the running app at `/llm.txt`,
+followed by a method reference generated from the live schema
+(`/json/protocol`). This file is the orientation guide.
 
 ------------------------------------------------------------------
 KEY CONCEPTS
 ------------------------------------------------------------------
 
-  - Accessibility tree (`/tree`) is the source of truth. Read it
-    before acting. Don't try to infer addresses from screenshots
-    alone — use the tree's `path` or developer-assigned `id`.
+  - Read before acting: Agent.snapshot (text, with @refs) or the
+    Accessibility / DOM domains. Don't infer addresses from
+    screenshots alone; an annotated screenshot labels every node with
+    its @ref.
 
-  - Selector grammar is CSS-attribute style:
-      #id
-      [role=button]
-      [role=button][name="Save"]
-      [text*="agree"]
-      [role=button]:nth(2)
-      [role=button]:visible
-      :focused
-      :layer(modal)
+  - Every node has a nodeId: process-wide, stable for its lifetime,
+    never reused, written @N in any selector. A ref whose node is gone
+    fails with reason "stale_node" — it never points at another node.
+
+  - Selectors: the widget grammar first, CSS for anything it rejects.
+      @14   #id   [role=button][name="Save"]   [key=app.save]
+      [role=button]:nth(2)   :focused   :layer(modal)
+      button.primary   .row:has-text("invoice #42")   ul > li
 
   - Roles (stable): button, textbox, textarea, label, checkbox,
     radio, slider, spinner, combobox, listbox, listitem, tree,
@@ -91,31 +94,16 @@ KEY CONCEPTS
     video, webview, chart, container.
 
   - Modal-trap respect: an action targeting a widget hidden behind a
-    modal dialog returns errorCode="modal_blocked" with the
-    blocking overlay's path — never silent-clicks through.
+    modal dialog fails with reason "modal_blocked" — never
+    silent-clicks through.
 
-  - Scroll-into-view is automatic. The action layer walks ancestors
-    for a ScrollIntoViewable container and brings the target visible
-    before hit-testing.
+  - Actions auto-wait for their target, scroll it into view, resolve
+    it once, and report focusChange / newOverlays / treeHash, so
+    "did anything change?" needs no re-fetch.
 
-  - `treeHash` in every /act response lets you detect "did the tree
-    change?" without re-fetching it.
-
-  - `/wait?for=idle` blocks until paint + layout + animator + job
-    queue are all quiescent for two consecutive frames. Use this
-    after an action before screenshotting. Other waits:
-    `for=selector&selector=<sel>&state=appears|gone` (wait for a
-    widget to appear/disappear) and `for=stable` (wait for the tree
-    hash to settle).
-
-  - `/tree` accepts optional `selector=`, `maxDepth=N`, and `leaves=1`
-    filters to shrink the response; no params = the full tree.
-
-  - `/act` click usually takes a `target` selector, but with no
-    target you may pass raw `x`,`y` to click a window coordinate
-    (escape hatch for custom-drawn surfaces).
-
-  - `/health` returns {ok, ready}; ready=true once a frame exists.
+  - Waits: Agent.waitFor {selector, state}, waitForIdle (paint +
+    layout + animators + jobs quiescent), waitForStable (tree hash
+    settled), waitForOverlay.
 
 ------------------------------------------------------------------
 SECURITY
@@ -123,13 +111,15 @@ SECURITY
 
   - Unix domain socket by default — same-user, same-machine access
     only. Filesystem permission is the auth.
-  - TCP requires QUI_AGENT_TOKEN bearer auth.
-  - No /eval endpoint. Action surface is declarative.
+  - TCP requires QUI_AGENT_TOKEN bearer auth; WebSockets from web
+    page origins are refused.
+  - No eval. The action surface is declarative.
 
 ------------------------------------------------------------------
 WHERE TO LEARN MORE
 ------------------------------------------------------------------
 
-  - agent/llm.txt — full wire spec (also served live at /llm.txt)
+  - agent/llm.txt — the protocol guide (also served live at /llm.txt)
+  - docs/rfc/0001-agent-protocol.zh.md — the protocol design
   - CLAUDE.md     — full framework architecture overview
   - examples/reactive-html — canonical app-dev demo with agent.BindEnv

@@ -2,7 +2,6 @@ package qui
 
 import (
 	"log"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,9 +13,9 @@ import (
 // message keys render bracketed (⟦file.save⟧) and log once each, so a
 // missing translation is impossible to overlook while developing.
 // Off in production, where a bare key is the friendlier degradation.
-var i18nStrictEnabled = os.Getenv("QUI_I18N_STRICT") == "1"
+var i18nStrictEnabled = envFlag("QUI_I18N_STRICT")
 
-func i18nStrict() bool { return i18nStrictEnabled }
+func i18nStrict() bool { return i18nStrictEnabled.Load() }
 
 // Locale is a BCP-47 language tag — "en", "zh-Hans", "zh-Hant-TW",
 // "ar-EG", "pt-BR". The zero value means "follow the system", resolved

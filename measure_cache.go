@@ -3,7 +3,6 @@ package qui
 import (
 	"fmt"
 	"log"
-	"os"
 )
 
 // Measure caching.
@@ -32,7 +31,7 @@ import (
 // widget whose cached size disagrees — the way to find one that changes
 // size without invalidating.
 
-var layoutCacheVerify = os.Getenv("QUI_DEBUG_LAYOUT_CACHE") == "1"
+var layoutCacheVerify = envFlag("QUI_DEBUG_LAYOUT_CACHE")
 
 // measureCacheSize bounds the per-widget entries. A widget is measured
 // under a handful of distinct constraints per pass (natural, cross-axis
@@ -113,7 +112,7 @@ func MeasureChild(w Widget, avail Size) Size {
 	c := mc.measureCacheRef()
 	epoch := currentMeasureEpoch()
 	if size, hit := c.lookup(avail, epoch); hit {
-		if layoutCacheVerify {
+		if layoutCacheVerify.Load() {
 			verifyMeasure(w, avail, size)
 		}
 		return size

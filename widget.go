@@ -265,6 +265,12 @@ func ancestorsToWindow(w Widget, r Rect) Rect {
 // should call SetSelf(outer) right after construction. Unset self is
 // treated as "not a subclass, return the embedded widget as-is".
 type BaseWidget struct {
+	// nodeID is the lazily-allocated process-wide identity (see nodeid.go);
+	// accessed atomically. synthIDs holds the IDs of non-widget nodes this
+	// widget publishes (self-drawn accessible children).
+	nodeID   uint64
+	synthIDs map[string]NodeID
+
 	id        string
 	rect      Rect
 	style     Style

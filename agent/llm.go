@@ -2,9 +2,13 @@ package agent
 
 import _ "embed"
 
-// llmTxt is the model-facing self-doc for the agent surface. Served
-// at GET /llm.txt. The .txt source lives in this directory so it
-// can be edited without rebuilding code.
+// guideTxt is the hand-written half of /llm.txt: concepts, selector
+// rules, recipes and pitfalls. The method reference half is generated from
+// the live protocol schema (reference.go), so it cannot drift from the code.
 //
 //go:embed llm.txt
-var llmTxt []byte
+var guideTxt []byte
+
+func llmText() []byte {
+	return append(append([]byte(nil), guideTxt...), protocolReference()...)
+}

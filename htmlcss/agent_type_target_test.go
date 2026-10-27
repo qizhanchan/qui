@@ -170,7 +170,8 @@ func TestTypeOnInputElementReachesBacking(t *testing.T) {
 	}
 }
 
-// llm.txt documents picking a <select> option with the `type` action: the
+// agent/llm.txt documents picking a <select> option with Agent.fill (the
+// Type action underneath): the
 // element hands the text to its backing Select, which matches it against
 // the option labels. The element's own content must stay untouched.
 func TestTypeOnSelectElementPicksOption(t *testing.T) {

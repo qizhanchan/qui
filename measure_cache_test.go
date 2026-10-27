@@ -37,7 +37,7 @@ func nestedFlex(leaf Widget, depth int) *Container {
 // skipUnderCacheVerify skips call-counting tests when
 // QUI_DEBUG_LAYOUT_CACHE=1 re-measures every cache hit on purpose.
 func skipUnderCacheVerify(t *testing.T) {
-	if layoutCacheVerify {
+	if layoutCacheVerify.Load() {
 		t.Skip("QUI_DEBUG_LAYOUT_CACHE re-measures every cache hit")
 	}
 }

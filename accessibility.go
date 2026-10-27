@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -37,10 +38,14 @@ import (
 // state. Suitable for sub-millisecond /tree responses on typical UI
 // trees (hundreds of widgets).
 type AXNode struct {
-	Path string `json:"path"`
-	ID   string `json:"id,omitempty"`
-	Role string `json:"role"`
-	Name string `json:"name,omitempty"`
+	// NodeID is the node's process-wide identity (see nodeid.go): stable for
+	// the node's lifetime, never reused, addressable as "@<id>". Prefer it
+	// over Path, which is positional and shifts when siblings change.
+	NodeID NodeID `json:"nodeId"`
+	Path   string `json:"path"`
+	ID     string `json:"id,omitempty"`
+	Role   string `json:"role"`
+	Name   string `json:"name,omitempty"`
 	// NameKey is the message key Name was translated from, when the
 	// widget's caption comes from the catalog rather than a literal.
 	//
@@ -119,7 +124,7 @@ type AccessibilityTree struct {
 // Hash returns a stable content hash of the tree shape and per-node
 // state. Two trees that differ in any visible attribute produce
 // different hashes; identical trees produce identical hashes. Used by
-// the agent /act endpoint to surface "did anything change?" without
+// every Agent-domain action to surface "did anything change?" without
 // shipping the full tree on every action reply.
 //
 // The hash covers Path, ID, Role, Name, NameKey, Value, State, Shortcut,
@@ -251,6 +256,7 @@ func (w *Window) buildAXSubtree(widget Widget, parentPath, layer string, isRoot,
 	bounds := InteractionBoundsOf(widget)
 	visible := parentVisible && !isWidgetHidden(widget) && !bounds.IsEmpty()
 	node := &AXNode{
+		NodeID:   WidgetNodeID(widget),
 		Path:     path,
 		ID:       WidgetID(widget),
 		Role:     WidgetRole(widget),
@@ -277,10 +283,13 @@ func (w *Window) buildAXSubtree(widget Widget, parentPath, layer string, isRoot,
 	// through it at the child's rect.
 	for i, vc := range WidgetAccessibleChildren(widget) {
 		vp := fmt.Sprintf("%s/#%d", path, i)
+		synthKey := "ax#" + strconv.Itoa(i)
 		if vc.ID != "" {
 			vp = fmt.Sprintf("%s/#%s", path, vc.ID)
+			synthKey = "ax#" + vc.ID
 		}
 		node.Children = append(node.Children, &AXNode{
+			NodeID:  WidgetSyntheticNodeID(widget, synthKey),
 			Path:    vp,
 			ID:      vc.ID,
 			Role:    vc.Role,

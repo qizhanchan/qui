@@ -183,7 +183,7 @@ h.Button("Save").T("qui.save")                   // reactive/html DSL
 - `recording.go` —— 事件监听器；
 - `jobs.go` —— `PostJob` 主线程队列。
 
-在任意 qui 应用中按 `Cmd/Ctrl+Shift+A` 可切换 agent 叠加层，无需改代码。`SetRoot` 之后调用 `agent.BindEnv(window)`，当 `QUI_AGENT=1` 时启动 HTTP 服务；`GET /llm.txt` 教会 agent 完整的线缆界面。新的控件 AX 覆写放在各子包的 `accessibility.go` 中。
+在任意 qui 应用中按 `Cmd/Ctrl+Shift+A` 可切换 agent 叠加层，无需改代码。`SetRoot` 之后调用 `agent.BindEnv(window)`，当 `QUI_AGENT=1` 时启动协议服务（覆盖进程内所有窗口）；`GET /llm.txt` 教会 agent 使用这套界面，`GET /json/protocol` 是 schema。协议的各个域在根包里（`protocol*.go`：`RegisterProtocolDomain`、带类型的 `NewProtocolCommand`、`EmitProtocolEvent`）；htmlcss 注册自己的 DOM 投影和 CSS 域，reactive 注册 Reactive 域，`agent` 只负责传输。节点身份是 `NodeID`（`nodeid.go`）：进程级、按控件懒分配、永不复用，在选择器里写作 `@N`。新的控件 AX 覆写放在各子包的 `accessibility.go` 中。
 
 ## 应用开发界面：htmlcss 与 reactive
 

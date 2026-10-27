@@ -34,6 +34,9 @@ import (
 // backing controls, marker labels) are collapsed away: a DOMNode maps
 // 1:1 to an htmlcss element.
 type DOMNode struct {
+	// NodeID is the element's process-wide identity — its widget's NodeID,
+	// so a DOM node and the AX node for the same element share it.
+	NodeID  qui.NodeID        `json:"nodeId"`
 	Path    string            `json:"path"`         // positional path, e.g. "div/ul/li[2]"
 	Tag     string            `json:"tag"`          // element tag, or "#text" / "#document"
 	ID      string            `json:"id,omitempty"` // id attribute
@@ -59,6 +62,8 @@ type DOMNode struct {
 	// el is the live element behind this node, used by Query matching,
 	// Styles resolution and action targeting. Not serialized.
 	el *El
+	// ax is the AX node the projection read structure from.
+	ax *qui.AXNode
 }
 
 // DOMTree is the projected DOM for a window: the main document plus one
@@ -101,17 +106,22 @@ func InspectWindowDo(w *qui.Window, fn func(*DOMTree) error) error {
 }
 
 func inspectWindow(w *qui.Window) *DOMTree {
-	ax := w.AccessibilityTree()
+	return projectTree(w, w.AccessibilityTree())
+}
+
+// projectTree builds the DOMTree from an already-captured AX tree (UI
+// goroutine: it reads live elements).
+func projectTree(w *qui.Window, ax *qui.AccessibilityTree) *DOMTree {
 	out := &DOMTree{
 		DevicePixelRatio: ax.DevicePixelRatio,
 		WindowSize:       qui.Rect{X: ax.WindowSize.X, Y: ax.WindowSize.Y, W: ax.WindowSize.W, H: ax.WindowSize.H},
 	}
-	out.Root = &DOMNode{Tag: "#document", Layer: "root", Visible: true}
+	out.Root = &DOMNode{NodeID: w.DocumentNodeID(), Tag: "#document", Layer: "root", Visible: true}
 	out.Root.Children = domForest(ax.Root, "root")
 	assignPaths(out.Root, "")
 	for _, ov := range ax.Overlays {
 		layer := ov.Layer
-		frag := &DOMNode{Tag: "#document-fragment", Layer: layer, Visible: true}
+		frag := &DOMNode{NodeID: qui.WidgetSyntheticNodeID(ov.Widget(), "#document-fragment"), Tag: "#document-fragment", Layer: layer, Visible: true}
 		frag.Children = domForest(ov, layer)
 		assignPaths(frag, "")
 		out.Overlays = append(out.Overlays, frag)
@@ -153,6 +163,7 @@ func domForest(ax *qui.AXNode, layer string) []*DOMNode {
 // attributes, text, computed display) from the element itself.
 func projectEl(el *El, ax *qui.AXNode, layer string) *DOMNode {
 	d := &DOMNode{
+		NodeID:  ax.NodeID,
 		Tag:     el.tag,
 		Role:    ax.Role,
 		State:   ax.State,
@@ -160,6 +171,7 @@ func projectEl(el *El, ax *qui.AXNode, layer string) *DOMNode {
 		Visible: ax.Visible,
 		Layer:   layer,
 		el:      el,
+		ax:      ax,
 	}
 	if el.node != nil {
 		d.ID = el.node.ID()

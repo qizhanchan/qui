@@ -665,7 +665,7 @@ func (l FlexLayout) Apply(children []Widget, bounds Rect) {
 	// caller probably didn't intend. With CSS-aligned defaults this
 	// fires almost exclusively when a child explicitly opts out of
 	// shrink (NoShrink:true) but the basisSum still exceeds available.
-	if flexDebugLayoutEnabled && leftover < -0.5 {
+	if flexDebugLayoutEnabled.Load() && leftover < -0.5 {
 		var basisSum float32
 		for _, it := range items {
 			basisSum += it.basis

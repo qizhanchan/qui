@@ -1,44 +1,35 @@
-// Package agent exposes a qui Window to external AI agents via a
-// local HTTP + Server-Sent-Events server. It is the "wire" half of
-// qui's ai-native operability story; the in-process Go API lives on
-// *qui.Window (Find / Click / Type / SnapshotAnnotated / etc.) and
-// is always available. This package adds:
+// Package agent serves qui's inspection protocol: the transport for AI
+// agents, tools and Chrome DevTools to observe and drive a running app.
 //
-//   - GET  /llm.txt        — self-documenting reference (embed)
-//   - GET  /tree           — accessibility tree (JSON); optional
-//     selector / maxDepth / leaves filters
-//   - GET  /screenshot     — PNG (scale / annotate / region)
-//   - GET  /diagnostics    — layout warnings
-//   - GET  /wait           — block until idle / overlay appears /
-//     selector appears|gone / tree stable
-//   - GET  /events         — SSE stream of dispatched events
-//   - GET  /console        — recent recorded events
-//   - POST /act            — perform an action atomically (selector-
-//     targeted, or click by raw x/y)
-//   - GET  /health         — liveness/readiness probe (JSON)
+// The protocol is CDP-shaped (Chrome DevTools Protocol): domains of typed
+// commands and events, JSON-RPC messages {id, method, params, sessionId}.
+// The domains themselves live in root's registry (qui.RegisterProtocolDomain
+// — Agent, DOM, Accessibility, Input, Page, Overlay, Log, Runtime,
+// Emulation, Animation, Debug), with htmlcss adding CSS and its DOM
+// projection and reactive adding Reactive. This package knows none of them
+// by name: it adds transport, sessions, targets and the event buffer.
 //
-// The server defaults to a Unix domain socket at
-// $TMPDIR/qui-agent-<pid>.sock (no port collisions, not visible in
-// netstat). TCP is opt-in via BindTCP / QUI_AGENT_TCP env, and
-// requires QUI_AGENT_TOKEN bearer auth when bound.
+//	POST /rpc                      one call: {method, params, target?}
+//	GET  /devtools/browser/<id>    WebSocket: app-level session
+//	GET  /devtools/page/<target>   WebSocket: session bound to one window
+//	GET  /json/version, /json/list, /json/protocol   CDP discovery + schema
+//	GET  /llm.txt                  the guide for agents + method reference
 //
-// Threading: every endpoint that mutates window state (POST /act,
-// GET /wait) reaches the main goroutine via Window.PostJob. Read-
-// only endpoints (/tree, /screenshot, /diagnostics) sample
-// snapshot-style state directly under their own internal locking;
-// the per-frame draw races are absorbed by the immutable nature of
-// the snapshot returned (image / tree are deep copies).
+// One server covers every window of the process (qui.LiveWindows); windows
+// are targets ("window-1", …). The server listens on a Unix domain socket
+// by default ($TMPDIR/qui-agent-<pid>.sock, owner-only) and writes a
+// discovery file ($TMPDIR/qui-agent/<app>.json) so clients find the app by
+// name. TCP is opt-in and requires a bearer token.
 //
 // Environment variables (handled by BindEnv):
 //
 //	QUI_AGENT=1            — start a UDS listener
-//	QUI_AGENT_SOCK=/p.sock — pin the UDS path (implies QUI_AGENT=1). Without
-//	                         it the path carries the PID, and a client that
-//	                         auto-discovers the newest socket can attach to a
-//	                         different app when several are running.
+//	QUI_AGENT_SOCK=/p.sock — pin the UDS path (implies QUI_AGENT=1)
 //	QUI_AGENT_TCP=:9119    — also start a TCP listener on the given addr
 //	QUI_AGENT_TOKEN=xyz    — require Authorization: Bearer xyz on TCP
+//	QUI_AGENT_DEVTOOLS=1   — let Chrome DevTools attach over TCP (the token
+//	                         then also travels as /devtools/t/<token>/…)
 //
-// The package is pure Go and imports only the standard library +
-// root qui. No widgets / media / scene3d / webview dependencies.
+// agent/client is a stdlib-only client for the protocol; cmd/qui-agent is a
+// CLI and MCP server built on it.
 package agent
