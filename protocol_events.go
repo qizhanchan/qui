@@ -246,6 +246,7 @@ func runtimeDomain() ProtocolDomain {
 // afterPaintProtocol runs at the end of a painted frame.
 func (w *Window) afterPaintProtocol(dirty Rect, full bool) {
 	w.frameSeq++
+	w.notePaintLifecycle()
 	if ProtocolEventsWanted(w, "Page") {
 		EmitProtocolEvent(w, "Page.frameCommitted", pageFrameCommitted{
 			Frame:       w.frameSeq,
@@ -408,7 +409,7 @@ func (w *Window) nodeAt(p Point) *AXNode {
 type overlayHighlightParams struct {
 	NodeID        NodeID `json:"nodeId,omitempty"`
 	BackendNodeID NodeID `json:"backendNodeId,omitempty"`
-	Selector      string `json:"selector,omitempty" desc:"qui: highlight the first match instead"`
+	Selector      string `json:"selector,omitempty" desc:"CSS selector: highlight the first match instead"`
 }
 
 type overlayInspectParams struct {
@@ -431,7 +432,7 @@ func overlayDomain() ProtocolDomain {
 						switch {
 						case p.Selector != "":
 							var nodes []*AXNode
-							if nodes, err = w.FindNodes(p.Selector); err == nil {
+							if nodes, err = w.findNodesCSSIn(w.AccessibilityTree(), p.Selector); err == nil {
 								if len(nodes) == 0 {
 									err = noMatchFor(p.Selector)
 								} else {

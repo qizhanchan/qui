@@ -90,6 +90,10 @@ func (s *session) isEnabled(domain string) bool {
 	return s.enabled[domain]
 }
 
+// SetToggle implements qui.ProtocolSessionToggles; toggles share the
+// enabled map, keyed by their own names.
+func (s *session) SetToggle(name string, on bool) { s.setEnabled(name, on) }
+
 func (s *session) setEnabled(domain string, on bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -382,6 +386,9 @@ func (s *Server) HandleEvent(w *qui.Window, method string, params any) {
 		if w != nil && sess.targetID == "" && len(s.windows()) > 1 {
 			// An unattached root session only hears its target's events
 			// when there is exactly one; with several it must attach.
+			continue
+		}
+		if method == "Page.lifecycleEvent" && !sess.isEnabled(qui.LifecycleEventsToggle) {
 			continue
 		}
 		if method == "Page.frameCommitted" {

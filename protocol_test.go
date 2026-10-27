@@ -3,6 +3,7 @@ package qui_test
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -148,5 +149,48 @@ func TestProtocol_SchemaAndErrors(t *testing.T) {
 	out, _ := json.Marshal(pe)
 	if !strings.Contains(string(out), `"reason":"stale_node"`) || !strings.Contains(string(out), `"code":-32000`) {
 		t.Errorf("error JSON = %s", out)
+	}
+}
+
+// The DOM domain takes CSS, as Chrome does: a client such as Puppeteer
+// sends [name=email] meaning the HTML attribute. Only the forms that mean
+// the same in both grammars (#id) are answered without a CSS engine; the
+// widget grammar is Agent.query's.
+func TestProtocol_DOMSelectorsAreCSS(t *testing.T) {
+	w, submit, _, _ := newTree(t)
+	q, err := call(t, w, "DOM.querySelectorAll", map[string]any{"selector": "#submit, [id=submit]"})
+	if err != nil || len(q["nodeIds"].([]any)) != 1 || q["nodeIds"].([]any)[0] != float64(submit.NodeID()) {
+		t.Fatalf("querySelectorAll #submit = %v, %v", q, err)
+	}
+	for _, sel := range []string{`[role=button][name="Submit"]`, "@" + strconv.Itoa(int(submit.NodeID())), "[role=button]:nth(0)"} {
+		_, err := call(t, w, "DOM.querySelectorAll", map[string]any{"selector": sel})
+		if reason(err) != "bad_selector" || !strings.Contains(err.Error(), "Agent.query") {
+			t.Errorf("DOM.querySelectorAll %s: err = %v, want bad_selector pointing at Agent.query", sel, err)
+		}
+	}
+	if _, err := call(t, w, "Overlay.highlightNode", map[string]any{"selector": `[name="Submit"]`}); reason(err) != "bad_selector" {
+		t.Errorf("highlightNode widget selector: err = %v, want bad_selector", err)
+	}
+}
+
+// Agent.query takes what every Agent target takes, comma lists included:
+// each alternative keeps its own grammar, so [name=] stays the accessible
+// name instead of the whole list falling through to CSS.
+func TestProtocol_AgentQuery(t *testing.T) {
+	w, submit, _, agree := newTree(t)
+	q, err := call(t, w, "Agent.query", map[string]any{"selector": `[role=checkbox][name="I agree"], [role=button][name="Submit"]`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := q["matches"].([]any)
+	if len(m) != 2 || m[0].(map[string]any)["nodeId"] != float64(submit.NodeID()) || m[1].(map[string]any)["nodeId"] != float64(agree.NodeID()) {
+		t.Fatalf("matches = %v, want [Submit, I agree] in tree order", m)
+	}
+	q, err = call(t, w, "Agent.query", map[string]any{"selector": `[name="nobody"]`})
+	if err != nil || len(q["matches"].([]any)) != 0 {
+		t.Fatalf("no match: %v, %v — want an empty list, not an error", q, err)
+	}
+	if _, err := call(t, w, "Agent.query", map[string]any{"target": "#submit"}); reason(err) != "invalid_params" {
+		t.Fatalf("misnamed field: err = %v", err)
 	}
 }

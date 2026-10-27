@@ -6,11 +6,118 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
+	"math"
+	"sync/atomic"
+	"time"
 )
 
 // The Page domain: the window as a page — screenshots, viewport metrics,
-// bringing it to the front. Lifecycle events (frameCommitted, windowResized)
+// bringing it to the front. Frame events (frameCommitted, windowResized)
 // are emitted from the frame loop; see protocol_events.go.
+//
+// Load lifecycle, as Chrome reports it. A window has no document to parse
+// or subresources to fetch, so the two milestones map onto the frame loop:
+//
+//	DOMContentLoaded — the first layout pass over a root at a non-empty
+//	                   size: the tree exists and every node has bounds.
+//	load             — the first frame painted after that.
+//
+// Both fire once per window, as Page.domContentEventFired / loadEventFired
+// to sessions with Page enabled, and as Page.lifecycleEvent to those that
+// also called Page.setLifecycleEventsEnabled. Enabling lifecycle events
+// replays the milestones already reached, as Chrome does, so a client that
+// attaches late still learns the window loaded. Agent.waitForReady is the
+// same state for one-shot HTTP callers, which hear no events.
+
+// pageLifecycle holds the milestone timestamps (protocol monotonic
+// seconds as math.Float64bits; 0 = not reached).
+type pageLifecycle struct {
+	domContentLoaded atomic.Uint64
+	load             atomic.Uint64
+}
+
+// protocolClock is the origin of the protocol's MonotonicTime.
+var protocolClock = time.Now()
+
+// monotonicSeconds is CDP's MonotonicTime: seconds on a clock that never
+// goes back. Never 0, which pageLifecycle reserves for "not reached".
+func monotonicSeconds() float64 {
+	return math.Max(time.Since(protocolClock).Seconds(), 1e-9)
+}
+
+func lifecycleTime(v *atomic.Uint64) float64 { return math.Float64frombits(v.Load()) }
+
+// ReadyState is the window's load state in document.readyState's terms:
+// "loading" until the first layout, "interactive" until the first painted
+// frame, then "complete". Safe from any goroutine.
+func (w *Window) ReadyState() string {
+	switch {
+	case w == nil || w.lifecycle.domContentLoaded.Load() == 0:
+		return "loading"
+	case w.lifecycle.load.Load() == 0:
+		return "interactive"
+	default:
+		return "complete"
+	}
+}
+
+// noteLayoutLifecycle runs after each layout pass: the first one over a
+// root at a real size is DOMContentLoaded.
+func (w *Window) noteLayoutLifecycle() {
+	if w.lifecycle.domContentLoaded.Load() != 0 || w.root == nil || w.lastSize.W <= 0 || w.lastSize.H <= 0 {
+		return
+	}
+	t := monotonicSeconds()
+	w.lifecycle.domContentLoaded.Store(math.Float64bits(t))
+	w.emitLifecycle("DOMContentLoaded", t)
+}
+
+// notePaintLifecycle runs after each painted frame: the first one after
+// DOMContentLoaded is load.
+func (w *Window) notePaintLifecycle() {
+	if w.lifecycle.load.Load() != 0 || w.lifecycle.domContentLoaded.Load() == 0 {
+		return
+	}
+	t := monotonicSeconds()
+	w.lifecycle.load.Store(math.Float64bits(t))
+	w.emitLifecycle("load", t)
+}
+
+func (w *Window) emitLifecycle(name string, t float64) {
+	if !ProtocolEventsWanted(w, "Page") {
+		return
+	}
+	if name == "load" {
+		EmitProtocolEvent(w, "Page.loadEventFired", pageTimestamp{Timestamp: t})
+	} else {
+		EmitProtocolEvent(w, "Page.domContentEventFired", pageTimestamp{Timestamp: t})
+	}
+	EmitProtocolEvent(w, "Page.lifecycleEvent", w.lifecycleEvent(name, t))
+}
+
+func (w *Window) lifecycleEvent(name string, t float64) pageLifecycleEvent {
+	id := w.TargetID()
+	return pageLifecycleEvent{FrameID: id, LoaderID: id, Name: name, Timestamp: t}
+}
+
+// LifecycleEventsToggle names the per-session switch
+// Page.setLifecycleEventsEnabled flips (see ProtocolSessionToggles).
+const LifecycleEventsToggle = "Page.lifecycleEvents"
+
+type pageTimestamp struct {
+	Timestamp float64 `json:"timestamp" desc:"MonotonicTime, seconds"`
+}
+
+type pageLifecycleEvent struct {
+	FrameID   string  `json:"frameId" desc:"the window's targetId"`
+	LoaderID  string  `json:"loaderId" desc:"the window's targetId (a window loads once)"`
+	Name      string  `json:"name" desc:"DOMContentLoaded | load"`
+	Timestamp float64 `json:"timestamp" desc:"MonotonicTime, seconds"`
+}
+
+type pageSetLifecycleParams struct {
+	Enabled bool `json:"enabled"`
+}
 
 // maxScreenshotScale caps a screenshot's scale: the resample allocates
 // W*scale × H*scale on the UI thread, so an unbounded scale is a one-request
@@ -138,7 +245,7 @@ func (w *Window) captureScreenshot(p pageScreenshotParams) ([]byte, image.Rectan
 func pageDomain() ProtocolDomain {
 	return ProtocolDomain{
 		Name:        "Page",
-		Description: "The window as a page: screenshots, viewport metrics, focus, and frame lifecycle events (sent only to sessions that Page.enable).",
+		Description: "The window as a page: screenshots, viewport metrics, focus, frame events and the load lifecycle (events go only to sessions that Page.enable).",
 		Commands: []ProtocolCommand{
 			NewProtocolCommand("captureScreenshot", "Capture the window (or a clip of it) at the end of the next frame, so it reflects every queued change.",
 				func(ctx *ProtocolContext, p pageScreenshotParams) (pageScreenshotResult, error) {
@@ -170,10 +277,30 @@ func pageDomain() ProtocolDomain {
 				func(ctx *ProtocolContext, _ empty) (empty, error) {
 					return empty{}, ctx.Window.synchronously(func() error { ctx.Window.Raise(); return nil })
 				}),
+			NewProtocolCommand("setLifecycleEventsEnabled", "Send Page.lifecycleEvent to this session. Enabling replays the milestones already reached, as Chrome does.",
+				func(ctx *ProtocolContext, p pageSetLifecycleParams) (empty, error) {
+					if t, ok := ctx.Session.(ProtocolSessionToggles); ok {
+						t.SetToggle(LifecycleEventsToggle, p.Enabled)
+					}
+					if !p.Enabled || ctx.Session == nil {
+						return empty{}, nil
+					}
+					w := ctx.Window
+					if t := lifecycleTime(&w.lifecycle.domContentLoaded); t != 0 {
+						ctx.Session.Emit("Page.lifecycleEvent", w.lifecycleEvent("DOMContentLoaded", t))
+					}
+					if t := lifecycleTime(&w.lifecycle.load); t != 0 {
+						ctx.Session.Emit("Page.lifecycleEvent", w.lifecycleEvent("load", t))
+					}
+					return empty{}, nil
+				}),
 		},
 		Events: []ProtocolEvent{
 			NewProtocolEvent[pageFrameCommitted]("frameCommitted", "A frame was painted (only while a session has Page enabled)."),
 			NewProtocolEvent[pageWindowResized]("windowResized", "The window's logical size changed."),
+			NewProtocolEvent[pageTimestamp]("domContentEventFired", "The first layout over the window's root (once per window)."),
+			NewProtocolEvent[pageTimestamp]("loadEventFired", "The first frame painted after DOMContentLoaded (once per window)."),
+			NewProtocolEvent[pageLifecycleEvent]("lifecycleEvent", "A load milestone (DOMContentLoaded, load); only to sessions that called setLifecycleEventsEnabled."),
 		},
 	}
 }

@@ -26,6 +26,9 @@ type Window struct {
 	highlight    *overlayHighlight
 	inspectMode  bool
 	inspectEatUp bool
+	// lifecycle is when the window reached DOMContentLoaded / load (see
+	// protocol_page.go); written on the UI goroutine, read from any.
+	lifecycle pageLifecycle
 	// anim is the animators' clock (Animation domain); metricsBefore the
 	// size to restore after Emulation.setDeviceMetricsOverride.
 	anim          animClock

@@ -374,6 +374,7 @@ func (w *Window) Step() {
 	// clipped to the mutated widget's rect.
 	w.lastSize = viewport
 	w.layoutPass()
+	w.noteLayoutLifecycle()
 	// A RequestGLRedraw is satisfied by any frame: a painted one replays
 	// retained GL draws anyway, so only a frame with nothing dirty needs
 	// the GL-only path.

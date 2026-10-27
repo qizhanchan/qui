@@ -37,6 +37,9 @@ import (
 //	                              root    → main tree
 //	                              modal   → topmost modal overlay
 //	                              topmost → topmost overlay (any kind)
+//	A, B                      — selector list: the union, in tree order;
+//	                            each alternative is resolved on its own
+//	                            (widget grammar, else CSS)
 //
 // Attribute values support double-quoted strings with backslash
 // escapes (\" and \\); unquoted values are read up to the next ']'.
@@ -113,6 +116,21 @@ func (w *Window) FindNodes(selector string) ([]*AXNode, error) {
 }
 
 func (w *Window) findNodesIn(tree *AccessibilityTree, selector string) ([]*AXNode, error) {
+	// A selector list resolves alternative by alternative, each under the
+	// rule above, so "[role=button][name=A], [role=button][name=B]" keeps
+	// [name=] the accessible name instead of the whole string falling
+	// through to CSS, where [name=] is the HTML attribute.
+	if parts := splitSelectorList(selector); len(parts) > 1 {
+		var lists [][]*AXNode
+		for _, part := range parts {
+			nodes, err := w.findNodesIn(tree, part)
+			if err != nil {
+				return nil, err
+			}
+			lists = append(lists, nodes)
+		}
+		return unionInTreeOrder(tree, lists), nil
+	}
 	sel, err := parseSelector(selector)
 	if err == nil {
 		return sel.matchNodes(tree), nil
@@ -129,6 +147,123 @@ func (w *Window) findNodesIn(tree *AccessibilityTree, selector string) ([]*AXNod
 		return nil, fmt.Errorf("%w: not a widget selector (%v) nor a CSS selector (%v)", ErrInvalidSelector, err, cssErr)
 	}
 	return nodes, nil
+}
+
+// findNodesCSSIn resolves selector as CSS only — the contract of the CDP
+// domains (DOM.querySelector, Overlay.highlightNode), where [name=] is the
+// HTML attribute and a client such as Puppeteer expects exactly that. The
+// widget grammar answers only the forms that mean the same in CSS (#id,
+// [id=…]: the DOM projection exports the widget ID as the id attribute), so
+// native widgets the CSS engine does not project stay addressable by id;
+// everything else goes to the CSS engine.
+func (w *Window) findNodesCSSIn(tree *AccessibilityTree, selector string) ([]*AXNode, error) {
+	if parts := splitSelectorList(selector); len(parts) > 1 {
+		var lists [][]*AXNode
+		for _, part := range parts {
+			nodes, err := w.findNodesCSSIn(tree, part)
+			if err != nil {
+				return nil, err
+			}
+			lists = append(lists, nodes)
+		}
+		return unionInTreeOrder(tree, lists), nil
+	}
+	sel, err := parseSelector(selector)
+	if err == nil && sel.cssEquivalent() {
+		return sel.matchNodes(tree), nil
+	}
+	if strings.TrimSpace(selector) == "" {
+		return nil, fmt.Errorf("%w: empty selector", ErrInvalidSelector)
+	}
+	engine := selectorEngine.Load()
+	if engine == nil {
+		return nil, fmt.Errorf("%w: %q: this window has no CSS engine; for the widget grammar ([role=…][name=…], @N) use Agent.query", ErrInvalidSelector, selector)
+	}
+	nodes, cssErr := (*engine)(w, tree, selector)
+	if cssErr != nil {
+		if err == nil {
+			return nil, fmt.Errorf("%w: %q is qui's widget grammar, not CSS; use Agent.query (%v)", ErrInvalidSelector, selector, cssErr)
+		}
+		return nil, cssErr
+	}
+	return nodes, nil
+}
+
+// cssEquivalent reports whether the selector uses only forms that mean
+// the same in the widget grammar and in CSS: #id and [id=…].
+func (s *compiledSelector) cssEquivalent() bool {
+	if s.nodeID != 0 || s.wantFocused || s.wantVisible || s.wantHidden || s.layer != "" || s.hasNth {
+		return false
+	}
+	for _, a := range s.attrs {
+		if a.field != "id" {
+			return false
+		}
+	}
+	return s.idEquals != "" || len(s.attrs) > 0
+}
+
+// splitSelectorList splits a selector at its top-level commas — outside
+// quotes, [...] and (...). A selector without one comes back as nil.
+func splitSelectorList(s string) []string {
+	var parts []string
+	depth, start := 0, 0
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case quote != 0:
+			if c == '\\' {
+				i++
+			} else if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case c == '[' || c == '(':
+			depth++
+		case c == ']' || c == ')':
+			depth--
+		case c == ',' && depth == 0:
+			parts = append(parts, strings.TrimSpace(s[start:i]))
+			start = i + 1
+		}
+	}
+	if parts == nil {
+		return nil
+	}
+	return append(parts, strings.TrimSpace(s[start:]))
+}
+
+// unionInTreeOrder merges match lists without duplicates, in tree order
+// (main tree, then overlays bottom-to-top), as one CSS selector list does.
+func unionInTreeOrder(tree *AccessibilityTree, lists [][]*AXNode) []*AXNode {
+	want := map[*AXNode]bool{}
+	for _, l := range lists {
+		for _, n := range l {
+			want[n] = true
+		}
+	}
+	out := make([]*AXNode, 0, len(want))
+	if tree != nil {
+		for _, n := range tree.flatten() {
+			if want[n] {
+				out = append(out, n)
+				delete(want, n)
+			}
+		}
+	}
+	// A CSS engine may hand back nodes the flattened tree does not hold;
+	// keep them, in the order they were matched.
+	for _, l := range lists {
+		for _, n := range l {
+			if want[n] {
+				out = append(out, n)
+				delete(want, n)
+			}
+		}
+	}
+	return out
 }
 
 // FindNodesSynced is FindNodes for callers off the UI goroutine (the

@@ -150,6 +150,36 @@ func TestRPC_DOMAndCSSOnHTML(t *testing.T) {
 	}
 }
 
+// [name=] means two different things in the two halves of the protocol:
+// DOM.* is CSS as in Chrome (the HTML attribute), Agent.* is the widget
+// grammar (the accessible name). Both over the wire, on one element.
+func TestRPC_NameSelectorPerDomain(t *testing.T) {
+	eng := htmlcss.NewStyleEngine(``)
+	app := eng.NewEl("div")
+	field := eng.NewEl("input")
+	field.SetAttr("name", "email")
+	field.SetAttr("aria-label", "Email address")
+	app.SetElementChildren([]qui.Widget{field})
+	eng.SetRoot(app)
+	w := qui.NewTestWindow(qui.Size{W: 300, H: 200})
+	w.SetRoot(app)
+	eng.Restyle()
+	app.Layout(qui.Rect{W: 300, H: 200})
+	_, c := newUDSServer(t, w)
+
+	ids := func(q map[string]any) []any { return q["nodeIds"].([]any) }
+	if got := ids(call(t, c, "DOM.querySelectorAll", map[string]any{"selector": "[name=email]"})); len(got) != 1 || got[0] != float64(field.NodeID()) {
+		t.Fatalf("DOM [name=email] = %v, want the input (HTML attribute)", got)
+	}
+	if got := ids(call(t, c, "DOM.querySelectorAll", map[string]any{"selector": `[name="Email address"]`})); len(got) != 0 {
+		t.Fatalf("DOM [name=\"Email address\"] = %v, want nothing: CSS has no accessible name", got)
+	}
+	m := call(t, c, "Agent.query", map[string]any{"selector": `[name="Email address"]`})["matches"].([]any)
+	if len(m) == 0 {
+		t.Fatalf("Agent.query accessible name matched nothing")
+	}
+}
+
 func TestWS_SessionsAndEvents(t *testing.T) {
 	w, btn, clicked := newSampleWindow(t)
 	_, c := newUDSServer(t, w)

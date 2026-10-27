@@ -378,6 +378,8 @@ M1–M7 已全部落地，旧 REST 端点已删除。以下是与上文设计的
 | §5.2 WebSocket | 用 `golang.org/x/net/websocket` | 自写的最小 RFC 6455 实现（`agent/internal/ws`，约 300 行，仅标准库） | 仓库的 `vendor/` 被 git 忽略且不含该包；自写实现也能精确控制 Origin 校验和帧大小上限 |
 | §6.1 绑定方式 | `BindEnv(app)` | 保留 `BindEnv(window)` 的签名，但服务进程内全部窗口（`qui.LiveWindows`） | 14 个示例零改动；多窗口应用只需一次调用 |
 | §7.3 统一选择器 | 一个合并的解析器 | 一个入口、两套语法、确定性规则：控件语法能解析就按控件语法，否则交给注册的 CSS 引擎（`qui.RegisterSelectorEngine`）。`Window.Find/Click/WaitFor` 也因此直接支持 CSS | 两套语法在 `[name=]` 上语义冲突（无障碍名称 vs HTML 属性），合并会破坏现有脚本；确定性规则消除了旧实现“失败后换语法重试”的不可预测性。CSS 中的 HTML `name` 属性需加标签限定：`input[name=email]` |
+| §7.3 统一选择器的适用范围（2026-10-27） | 所有接受 selector 的方法 | 双语法只用于 `Agent.*`（target、`Agent.query`、`Agent.waitFor`）。CDP 域（`DOM.querySelector(All)`、`Overlay.highlightNode`）按 Chrome 只认 CSS，`[name=]` 是 HTML 属性；控件语法只回答与 CSS 同义的 `#id` / `[id=]`，让 CSS 引擎投影不到的原生 widget 仍能按 id 找到，其余写法按 CSS 解析，控件专有写法报 `bad_selector` 并指向 `Agent.query`。逗号选择器列表按每个分支各自判定语法再求并集 | Puppeteer 等 CDP 客户端按 CSS 语义发 `[name=email]`；混用会让同一个 selector 在 qui 和 Chrome 里含义不同。逗号原来会把整串推给 CSS，悄悄改变 `[name=]` 的含义 |
+| §8 Page 生命周期（2026-10-27） | — | `Page.domContentEventFired` / `loadEventFired`、`Page.setLifecycleEventsEnabled` + `Page.lifecycleEvent`。窗口没有文档要解析：首次在非空尺寸上对 root 布局 = `DOMContentLoaded`，其后首次绘制 = `load`，每个窗口各一次；开启生命周期事件时回放已到达的里程碑（与 Chrome 一致）。HTTP 调用方收不到事件，用 qui 扩展 `Agent.waitForReady`（CLI `wait-ready`） | 启动后立刻快照会读到还没有 bounds 的树；没有就绪信号时脚本只能 sleep |
 | §7.3 `@418 .row` 作用域写法 | 支持 | 未实现；用 `DOM.querySelector {nodeId, selector}` 做子树查询 | 使用频率低 |
 | §7.1 文本节点 | El 侧懒分配 | htmlcss 的文本段本身就是 El，天然有 id；只有“叶子元素自带的文本”需要合成节点，其 id 跟随元素生命周期，文本变化时保留（回答了 §15 问题 1） | — |
 | §12 schema 生成物 | 提交生成文件 + CI 检查 | `/json/protocol` 和 `/llm.txt` 的方法参考都在运行时由注册表生成，没有需要同步的生成文件 | 从结构上杜绝漂移，不需要 CI 检查 |

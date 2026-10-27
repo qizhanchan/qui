@@ -43,6 +43,14 @@ driving the wrong app reports success and screenshots the wrong window.
 TCP is opt-in: QUI_AGENT_TCP=127.0.0.1:9222 plus QUI_AGENT_TOKEN (sent
 as "Authorization: Bearer <token>").
 
+A freshly started app may still be laying out its first frame (the
+snapshot is a root with no bounds). Run `qui-agent wait-ready`
+(Agent.waitForReady) first: it returns once the window has been laid
+out and painted (readyState "complete") and gone idle. CDP clients get
+the same milestones as Page.domContentEventFired / loadEventFired, or
+Page.lifecycleEvent after Page.setLifecycleEventsEnabled — which replays
+milestones already reached, as Chrome does.
+
 Transports, same methods on both:
   POST /rpc                     {"method", "params", "target"?} → {"result"} | {"error"}
   WebSocket /devtools/browser/x app-level session (CDP-style, with sessionId)
@@ -81,8 +89,16 @@ SNAPSHOT — Agent.snapshot / qui-agent snapshot
 SELECTORS — when you have no ref
 ------------------------------------------------------------------
 
-One string, two grammars, decided deterministically: whatever the widget
-grammar accepts means what it means there; anything else is CSS.
+Agent targets (and Agent.query, Agent.waitFor) take one string in two
+grammars, decided deterministically: whatever the widget grammar accepts
+means what it means there; anything else is CSS. A comma list ("A, B")
+is decided per alternative and matches the union, in tree order.
+
+The CDP domains take CSS only, as in Chrome: DOM.querySelector(All) and
+Overlay.highlightNode's selector. There [name=email] is the HTML
+attribute; #id also reaches native widgets. A widget-grammar selector
+there fails with bad_selector — use Agent.query {selector} to list what
+a widget selector matches ({nodeId, role, name} per match).
 
 Widget grammar (criteria AND together):
   @14                 node reference
@@ -99,8 +115,9 @@ combinators (a b, a > b, a + b, a ~ b), and :has-text("…") — matches the
 innermost element whose text contains the string (case-insensitive):
   button:has-text("Save")    .row:has-text("invoice #42")
 
-Note [name=…] is the widget grammar's ACCESSIBLE NAME. To match an HTML
-name attribute, qualify it with a tag: input[name=email].
+Note [name=…] is the widget grammar's ACCESSIBLE NAME in an Agent
+target. To match an HTML name attribute there, qualify it with a tag
+(input[name=email]) — or use DOM.querySelector, which is CSS throughout.
 
 LOCALIZED APPS — prefer, in order: @ref (from a fresh snapshot), #id,
 [key=…] (survives a language switch), role + structure, [name=…] last.
@@ -142,6 +159,7 @@ fails with not_text_target and changes NOTHING.
 WAITING
 ------------------------------------------------------------------
 
+  Agent.waitForReady     the window has loaded and gone idle (after start)
   Agent.waitFor {selector, state: visible|hidden|attached|detached}
   Agent.waitForIdle      no repaint / animation / job pending
   Agent.waitForStable    the tree hash held across two samples

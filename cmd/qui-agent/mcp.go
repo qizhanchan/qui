@@ -392,11 +392,11 @@ func (s *mcpServer) curatedTools() []mcpTool {
 			InputSchema: obj(map[string]any{"target": prop("string", "@ref or selector")}, "target"),
 			run: func(ctx context.Context, args map[string]any) ([]map[string]any, error) {
 				t, _ := args["target"].(string)
-				p := map[string]any{"selector": t}
-				if id, ok := refID(t); ok {
-					p = map[string]any{"nodeId": id}
+				id, err := r.resolve(t)
+				if err != nil {
+					return nil, err
 				}
-				return s.passthrough("Overlay.highlightNode")(ctx, p)
+				return s.passthrough("Overlay.highlightNode")(ctx, map[string]any{"nodeId": id})
 			},
 		},
 		{

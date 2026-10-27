@@ -101,7 +101,8 @@ KEY CONCEPTS
     it once, and report focusChange / newOverlays / treeHash, so
     "did anything change?" needs no re-fetch.
 
-  - Waits: Agent.waitFor {selector, state}, waitForIdle (paint +
+  - Waits: Agent.waitForReady (first frame laid out and painted, then
+    idle — run it after starting an app), Agent.waitFor {selector, state}, waitForIdle (paint +
     layout + animators + jobs quiescent), waitForStable (tree hash
     settled), waitForOverlay.
 

@@ -140,6 +140,22 @@ func (w *Window) WaitIdle(timeout time.Duration) error {
 	}, twoFrameConfirm)
 }
 
+// WaitReady blocks until the window has loaded (ReadyState "complete":
+// laid out and painted once) and then gone idle — the point from which
+// a snapshot shows the real UI rather than a tree with no bounds yet.
+func (w *Window) WaitReady(timeout time.Duration) error {
+	if w == nil {
+		return errors.New("qui: nil window")
+	}
+	deadline := time.Now().Add(timeout)
+	if err := w.waitUntil(timeout, func() bool {
+		return w.ReadyState() == "complete"
+	}, oneFrameConfirm); err != nil {
+		return err
+	}
+	return w.WaitIdle(time.Until(deadline))
+}
+
 // WaitOverlay blocks until an overlay matching layerPattern appears
 // (when appear == true) or disappears (when appear == false). The
 // pattern is matched as a substring against the overlay's Layer

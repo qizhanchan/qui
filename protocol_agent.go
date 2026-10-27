@@ -460,7 +460,21 @@ type agentWaitForParams struct {
 }
 
 type agentWaitParams struct {
-	TimeoutMs *int `json:"timeoutMs,omitempty" desc:"default 2000"`
+	TimeoutMs *int `json:"timeoutMs,omitempty" desc:"default 2000 (waitForReady: 5000)"`
+}
+
+type agentQueryParams struct {
+	Selector string `json:"selector" desc:"selector or @ref, as for any Agent target"`
+}
+
+type agentQueryResult struct {
+	Matches []agentMatched `json:"matches" desc:"every match, in tree order"`
+}
+
+type agentReadyResult struct {
+	ReadyState string    `json:"readyState" desc:"loading | interactive | complete, as document.readyState"`
+	IdleState  IdleState `json:"idleState"`
+	TreeHash   string    `json:"treeHash"`
 }
 
 type agentWaitOverlayParams struct {
@@ -649,10 +663,31 @@ func agentDomain() ProtocolDomain {
 					return ctx.Window.Pinch(ref, p.Scale)
 				})
 			}).WithStrict(),
+		NewProtocolCommand("query", "Every node a selector matches, in tree order, without waiting or acting. Takes the same selectors as every Agent target (widget grammar, CSS, @ref, comma lists); DOM.querySelectorAll takes CSS only.",
+			func(ctx *ProtocolContext, p agentQueryParams) (agentQueryResult, error) {
+				out := agentQueryResult{Matches: []agentMatched{}}
+				nodes, err := ctx.Window.FindNodesSynced(p.Selector)
+				if err != nil {
+					return out, err
+				}
+				for _, n := range nodes {
+					out.Matches = append(out.Matches, agentMatched{NodeID: n.NodeID, Role: n.Role, Name: n.Name})
+				}
+				return out, nil
+			}).WithStrict(),
 		NewProtocolCommand("waitFor", "Block until a selector is visible / hidden (matches nothing visible) / attached (matches anything) / detached (matches nothing), confirmed on two consecutive frames.",
 			func(ctx *ProtocolContext, p agentWaitForParams) (agentWaitResult, error) {
 				err := agentWaitSelector(ctx.ctx(), ctx.Window, p.Selector, p.State, waitTimeout(p.TimeoutMs, 2000))
 				return agentWaitDone(ctx.Window, err)
+			}).WithStrict(),
+		NewProtocolCommand("waitForReady", "Block until the window has loaded (laid out and painted once: readyState complete) and gone idle. Run it first after starting an app.",
+			func(ctx *ProtocolContext, p agentWaitParams) (agentReadyResult, error) {
+				w := ctx.Window
+				if err := w.WaitReady(waitTimeout(p.TimeoutMs, 5000)); err != nil {
+					return agentReadyResult{ReadyState: w.ReadyState()}, err
+				}
+				done, err := agentWaitDone(w, nil)
+				return agentReadyResult{ReadyState: w.ReadyState(), IdleState: done.IdleState, TreeHash: done.TreeHash}, err
 			}).WithStrict(),
 		NewProtocolCommand("waitForIdle", "Block until no repaint, animation, tickable or job is pending (animators quiet for 0.5s don't count).",
 			func(ctx *ProtocolContext, p agentWaitParams) (agentWaitResult, error) {

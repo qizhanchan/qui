@@ -46,6 +46,7 @@ observe
   targets                       the app's windows
   snapshot [ROOT] [-all] [-depth N] [-json]
                                 the UI as text, one [ref=@N] per node
+  query SELECTOR                every node it matches: nodeId, role, name
   html [TARGET]                 the live tree serialized as HTML
   styles TARGET                 matched rules, computed values, box model
   reactive                      the reactive component tree
@@ -66,6 +67,7 @@ act (TARGET = @ref from snapshot, or a selector: CSS, [role=…][name=…], #id)
   pinch TARGET SCALE
 
 wait
+  wait-ready [-timeout MS]      the app has loaded and gone idle (run first)
   wait SELECTOR [-state visible|hidden|attached|detached] [-timeout MS]
   wait-idle [-timeout MS]   wait-stable [-timeout MS]   wait-overlay [PATTERN] [-gone]
 
@@ -445,6 +447,13 @@ func (r *runner) run(cmd string, args []string) error {
 		})
 		need(pos, 1, "wait SELECTOR [-state …] [-timeout MS]")
 		return r.act("Agent.waitFor", map[string]any{"selector": pos[0], "state": state, "timeoutMs": timeout})
+	case "wait-ready":
+		var timeout int
+		flags(cmd, args, func(fs *flag.FlagSet) { fs.IntVar(&timeout, "timeout", 5000, "ms") })
+		return r.act("Agent.waitForReady", map[string]any{"timeoutMs": timeout})
+	case "query":
+		need(args, 1, "query SELECTOR")
+		return r.act("Agent.query", map[string]any{"selector": args[0]})
 	case "wait-idle", "wait-stable":
 		var timeout int
 		flags(cmd, args, func(fs *flag.FlagSet) { fs.IntVar(&timeout, "timeout", 2000, "ms") })
@@ -477,10 +486,11 @@ func (r *runner) run(cmd string, args []string) error {
 		return nil
 	case "highlight":
 		need(args, 1, "highlight TARGET")
-		if id, ok := refID(args[0]); ok {
-			return r.act("Overlay.highlightNode", map[string]any{"nodeId": id})
+		id, err := r.resolve(args[0])
+		if err != nil {
+			return err
 		}
-		return r.act("Overlay.highlightNode", map[string]any{"selector": args[0]})
+		return r.act("Overlay.highlightNode", map[string]any{"nodeId": id})
 	case "unhighlight":
 		return r.act("Overlay.hideHighlight", map[string]any{})
 	case "flags":
@@ -539,21 +549,22 @@ func refID(s string) (int64, bool) {
 }
 
 // resolve turns a TARGET into a nodeId: a ref directly, a selector through
-// DOM.querySelector.
+// Agent.query, so TARGET means what it means for every action (DOM.*
+// would read it as CSS only).
 func (r *runner) resolve(target string) (int64, error) {
 	if id, ok := refID(target); ok {
 		return id, nil
 	}
-	raw, err := r.call("DOM.querySelector", map[string]any{"selector": target})
+	raw, err := r.call("Agent.query", map[string]any{"selector": target})
 	if err != nil {
 		return 0, err
 	}
-	var out struct{ NodeID int64 }
+	var out struct{ Matches []struct{ NodeID int64 } }
 	_ = json.Unmarshal(raw, &out)
-	if out.NodeID == 0 {
+	if len(out.Matches) == 0 {
 		return 0, fmt.Errorf("no_match: %s matched nothing", target)
 	}
-	return out.NodeID, nil
+	return out.Matches[0].NodeID, nil
 }
 
 // events prints buffered events, and with -follow streams new ones.

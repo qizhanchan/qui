@@ -119,6 +119,13 @@ type ProtocolSession interface {
 	Emit(method string, params any)
 }
 
+// ProtocolSessionToggles is implemented by sessions that keep switches
+// beyond Domain.enable, such as LifecycleEventsToggle. A transport whose
+// sessions lack it delivers every event of an enabled domain.
+type ProtocolSessionToggles interface {
+	SetToggle(name string, on bool)
+}
+
 // ProtocolContext is what a command handler receives.
 type ProtocolContext struct {
 	// Context is cancelled when the client goes away or the server stops.

@@ -344,7 +344,7 @@ type domNodeResult struct {
 
 type domQueryParams struct {
 	NodeID   NodeID `json:"nodeId,omitempty" desc:"scope: search this node's subtree; 0 or the document = everything"`
-	Selector string `json:"selector" desc:"CSS or widget selector, or @ref"`
+	Selector string `json:"selector" desc:"CSS selector, as in Chrome ([name=] is the HTML attribute); the widget grammar is Agent.query's"`
 }
 
 type domQueryResult struct {
@@ -408,12 +408,12 @@ func domLookup(doc *DOMViewNode, id NodeID) (*DOMViewNode, *DOMViewNode, error) 
 	return n, p, nil
 }
 
-// domMatches resolves selector (any grammar FindNodes accepts) to DOM nodes
+// domMatches resolves a CSS selector (see findNodesCSSIn) to DOM nodes
 // under scope, in document order. An AX match that is not itself in the DOM
 // view (a backing widget inside an element) maps to its nearest projected
 // ancestor.
 func domMatches(w *Window, tree *AccessibilityTree, doc *DOMViewNode, scope NodeID, selector string) ([]NodeID, error) {
-	nodes, err := w.findNodesIn(tree, selector)
+	nodes, err := w.findNodesCSSIn(tree, selector)
 	if err != nil {
 		return nil, err
 	}
@@ -460,7 +460,8 @@ func domDomain() ProtocolDomain {
 	return ProtocolDomain{
 		Name: "DOM",
 		Description: "The window as a DOM. For htmlcss content: HTML elements with classes and attributes; otherwise one element per widget. " +
-			"nodeId == backendNodeId == the qui NodeID (also @<id> in selectors). Selectors accept CSS, the widget grammar ([role=…][name=…]) and @refs.",
+			"nodeId == backendNodeId == the qui NodeID (also @<id> in Agent selectors). Selectors are CSS, as in Chrome: [name=] is the HTML attribute, and #id also reaches native widgets. " +
+			"For the widget grammar ([role=…][name=…], :focused, @N) use Agent.query.",
 		Commands: []ProtocolCommand{
 			NewProtocolCommand("getDocument", "The #document node, with children to depth (default 1; -1 = the whole tree).",
 				func(ctx *ProtocolContext, p domGetDocumentParams) (out domDocumentResult, err error) {
