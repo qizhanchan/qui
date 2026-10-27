@@ -4530,6 +4530,9 @@ func (e *El) Handle(event qui.Event) bool {
 		if e.runBuiltinClick() {
 			acted = true
 		}
+		if e.activateLabeledControl(me.Target()) {
+			acted = true
+		}
 		if acted {
 			// An author click handler on a link owns the click (the link
 			// doesn't also navigate) — the in-app router pattern.
@@ -4980,6 +4983,49 @@ func (e *El) runBuiltinClick() bool {
 		}
 	}
 	return false
+}
+
+// activateLabeledControl is a click on a <label> without for=: like the
+// browser, it activates the control the label wraps — unless the click
+// landed on that control, which already acted on it — and reports whether
+// it did. A disabled control stays inert.
+func (e *El) activateLabeledControl(target qui.Widget) bool {
+	ctl := e.labeledControl()
+	if ctl == nil || target == qui.Widget(ctl) || ctl.ownsControlTarget(target) {
+		return false
+	}
+	if _, disabled := ctl.attrs["disabled"]; disabled {
+		return false
+	}
+	ctl.activateFromLabel()
+	return true
+}
+
+// labeledControl is the control a <label> without for= is associated with:
+// its first labelable descendant (HTML's implicit label association).
+func (e *El) labeledControl() *El {
+	if e.tag != "label" || strings.TrimSpace(e.attrs["for"]) != "" {
+		return nil
+	}
+	var found *El
+	var walk func(*El)
+	walk = func(x *El) {
+		for _, k := range x.elementKids {
+			ke, ok := k.(*El)
+			if !ok || found != nil {
+				continue
+			}
+			switch {
+			case ke.tag == "input" && ke.attrs["type"] != "hidden",
+				ke.tag == "select", ke.tag == "textarea":
+				found = ke
+			default:
+				walk(ke)
+			}
+		}
+	}
+	walk(e)
+	return found
 }
 
 func (e *El) activateFromLabel() {
