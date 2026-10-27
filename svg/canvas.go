@@ -298,6 +298,10 @@ func (c *Canvas) Clear(color qui.Color) {
 		num(c.width), num(c.height), colorHex(color))
 }
 
+// ClearRect is a no-op: an SVG document has no pixels to erase, and
+// elements already written stay.
+func (c *Canvas) ClearRect(qui.Rect) {}
+
 // FillRect fills an axis-aligned rectangle.
 func (c *Canvas) FillRect(rect qui.Rect, color qui.Color) {
 	c.DrawShape(qui.ShapeRect(rect), qui.Paint{Color: color})

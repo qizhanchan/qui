@@ -115,6 +115,10 @@ func (c *pdfCanvas) Clear(color gfx.Color) {
 	c.FillRect(gfx.Rect{W: c.page.wLogical, H: c.page.hLogical}, color)
 }
 
+// ClearRect has nothing to erase on a PDF page: marks already emitted
+// stay, and nothing is composited underneath the page.
+func (c *pdfCanvas) ClearRect(gfx.Rect) {}
+
 func (c *pdfCanvas) setFill(color gfx.Color) {
 	c.applyAlpha(color.A)
 	c.emit("%s %s %s rg\n", pdfNum(float64(color.R)), pdfNum(float64(color.G)), pdfNum(float64(color.B)))

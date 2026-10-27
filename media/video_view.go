@@ -1139,7 +1139,7 @@ func (v *VideoView) Draw(canvas qui.Canvas) {
 	// letterbox background remains opaque around it. Use the full
 	// bounds for the hole (not just dstRect) so any future under-
 	// the-frame UI works the same way.
-	canvas.FillRect(bounds, qui.Color{R: 0, G: 0, B: 0, A: 0})
+	canvas.ClearRect(bounds)
 
 	if rk, ok := canvas.(qui.RetainedGLCanvas); ok {
 		v.glSrc, v.glDst = src, dst

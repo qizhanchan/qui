@@ -185,23 +185,91 @@ func TestDrawLineClippedRespectsClipRect(t *testing.T) {
 	}
 }
 
-// FillRect with A=0 is the hole-punch idiom that GL-compositing widgets
-// (VideoView / scene3d.Viewport / WebView) rely on: paint an opaque
-// letterbox background, then FillRect with A=0 to clear the pixels the
-// GL texture should show through. Treating A=0 as a no-op leaves the
-// opaque bg in place, so the texture below the CPU layer never appears.
-func TestFillRectAlphaZeroPunchesHole(t *testing.T) {
+// ClearRect is how GL-compositing widgets (VideoView / scene3d.Viewport /
+// WebView) open the 2D layer: paint an opaque letterbox background, then
+// clear the pixels the GL texture should show through.
+func TestClearRectMakesTransparent(t *testing.T) {
 	img := solidImage(8, 8, color.RGBA{255, 0, 0, 255})
 	c := NewImageCanvasForTest(img)
-	c.FillRect(gfx.Rect{X: 2, Y: 2, W: 4, H: 4}, gfx.Color{R: 0, G: 0, B: 0, A: 0})
-
-	// Inside the punched rect: pixels must be (0,0,0,0).
+	c.ClearRect(gfx.Rect{X: 2, Y: 2, W: 4, H: 4})
 	if got := img.RGBAAt(3, 3); got != (color.RGBA{}) {
-		t.Errorf("punched pixel (3,3) = %+v, want fully transparent", got)
+		t.Errorf("cleared pixel (3,3) = %+v, want fully transparent", got)
 	}
-	// Outside the punched rect: untouched red.
 	if got := img.RGBAAt(0, 0); got.R != 255 || got.A != 255 {
 		t.Errorf("untouched pixel (0,0) = %+v, want opaque red", got)
+	}
+}
+
+func TestClearRectFollowsTransformAndClip(t *testing.T) {
+	img := solidImage(20, 20, color.RGBA{0, 0, 255, 255})
+	c := NewImageCanvasForTest(img)
+	c.Save()
+	c.Translate(10, 0)
+	c.ClipRect(gfx.Rect{X: 0, Y: 0, W: 4, H: 20})
+	c.ClearRect(gfx.Rect{X: 0, Y: 0, W: 8, H: 8}) // translated to x 10..18, clipped to 10..14
+	c.Restore()
+	for _, p := range []struct {
+		x, y  int
+		clear bool
+	}{{11, 3, true}, {13, 7, true}, {3, 3, false}, {15, 3, false}, {11, 9, false}} {
+		got := img.RGBAAt(p.x, p.y)
+		if (got.A == 0) != p.clear {
+			t.Errorf("(%d,%d) = %+v, want cleared=%v", p.x, p.y, got, p.clear)
+		}
+	}
+}
+
+// A zero-alpha color paints nothing, whatever its RGB and whatever the
+// primitive — as on a web canvas. Color{} used to erase (the old
+// hole-punch idiom), so an unset or CSS-transparent color wiped pixels:
+// a diagram's stroke "none" left transparent outlines.
+func TestZeroAlphaPaintsNothing(t *testing.T) {
+	orig := color.RGBA{120, 80, 200, 255}
+	img := solidImage(40, 40, orig)
+	c := NewImageCanvasForTest(img)
+	for _, col := range []gfx.Color{{}, {R: 1, G: 1, B: 1}, {R: 0.5, A: 0.0008}} {
+		c.FillRect(gfx.Rect{X: 2, Y: 2, W: 10, H: 10}, col)
+		c.StrokeRect(gfx.Rect{X: 14, Y: 2, W: 10, H: 10}, col, 2)
+		c.FillRoundedRect(gfx.Rect{X: 26, Y: 2, W: 10, H: 10}, 3, col)
+		c.StrokeRoundedRect(gfx.Rect{X: 2, Y: 14, W: 10, H: 10}, 3, col, 2)
+		c.DrawLine(gfx.Point{X: 14, Y: 20}, gfx.Point{X: 36, Y: 20}, col, 3)
+		c.DrawShape(gfx.ShapePath{Path: gfx.NewPath().AddCircle(20, 32, 6)}, gfx.Paint{Color: col, AntiAlias: true})
+		c.DrawShape(gfx.ShapePath{Path: gfx.NewPath().AddCircle(32, 32, 6)}, gfx.Paint{Color: col, Style: gfx.PaintStroke, StrokeWidth: 2, AntiAlias: true})
+	}
+	for y := 0; y < 40; y++ {
+		for x := 0; x < 40; x++ {
+			if got := img.RGBAAt(x, y); got != orig {
+				t.Fatalf("pixel (%d,%d) = %+v after zero-alpha paints, want untouched %+v", x, y, got, orig)
+			}
+		}
+	}
+}
+
+// Clear replaces the clip's pixels: transparent clears them (an overlay
+// panel's corners), translucent sets them rather than blending, opaque
+// fills.
+func TestClearReplacesInsideClip(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		col  gfx.Color
+		want color.RGBA
+	}{
+		{"transparent", gfx.ColorTransparent, color.RGBA{}},
+		{"translucent", gfx.Color{R: 1, A: 0.5}, color.RGBA{128, 0, 0, 128}}, // premultiplied, not blended over blue
+		{"opaque", gfx.Color{G: 1, A: 1}, color.RGBA{0, 255, 0, 255}},
+	} {
+		img := solidImage(10, 10, color.RGBA{0, 0, 255, 255})
+		c := NewImageCanvasForTest(img)
+		c.Save()
+		c.ClipRect(gfx.Rect{X: 0, Y: 0, W: 5, H: 10})
+		c.Clear(tc.col)
+		c.Restore()
+		if got := img.RGBAAt(2, 2); got != tc.want {
+			t.Errorf("%s: inside clip = %+v, want %+v", tc.name, got, tc.want)
+		}
+		if got := img.RGBAAt(7, 2); got != (color.RGBA{0, 0, 255, 255}) {
+			t.Errorf("%s: outside clip = %+v, want untouched blue", tc.name, got)
+		}
 	}
 }
 

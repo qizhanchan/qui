@@ -626,7 +626,7 @@ func (v *WebView) Tick(_ time.Time) qui.Rect {
 //  1. CPU path: if the page is a cpuFrameProvider with a
 //     ready image, fill background then canvas.DrawImage at widget
 //     bounds. Works on every Canvas (including tests / non-GL).
-//  2. GL path: hole-punch alpha=0 then queue a GL closure
+//  2. GL path: ClearRect a hole, then queue a GL closure
 //     that scissors to the canvas clip and blits the texture via
 //     drawWebViewTexture (samplerRect shader for IOSurface).
 //  3. Background-only: when no frame is available yet, just fill the
@@ -663,14 +663,14 @@ func (v *WebView) Draw(canvas qui.Canvas) {
 
 	// Opaque fill first (so a still-loading page shows the background
 	// instead of whatever was on the framebuffer last frame), then
-	// punch a transparent hole for the texture composite.
+	// clear a transparent hole for the texture composite.
 	canvas.FillRect(bounds, bg)
-	canvas.FillRect(bounds, qui.Color{A: 0})
+	canvas.ClearRect(bounds)
 
 	clip := bounds
 	if ca, isClip := canvas.(qui.ClipAware); isClip {
 		clip = ca.ClipBounds()
-		// Page-side hole-punch already established the dirty area;
+		// The page-side ClearRect already established the dirty area;
 		// downstream code only uses clip for scissor.
 	}
 

@@ -182,10 +182,7 @@ func (c imageCanvas) RestoreTo(depth int) {
 	c.CanvasState.RestoreTo(depth)
 }
 
-// Clear fills the current clip with `color`. Routes through the same
-// fillRectBlend the rest of the renderer uses, so opacity / hole-punch
-// semantics stay consistent with FillRect.
-// Clear fills the CURRENT CLIP (not the entire framebuffer) with `color`.
+// Clear sets the CURRENT CLIP (not the entire framebuffer) to `color`.
 // This matches the pre-refactor semantics — Window.Step relies on
 // Clear-clipped-to-dirty-region so a partial repaint (e.g. hover) leaves
 // the rest of the framebuffer intact from the previous frame. Calling
@@ -199,7 +196,32 @@ func (c imageCanvas) Clear(color gfx.Color) {
 	if dst.Empty() {
 		return
 	}
-	c.Backend.FillRect(dst, color)
+	// Replace, don't blend: an opaque fill overwrites on its own; any
+	// other color first takes the pixels back to transparent.
+	if color.A < 1 {
+		c.Backend.ClearRect(dst)
+	}
+	if color.A > 0 {
+		c.Backend.FillRect(dst, color)
+	}
+}
+
+// ClearRect makes rect transparent — the 2D layer's hole a GL-composited
+// widget shows through. A rotated transform clears the axis-aligned
+// bounds of the transformed rect.
+func (c imageCanvas) ClearRect(rect gfx.Rect) {
+	if c.Backend == nil {
+		return
+	}
+	top := c.TopCopy()
+	if top.Clip.IsEmpty() {
+		return
+	}
+	dst := rectToPixelRect(top.Matrix.TransformRect(rect)).Intersect(rectToPixelRect(top.Clip))
+	if dst.Empty() {
+		return
+	}
+	c.Backend.ClearRect(dst)
 }
 
 // DrawShape is the single rasterization entry point. Every shape +
@@ -211,6 +233,15 @@ func (c imageCanvas) DrawShape(shape gfx.Shape, paint gfx.Paint) {
 	if c.Backend == nil {
 		return
 	}
+	// Fill primitives with a shader route through the path rasterizer so
+	// gradient handling lives in exactly one place. Strokes always use
+	// Paint.Color — Paint.Shader is fill-only in v1.
+	shaderFill := paint.Shader != nil && paint.Style != gfx.PaintStroke
+	// A zero-alpha color paints nothing (see gfx.Canvas); erasing is
+	// ClearRect's job.
+	if !shaderFill && paint.Color.A <= 0 {
+		return
+	}
 	top := c.TopCopy()
 	// The clip starts as the surface bounds, so an empty one means
 	// "clipped away entirely". Stop here: the GPU backend reads a
@@ -220,10 +251,6 @@ func (c imageCanvas) DrawShape(shape gfx.Shape, paint gfx.Paint) {
 	}
 	s := top.Matrix.AvgScale()
 	axisAligned := top.Matrix.IsAxisAligned()
-	// Fill primitives with a shader route through the path rasterizer so
-	// gradient handling lives in exactly one place. Strokes always use
-	// Paint.Color — Paint.Shader is fill-only in v1.
-	shaderFill := paint.Shader != nil && paint.Style != gfx.PaintStroke
 	switch sh := shape.(type) {
 	case gfx.ShapeRect:
 		if !axisAligned || shaderFill {
@@ -829,6 +856,20 @@ func (c imageCanvas) FillRect(rect gfx.Rect, color gfx.Color) {
 	c.DrawShape(gfx.ShapeRect(rect), gfx.Paint{Color: color})
 }
 
+// clearPixels sets dst to transparent (0,0,0,0).
+func clearPixels(img *image.RGBA, dst image.Rectangle) {
+	stddraw.Draw(img, dst, image.Transparent, image.Point{}, stddraw.Src)
+}
+
+// replaceRect sets dst to c — an overwrite, unlike fillRectBlend's
+// source-over for translucent colors.
+func replaceRect(img *image.RGBA, dst image.Rectangle, c gfx.Color) {
+	if c.A < 1 {
+		clearPixels(img, dst)
+	}
+	fillRectBlend(img, dst, c)
+}
+
 // fillRectBlend writes color into dst with the right Porter-Duff op for
 // its alpha: stddraw.Src (replace) for opaque colors — the fast path the
 // background fills take — and a manual per-pixel src-over for
@@ -848,27 +889,11 @@ func fillRectBlend(img *image.RGBA, dst image.Rectangle, c gfx.Color) {
 		return
 	}
 	rgba := toRGBA(c)
-	// Hole-punch idiom: callers (VideoView, scene3d.Viewport, WebView)
-	// paint an opaque letterbox background, then FillRect with
-	// Color{A:0} (i.e. fully zero RGBA) to clear the pixels the GL
-	// texture should show through. Use stddraw.Src so the bitmap is
-	// overwritten with (0,0,0,0).
-	//
-	// Crucially the (R,G,B) check is required: a translucent paint
-	// (e.g. DrawStateLayer's hover overlay) computes c.A = layerA *
-	// opacity in float space; if opacity is tiny (the first ~1.6 ms of
-	// the 200 ms hover transition), ToByte rounds c.A to 0 even though
-	// it's non-zero in float. Without the RGB-zero guard, fillRectBlend
-	// hole-punched the rounded-rect strips to (0,0,0,0); the corners
-	// (drawCornerAA, which no-ops on a==0) survived, producing the
-	// "black rectangle in the button's center, rounded ends intact"
-	// flash a fast hover triggered.
+	// Zero alpha (exactly, or a tiny float alpha rounding to 0 — the
+	// first ms of a state-layer hover fade) is invisible: skip. This
+	// used to double as the hole-punch idiom for Color{}, which made any
+	// unset or CSS-transparent color an eraser; holes are ClearRect now.
 	if rgba.A == 0 {
-		if rgba.R == 0 && rgba.G == 0 && rgba.B == 0 {
-			stddraw.Draw(img, dst, &image.Uniform{C: rgba}, image.Point{}, stddraw.Src)
-		}
-		// Non-zero RGB with A=0 is a degenerate translucent paint —
-		// invisible by definition. Skip.
 		return
 	}
 	if rgba.A == 0xff {

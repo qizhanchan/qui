@@ -131,15 +131,25 @@ func (b *CPUBackend) PopLayer(mask *image.Alpha) {
 	compositeLayerClipped(f.outer, src, mask, f.paint, f.clip)
 }
 
-// Clear paints `color` across the entire active target. Ignores clip
-// — matches the old Canvas.Clear semantics (fill the ENTIRE current
-// target).
+// Clear sets the entire active target to `color`. Ignores clip —
+// matches the old Canvas.Clear semantics (the ENTIRE current target).
 func (b *CPUBackend) Clear(color gfx.Color) {
 	img := b.activeImg()
 	if img == nil {
 		return
 	}
-	fillRectBlend(img, img.Bounds(), color)
+	replaceRect(img, img.Bounds(), color)
+}
+
+// ClearRect makes dst transparent.
+func (b *CPUBackend) ClearRect(dst image.Rectangle) {
+	img := b.activeImg()
+	if img == nil {
+		return
+	}
+	if dst = dst.Intersect(img.Bounds()); !dst.Empty() {
+		clearPixels(img, dst)
+	}
 }
 
 // FillRect writes color into dst (already clipped by the frontend to

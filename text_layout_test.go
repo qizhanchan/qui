@@ -160,6 +160,7 @@ type recordCanvas struct {
 }
 
 func (c *recordCanvas) Clear(Color)                                     {}
+func (c *recordCanvas) ClearRect(Rect)                                  {}
 func (c *recordCanvas) FillRect(Rect, Color)                            {}
 func (c *recordCanvas) FillRoundedRect(Rect, float32, Color)            {}
 func (c *recordCanvas) StrokeRect(Rect, Color, float32)                 {}

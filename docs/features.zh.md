@@ -47,7 +47,7 @@
 **渲染**
 
 - `Canvas` 前端：Save/Restore 状态栈（裁剪 + 2×3 仿射矩阵）、`Path` 支持二次 / 三次贝塞尔、抗锯齿 winding/even-odd 填充、描边 cap/join/miter。
-- `SaveLayer` 支持混合模式与 `Paint.Alpha`；`ClipPath`；线性 / 径向渐变着色器；`ColorFilter` / `ImageFilter`（投影、模糊）；`DrawShadow`。
+- `SaveLayer` 支持混合模式与 `Paint.Alpha`；`ClipPath`；线性 / 径向渐变着色器；`ColorFilter` / `ImageFilter`（投影、模糊）；`DrawShadow`；`ClearRect`（对应 Web canvas 的 `clearRect`：为 GL 合成控件挖透明洞；透明度为 0 的绘制什么都不画）。
 - `RasterBackend` 接缝：纯 Go 的 CPU 参考实现（`internal/render/backend_cpu.go`）与可选 GPU 后端（`QUI_GPU_RASTER=1`，`internal/render/backend_gpu.go`）。
 - 脏区域绘制，`Invalidate` / `InvalidateRect` / `InvalidateLayout` 及包围盒变化提升。
 - 离屏渲染与回读；通过 `pdf.NewDoc`（以画布形式输出 PDF 页面，另有 `pdf.Print`）与 `svg.NewCanvas`（输出 SVG 文档）进行矢量导出。

@@ -649,8 +649,8 @@ type gpuImageCanvas struct {
 // DrawTexture queues the compositing call. It runs in End() AFTER
 // the framebuffer clear and BEFORE the 2D CPU blit, so the 2D
 // layer paints on top. A widget that wants the texture to be
-// visible (not covered) should punch a hole in the CPU image by
-// calling FillRect with alpha=0 at the same rect — 2D blit's
+// visible (not covered) should open a hole in the CPU image by
+// calling ClearRect at the same rect — 2D blit's
 // alpha blending then leaves the texture showing through. Higher-
 // priority 2D widgets drawn later (tooltips, dropdowns) cover the
 // texture naturally because they paint opaque pixels into the

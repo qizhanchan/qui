@@ -17,18 +17,19 @@ import (
 type RecordingCanvas struct {
 	*CanvasState
 
-	Clears    []Color
-	Fills     []Rect
-	Rounds    []RoundedRecord
-	Strokes   []Rect
-	Texts     []Rect
-	Images    []Rect
-	Vectors   []Rect
-	Lines     []LineRecord
-	Polylines [][]Point
-	Shadows   []ShadowRecord
-	Layers    []LayerRecord
-	Paths     []PathRecord
+	Clears     []Color
+	ClearRects []Rect // physical, like Fills
+	Fills      []Rect
+	Rounds     []RoundedRecord
+	Strokes    []Rect
+	Texts      []Rect
+	Images     []Rect
+	Vectors    []Rect
+	Lines      []LineRecord
+	Polylines  [][]Point
+	Shadows    []ShadowRecord
+	Layers     []LayerRecord
+	Paths      []PathRecord
 }
 
 // LayerRecord captures a SaveLayer call — the requested bounds, the
@@ -205,6 +206,12 @@ type PathRecord struct {
 }
 
 func (r *RecordingCanvas) Clear(c Color) { r.Clears = append(r.Clears, c) }
+
+func (r *RecordingCanvas) ClearRect(rect Rect) {
+	if eff, ok := r.projectRect(rect); ok {
+		r.ClearRects = append(r.ClearRects, eff)
+	}
+}
 
 func (r *RecordingCanvas) FillRect(rect Rect, _ Color) {
 	if eff, ok := r.projectRect(rect); ok {

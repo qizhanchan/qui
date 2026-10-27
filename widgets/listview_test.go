@@ -335,6 +335,7 @@ func (w *delegateRowWidget) HitTest(p Point) Widget {
 type listNoopCanvas struct{}
 
 func (listNoopCanvas) Clear(Color)                                     {}
+func (listNoopCanvas) ClearRect(Rect)                                  {}
 func (listNoopCanvas) FillRect(Rect, Color)                            {}
 func (listNoopCanvas) FillRoundedRect(Rect, float32, Color)            {}
 func (listNoopCanvas) StrokeRect(Rect, Color, float32)                 {}

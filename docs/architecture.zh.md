@@ -89,7 +89,7 @@ AppKit 可能在等待期间、没有任何输入事件的情况下投递的平�
 
 渲染是 Skia 形状的，分为两层。
 
-**Canvas 前端**（`internal/gfx/render.go`、`internal/gfx/canvas_state.go`、`internal/gfx/canvas_paint.go`、`internal/render/canvas_layer.go`、`internal/gfx/path.go`）：Save/Restore 状态栈（裁剪 + 2×3 仿射矩阵），`DrawShape(Shape, Paint)` 是唯一入口（便捷方法是包装），`Path` 支持二次 / 三次贝塞尔、抗锯齿的 winding/even-odd 填充、描边 cap/join/miter，`SaveLayer` 支持混合模式与 `Paint.Alpha`，`ClipPath`（在 Restore 时遮罩），`Paint.Shader`（线性 / 径向渐变），`ColorFilter`/`ImageFilter`（投影、模糊），以及用于 elevaton 阴影的 `DrawShadow`。
+**Canvas 前端**（`internal/gfx/render.go`、`internal/gfx/canvas_state.go`、`internal/gfx/canvas_paint.go`、`internal/render/canvas_layer.go`、`internal/gfx/path.go`）：Save/Restore 状态栈（裁剪 + 2×3 仿射矩阵），`DrawShape(Shape, Paint)` 是唯一入口（便捷方法是包装），`Path` 支持二次 / 三次贝塞尔、抗锯齿的 winding/even-odd 填充、描边 cap/join/miter，`SaveLayer` 支持混合模式与 `Paint.Alpha`，`ClipPath`（在 Restore 时遮罩），`Paint.Shader`（线性 / 径向渐变），`ColorFilter`/`ImageFilter`（投影、模糊），以及用于 elevaton 阴影的 `DrawShadow`。绘制语义与 Web canvas 一致：透明度为 0 的颜色什么都不画（`Color{}` / CSS `transparent` 表示"不画"，绝不是橡皮擦），`Clear` 替换裁剪区内的像素，`ClearRect` 把矩形变成透明——GL 合成的控件（VideoView、scene3d.Viewport、WebView）就从这个洞里露出纹理。
 
 **RasterBackend**（`internal/render/backend.go`）：前端之下产出像素的抽象。所有坐标都已是物理坐标，每个方法都收到一个它必须遵守的裁剪。`internal/render/backend_cpu.go` 是参考实现；`internal/render/backend_gpu.go`（FBO + 着色器，`QUI_GPU_RASTER=1`）接入同一个位置，并按图元与 CPU 路径交替。`internal/render/renderer_gl.go` 负责 GL 窗口 blit。
 

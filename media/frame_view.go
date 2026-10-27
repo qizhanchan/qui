@@ -448,7 +448,7 @@ func (v *FrameView) Draw(canvas qui.Canvas) {
 	}
 	// Punch the 2D layer so the GL picture underneath shows through.
 	if hole := content.Intersect(bounds); !hole.IsEmpty() {
-		canvas.FillRect(hole, qui.Color{})
+		canvas.ClearRect(hole)
 	}
 	v.physBox = canvas.CurrentMatrix().TransformRect(bounds)
 	rk.QueueRetainedGLDraw(v, v.physBox, v.glDraw)

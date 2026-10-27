@@ -47,7 +47,7 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 **Rendering**
 
 - `Canvas` frontend: Save/Restore state stack (clip + 2×3 affine matrix), `Path` with quad/cubic Béziers, anti-aliased winding/even-odd fill, stroke cap/join/miter.
-- `SaveLayer` with blend modes and `Paint.Alpha`; `ClipPath`; linear/radial gradient shaders; `ColorFilter` / `ImageFilter` (drop shadow, blur); `DrawShadow`.
+- `SaveLayer` with blend modes and `Paint.Alpha`; `ClipPath`; linear/radial gradient shaders; `ColorFilter` / `ImageFilter` (drop shadow, blur); `DrawShadow`; `ClearRect` (web-canvas `clearRect`: transparent holes for GL-composited widgets; zero-alpha paints draw nothing).
 - `RasterBackend` seam: pure-Go CPU reference (`internal/render/backend_cpu.go`) and optional GPU backend (`QUI_GPU_RASTER=1`, `internal/render/backend_gpu.go`).
 - Dirty-region painting, `Invalidate` / `InvalidateRect` / `InvalidateLayout` with bounds-change promotion.
 - Offscreen rendering and readback; vector export through `pdf.NewDoc` (PDF pages as canvases, plus `pdf.Print`) and `svg.NewCanvas` (SVG documents).

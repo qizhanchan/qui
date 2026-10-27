@@ -53,9 +53,15 @@ type RasterBackend interface {
 
 	// -- Draw primitives — physical coords, physical clip -------------
 
-	// Clear paints `color` over the ENTIRE current target (not just the
-	// clip). Used by Canvas.Clear.
+	// Clear sets the ENTIRE current target (not just the clip) to
+	// `color`, replacing what was there.
 	Clear(color gfx.Color)
+
+	// ClearRect sets every pixel of `dst` (physical, already clipped by
+	// the frontend) to transparent — an overwrite, not a blend. It backs
+	// Canvas.ClearRect and Canvas.Clear. FillRect never erases: a
+	// zero-alpha color paints nothing.
+	ClearRect(dst image.Rectangle)
 
 	// FillRect writes `color` into `dst` (already intersected with the
 	// physical clip by the frontend, so no additional clipping needed).

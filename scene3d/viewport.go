@@ -141,7 +141,7 @@ func (v *Viewport) Draw(canvas qui.Canvas) {
 	// Punch a hole in the 2D CPU buffer at our bounds so the 3D
 	// texture underneath shows through. Widgets drawn later (e.g.,
 	// overlay tooltips) will re-paint opaque pixels on top.
-	canvas.FillRect(v.Bounds(), qui.Color{R: 0, G: 0, B: 0, A: 0})
+	canvas.ClearRect(v.Bounds())
 
 	bounds := v.Bounds()
 	// Queue the 3D render + composite as a deferred GL op so it

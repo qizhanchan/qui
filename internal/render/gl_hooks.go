@@ -71,8 +71,8 @@ type GPUCanvas interface {
 	// pixels). srcRect is in texture pixel space; pass
 	// Rect{W: texW, H: texH} to sample the full texture. The
 	// rendering happens AFTER the 2D CPU blit (so the texture draws
-	// on top), unless the caller punches a transparent hole in the
-	// 2D layer first (FillRect with A=0). Respects alpha blending.
+	// on top), unless the caller opens a transparent hole in the
+	// 2D layer first (ClearRect). Respects alpha blending.
 	DrawTexture(tex uint32, srcRect, dstRect gfx.Rect, opts TextureOpts)
 
 	// QueueGLDraw schedules a raw GL callback to run between the

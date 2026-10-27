@@ -93,7 +93,22 @@ type Canvas interface {
 	DrawShape(shape Shape, paint Paint)
 
 	// Draw primitives — all auto-clipped to the current stack frame.
+	//
+	// A paint whose color has zero alpha draws nothing, as on a web
+	// canvas: Color{} (ColorTransparent, CSS transparent) is "no paint",
+	// never an eraser. To make pixels transparent use ClearRect.
+
+	// Clear sets every pixel inside the current clip to color —
+	// replacing what was there, not blending over it. Clear(ColorTransparent)
+	// leaves the clip fully transparent.
 	Clear(color Color)
+	// ClearRect makes rect (under the current transform, inside the
+	// clip) fully transparent, like CanvasRenderingContext2D.clearRect.
+	// This is how a widget composited by GL underneath the 2D layer
+	// (VideoView, scene3d.Viewport, WebView) opens a hole for its texture.
+	// Inside a SaveLayer it clears the layer's pixels. Rotated transforms
+	// clear the rect's axis-aligned bounds.
+	ClearRect(rect Rect)
 	FillRect(rect Rect, color Color)
 	FillRoundedRect(rect Rect, radius float32, color Color)
 	StrokeRect(rect Rect, color Color, width float32)
@@ -184,6 +199,7 @@ func (c NoopCanvas) ClipPath(path *Path) {
 
 func (NoopCanvas) DrawShape(Shape, Paint)                          {}
 func (NoopCanvas) Clear(Color)                                     {}
+func (NoopCanvas) ClearRect(Rect)                                  {}
 func (NoopCanvas) FillRect(Rect, Color)                            {}
 func (NoopCanvas) FillRoundedRect(Rect, float32, Color)            {}
 func (NoopCanvas) StrokeRect(Rect, Color, float32)                 {}

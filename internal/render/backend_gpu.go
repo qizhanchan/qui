@@ -38,7 +38,7 @@ import (
 // CompositeToDefault binds the FBO's color texture and issues the
 // same full-screen quad the CPU backend uses, so scene3d /
 // webview / video textures underneath still show through the 2D
-// layer's alpha=0 regions (hole-punch preserved).
+// layer's transparent regions (the holes Canvas.ClearRect opens).
 //
 // # State assumed constant during widget.Draw
 //
@@ -428,6 +428,23 @@ func (b *GPUBackend) Clear(color gfx.Color) {
 	b.cpuDirty = true
 }
 
+// ClearRect makes dst transparent: a scissored gl.Clear on the FBO (the
+// hole a deferred-GL widget shows through), or the CPU fallback while a
+// layer is active or the FBO isn't up. Pending CPU pixels are flushed
+// first so they don't survive the clear.
+func (b *GPUBackend) ClearRect(dst image.Rectangle) {
+	if dst.Dx() <= 0 || dst.Dy() <= 0 {
+		return
+	}
+	if b.layerActive() || !b.fboReady {
+		b.fallback.ClearRect(dst)
+		b.cpuDirty = true
+		return
+	}
+	b.flushCPUIfDirty()
+	b.holePunchRect(dst)
+}
+
 func (b *GPUBackend) FillRect(dst image.Rectangle, color gfx.Color) {
 	// Frontend already clipped `dst` to physical framebuffer bounds and
 	// to the current clip. Nothing to do for degenerate rects.
@@ -440,23 +457,8 @@ func (b *GPUBackend) FillRect(dst image.Rectangle, color gfx.Color) {
 		return
 	}
 	rgba := toRGBA(color)
-	// Hole-punch idiom: (0,0,0,0) means "make this rect transparent so
-	// the deferred-GL widget underneath shows through." CPU path uses
-	// stddraw.Src; GPU-native equivalent is gl.Scissor + gl.Clear with
-	// a zero clear color. Must flush any pending CPU pixels FIRST so
-	// they don't survive the punch.
-	if rgba.A == 0 && rgba.R == 0 && rgba.G == 0 && rgba.B == 0 {
-		if !b.fboReady {
-			b.fallback.FillRect(dst, color)
-			b.cpuDirty = true
-			return
-		}
-		b.flushCPUIfDirty()
-		b.holePunchRect(dst)
-		return
-	}
-	// Non-degenerate translucent (A=0, RGB≠0) is a no-op — same as the
-	// CPU path's early return in fillRectBlend.
+	// Zero alpha paints nothing — same as the CPU path's fillRectBlend.
+	// Erasing is ClearRect.
 	if rgba.A == 0 {
 		return
 	}
