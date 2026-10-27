@@ -1545,26 +1545,52 @@ func tokenizePreserve(items []InlineItem) []inlineTok {
 			for i < len(runes) && runes[i] != '\n' && runes[i] != '\t' && isInlineSpace(runes[i]) == space {
 				i++
 			}
-			seg := runes[start:i]
-			toks = append(toks, inlineTok{
-				text:       string(seg),
-				font:       it.Font,
-				color:      it.Color,
-				deco:       it.Decoration,
-				decoPaint:  it.DecorationPaint,
-				href:       it.Href,
-				linkSrc:    it.LinkSource,
-				background: it.Background,
-				shift:      it.BaselineShift,
-				width:      MeasureRunes(seg, it.Font, nil),
-				space:      space,
-				srcItem:    ii,
-				srcStart:   start,
-				srcEnd:     i,
-			})
+			// A word splits at its line-break opportunities (UAX #14), as
+			// in the collapsing tokenizer: CSS pre-wrap still breaks
+			// between CJK ideographs, after hyphens, and so on.
+			from := start
+			for _, b := range preserveBreaks(runes[start:i], space) {
+				seg := runes[from : start+b]
+				toks = append(toks, inlineTok{
+					text:       string(seg),
+					font:       it.Font,
+					color:      it.Color,
+					deco:       it.Decoration,
+					decoPaint:  it.DecorationPaint,
+					href:       it.Href,
+					linkSrc:    it.LinkSource,
+					background: it.Background,
+					shift:      it.BaselineShift,
+					width:      MeasureRunes(seg, it.Font, nil),
+					space:      space,
+					srcItem:    ii,
+					srcStart:   from,
+					srcEnd:     start + b,
+				})
+				from = start + b
+			}
 		}
 	}
 	return toks
+}
+
+// preserveBreaks are the ends of the tokens a preserved run splits into:
+// a whitespace run stays whole, a word ends at each of its line-break
+// opportunities (the last one is its end).
+func preserveBreaks(seg []rune, space bool) []int {
+	if space {
+		return []int{len(seg)}
+	}
+	var out []int
+	for _, b := range LineBreakBoundaries(seg) {
+		if b.Offset > 0 && (len(out) == 0 || b.Offset > out[len(out)-1]) {
+			out = append(out, b.Offset)
+		}
+	}
+	if len(out) == 0 || out[len(out)-1] != len(seg) {
+		out = append(out, len(seg))
+	}
+	return out
 }
 
 // lineRunWidth is tokRunWidth over one line's token indices — the run a

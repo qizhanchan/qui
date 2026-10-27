@@ -27,6 +27,9 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -74,7 +77,7 @@ func main() {
 	// interactive modules. The returned El tree stays mutable/restyleable.
 	doc := htmlcss.RenderDoc(pageHTML, css, htmlcss.Options{
 		Window:  window,
-		BaseDir: "examples/html-css",
+		BaseDir: exampleDir(),
 	})
 	body := doc.Root
 
@@ -384,4 +387,18 @@ func (p *scribblePad) HitTest(pt qui.Point) qui.Widget {
 		return p
 	}
 	return nil
+}
+
+// exampleDir is the directory the page's relative <img src> paths (icons/…)
+// resolve against: this source file's directory, so the icons load no matter
+// which directory the example is started from. A binary moved away from its
+// source tree falls back to the working directory.
+func exampleDir() string {
+	if _, file, _, ok := runtime.Caller(0); ok {
+		dir := filepath.Dir(file)
+		if _, err := os.Stat(filepath.Join(dir, "icons")); err == nil {
+			return dir
+		}
+	}
+	return "."
 }

@@ -95,6 +95,33 @@ func TestPreserveWrapHangsSpaces(t *testing.T) {
 	}
 }
 
+// Preserve mode breaks words at their line-break opportunities like CSS
+// pre-wrap: between CJK ideographs, so a run of Chinese with no spaces
+// still wraps, and every rune stays in place.
+func TestPreserveWrapsCJK(t *testing.T) {
+	f := gfx.Font{Size: 16}
+	src := "Markdown（干净节点原样复用字节、改过的按文档风格重写，行内写回经重解析验证），光标"
+	l := BuildInlineLayout([]InlineItem{inlineText(src, f)}, preserveOpts(200))
+	if len(l.Lines) < 3 {
+		t.Fatalf("expected the run to wrap, got %d lines", len(l.Lines))
+	}
+	for i, ln := range l.Lines {
+		if ln.Width > 200 {
+			t.Errorf("line %d is %v wide, past MaxWidth 200", i, ln.Width)
+		}
+	}
+	if got := flatFragText(l); got != src {
+		t.Errorf("wrap lost runes: %q", got)
+	}
+	// no line starts with closing punctuation (UAX #14 keeps it with the
+	// text before it)
+	for i, ln := range l.Lines[1:] {
+		if len(ln.Frags) > 0 && strings.ContainsAny(string([]rune(ln.Frags[0].Text)[:1]), "，、）") {
+			t.Errorf("line %d starts with %q", i+1, ln.Frags[0].Text)
+		}
+	}
+}
+
 // A trailing '\n' in preserve mode produces a final empty line — the caret
 // needs a line to sit on. Collapse mode keeps its historical behavior.
 func TestPreserveTrailingNewlineEmptyLine(t *testing.T) {
