@@ -1139,13 +1139,25 @@ func (e *El) isControl() bool {
 
 // isControlSurface reports whether the element acts as a clickable control
 // face rather than prose: a <label for=…> that toggles/focuses its target,
-// or a push-button / file-picker input. Their captions stay out of
-// drag-selection even without `user-select: none`.
+// a push-button / file-picker input, or anything inside a <button>. Their
+// captions stay out of drag-selection even without `user-select: none` —
+// and, being unselectable, claim no I-beam, so the pointer stays an arrow
+// over a button's text as in Chrome.
 func (e *El) isControlSurface() bool {
 	if e.tag == "label" && strings.TrimSpace(e.attrs["for"]) != "" {
 		return true
 	}
-	return e.isButtonInput() || e.isFileInput()
+	if e.isButtonInput() || e.isFileInput() {
+		return true
+	}
+	// Chrome never starts a selection inside a <button>, including text in
+	// nested spans (<button><span>OK</span></button>).
+	for p := e; p != nil; p = p.elParent {
+		if p.tag == "button" {
+			return true
+		}
+	}
+	return false
 }
 
 // isFileInput reports whether this is an <input type=file>, which renders

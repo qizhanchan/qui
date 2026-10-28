@@ -109,6 +109,36 @@ func TestLabelForNotSelectable(t *testing.T) {
 	}
 }
 
+// A <button>'s caption — direct text or inside nested elements — is a
+// control face, not prose (Chrome): unselectable, and so no I-beam over it.
+func TestButtonCaptionNotSelectable(t *testing.T) {
+	res := RenderDoc(`<body>
+		<button id="b">Cancel</button>
+		<button id="nb"><span id="ns">Apply</span></button>
+		<p id="p">prose</p>
+	</body>`, ``, Options{})
+	res.Root.Layout(qui.Rect{X: 0, Y: 0, W: 300, H: 100})
+
+	for _, id := range []string{"b", "ns"} {
+		el := res.ByID[id].(*El)
+		if el.textLabel != nil && el.textLabel.Selectable {
+			t.Errorf("#%s: button caption label should be non-selectable", id)
+		}
+		for _, ib := range el.inlinePool {
+			if ib.Selectable {
+				t.Errorf("#%s: button caption inline box should be non-selectable", id)
+			}
+		}
+		if el.textLabel == nil && len(el.inlinePool) == 0 {
+			t.Errorf("#%s: expected a text label or inline box", id)
+		}
+	}
+	p := res.ByID["p"].(*El)
+	if p.textLabel != nil && !p.textLabel.Selectable {
+		t.Error("<p> prose should remain selectable")
+	}
+}
+
 // A push-button <input> (submit/reset/button) renders as a button (box +
 // text label = value), NOT an editable text field.
 func TestInputButtonTypesRenderAsButtons(t *testing.T) {
