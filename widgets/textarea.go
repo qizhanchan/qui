@@ -160,6 +160,19 @@ func (t *TextArea) font() Font {
 	return t.Style().Font
 }
 
+// Layout keeps the scroll offsets within the new size: text set before
+// the field had one (an htmlcss value applied at creation) scrolled the
+// caret into a zero-sized box, which would otherwise leave the text
+// scrolled out of sight once the field is laid out.
+func (t *TextArea) Layout(rect Rect) {
+	old := t.Bounds()
+	t.BaseWidget.Layout(rect)
+	if rect.W != old.W || rect.H != old.H {
+		content, _, _ := t.visibleContentRect(rect)
+		t.clampScroll(content)
+	}
+}
+
 func (t *TextArea) Measure(available Size) Size {
 	width := t.MinWidth
 	height := t.MinHeight
