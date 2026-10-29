@@ -151,7 +151,8 @@ type ComputedStyle struct {
 	FlexDirection qui.Direction
 	Justify       qui.Justify
 	AlignItems    qui.AlignCross
-	Gap           float32
+	RowGap        float32 // row-gap (gap's first value)
+	ColumnGap     float32 // column-gap (gap's second value, else its first)
 	Wrap          bool
 	AlignContent  qui.AlignContent // wrap-line distribution; CSS initial = stretch
 	FlexGrow      float32
@@ -1070,11 +1071,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	if v, ok := m["align-items"]; ok {
 		cs.AlignItems = parseAlign(v)
 	}
-	if v, ok := m["gap"]; ok {
-		if px, ok := parseLength(v, fs, 0); ok {
-			cs.Gap = px
-		}
-	}
+	cs.RowGap, cs.ColumnGap = gridGaps(cs)
 	if v, ok := m["flex-wrap"]; ok && strings.Contains(v, "wrap") {
 		cs.Wrap = true
 	}

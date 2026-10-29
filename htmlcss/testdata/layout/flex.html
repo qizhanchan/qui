@@ -25,6 +25,11 @@ body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
 #tight { width: 200px; height: auto; } #tight > div { background: #ccc; }
 #wrapcol { width: 300px; height: auto; align-items: flex-start; } #wrapcol > div { flex: 1; }
 #nested { flex-direction: column; width: 300px; height: auto; } #nested > div { display: flex; gap: 4px; } #nested span { padding: 2px; }
+/* gap with two values (row column), its longhands, and a longhand after it */
+#gaptwo { flex-wrap: wrap; width: 250px; height: auto; gap: 6px 20px; } #gaptwo > div { width: 100px; height: 30px; }
+#gaplh { flex-wrap: wrap; width: 250px; height: auto; row-gap: 12px; column-gap: 4px; } #gaplh > div { width: 100px; height: 30px; }
+#gapcol { flex-direction: column; flex-wrap: wrap; width: 300px; height: 70px; gap: 8px 30px; } #gapcol > div { width: 60px; height: 20px; }
+#gapover { gap: 10px; column-gap: 24px; } #gapover > div { width: 50px; }
 </style></head><body>
 <section class="case"><div class="row" id="grow"><div id="g1"></div><div id="g2"></div><div id="g3"></div></div></section>
 <section class="case"><div class="row" id="shrink"><div id="s1"></div><div id="s2"></div></div></section>
@@ -41,4 +46,8 @@ body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
 <section class="case"><div class="row" id="tight"><div id="ti1" data-tol="2">some long text content</div><div id="ti2" data-tol="2">another long one</div></div></section>
 <section class="case"><div class="row" id="wrapcol"><div id="wc1" data-tol="2">text that should wrap inside a flexible item</div><div id="wc2" data-tol="2">x</div></div></section>
 <section class="case"><div class="row" id="nested"><div id="ne1"><span id="ns1">a</span><span id="ns2">bb</span></div><div id="ne2" data-tol="2">plain</div></div></section>
+<section class="case"><div class="row" id="gaptwo"><div id="gt1"></div><div id="gt2"></div><div id="gt3"></div></div></section>
+<section class="case"><div class="row" id="gaplh"><div id="gl1"></div><div id="gl2"></div><div id="gl3"></div></div></section>
+<section class="case"><div class="row" id="gapcol"><div id="gc1"></div><div id="gc2"></div><div id="gc3"></div><div id="gc4"></div></div></section>
+<section class="case"><div class="row" id="gapover"><div id="go1"></div><div id="go2"></div></div></section>
 </body></html>

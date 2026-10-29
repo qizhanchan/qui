@@ -145,12 +145,18 @@ func firstNonEmpty(vals ...string) string {
 // chooseLayout maps computed display to a qui layout engine.
 func chooseLayout(cs *ComputedStyle) qui.Layout {
 	if cs.Display == "flex" {
+		// column-gap separates items in a row and row-gap the lines a
+		// row wraps into; a column flips them
+		gap, cross := cs.ColumnGap, cs.RowGap
+		if cs.FlexDirection == qui.Vertical {
+			gap, cross = cross, gap
+		}
 		return qui.FlexLayout{
 			Direction:    cs.FlexDirection,
 			Justify:      cs.Justify,
 			AlignItems:   cs.AlignItems,
-			Gap:          cs.Gap,
-			CrossGap:     cs.Gap,
+			Gap:          gap,
+			CrossGap:     cross,
 			Wrap:         cs.Wrap,
 			AlignContent: cs.AlignContent,
 		}

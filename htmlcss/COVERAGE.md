@@ -135,7 +135,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | Property | Status | Notes |
 |---|---|---|
 | `display: block/inline/inline-block/none/flex/grid` | ✅ | static `none` pruned at compile time; runtime toggling to/from `none` also works and the parent layout skips the box entirely (no flex/grid gap residue) |
-| Flex: `flex-direction/justify-content/align-items/flex-wrap/gap/flex-grow` | ✅ | `align-items:stretch` (default) stretches only cross-axis-auto items; explicit `width` (column) / `height` (row), including percentages, keep their size and align to the start, like the browser |
+| Flex: `flex-direction/justify-content/align-items/flex-wrap/gap/row-gap/column-gap/flex-grow` | ✅ | `gap` takes one or two values (row column), and the longhands override it in cascade order; `align-items:stretch` (default) stretches only cross-axis-auto items; explicit `width` (column) / `height` (row), including percentages, keep their size and align to the start, like the browser |
 | Flex: `align-self/flex-shrink/flex-basis/order` | ✅ | `flex` shorthand expands grow/shrink/basis (none/auto/initial); `order` uses stable sort; `flex-shrink:0` → `NoShrink` |
 | Flex: `align-content` | ✅ | multi-line distribution in the remaining cross-axis space: start/center/end/space-between/around/evenly/stretch |
 | Grid: `grid-template-columns/rows` (px/fr/auto/repeat), `grid-auto-rows/columns`, `gap`/`row-gap`/`column-gap` | ✅ | items past the template get implicit tracks sized by `grid-auto-*` |

@@ -35,7 +35,7 @@ func gridLayout(cs *ComputedStyle, itemCount int) qui.Layout {
 			rows[i] = qui.GridAutoTrack()
 		}
 	}
-	rowGap, colGap := gridGaps(cs)
+	rowGap, colGap := cs.RowGap, cs.ColumnGap
 	return qui.GridLayout{
 		Columns: cols, Rows: rows,
 		AutoColumns: parseGridTracks(cs.raw["grid-auto-columns"], cs.FontSize),
