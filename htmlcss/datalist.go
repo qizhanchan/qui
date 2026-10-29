@@ -121,6 +121,7 @@ func (e *El) refreshSuggestions(typed string) {
 	}
 	e.suggestMatches = matches
 	e.suggestIdx = -1 // nothing highlighted until the user arrows into the list
+	e.suggestOff = 0  // a new filter starts at the top
 	e.showSuggestions()
 }
 
@@ -156,17 +157,8 @@ func (e *El) showSuggestions() {
 			anchor = b
 		}
 	}
-	// Match the browser: the list is exactly as wide as the field, not as
-	// wide as its widest suggestion. Box reports its natural content width
-	// from Container.Measure, so the width rides on the preferred size and
-	// is resolved by MeasureConstrained (here and inside Popup.ShowAt);
-	// FlowLayout then stretches every row to the full list width. A field
-	// with no laid-out width yet (measure-only tree) falls back to hugging
-	// the suggestions.
-	if anchor.W > 0 {
-		list.SetPreferredSize(anchor.W, 0)
-	}
 
+	var current qui.Widget
 	for i, match := range e.suggestMatches {
 		idx, value := i, match
 		// Rows are flat list items, not buttons: rebuild States so the
@@ -180,19 +172,67 @@ func (e *El) showSuggestions() {
 		}
 		if idx == e.suggestIdx {
 			flat.Background = highlight
+			current = row
 		}
 		hover := flat
 		hover.Background = highlight
 		row.States = qui.StateStyle{Base: flat, Hover: &hover, Pressed: &hover}
 		row.StateLayerColor = qui.Color{}
+		row.AlignStart = true // Chrome's rows read left-aligned
 		list.AddChild(row)
 	}
 
+	// Size it like a <select> dropdown: at least as wide as the field,
+	// growing to the widest suggestion (up to the window), and as tall as
+	// its rows on the roomier side of the field — the popup caps a longer
+	// list at that height (MaxSize) and scrolls it. Box reports its natural
+	// content width from Container.Measure, so the width rides on the
+	// preferred size; FlowLayout then stretches every row to the full list
+	// width. A field with no laid-out width yet (measure-only tree) hugs
+	// the suggestions.
+	winSize := win.Size()
+	nat := qui.MeasureConstrained(list, qui.Size{W: winSize.W, H: 1 << 20})
+	w := min(max(nat.W, anchor.W), winSize.W-2*suggestEdge)
+	y, budget := suggestPlaceY(winSize.H, anchor.Y-suggestGap, anchor.Y+anchor.H+suggestGap, nat.H)
+	list.SetPreferredSize(w, 0)
+
 	popup := widgets.NewPopup(list)
-	x, y := anchoredPopupPos(win.Size(), qui.MeasureConstrained(list, win.Size()), anchor)
-	popup.ShowAt(win, x, y)
+	popup.MaxSize = qui.Size{W: w, H: budget}
+	popup.ShowAt(win, max(min(anchor.X, winSize.W-w), 0), y)
 	popup.OnClose = func() { e.suggestPopup = nil }
 	e.suggestPopup = popup
+	if popup.Scrolls() {
+		// Keep the offset across rebuilds (each ↑/↓ rebuilds the list) and
+		// bring the highlighted row into view.
+		popup.ScrollTo(e.suggestOff)
+		if current != nil {
+			popup.ScrollChildIntoView(current)
+		}
+	}
+}
+
+const (
+	suggestGap  = 4 // between the field and the list
+	suggestEdge = 8 // the list keeps this far from the window edges
+)
+
+// suggestPlaceY places a list of natural height natH next to a field
+// spanning [top, bottom] in a window winH tall, as a <select> dropdown
+// does: below when it fits, else above, else on the roomier side capped
+// to the space there (budget < natH: the list scrolls).
+func suggestPlaceY(winH, top, bottom, natH float32) (y, budget float32) {
+	below := winH - bottom - suggestEdge
+	above := top - suggestEdge
+	switch {
+	case natH <= below:
+		return bottom, natH
+	case natH <= above:
+		return top - natH, natH
+	case above > below:
+		return top - above, above
+	default:
+		return bottom, max(below, 0)
+	}
 }
 
 // closeSuggestions dismisses the popup if it is showing.
@@ -202,6 +242,7 @@ func (e *El) closeSuggestions() {
 	}
 	p := e.suggestPopup
 	e.suggestPopup = nil
+	e.suggestOff = p.ScrollOffset()
 	p.OnClose = nil
 	p.Close()
 }

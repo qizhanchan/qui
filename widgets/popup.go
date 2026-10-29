@@ -50,6 +50,10 @@ type Popup struct {
 	// NoClamp keeps ShowAt's position verbatim; by default the popup is
 	// shifted to stay inside the window.
 	NoClamp bool
+	// MaxSize caps the size ShowAt gives the popup (zero fields: no cap
+	// beyond the window). The window always caps it, less popupEdge on
+	// each side; content taller than the cap scrolls (see Scrolls).
+	MaxSize Size
 	// OnClose runs after the popup closed, for any reason.
 	OnClose func()
 	// OnCloseReason runs after the popup closed, with the reason.
@@ -74,7 +78,15 @@ type Popup struct {
 	// menus it was opened from, so hovering (or clicking) a parent row
 	// reaches that row while the submenu is still up.
 	passThrough func(Point) Widget
+
+	// scroller hosts Content when it is taller than the popup may be: the
+	// popup scrolls it instead of running past the window (a <select>
+	// with a hundred options). nil while the content fits.
+	scroller *ScrollView
 }
+
+// popupEdge is how far inside the window a capped popup stays.
+const popupEdge = 8
 
 // SetResizeHandler installs a window-resize handler. When set, a window
 // resize invokes fn instead of dismissing the popup — anchored menus use
@@ -104,6 +116,7 @@ func (p *Popup) SetContent(w Widget) {
 		if w != nil && !AdoptWidgetTree(w, p, p.window) {
 			return
 		}
+		p.dropScroller() // the old content back under the popup, then out
 		if old := p.Content; old != nil {
 			DetachWidgetTree(old)
 		}
@@ -113,6 +126,7 @@ func (p *Popup) SetContent(w Widget) {
 		}
 		return
 	}
+	p.dropScroller()
 	p.Content = w
 }
 
@@ -131,12 +145,131 @@ func (p *Popup) ShowAt(w *Window, x, y float32) {
 	if w == nil || p.Content == nil || p.window != nil {
 		return
 	}
-	size := MeasureConstrained(p.Content, w.Size())
+	size := p.fit(w.Size())
 	if !p.NoClamp {
 		x, y = clampPopup(w.Size(), x, y, size)
 	}
 	p.showAtSize(w, x, y, size)
 	p.natural = true
+}
+
+// fit is the size ShowAt gives the popup in a window of size win: the
+// content's natural size, capped to MaxSize and to the window less
+// popupEdge each side. A content taller than that goes into the
+// scroller; one that fits leaves it.
+//
+// Content is measured at the window size first, as before; only when that
+// reaches the cap is it measured unbounded, to tell a long list (a finite
+// natural height: scroll it) from content that fills whatever it is given
+// (no natural height: just cap it).
+func (p *Popup) fit(win Size) Size {
+	limit := Size{W: max(win.W-2*popupEdge, 0), H: max(win.H-2*popupEdge, 0)}
+	if p.MaxSize.W > 0 {
+		limit.W = min(limit.W, p.MaxSize.W)
+	}
+	if p.MaxSize.H > 0 {
+		limit.H = min(limit.H, p.MaxSize.H)
+	}
+	nat := MeasureConstrained(p.Content, Size{W: limit.W, H: win.H})
+	tall := float32(0)
+	if nat.H >= limit.H {
+		const unbounded = 1 << 20
+		if h := MeasureConstrained(p.Content, Size{W: limit.W, H: unbounded}).H; h > limit.H && h < unbounded/2 {
+			tall = h
+		}
+	}
+	size := Size{W: min(nat.W, limit.W), H: min(nat.H, limit.H)}
+	if tall > 0 {
+		p.useScroller(Size{W: size.W, H: tall})
+	} else {
+		p.dropScroller()
+	}
+	return size
+}
+
+// useScroller hosts Content in the scroller, at content size.
+func (p *Popup) useScroller(content Size) {
+	if p.scroller == nil {
+		sv := NewScrollView()
+		sv.OverlayBar = true // the overlay scrollbar of macOS (and of Chrome there)
+		sv.SetParent(p)
+		if p.window != nil {
+			sv.SetWindow(p.window)
+		}
+		p.scroller = sv
+	}
+	p.scroller.SetContent(p.Content, content)
+}
+
+// dropScroller hands Content back to the popup itself.
+func (p *Popup) dropScroller() {
+	sv := p.scroller
+	if sv == nil {
+		return
+	}
+	p.scroller = nil
+	if c := p.Content; c != nil && sv.Content == c {
+		sv.ReleaseChildForTransfer(c)
+		AdoptWidgetTree(c, p, p.window)
+	}
+	sv.SetParent(nil)
+	DetachWidgetTree(sv)
+}
+
+// root is the widget the popup lays out and draws: the scroller while the
+// content scrolls, else Content.
+func (p *Popup) root() Widget {
+	if p.scroller != nil {
+		return p.scroller
+	}
+	return p.Content
+}
+
+// halo is the content whose elevation halo the popup repaints; a
+// scrolled content's bounds are in content coordinates, so none then.
+func (p *Popup) halo() Widget {
+	if p.scroller != nil {
+		return nil
+	}
+	return p.Content
+}
+
+// ReleaseChildForTransfer lets Content move into the scroller (and back).
+func (p *Popup) ReleaseChildForTransfer(child Widget) bool {
+	if child == nil || child != p.Content && child != Widget(p.scroller) {
+		return false
+	}
+	if child.Parent() == p {
+		child.SetParent(nil)
+	}
+	return true
+}
+
+// Scrolls reports whether the content is taller than the popup and
+// scrolls in it.
+func (p *Popup) Scrolls() bool { return p.scroller != nil }
+
+// ScrollOffset is how far the content is scrolled (0 when it fits).
+func (p *Popup) ScrollOffset() float32 {
+	if p.scroller == nil {
+		return 0
+	}
+	return p.scroller.ScrollY()
+}
+
+// ScrollTo scrolls the content to off (clamped); no-op when it fits.
+func (p *Popup) ScrollTo(off float32) {
+	if p.scroller != nil {
+		p.scroller.ScrollTo(off)
+	}
+}
+
+// ScrollChildIntoView scrolls so w, a descendant of Content, is visible
+// (a highlighted row moved by the keyboard); no-op when the content fits.
+func (p *Popup) ScrollChildIntoView(w Widget) {
+	if p.scroller != nil {
+		p.scroller.ScrollChildIntoView(w)
+	}
 }
 
 // clampPopup shifts (x, y) so a popup of size stays inside win, preferring
@@ -158,11 +291,11 @@ func (p *Popup) showAtSize(w *Window, x, y float32, size Size) {
 	p.natural = false
 	contentRect := Rect{X: x, Y: y, W: size.W, H: size.H}
 	p.Layout(contentRect)
-	if !AdoptWidgetTree(p.Content, p, w) {
+	if !AdoptWidgetTree(p.root(), p, w) {
 		return
 	}
-	p.Content.Layout(contentRect)
-	p.pushOverlay(w, p, p.Content)
+	p.root().Layout(contentRect)
+	p.pushOverlay(w, p, p.halo())
 	if p.ClickThrough && p.DismissOnOutsideClick {
 		p.onLeave(w.AddEventFilter(p.clickThroughFilter))
 	}
@@ -252,7 +385,7 @@ func (p *Popup) closeFor(reason PopupCloseReason) bool {
 }
 
 func (p *Popup) close(reason PopupCloseReason) {
-	if p.popOverlay(p, p.Content) {
+	if p.popOverlay(p, p.halo()) {
 		p.fireClose(reason)
 	}
 }
@@ -294,15 +427,15 @@ func (p *Popup) RelayoutAt(x, y float32, size Size) {
 		return
 	}
 	// Old extent (+ elevation halo) must repaint with what's underneath.
-	if r, ok := overlayHaloRect(p.Content); ok {
+	if r, ok := overlayHaloRect(p.halo()); ok {
 		p.window.InvalidateRect(r)
 	}
 	p.window.InvalidateRect(p.Bounds())
 	contentRect := Rect{X: x, Y: y, W: size.W, H: size.H}
 	p.Layout(contentRect)
-	p.Content.Layout(contentRect)
+	p.root().Layout(contentRect)
 	// New extent (+ halo) into the dirty union.
-	if r, ok := overlayHaloRect(p.Content); ok {
+	if r, ok := overlayHaloRect(p.halo()); ok {
 		p.window.InvalidateRect(r)
 	}
 	p.window.InvalidateRect(p.Bounds())
@@ -319,7 +452,7 @@ func (p *Popup) RelayoutOverlay(winSize Size) {
 	b := p.Bounds()
 	size := Size{W: b.W, H: b.H}
 	if p.natural {
-		size = MeasureConstrained(p.Content, winSize)
+		size = p.fit(winSize)
 	}
 	x, y := b.X, b.Y
 	if !p.NoClamp {
@@ -333,24 +466,63 @@ func (p *Popup) RelayoutOverlay(winSize Size) {
 // the dirty region.
 func (p *Popup) PaintBounds() Rect {
 	b := p.Bounds()
-	if r, ok := overlayHaloRect(p.Content); ok {
+	if r, ok := overlayHaloRect(p.halo()); ok {
 		b = b.Union(r)
 	}
 	return b
 }
 
-// ChildList exposes Content for focus traversal / tick / etc.
+// ChildList exposes Content (or the scroller hosting it) for focus
+// traversal / tick / etc.
 func (p *Popup) ChildList() []Widget {
-	if p.Content == nil {
-		return nil
+	if r := p.root(); r != nil {
+		return []Widget{r}
 	}
-	return []Widget{p.Content}
+	return nil
 }
 
+// Draw paints the content clipped to the popup (and its halo). A browser's
+// dropdowns are windows of their own, so nothing inside one can paint over
+// the page; a popup here is a layer of the window, and content drawing past
+// its bounds would cover the page and outlive the popup, as pixels the
+// popup's repaint never reaches.
 func (p *Popup) Draw(canvas Canvas) {
-	if p.Content != nil && !boxChildHidden(p.Content) {
-		p.Content.Draw(canvas)
+	r := p.root()
+	if r == nil || boxChildHidden(p.Content) {
+		return
 	}
+	depth := canvas.Save()
+	canvas.ClipRect(p.PaintBounds())
+	if p.scroller != nil {
+		// The content's surface scrolls with it; the popup keeps a frame
+		// of the same surface still around the viewport.
+		bg, border, bw, radius := popupSurface(p.Content)
+		b := p.Bounds()
+		if bg.A > 0 {
+			canvas.FillRoundedRect(b, radius, bg)
+		}
+		r.Draw(canvas)
+		if bw > 0 && border.A > 0 {
+			canvas.StrokeRoundedRect(b, radius, border, bw)
+		}
+	} else {
+		r.Draw(canvas)
+	}
+	canvas.RestoreTo(depth)
+}
+
+// popupSurface reads a content widget's background and border.
+func popupSurface(w Widget) (bg, border Color, borderSize, radius float32) {
+	sw, ok := w.(interface{ Style() *Style })
+	if !ok || sw.Style() == nil {
+		return
+	}
+	st := sw.Style()
+	bw := st.BorderSize
+	if bw <= 0 && st.Border.A > 0 {
+		bw = 1
+	}
+	return st.Background, st.Border, bw, st.Radius
 }
 
 func (p *Popup) Handle(event Event) bool {
@@ -441,9 +613,9 @@ func nextTabTarget(w *Window, shift bool) Widget {
 // outside clicks too so Handle can dismiss them. Otherwise outside clicks
 // fall through to whatever's underneath.
 func (p *Popup) HitTest(point Point) Widget {
-	if p.Content != nil {
+	if r := p.root(); r != nil {
 		if p.Bounds().Contains(point) {
-			if hit := p.Content.HitTest(point); hit != nil {
+			if hit := r.HitTest(point); hit != nil {
 				return hit
 			}
 			return p

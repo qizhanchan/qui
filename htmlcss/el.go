@@ -187,6 +187,7 @@ type El struct {
 	suggestMatches  []string
 	suggestIdx      int
 	suggestPopup    *widgets.Popup
+	suggestOff      float32 // the popup's scroll offset, kept across rebuilds
 	suggestApplying bool
 	radioGrp        *widgets.RadioGroup // set for <input type=radio>, keyed by name
 	// fileValue holds the absolute path chosen through the native file

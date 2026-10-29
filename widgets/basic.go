@@ -57,6 +57,9 @@ type Button struct {
 	// IconGap is horizontal spacing between icon and text when both are
 	// set. <=0 uses 8 px unscaled.
 	IconGap float32
+	// AlignStart puts the label (or icon + label) at the content's left
+	// edge instead of centering it — list rows, not push buttons.
+	AlignStart bool
 	OnClick func()
 
 	// States carries the layered Base / Hover / Pressed / Focused /
@@ -259,8 +262,14 @@ func (b *Button) elevationForState(state State) int {
 // font returns the button's label font. Measure/Draw read through this
 // helper so callers can still override Style().Font.Size (e.g.
 // examples/reactive sets 11).
+// font is the label font. An unset one (States rebuilt without a Font)
+// falls back to the theme label font, the one Measure sizes with — drawing
+// with another font made the label overrun the width it was measured at.
 func (b *Button) font() Font {
-	return b.Style().Font
+	if f := b.Style().Font; f.Size > 0 {
+		return f
+	}
+	return ThemeFont(TextLabel)
 }
 
 // toDuration converts a Theme.Duration (int64 ns) to time.Duration
@@ -282,9 +291,6 @@ const (
 func (b *Button) Measure(available Size) Size {
 	base := &b.States.Base
 	font := b.font()
-	if font.Size <= 0 {
-		font = ThemeFont(TextLabel)
-	}
 	// Measure the RESOLVED caption: a translated string has a different
 	// width than the literal, and Measure feeding layout the wrong one
 	// is how localized buttons end up clipping their own text.
@@ -409,7 +415,7 @@ func (b *Button) Draw(canvas Canvas) {
 		textW, _ := TextMetrics(text, b.font())
 		runW := iconRect.W + gap + textW
 		offset := (content.W - runW) / 2
-		if offset < 0 {
+		if offset < 0 || b.AlignStart {
 			offset = 0
 		}
 		iconRect.X = content.X + offset
@@ -418,6 +424,10 @@ func (b *Button) Draw(canvas Canvas) {
 		content.W = textW
 	}
 	if text != "" {
+		if b.AlignStart {
+			canvas.DrawText(text, content, fg, b.font())
+			return
+		}
 		drawCentered(canvas, text, content, fg, b.font())
 	}
 }

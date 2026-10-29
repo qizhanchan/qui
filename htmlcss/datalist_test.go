@@ -1,6 +1,7 @@
 package htmlcss
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/qizhanchan/qui"
@@ -224,5 +225,43 @@ func TestNoDatalistNoSuggestions(t *testing.T) {
 	in.NotifyTextChanged()
 	if len(el.suggestions) != 0 || el.suggestOpen() {
 		t.Error("a field without `list` must not autocomplete")
+	}
+}
+
+// A long list sizes like a <select> dropdown: it grows to its widest
+// suggestion, stays inside the window and scrolls; the highlighted row is
+// scrolled into view as ↑/↓ move it, and the offset survives the rebuild.
+func TestDatalistLongListScrolls(t *testing.T) {
+	el, in, _ := datalistField(t)
+	win := el.Window()
+	var items []string
+	for i := range 60 {
+		items = append(items, "../../a/rather/long/path/to/a/model/file-"+strconv.Itoa(i)+".json")
+	}
+	el.SetSuggestions(items)
+	in.SetFocused(true)
+	el.handleSuggestKey(qui.NewKeyEvent(qui.EventKeyDown, qui.KeyDown, 0))
+	if !el.suggestOpen() || !el.suggestPopup.Scrolls() {
+		t.Fatal("a 60-row list should open scrolling")
+	}
+	win.DrainJobsForTest()
+	list := el.suggestPopup.Bounds() // the content inside scrolls at full height
+	if list.Y < 0 || list.Y+list.H > 300 || list.X+list.W > 400 {
+		t.Errorf("list %+v leaves the 400x300 window", list)
+	}
+	if list.W <= in.Bounds().W {
+		t.Errorf("list width %v should grow past the field (%v) for long suggestions", list.W, in.Bounds().W)
+	}
+	// ↑ from nothing wraps to the last row: it must come into view.
+	el.handleSuggestKey(qui.NewKeyEvent(qui.EventKeyDown, qui.KeyUp, 0))
+	win.DrainJobsForTest()
+	if off := el.suggestPopup.ScrollOffset(); off < 60*20 { // most of 60 rows of ~26px
+		t.Fatalf("last row highlighted, scroll = %v", off)
+	}
+	// ↑ again: the rebuilt list keeps its place instead of jumping to the top.
+	el.handleSuggestKey(qui.NewKeyEvent(qui.EventKeyDown, qui.KeyUp, 0))
+	win.DrainJobsForTest()
+	if el.suggestPopup.ScrollOffset() == 0 {
+		t.Error("the offset was lost on rebuild")
 	}
 }
