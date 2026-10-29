@@ -391,6 +391,27 @@ func RuneAdvance(r rune, fontSpec Font) float32 { return typeset.RuneAdvance(r, 
 // SetAutoLoadSystemCJK toggles lazy system CJK probing on first font use.
 func SetAutoLoadSystemCJK(enabled bool) { typeset.SetAutoLoadSystemCJK(enabled) }
 
+// SetDefaultFontFeatures sets OpenType feature switches applied to all
+// text before each Font's own Features (those win for the same tag) — an
+// app-wide preference, e.g. {"-calt", "-liga", "-dlig"} so a code font
+// installed with SetDefaultFont keeps "!=" as two characters everywhere,
+// not only where a Font asks for it. A change drops the text caches and
+// re-lays-out every window.
+func SetDefaultFontFeatures(features ...string) {
+	if !typeset.SetDefaultFontFeatures(features) {
+		return
+	}
+	for _, w := range LiveWindows() {
+		w.PostJob(func() {
+			w.InvalidateLayout()
+			w.Invalidate()
+		})
+	}
+}
+
+// DefaultFontFeatures returns the SetDefaultFontFeatures set.
+func DefaultFontFeatures() []string { return typeset.DefaultFontFeatures() }
+
 // SetDefaultFont swaps the entire global default font family in one call.
 func SetDefaultFont(family string, regular []byte, weights ...FontFace) error {
 	return typeset.SetDefaultFont(family, regular, weights...)

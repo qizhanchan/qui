@@ -303,6 +303,7 @@ var inheritedBuiltins = map[string]bool{
 	"white-space": true, "text-transform": true, "visibility": true,
 	"cursor": true, "list-style-type": true, "accent-color": true,
 	"direction": true, "user-select": true,
+	"font-variant-ligatures": true, "font-feature-settings": true,
 }
 
 // builtinInitial is the initial value of the built-in properties whose
@@ -315,6 +316,7 @@ var builtinInitial = map[string]string{
 	"letter-spacing": "normal", "word-spacing": "normal", "text-indent": "0",
 	"white-space": "normal", "text-transform": "none", "visibility": "visible",
 	"list-style-type": "disc", "display": "inline",
+	"font-variant-ligatures": "normal", "font-feature-settings": "normal",
 }
 
 // resolveCSSWideKeywords applies inherit / initial / unset / revert on

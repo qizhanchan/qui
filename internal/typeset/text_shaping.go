@@ -3,10 +3,12 @@ package typeset
 import (
 	"bytes"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unicode"
 
 	"github.com/go-text/typesetting/di"
@@ -695,7 +697,40 @@ func SourceFontForShapingFace(face *gtfont.Face) *opentype.Font {
 	return source
 }
 
+// defaultFeatures (SetDefaultFontFeatures) go in front of every font's
+// own Features.
+var defaultFeatures atomic.Pointer[[]string]
+
+// SetDefaultFontFeatures sets OpenType feature switches applied to all
+// text before each font's own Features (which, coming later, win for the
+// same tag) — an application-wide preference such as "no programming
+// ligatures" for a code font installed as the default family. It drops
+// every shaping and layout cache when the set changes, and reports
+// whether it did.
+func SetDefaultFontFeatures(features []string) bool {
+	features = append([]string(nil), features...)
+	FontCacheMu.Lock()
+	defer FontCacheMu.Unlock()
+	if old := defaultFeatures.Load(); old != nil && slices.Equal(*old, features) || old == nil && len(features) == 0 {
+		return false
+	}
+	defaultFeatures.Store(&features)
+	ClearFontFaceCachesUnlocked()
+	return true
+}
+
+// DefaultFontFeatures returns the SetDefaultFontFeatures set.
+func DefaultFontFeatures() []string {
+	if p := defaultFeatures.Load(); p != nil {
+		return append([]string(nil), (*p)...)
+	}
+	return nil
+}
+
 func shapingFeatures(features []string) []shaping.FontFeature {
+	if p := defaultFeatures.Load(); p != nil && len(*p) > 0 {
+		features = append(append([]string(nil), (*p)...), features...)
+	}
 	if len(features) == 0 {
 		return nil
 	}

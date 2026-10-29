@@ -829,6 +829,7 @@ func fontFrom(cs *ComputedStyle) qui.Font {
 		Italic:        cs.Italic,
 		LetterSpacing: cs.LetterSpacing,
 		WordSpacing:   cs.WordSpacing,
+		Features:      cs.FontFeatures(),
 	}
 }
 

@@ -58,10 +58,16 @@ type ComputedStyle struct {
 	LetterSpacing float32
 	WordSpacing   float32
 	// TextIndent (px) indents the first line of a block's text (inherited).
-	TextIndent  float32
-	Underline   bool
-	LineThrough bool
-	Overline    bool
+	TextIndent float32
+	// LigatureFeatures (font-variant-ligatures) and FeatureSettings
+	// (font-feature-settings) are OpenType feature switches in qui.Font
+	// form ("-calt", "ss01=2"), both inherited; the shaper applies them in
+	// that order, so the low-level setting wins (CSS Fonts 4 §7.2).
+	LigatureFeatures []string
+	FeatureSettings  []string
+	Underline        bool
+	LineThrough      bool
+	Overline         bool
 	// Text-decoration line styling (CSS text-decoration-color/-style/
 	// -thickness). Not inherited (each element resolves its own).
 	DecorationColor     qui.Color
@@ -641,6 +647,8 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		cs.LetterSpacing = parent.LetterSpacing
 		cs.WordSpacing = parent.WordSpacing
 		cs.TextIndent = parent.TextIndent
+		cs.LigatureFeatures = parent.LigatureFeatures
+		cs.FeatureSettings = parent.FeatureSettings
 		cs.AccentColor = parent.AccentColor
 		cs.HasAccentColor = parent.HasAccentColor
 		cs.ScrollbarThumb = parent.ScrollbarThumb
@@ -821,6 +829,16 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 			cs.WordSpacing = 0
 		} else if px, ok := parseLength(v, fs, fs); ok {
 			cs.WordSpacing = px
+		}
+	}
+	if v, ok := m["font-variant-ligatures"]; ok {
+		if f, ok := parseVariantLigatures(v); ok {
+			cs.LigatureFeatures = f
+		}
+	}
+	if v, ok := m["font-feature-settings"]; ok {
+		if f, ok := parseFeatureSettings(v); ok {
+			cs.FeatureSettings = f
 		}
 	}
 	if v, ok := m["text-indent"]; ok {
@@ -1799,4 +1817,94 @@ func parseAlign(v string) qui.AlignCross {
 	default:
 		return qui.AlignStretch
 	}
+}
+
+// FontFeatures is the element's OpenType feature list for qui.Font:
+// font-variant-ligatures, then font-feature-settings (later wins).
+func (cs *ComputedStyle) FontFeatures() []string {
+	if len(cs.FeatureSettings) == 0 {
+		return cs.LigatureFeatures
+	}
+	if len(cs.LigatureFeatures) == 0 {
+		return cs.FeatureSettings
+	}
+	return append(append([]string(nil), cs.LigatureFeatures...), cs.FeatureSettings...)
+}
+
+// ligatureKeywords maps font-variant-ligatures keywords to the features
+// they switch (CSS Fonts 4 §6.4).
+var ligatureKeywords = map[string][]string{
+	"common-ligatures":           {"liga", "clig"},
+	"no-common-ligatures":        {"-liga", "-clig"},
+	"discretionary-ligatures":    {"dlig"},
+	"no-discretionary-ligatures": {"-dlig"},
+	"historical-ligatures":       {"hlig"},
+	"no-historical-ligatures":    {"-hlig"},
+	"contextual":                 {"calt"},
+	"no-contextual":              {"-calt"},
+}
+
+// parseVariantLigatures parses font-variant-ligatures: normal, none (every
+// ligature and contextual alternate off — what code fonts need so "!="
+// stays two glyphs), or a list of the keywords above. A value with an
+// unknown or repeated-group keyword is invalid.
+func parseVariantLigatures(v string) ([]string, bool) {
+	switch kw := strings.ToLower(strings.TrimSpace(v)); kw {
+	case "normal":
+		return nil, true
+	case "none":
+		return []string{"-liga", "-clig", "-dlig", "-hlig", "-calt"}, true
+	}
+	var out []string
+	groups := map[string]bool{}
+	for _, tok := range strings.Fields(strings.ToLower(v)) {
+		f, ok := ligatureKeywords[tok]
+		if !ok {
+			return nil, false
+		}
+		group := strings.TrimPrefix(tok, "no-")
+		if groups[group] {
+			return nil, false
+		}
+		groups[group] = true
+		out = append(out, f...)
+	}
+	return out, len(out) > 0
+}
+
+// parseFeatureSettings parses font-feature-settings: normal or a comma
+// list of `"tag" [on | off | <integer>]`. A malformed entry invalidates
+// the whole declaration, as in browsers.
+func parseFeatureSettings(v string) ([]string, bool) {
+	v = strings.TrimSpace(v)
+	if strings.EqualFold(v, "normal") {
+		return nil, true
+	}
+	var out []string
+	for _, item := range strings.Split(v, ",") {
+		item = strings.TrimSpace(item)
+		if len(item) < 6 || (item[0] != '"' && item[0] != '\'') || item[5] != item[0] {
+			return nil, false
+		}
+		tag := item[1:5]
+		for i := 0; i < 4; i++ {
+			if tag[i] < 0x20 || tag[i] > 0x7e {
+				return nil, false
+			}
+		}
+		val := 1
+		switch rest := strings.ToLower(strings.TrimSpace(item[6:])); rest {
+		case "", "on":
+		case "off":
+			val = 0
+		default:
+			n, err := strconv.Atoi(rest)
+			if err != nil || n < 0 {
+				return nil, false
+			}
+			val = n
+		}
+		out = append(out, tag+"="+strconv.Itoa(val))
+	}
+	return out, true
 }
