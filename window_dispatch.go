@@ -162,6 +162,9 @@ func (w *Window) dispatch(event Event) {
 			}
 			raw = true
 		}
+		if !raw && w.accels != nil && w.observeDoubleTap(e) {
+			return
+		}
 	case CharEvent:
 		raw = w.rawKeyboardTarget() != nil
 	}

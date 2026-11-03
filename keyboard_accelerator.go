@@ -26,6 +26,7 @@ import (
 type AcceleratorRegistry struct {
 	entries []acceleratorEntry
 	nextID  int64
+	taps    []doubleTapEntry // double-tap modifier bindings (keyboard_doubletap.go)
 }
 
 type acceleratorEntry struct {

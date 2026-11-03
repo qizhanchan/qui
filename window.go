@@ -270,6 +270,7 @@ type Window struct {
 	// accels is an optional registry of Cmd-S / Ctrl-Z style shortcuts
 	// consulted AFTER normal widget dispatch. See AcceleratorRegistry.
 	accels *AcceleratorRegistry
+	taps   doubleTapState // double-tap modifier tracking (keyboard_doubletap.go)
 	// Debug overlay state is opt-in. Once configured, the debug shortcut
 	// can toggle the overlay without rebuilding application UI.
 	debugOverlayConfigured bool
