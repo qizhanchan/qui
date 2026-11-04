@@ -268,4 +268,30 @@ const (
 	// shows up as the user's typing going to the wrong place rather than as
 	// a missing feature.
 	WindowOverlayPanel
+
+	// WindowPopup is a borderless, transparent window that belongs to an
+	// owner window of the same app: a popup that must be free of the
+	// owner's bounds (a chooser opened near the window edge, a list wider
+	// than the window) but otherwise behaves like an in-window popover. It
+	// is ordered with its owner — above it, never above other apps — and
+	// hidden while the app is inactive. Whether it may take keyboard focus
+	// is switchable (PopupFocuser): a chooser with a filter field takes it,
+	// a completion list shown while the user types in the owner does not.
+	//
+	// A backend that cannot make one returns ErrPopupWindowUnsupported;
+	// callers then fall back to an in-window overlay.
+	WindowPopup
 )
+
+// PopupFocuser is implemented by windows of a backend that supports
+// WindowPopup: whether the popup may become the key window.
+type PopupFocuser interface {
+	SetPopupFocusable(on bool)
+}
+
+// ShadowInvalidator is implemented by backends whose transparent windows
+// carry a native shadow computed from the drawn alpha; InvalidateShadow
+// recomputes it after the content changed shape.
+type ShadowInvalidator interface {
+	InvalidateShadow()
+}

@@ -258,6 +258,12 @@ type Window struct {
 	// framebuffer's opacity is chosen when the GPU context is made.
 	// See overlay_window.go.
 	kind WindowKind
+	// platApp is the backend that made this window; popups it owns are
+	// made by the same one (window_popup.go).
+	platApp platformApp
+	// popupFocusable: a WindowPopup becomes the key window when shown
+	// (window_popup.go).
+	popupFocusable bool
 	// cursorShape is the last cursor style requested by widgets.
 	cursorShape CursorShape
 	// raw is the raw keyboard capture configuration (keyboard_raw.go).
@@ -360,6 +366,7 @@ func newWindowFromConfig(plat platformApp, cfg platformWindowConfig) (*Window, e
 		title:          cfg.Title,
 		plat:           pw,
 		platformBacked: true,
+		platApp:        plat,
 		renderer:       defaultRenderer(pw),
 		kind:           cfg.Kind,
 		lastSize:       Size{W: float32(width), H: float32(height)},
@@ -389,7 +396,7 @@ func newWindowFromConfig(plat platformApp, cfg platformWindowConfig) (*Window, e
 	// Overlay panels are excluded: one is typically created AFTER the real
 	// window and lives for the whole process, so letting it win would hand
 	// the app's clipboard to a window that has no text input at all.
-	if cfg.Kind != WindowOverlayPanel {
+	if cfg.Kind != WindowOverlayPanel && cfg.Kind != WindowPopup {
 		SetClipboardProvider(newOSClipboard(pw))
 	}
 

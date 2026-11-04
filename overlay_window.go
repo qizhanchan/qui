@@ -116,7 +116,11 @@ func (w *Window) ShowAt(x, y int) {
 	}
 	w.assertUIThread("Window.ShowAt")
 	w.plat.setPos(x, y)
-	w.plat.setVisible(true, false)
+	if w.kind == WindowPopup {
+		w.showPopup()
+	} else {
+		w.plat.setVisible(true, false)
+	}
 	// A hidden window skips painting entirely, so whatever was on screen
 	// last time is stale by definition. Force a full repaint rather than
 	// trusting the accumulated dirty region.
@@ -131,6 +135,11 @@ func (w *Window) Show() {
 		return
 	}
 	w.assertUIThread("Window.Show")
+	if w.kind == WindowPopup {
+		w.showPopup()
+		w.Invalidate()
+		return
+	}
 	w.plat.setVisible(true, w.kind != WindowOverlayPanel)
 	w.Invalidate()
 }
@@ -146,6 +155,10 @@ func (w *Window) Hide() {
 		return
 	}
 	w.assertUIThread("Window.Hide")
+	if w.kind == WindowPopup {
+		w.hidePopup()
+		return
+	}
 	w.plat.setVisible(false, false)
 }
 

@@ -69,7 +69,10 @@ func (a *headlessApp) NewWindow(cfg contract.WindowConfig) (contract.Window, err
 	if h <= 0 {
 		h = 1
 	}
-	return &headlessWindow{app: a, title: cfg.Title, w: w, h: h, visible: true}, nil
+	// A popup starts hidden, as on a real backend: it is shown at a
+	// computed place (Window.ShowAt).
+	visible := cfg.Kind != contract.WindowPopup
+	return &headlessWindow{app: a, title: cfg.Title, w: w, h: h, visible: visible}, nil
 }
 
 // PumpEvents has no OS events to dispatch; it only waits — for a wake

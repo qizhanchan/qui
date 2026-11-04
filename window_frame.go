@@ -460,7 +460,7 @@ func (w *Window) Step() {
 		// card and lets the corners composite through to whatever is behind
 		// the window. Clearing to Surface there would paint an opaque
 		// rectangle over exactly the pixels the transparency exists for.
-		if w.kind == WindowOverlayPanel {
+		if w.kind == WindowOverlayPanel || w.kind == WindowPopup {
 			drawCanvas.Clear(ColorTransparent)
 		} else {
 			drawCanvas.Clear(CurrentTheme().Surface)
@@ -497,6 +497,11 @@ func (w *Window) Step() {
 	}
 	w.renderer.End()
 	w.present()
+	// A popup's native shadow is computed from the alpha it drew; once the
+	// card changed shape the shadow of the old shape would linger.
+	if w.kind == WindowPopup {
+		w.InvalidateShadow()
+	}
 	w.afterPaintProtocol(clip, fullRepaintClip(clip, viewport))
 	w.dirtyRegion = Rect{}
 	w.framePainted = true

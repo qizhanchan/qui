@@ -104,6 +104,18 @@ type PortalOptions struct {
 	// "portal" otherwise; Label is its accessible name (a dialog title).
 	Role  string
 	Label string
+
+	// OwnWindow shows the content in its own popup window (a
+	// qui.WindowPopup owned by the runtime's window) instead of the
+	// window's overlay stack, so it can extend past the window's edges and
+	// is sized and placed against the display: a chooser opened near the
+	// right edge, a list wider than the window. Behavior is otherwise the
+	// overlay's — a press in the owner window counts as a backdrop click,
+	// Escape / Enter reach OnEscape / OnEnter — and a popup that took focus
+	// (no KeepFocus) also counts losing it as a backdrop click. Without
+	// popup windows (x11, web, test windows) it is an ordinary overlay;
+	// PortalFill always is.
+	OwnWindow bool
 }
 
 const portalKind = "#portal"
@@ -140,6 +152,9 @@ type portalHost struct {
 	opts PortalOptions
 	// lastAnchor is the anchor rect the content was last placed against.
 	lastAnchor qui.Rect
+	// pw is set while the content lives in its own popup window
+	// (PortalOptions.OwnWindow); the host is then that window's root.
+	pw *portalWindow
 }
 
 func newPortalHost(opts PortalOptions) *portalHost {
@@ -152,6 +167,9 @@ func newPortalHost(opts PortalOptions) *portalHost {
 func (h *portalHost) applyOpts(opts PortalOptions) {
 	h.opts = opts
 	h.Style().Background = opts.Backdrop
+	if h.pw != nil {
+		h.Style().Background = qui.Color{}
+	}
 	h.Style().Padding = qui.Insets{}
 }
 
@@ -174,6 +192,17 @@ func (h *portalHost) Modal() bool { return h.opts.Modal }
 func (h *portalHost) Measure(available qui.Size) qui.Size { return available }
 
 func (h *portalHost) Layout(rect qui.Rect) {
+	if h.pw != nil {
+		// The popup window is sized to the content: fill it.
+		if h.pw.size.W > 0 {
+			rect = qui.Rect{W: h.pw.size.W, H: h.pw.size.H}
+		}
+		h.Container.Layout(rect)
+		for _, child := range h.ChildList() {
+			child.Layout(rect)
+		}
+		return
+	}
 	h.Container.Layout(rect) // stores bounds; LayoutEngine is nil
 	for _, child := range h.ChildList() {
 		var r qui.Rect
@@ -232,6 +261,15 @@ func portalMeasure(child qui.Widget, rect qui.Rect) qui.Size {
 // initial geometry.
 func (h *portalHost) Tick(now time.Time) qui.Rect {
 	dirty := h.Container.Tick(now)
+	if h.pw != nil {
+		moved := h.opts.Align == PortalAnchored && h.opts.Anchor != nil && h.opts.Anchor() != h.lastAnchor
+		if h.IsLayoutDirty() || moved {
+			h.pw.place()
+			h.ClearLayoutDirty()
+			dirty = h.Bounds()
+		}
+		return dirty
+	}
 	if w := h.Window(); w != nil {
 		sz := w.Size()
 		moved := h.opts.Align == PortalAnchored && h.opts.Anchor != nil && h.opts.Anchor() != h.lastAnchor
@@ -271,7 +309,7 @@ func (h *portalHost) HitTest(p qui.Point) qui.Widget {
 }
 
 func (h *portalHost) Handle(event qui.Event) bool {
-	if me, ok := event.(qui.MouseEvent); ok &&
+	if me, ok := event.(qui.MouseEvent); ok && h.pw == nil &&
 		me.Type() == qui.EventMouseDown && event.Target() == qui.Widget(h) {
 		if h.opts.OnBackdropClick != nil {
 			h.opts.OnBackdropClick()
@@ -309,12 +347,27 @@ func (h *portalHost) SetFocused(bool) {}
 // layoutPortal (re)positions the overlay to the current window size and
 // invalidates its pixels.
 func layoutPortal(host *portalHost, window *qui.Window) {
+	if host.pw != nil {
+		host.pw.schedulePlace()
+		return
+	}
 	if window == nil {
 		return
 	}
 	sz := window.Size()
 	host.Layout(qui.Rect{X: 0, Y: 0, W: sz.W, H: sz.H})
 	window.InvalidateRect(host.Bounds())
+}
+
+// invalidatePortal repaints the portal's content wherever it lives.
+func invalidatePortal(host *portalHost, window *qui.Window) {
+	if host.pw != nil {
+		host.pw.win.Invalidate()
+		return
+	}
+	if window != nil {
+		window.InvalidateRect(host.Bounds())
+	}
 }
 
 // placeAnchored computes a popover's rect: on the preferred side of

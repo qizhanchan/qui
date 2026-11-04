@@ -14,6 +14,7 @@
 - 每个应用多个窗口；游离窗口可以在其他线程构造。
 - 每个窗口的渲染器选择、设备像素比处理和内容视口缩放。
 - 窗口模式：普通、全屏、浮层面板（不激活、透明、始终置顶 —— cocoa 后端）。
+- 独立窗口的弹出层：`PortalOptions.OwnWindow`（`h.PopoverOptions.OwnWindow`、`h.ModalOptions.OwnWindow`）把内容放进一个归属当前窗口的弹窗窗口（`NewPopupWindow`：无边框、透明、随属主窗口排序，可选是否获得键盘焦点；cocoa 与 headless 后端），按内容定尺寸、按屏幕定位，可以超出窗口边缘；在属主窗口按下、Escape、或（获得焦点的弹窗）失去焦点即关闭，与 overlay 的背景点击一致。后端没有弹窗窗口时退回窗口内 overlay，`h.OwnWindowAvailable()` 可查询。agent：`Browser.getWindowForTarget` 返回窗口的屏幕位置。
 - 客户端标题栏：`TitlebarOverlay`、`TitlebarInsets` 与窗口管理器拖拽。
 - 显示器枚举与几何持久化辅助。
 

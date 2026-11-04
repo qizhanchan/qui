@@ -571,8 +571,24 @@ void quiCocoaWake(void) {
 
 // --- window creation -------------------------------------------------
 
-// quiCocoaCreateWindow builds the NSWindow (kind 0) or the NSPanel that
-// backs qui.WindowOverlayPanel (kind 1).
+// QuiPopupPanel backs qui.WindowPopup: a borderless panel that belongs to
+// the app's own window (a child window, ordered with it) rather than
+// floating over every app like the overlay panel. A borderless window
+// answers NO to canBecomeKeyWindow by default; keyable flips that for the
+// popups that hold a text field (a filter), and stays NO for those shown
+// while the user keeps typing in the owner (a completion list, a hover).
+@interface QuiPopupPanel : NSPanel
+@property (nonatomic, assign) BOOL keyable;
+@end
+
+@implementation QuiPopupPanel
+- (BOOL)canBecomeKeyWindow  { return self.keyable; }
+- (BOOL)canBecomeMainWindow { return NO; }
+@end
+
+// quiCocoaCreateWindow builds the NSWindow (kind 0), the NSPanel that
+// backs qui.WindowOverlayPanel (kind 1), or the QuiPopupPanel that backs
+// qui.WindowPopup (kind 2).
 //
 // The panel is deliberately an NSPanel and not a borderless NSWindow:
 // NSWindowStyleMaskNonactivatingPanel — the property that keeps the app the
@@ -584,9 +600,34 @@ int quiCocoaCreateWindow(uintptr_t handle, int width, int height,
                          int kind) {
     @autoreleasepool {
         const BOOL overlay = (kind == 1);
+        const BOOL popup = (kind == 2);
         NSRect rect = NSMakeRect(0, 0, width, height);
         NSWindow* window = nil;
-        if (overlay) {
+        if (popup) {
+            QuiPopupPanel* panel = [[QuiPopupPanel alloc]
+                initWithContentRect:rect
+                          styleMask:NSWindowStyleMaskBorderless
+                            backing:NSBackingStoreBuffered
+                              defer:NO];
+            if (panel == nil) return 0;
+            // Ordered with its owner (qui attaches it as a child window when
+            // shown), at the owner's level: above it, never above other
+            // apps, and gone with the app when it deactivates.
+            [panel setFloatingPanel:NO];
+            [panel setHidesOnDeactivate:YES];
+            [panel setCollectionBehavior:NSWindowCollectionBehaviorTransient |
+                                         NSWindowCollectionBehaviorFullScreenAuxiliary];
+            // Transparent framebuffer + a native shadow that follows the
+            // drawn card's alpha, exactly as for the overlay panel.
+            [panel setOpaque:NO];
+            [panel setBackgroundColor:[NSColor clearColor]];
+            [panel setHasShadow:YES];
+            [panel setExcludedFromWindowsMenu:YES];
+            [panel setBecomesKeyOnlyIfNeeded:NO];
+            [panel setWorksWhenModal:YES];
+            panel.keyable = NO;
+            window = panel;
+        } else if (overlay) {
             NSPanel* panel = [[NSPanel alloc]
                 initWithContentRect:rect
                           styleMask:NSWindowStyleMaskBorderless |
@@ -683,7 +724,7 @@ int quiCocoaCreateWindow(uintptr_t handle, int width, int height,
         GLint interval = 1;   // vsync
         [context setValues:&interval
              forParameter:NSOpenGLContextParameterSwapInterval];
-        if (overlay) {
+        if (overlay || popup) {
             // Without this the GL surface is composited as opaque no matter
             // what alpha the framebuffer holds, and the panel shows up as a
             // black rectangle with the card drawn inside it. The pixel
@@ -701,7 +742,7 @@ int quiCocoaCreateWindow(uintptr_t handle, int width, int height,
         box.shouldClose = NO;
         gQuiWindows[@((unsigned long)handle)] = box;
 
-        if (overlay) {
+        if (overlay || popup) {
             // Panels start hidden and are positioned by the app before the
             // first show — see qui.Window.ShowAt. Centering and ordering
             // front here would flash the panel at the wrong place.
@@ -733,6 +774,22 @@ void quiCocoaSetVisible(uintptr_t handle, int visible, int activate) {
             [box.window orderFrontRegardless];
         }
     }
+}
+
+// quiCocoaSetPopupKeyable sets whether a popup panel (kind 2) may become
+// the key window — see QuiPopupPanel.
+void quiCocoaSetPopupKeyable(uintptr_t handle, int keyable) {
+    QuiWindowBox* box = quiBox(handle);
+    if (box == nil || ![box.window isKindOfClass:[QuiPopupPanel class]]) return;
+    ((QuiPopupPanel*)box.window).keyable = keyable != 0;
+}
+
+// quiCocoaInvalidateShadow recomputes a transparent window's shadow from
+// the alpha of what it drew last — after its content changed shape.
+void quiCocoaInvalidateShadow(uintptr_t handle) {
+    QuiWindowBox* box = quiBox(handle);
+    if (box == nil) return;
+    [box.window invalidateShadow];
 }
 
 int quiCocoaIsVisible(uintptr_t handle) {

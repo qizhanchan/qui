@@ -515,7 +515,7 @@ func reconcileNode(prev *instance, next Element, pass *reconcilePass) (*instance
 		if synced != FlagNone || childFlags.has(FlagLayout) {
 			layoutPortal(host, pass.runtime.window)
 		} else if childFlags.has(FlagPaint) {
-			pass.runtime.window.InvalidateRect(host.Bounds())
+			invalidatePortal(host, pass.runtime.window)
 		}
 		// Overlay invalidation handled locally — nothing for the parent
 		// tree to do.
@@ -846,6 +846,10 @@ func mountPortal(elem Element, pass *reconcilePass) (*instance, Flags) {
 		SetContainerChildren(host.Container, kids)
 	}
 	node.destroy = func(qui.Widget) {
+		if host.pw != nil {
+			host.pw.close()
+			return
+		}
 		window.RemoveOverlay(host)
 	}
 
@@ -860,6 +864,21 @@ func mountPortal(elem Element, pass *reconcilePass) (*instance, Flags) {
 	node.styleParent = pass.currentHost()
 	adoptStyleParent(node.lastWidgets, node.styleParent)
 
+	if elem.portal.OwnWindow {
+		if pw := newPortalWindow(rt, window, host); pw != nil {
+			opts := elem.portal
+			pw.onShown = func() {
+				// As for the overlay: give Escape / Enter a receiver unless
+				// the content focused something of its own (autofocus).
+				if (opts.OnEscape != nil || opts.OnEnter != nil) && !opts.KeepFocus &&
+					!focusInside(pw.win, host) {
+					pw.win.SetFocus(host)
+				}
+			}
+			pw.schedulePlace()
+			return node, FlagNone
+		}
+	}
 	layoutPortal(host, window)
 	window.PushOverlay(host)
 	// Lay out once more now that the content can reach the window: the

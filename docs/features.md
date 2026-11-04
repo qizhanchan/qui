@@ -13,7 +13,8 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 - Lifecycle callbacks: `OnActivate`, `OnMove`, `OnMinimize`, `OnFullscreenChange`, `OnClose` (each returns its remover); owned child windows (`SetOwner`) and sheets (`ShowAsSheet`, macOS).
 - Multiple windows per app; detached windows may be constructed off-thread.
 - Per-window renderer selection, device-pixel-ratio handling and content-viewport zoom.
-- Window modes: normal, fullscreen, overlay panel (non-activating, transparent, always-on-top — cocoa backend).
+- Window modes: normal, fullscreen, overlay panel (non-activating, transparent, always-on-top — cocoa backend), popup window (`NewPopupWindow`: borderless, transparent, owned by a window and ordered with it, optionally key — cocoa and headless backends).
+- Popovers / modals in their own window: `PortalOptions.OwnWindow` (`h.PopoverOptions.OwnWindow`, `h.ModalOptions.OwnWindow`) renders the content in a pooled popup window sized to it and placed against the display, so it can extend past the window's edges; a press in the owner, Escape or (for a focused popup) losing focus dismisses it as the overlay's backdrop would. Falls back to the in-window overlay where the backend has no popup windows; `h.OwnWindowAvailable()` tells which. Agent: `Browser.getWindowForTarget` reports a window's screen bounds.
 - Client-side title bars with `TitlebarOverlay`, `TitlebarInsets` and window-manager drag.
 - Monitor enumeration and geometry persistence helpers.
 

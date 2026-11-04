@@ -31,6 +31,11 @@ type PopoverOptions struct {
 	KeepFocus bool
 	// Label names it for the accessibility tree.
 	Label string
+	// OwnWindow shows it in its own popup window, free of the window's
+	// edges, where the platform has popup windows (see
+	// reactive.PortalOptions.OwnWindow); elsewhere it is the usual
+	// in-window popover.
+	OwnWindow bool
 }
 
 // Popover shows child next to anchor (capture it with RefTo / Ref) and
@@ -75,6 +80,7 @@ func PopoverAt(anchor func() qui.Rect, opts PopoverOptions, child Node) Node {
 		KeepFocus:        opts.KeepFocus,
 		Role:             "dialog",
 		Label:            opts.Label,
+		OwnWindow:        opts.OwnWindow,
 	}
 	return rawNode{reactive.PortalWith(po, child.Build())}
 }
@@ -83,3 +89,9 @@ func PopoverAt(anchor func() qui.Rect, opts PopoverOptions, child Node) Node {
 // handle for engine-wide settings such as SetLinkHandler (in-app routes
 // for `<a href="#/settings">`).
 func Engine(rt *reactive.Runtime) *htmlcss.StyleEngine { return engineOf(rt) }
+
+// OwnWindowAvailable reports whether OwnWindow popovers and modals of the
+// component rendering now get their own popup window (see
+// reactive.OwnWindowAvailable); false means they fall back to the
+// in-window overlay.
+func OwnWindowAvailable() bool { return reactive.OwnWindowAvailable(nil) }

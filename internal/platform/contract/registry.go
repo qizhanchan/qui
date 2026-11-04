@@ -134,3 +134,8 @@ type (
 var ErrOverlayPanelUnsupported = errors.New(
 	"qui: the active platform backend cannot create overlay panels " +
 		"(non-activating transparent windows); try QUI_PLATFORM=cocoa")
+
+// ErrPopupWindowUnsupported is what a backend returns from NewWindow for a
+// WindowPopup it cannot make. Re-exported as qui.ErrPopupWindowUnsupported.
+var ErrPopupWindowUnsupported = errors.New(
+	"qui: the active platform backend cannot create popup windows")

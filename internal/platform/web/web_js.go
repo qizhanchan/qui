@@ -278,6 +278,11 @@ type webWindow struct {
 }
 
 func (a *webApp) NewWindow(cfg contract.WindowConfig) (contract.Window, error) {
+	// Secondary windows here are fixed canvases over the page; a popup
+	// that follows an owner is left to the in-window overlay.
+	if cfg.Kind == contract.WindowPopup {
+		return nil, contract.ErrPopupWindowUnsupported
+	}
 	doc := a.doc
 	w := &webWindow{app: a, main: len(a.windows) == 0, visible: true}
 

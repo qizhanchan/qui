@@ -66,6 +66,9 @@ func (glfwApp) NewWindow(cfg contract.WindowConfig) (contract.Window, error) {
 	if cfg.Kind == contract.WindowOverlayPanel {
 		return nil, contract.ErrOverlayPanelUnsupported
 	}
+	if cfg.Kind == contract.WindowPopup {
+		return nil, contract.ErrPopupWindowUnsupported
+	}
 	var share *glfw.Window
 	if cfg.Share != nil {
 		if gw, ok := cfg.Share.(*glfwWindow); ok {

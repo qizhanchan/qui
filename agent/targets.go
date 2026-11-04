@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"runtime/debug"
+	"strconv"
 	"strings"
 
 	"github.com/qizhanchan/qui"
@@ -249,8 +250,58 @@ func browserDomain() qui.ProtocolDomain {
 		Commands: []qui.ProtocolCommand{
 			qui.NewProtocolCommand("getVersion", "Protocol and qui version.",
 				func(*qui.ProtocolContext, struct{}) (versionResult, error) { return versionInfo(), nil }).WithAppLevel(),
+			qui.NewProtocolCommand("getWindowForTarget", "A window's bounds on screen (global logical coordinates) — where a popup window landed relative to its owner.",
+				func(ctx *qui.ProtocolContext, p targetIDParams) (windowForTargetResult, error) {
+					s, sess := hostOf(ctx)
+					w, err := s.windowFor(sess, p.TargetID)
+					if err != nil {
+						return windowForTargetResult{}, err
+					}
+					var out windowForTargetResult
+					err = w.RunSynced(func() error {
+						pos := w.Position()
+						sz := w.WindowSize()
+						state := "normal"
+						switch {
+						case w.IsMinimized():
+							state = "minimized"
+						case w.IsFullscreen():
+							state = "fullscreen"
+						}
+						out = windowForTargetResult{
+							WindowID: windowNumber(w.TargetID()),
+							Bounds: windowBounds{
+								Left: int(pos.X), Top: int(pos.Y), Width: int(sz.W), Height: int(sz.H),
+								WindowState: state,
+							},
+							Visible: w.IsVisible(),
+						}
+						if o := w.Owner(); o != nil {
+							out.OwnerTargetID = o.TargetID()
+						}
+						return nil
+					})
+					return out, err
+				}).WithAppLevel(),
 		},
 	}
+}
+
+type windowBounds struct {
+	Left        int    `json:"left"`
+	Top         int    `json:"top"`
+	Width       int    `json:"width"`
+	Height      int    `json:"height"`
+	WindowState string `json:"windowState" desc:"normal, minimized or fullscreen"`
+}
+
+type windowForTargetResult struct {
+	WindowID int          `json:"windowId"`
+	Bounds   windowBounds `json:"bounds"`
+	// Visible and OwnerTargetID extend CDP: a qui popup window is hidden
+	// while parked, and belongs to the window it pops up from.
+	Visible       bool   `json:"visible"`
+	OwnerTargetID string `json:"ownerTargetId,omitempty"`
 }
 
 type schemaDomainInfo struct {
@@ -284,4 +335,10 @@ func schemaDomain() qui.ProtocolDomain {
 // not.
 func (s *Server) devtoolsFrontendURL(hostport, targetID string) string {
 	return fmt.Sprintf("devtools://devtools/bundled/inspector.html?ws=%s/devtools/t/$QUI_AGENT_TOKEN/page/%s", hostport, targetID)
+}
+
+// windowNumber is the N of a "window-N" target id (0 otherwise).
+func windowNumber(id string) int {
+	n, _ := strconv.Atoi(strings.TrimPrefix(id, "window-"))
+	return n
 }

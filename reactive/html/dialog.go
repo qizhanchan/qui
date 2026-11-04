@@ -27,6 +27,12 @@ type ModalOptions struct {
 	// Label is the overlay's accessible name (the dialog title); its role
 	// is "dialog".
 	Label string
+
+	// OwnWindow shows the content in its own popup window centered over
+	// the window (no scrim; a press in the window counts as a backdrop
+	// click) where the platform has popup windows — see
+	// reactive.PortalOptions.OwnWindow.
+	OwnWindow bool
 }
 
 // defaultScrim is the backdrop when ModalOptions.Backdrop is zero: the
@@ -57,6 +63,7 @@ func ModalPortalWith(opts ModalOptions, child Node) Node {
 		OnEscape:        opts.OnEscape,
 		OnEnter:         opts.OnEnter,
 		Label:           opts.Label,
+		OwnWindow:       opts.OwnWindow,
 	}, child.Build())}
 }
 

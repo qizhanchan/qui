@@ -35,6 +35,8 @@ void   quiCocoaRestore(uintptr_t handle);
 void   quiCocoaFocus(uintptr_t handle);
 void   quiCocoaSetVisible(uintptr_t handle, int visible, int activate);
 int    quiCocoaIsVisible(uintptr_t handle);
+void   quiCocoaSetPopupKeyable(uintptr_t handle, int keyable);
+void   quiCocoaInvalidateShadow(uintptr_t handle);
 int    quiCocoaIsKey(uintptr_t handle);
 void   quiCocoaSetFullscreen(uintptr_t handle, int on, int x, int y, int w, int h);
 int    quiCocoaShouldClose(uintptr_t handle);
@@ -152,8 +154,11 @@ func (cocoaApp) NewWindow(cfg contract.WindowConfig) (contract.Window, error) {
 		share = C.uintptr_t(cw.handle)
 	}
 	kind := C.int(0)
-	if cfg.Kind == contract.WindowOverlayPanel {
+	switch cfg.Kind {
+	case contract.WindowOverlayPanel:
 		kind = 1
+	case contract.WindowPopup:
+		kind = 2
 	}
 	if C.quiCocoaCreateWindow(C.uintptr_t(w.handle), C.int(cfg.Width), C.int(cfg.Height),
 		title, share, kind) == 0 {
@@ -682,3 +687,11 @@ func (w *cocoaWindow) commitDrop(x, y float64) {
 	}
 	w.handler.OnFileDrop(paths, x, y)
 }
+
+// SetPopupFocusable implements contract.PopupFocuser.
+func (w *cocoaWindow) SetPopupFocusable(on bool) {
+	C.quiCocoaSetPopupKeyable(C.uintptr_t(w.handle), cBool(on))
+}
+
+// InvalidateShadow implements contract.ShadowInvalidator.
+func (w *cocoaWindow) InvalidateShadow() { C.quiCocoaInvalidateShadow(C.uintptr_t(w.handle)) }

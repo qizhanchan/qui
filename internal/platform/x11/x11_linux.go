@@ -68,6 +68,9 @@ func (a *app) NewWindow(cfg contract.WindowConfig) (contract.Window, error) {
 	if cfg.Kind == contract.WindowOverlayPanel {
 		return nil, contract.ErrOverlayPanelUnsupported
 	}
+	if cfg.Kind == contract.WindowPopup {
+		return nil, contract.ErrPopupWindowUnsupported
+	}
 	title := C.CString(cfg.Title)
 	defer C.free(unsafe.Pointer(title))
 	id := C.quiX11CreateWindow(C.int(a.phys(max(cfg.Width, 1))), C.int(a.phys(max(cfg.Height, 1))), title)

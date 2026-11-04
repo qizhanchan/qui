@@ -1,7 +1,10 @@
 package qui
 
 import (
+	"errors"
 	"time"
+
+	"github.com/qizhanchan/qui/internal/platform/contract"
 )
 
 // Helpers the widgets subpackage needs to exercise Window-level behavior
@@ -221,4 +224,20 @@ func NewCharEvent(r rune, mods Modifiers) CharEvent {
 		Rune:      r,
 		Mods:      mods,
 	}
+}
+
+// NewHeadlessWindowForTest makes a window on the headless backend — a real
+// platform window (positions, popup windows, presented frames) that never
+// reaches the screen — whatever backend the process would pick. For tests
+// of behavior a NewTestWindow cannot have, such as OS popup windows.
+func NewHeadlessWindowForTest(width, height int) (*Window, error) {
+	b, ok := contract.Lookup("headless")
+	if !ok {
+		return nil, errors.New("qui: headless backend not compiled in")
+	}
+	app, err := b.Factory()
+	if err != nil {
+		return nil, err
+	}
+	return newWindowFromConfig(adaptApp(app), platformWindowConfig{Title: "test", Width: width, Height: height})
 }
