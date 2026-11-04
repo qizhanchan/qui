@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/qizhanchan/qui"
+	"github.com/qizhanchan/qui/htmlcss"
 	"github.com/qizhanchan/qui/reactive"
 	h "github.com/qizhanchan/qui/reactive/html"
 )
@@ -123,4 +124,53 @@ func popupRoot(t *testing.T, owner *qui.Window) qui.Widget {
 	}
 	t.Fatal("no popup window with content")
 	return nil
+}
+
+// A popup that took the focus covers the owner like an overlay's backdrop:
+// what the pointer rested on leaves its hover, and moves no longer reach
+// the owner (no hover card starts under a chooser). A KeepFocus popup
+// (completion list) leaves the owner live.
+func TestPopoverOwnWindowCoversTheOwnersPointer(t *testing.T) {
+	for _, keep := range []bool{false, true} {
+		owner, err := qui.NewHeadlessWindowForTest(800, 600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		moves, leaves := 0, 0
+		var setOpen func(bool)
+		rt := h.Mount(owner, `.doc { width: 800px; height: 600px; } .pop { width: 100px; height: 50px; }`, func() h.Node {
+			open, set := reactive.UseState(false)
+			setOpen = set
+			var pop h.Node
+			if open {
+				pop = h.PopoverAt(func() qui.Rect { return qui.Rect{X: 10, Y: 10, W: 1, H: 1} },
+					h.PopoverOptions{OwnWindow: true, KeepFocus: keep, OnDismiss: func() { set(false) }},
+					h.Div().Class("pop"))
+			}
+			return h.Div(h.Div().Class("doc").
+				OnPointerMove(func(htmlcss.PointerEvent) bool { moves++; return false }).
+				OnMouseLeave(func() { leaves++ }), pop)
+		})
+		rt.Render()
+		layoutAll(owner, rt.Root())
+		owner.DispatchTestEvent(qui.NewMouseEvent(qui.EventMouseMove, 300, 300, qui.MouseButtonLeft, 0))
+		if moves != 1 {
+			t.Fatalf("keep=%v: setup: %d moves", keep, moves)
+		}
+		setOpen(true)
+		rt.Render()
+		owner.DispatchTestEvent(qui.NewMouseEvent(qui.EventMouseMove, 310, 300, qui.MouseButtonLeft, 0))
+		if keep {
+			if moves != 2 || leaves != 0 {
+				t.Fatalf("KeepFocus popup: moves %d leaves %d, want the owner live (2, 0)", moves, leaves)
+			}
+			continue
+		}
+		if moves != 1 {
+			t.Fatalf("a move reached the owner under a focused popup")
+		}
+		if leaves != 1 {
+			t.Fatalf("the hovered element got %d leaves when the popup opened, want 1", leaves)
+		}
+	}
 }

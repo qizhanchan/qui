@@ -104,6 +104,12 @@ func newPortalWindow(rt *Runtime, owner *qui.Window, host *portalHost) *portalWi
 		p.unfilter = owner.AddEventFilter(p.ownerFilter)
 	}
 	if !host.opts.KeepFocus {
+		// The owner is behind a backdrop now, as under an overlay: what
+		// the pointer rests on leaves its hover (a pending hover card is
+		// cancelled, an open one closes).
+		owner.ClearHover()
+	}
+	if !host.opts.KeepFocus {
 		p.unactivate = win.OnActivate(func(active bool) {
 			if !active && p.shown {
 				p.dismiss()
@@ -114,11 +120,20 @@ func newPortalWindow(rt *Runtime, owner *qui.Window, host *portalHost) *portalWi
 }
 
 // ownerFilter: a press in the owner window dismisses the popup and is
-// swallowed with its release, like a press on an overlay's backdrop.
+// swallowed with its release, like a press on an overlay's backdrop. A
+// popup that took the focus (a chooser, a dialog) also keeps the owner's
+// pointer moves and wheel from its content, as the backdrop covering the
+// window would: nothing there starts a hover or scrolls under it. One
+// that left the focus with the owner (KeepFocus: a completion list, a
+// hover card) leaves the owner live.
 func (p *portalWindow) ownerFilter(ev qui.Event) bool {
 	me, ok := ev.(qui.MouseEvent)
 	if !ok {
 		return false
+	}
+	switch me.Type() {
+	case qui.EventMouseMove, qui.EventScroll, qui.EventMouseEnter:
+		return !p.host.opts.KeepFocus
 	}
 	switch me.Type() {
 	case qui.EventMouseDown:

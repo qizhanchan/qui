@@ -458,6 +458,18 @@ func (w *Window) reconcileSubtreeMove(root Widget) {
 	}
 }
 
+// ClearHover sends MouseLeave to the widgets under the pointer, as when
+// something covers them (an overlay, a popup window taking the pointer's
+// role): their hover state ends — a hover-intent timer is cancelled, a
+// :hover style drops. The next pointer move rebuilds it.
+func (w *Window) ClearHover() {
+	if w == nil {
+		return
+	}
+	w.assertUIThread("Window.ClearHover")
+	w.clearHoverPath()
+}
+
 func (w *Window) clearHoverPath() {
 	now := time.Now()
 	for i := len(w.hoverPath) - 1; i >= 0; i-- {
