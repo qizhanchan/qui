@@ -72,3 +72,13 @@ func TestDoubleTapModifier(t *testing.T) {
 		t.Fatalf("mixed fired")
 	}
 }
+
+func TestParseBareModifier(t *testing.T) {
+	k, m, err := ParseShortcut("Shift")
+	if err != nil || k != KeyLeftShift || m != ModShift {
+		t.Fatalf("Shift → %v %v %v", k, m, err)
+	}
+	if k, m, _ := ParseShortcut("Cmd+Ctrl"); k != KeyLeftControl || m != ModSuper|ModControl {
+		t.Fatalf("Cmd+Ctrl → %v %v", k, m)
+	}
+}

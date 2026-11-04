@@ -295,6 +295,18 @@ func ParseShortcut(s string) (Key, Modifiers, error) {
 		}
 	}
 	keyTok := strings.TrimSpace(parts[len(parts)-1])
+	// a modifier as the key: the modifier key itself ("Shift" presses
+	// left Shift, which also holds the modifier, as platforms report it)
+	switch strings.ToLower(keyTok) {
+	case "shift":
+		return KeyLeftShift, mods | ModShift, nil
+	case "ctrl", "control":
+		return KeyLeftControl, mods | ModControl, nil
+	case "alt", "option", "opt":
+		return KeyLeftAlt, mods | ModAlt, nil
+	case "cmd", "command", "super", "meta":
+		return KeyLeftSuper, mods | ModSuper, nil
+	}
 	key, err := parseKeyToken(keyTok)
 	if err != nil {
 		return KeyUnknown, 0, fmt.Errorf("in shortcut %q: %w", s, err)
