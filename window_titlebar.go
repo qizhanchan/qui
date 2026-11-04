@@ -48,6 +48,11 @@ const (
 	// title area itself. System window controls keep working on top of it;
 	// use TitlebarInsets to leave room for them.
 	TitlebarOverlay
+	// TitlebarOverlayTall is TitlebarOverlay with a taller title area —
+	// a compact toolbar's height (38pt on macOS), the system controls
+	// centered in it — for an app that puts its main toolbar there, the
+	// way IDEs do. TitlebarInsets().Top is that height.
+	TitlebarOverlayTall
 )
 
 // SetTitlebarStyle applies s to this window, reporting whether the platform

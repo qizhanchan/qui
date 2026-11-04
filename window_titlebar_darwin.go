@@ -9,7 +9,14 @@ import (
 )
 
 func platformSetTitlebarStyle(ns unsafe.Pointer, s TitlebarStyle) bool {
-	macos.TitlebarSetOverlay(ns, s == TitlebarOverlay)
+	mode := 0
+	switch s {
+	case TitlebarOverlay:
+		mode = 1
+	case TitlebarOverlayTall:
+		mode = 2
+	}
+	macos.TitlebarSetOverlay(ns, mode)
 	return true
 }
 

@@ -56,18 +56,44 @@ static void quiNativeEndSheet(void* parent, void* child) {
 	}
 }
 
-// quiTitlebarSetOverlay switches the window between a native title bar and
-// a transparent one over full-height content.
+// quiTitlebarToolbarID marks the empty toolbar quiTitlebarSetOverlay adds
+// for the tall style, so switching away removes only ours.
+static NSString* const quiTitlebarToolbarID = @"qui.titlebar.tall";
+
+// quiTitlebarSetOverlay switches the window between a native title bar
+// (mode 0), a transparent one over full-height content (1), and the same
+// at the height of a compact toolbar (2).
 //
 // FullSizeContentView (rather than a borderless window) is what keeps the
 // deal cheap: the window frame still exists, so resize edges, the traffic
 // lights, native fullscreen and window snapping all keep working — only the
 // title bar's drawing and its title text go away. A borderless window would
 // hand us all of that to reimplement.
-static void quiTitlebarSetOverlay(void* nsWindowPtr, int on) {
+//
+// The tall style is an empty NSToolbar in the unified-compact style: AppKit
+// then makes the title bar 38pt and centers the traffic lights in it itself
+// (the IDE main-toolbar look, and Electron's hiddenInset), which survives
+// fullscreen, display changes and window resizes, unlike moving the buttons
+// by hand. The toolbar has no items, so it draws nothing and clicks reach
+// the content below it.
+static void quiTitlebarSetOverlay(void* nsWindowPtr, int mode) {
 	NSWindow* win = (__bridge NSWindow*)nsWindowPtr;
 	if (win == nil) {
 		return;
+	}
+	int on = mode != 0;
+	NSToolbar* tb = [win toolbar];
+	int ours = tb != nil && [[tb identifier] isEqualToString:quiTitlebarToolbarID];
+	if (mode == 2 && !ours) {
+		NSToolbar* t = [[NSToolbar alloc] initWithIdentifier:quiTitlebarToolbarID];
+		[win setToolbar:t];
+		if (@available(macOS 11.0, *)) {
+			[win setToolbarStyle:NSWindowToolbarStyleUnifiedCompact];
+			// No hairline under the strip: the app draws its own border.
+			[win setTitlebarSeparatorStyle:NSTitlebarSeparatorStyleNone];
+		}
+	} else if (mode != 2 && ours) {
+		[win setToolbar:nil];
 	}
 	NSWindowStyleMask mask = [win styleMask];
 	if (on) {
@@ -104,6 +130,15 @@ static void quiTitlebarInsets(void* nsWindowPtr, double* left, double* right, do
 	NSRect probe = NSMakeRect(0, 0, frame.size.width, frame.size.height);
 	NSRect content = [NSWindow contentRectForFrameRect:probe styleMask:mask];
 	double h = frame.size.height - content.size.height;
+	// A toolbar (the tall style) makes the title bar taller than the style
+	// mask says; the buttons' container is the strip as drawn.
+	NSButton* close = [win standardWindowButton:NSWindowCloseButton];
+	if (close != nil && [close superview] != nil) {
+		double strip = [[close superview] frame].size.height;
+		if (strip > h) {
+			h = strip;
+		}
+	}
 	if (h < 0) {
 		h = 0;
 	}
@@ -189,9 +224,10 @@ func WindowBeginSheet(parent, child unsafe.Pointer) { C.quiNativeBeginSheet(pare
 // WindowEndSheet dismisses child if it is parent's sheet.
 func WindowEndSheet(parent, child unsafe.Pointer) { C.quiNativeEndSheet(parent, child) }
 
-// TitlebarSetOverlay switches between the native title bar and a
-// transparent one over full-height content.
-func TitlebarSetOverlay(ns unsafe.Pointer, on bool) { C.quiTitlebarSetOverlay(ns, cBool(on)) }
+// TitlebarSetOverlay switches between the native title bar (mode 0) and a
+// transparent one over full-height content: 1 at the native height, 2 at a
+// compact toolbar's height with the window buttons centered in it.
+func TitlebarSetOverlay(ns unsafe.Pointer, mode int) { C.quiTitlebarSetOverlay(ns, C.int(mode)) }
 
 // TitlebarInsets returns the room the system title bar controls need.
 func TitlebarInsets(ns unsafe.Pointer) (left, right, top float64) {
