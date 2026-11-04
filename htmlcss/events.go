@@ -20,6 +20,34 @@ type PointerEvent struct {
 	Pressed bool
 
 	prevented *bool
+	// stopped is the click's propagation flag (click_propagation.go);
+	// nil for pointer events, whose StopPropagation stops ev itself.
+	stopped *bool
+	ev      qui.Event
+}
+
+// StopPropagation stops the event from reaching any further ancestor's
+// handlers — the DOM's stopPropagation. For a click (OnClickEvent) it
+// stops the click only: the ancestors' pointer listeners still hear the
+// release. For a pointer event it is the same as returning true.
+func (p PointerEvent) StopPropagation() {
+	switch {
+	case p.stopped != nil:
+		*p.stopped = true
+	case p.ev != nil:
+		p.ev.StopPropagation()
+	}
+}
+
+// IsPropagationStopped reports whether a handler stopped the event.
+func (p PointerEvent) IsPropagationStopped() bool {
+	switch {
+	case p.stopped != nil:
+		return *p.stopped
+	case p.ev != nil:
+		return p.ev.IsPropagationStopped()
+	}
+	return false
 }
 
 // PreventDefault suppresses the element's built-in behavior for this
@@ -43,6 +71,7 @@ func (e *El) pointerEvent(me qui.MouseEvent, prevented *bool) PointerEvent {
 		Button: me.Button, Mods: me.Mods, Clicks: me.Clicks,
 		Pressed:   e.Pressed() || (me.Type() == qui.EventMouseMove && e.Window().PointerCaptured()),
 		prevented: prevented,
+		ev:        me,
 	}
 }
 

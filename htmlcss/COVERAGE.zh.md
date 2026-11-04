@@ -196,6 +196,7 @@
 | 能力 | 状态 | 备注 |
 |---|---|---|
 | 点击 `onClick` | ✅ | `OnClickEvent` 额外给出位置、按键、修饰键、点击次数与 `PreventDefault`（阻止 submit 按钮提交、链接跳转、file / color 输入打开选择器）。在元素上按下、拖到别处松开不算点击（pointerup 照常触发）；同时包含按下点和松开点的祖先会收到点击 |
+| 点击冒泡 / `stopPropagation` | ✅ | click、dblclick、contextmenu 按 Chrome 冒泡：祖先的 handler 由内向外依次执行，且在整轮 pointerup 冒泡之后（dblclick 在 click 之后单独冒泡一轮）；键盘激活 / `El.Click()` 发出的合成 click 同样冒泡。停止方式：`PointerEvent.StopPropagation()`（在 `OnClickEvent` 里调用；只停 click，不停 release），或用 `El.SetStopClickPropagation` / DSL `StopClickPropagation()` 声明屏障（覆盖 click、dblclick、contextmenu）；`HearsNestedClicks()` 声明外层 handler 有意接收子元素冒泡上来的点击（审计会跳过它）。默认动作（表单提交、label 激活、链接）在分发结束后执行一次，由路径上最内层有默认动作的元素执行，除非有 handler 调用了 `PreventDefault`。审计：`QUI_DEBUG_CLICKS=1`（或文件路径）或 `h.AuditClicks(fn)`，按源码行列出一次点击会触发两个元素 handler 的位置（`htmlcss.AuditClickNesting`）。表单控件上的 contextmenu 仍由控件自己的 handler 独占 |
 | `onPointerDown` / `onPointerMove` / `onPointerUp` | ✅ | 位置（窗口 + 元素局部）、按键、修饰键、点击次数；返回 true 即消费。按下会捕获指针，移出元素后仍收到移动与松开 |
 | 右键 `onContextMenu` | ✅ | 回传窗口坐标，可锚定菜单 |
 | `<a href>` 导航 | ✅ | 元素本身或折叠 span 均可点。`StyleEngine.SetLinkHandler` 优先决定（应用内路由，如 `#/settings`），两种情况下拿到的都是 `<a>` 元素本身；未设置时只有 `http(s)` 与 `mailto` 交给系统打开，其他协议与相对 / 片段链接什么也不做。链接上的作者点击处理器拥有这次点击 |

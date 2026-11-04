@@ -72,7 +72,8 @@ AppKit 可能在等待期间、没有任何输入事件的情况下投递的平�
 - 通过对比分发路径合成 hover 进入 / 离开；
 - `MouseDown` 与 Tab 循环更新焦点；
 - 拖放以 4px 死区合成；
-- 浮层自上而下命中测试，`Modal()` 浮层会困住焦点。
+- 浮层自上而下命中测试，`Modal()` 浮层会困住焦点；
+- htmlcss 元素在此之上遵循 Chrome：最内层元素为整条路径分发一次 release（先全部 pointerup，再全部 click，再全部 dblclick），右键同理（先全部 pointerdown，再全部 contextmenu）；`PointerEvent.StopPropagation` 或 `SetStopClickPropagation` 标记的元素会停止 click，但不停止 release 本身（`htmlcss/click_propagation.go`）。
 
 ### 坐标空间
 

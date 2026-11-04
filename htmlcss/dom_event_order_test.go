@@ -50,18 +50,10 @@ type domEventAllow struct {
 }
 
 var domEventAllowlist = []domEventAllow{
-	// By design: an El click handler acts on the release and consumes it
-	// (nested_click_test.go — a ✕ inside a clickable tab row), so click
-	// and dblclick stop at the innermost handler instead of bubbling.
-	{"*", "*", "click * bubble", "a click handler consumes the release: click doesn't bubble (nested_click_test.go)"},
-	{"*", "*", "dblclick * bubble", "a dblclick handler consumes the release: dblclick doesn't bubble"},
-	{"*", "*click *", "pointerup * bubble", "the release a click handler consumed never reaches ancestors' pointerup listeners"},
-	{"*", "rightclick *", "pointerdown * bubble", "SetOnContextMenu consumes the right press, so ancestors miss its pointerdown"},
-	{"*", "rightclick *", "contextmenu * bubble", "a contextmenu handler consumes the press: contextmenu doesn't bubble"},
-
 	// Chrome's native <select> popup is its own window, which hands the
 	// release back to the select: a second pointerup after the click.
 	{"choice-controls", "click sel", "pointerup sel", "Chrome's native <select> popup re-sends the release (a second pointerup)"},
+	{"choice-controls", "click sel", "pointerup box bubble", "…and that second pointerup bubbles"},
 
 	// A push button doesn't take focus on click (the macOS convention, see
 	// El.FocusOnClick); Chrome focuses it.

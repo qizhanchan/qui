@@ -245,6 +245,17 @@ type El struct {
 	savedVisualTransform *widgets.BoxTransform
 
 	onClick func()
+	// stopClicks makes the element a click-propagation barrier: click,
+	// double-click and context-menu events that reach it go no further
+	// up (the DOM's stopPropagation, declared). See click_propagation.go.
+	stopClicks bool
+	// hearsNested marks a click handler meant to hear its descendants'
+	// clicks too (a pane focusing on any click inside): AuditClickNesting
+	// doesn't report pairs with it as the outer element.
+	hearsNested bool
+	// clickSite is where the click handlers were installed (file:line),
+	// recorded only while QUI_DEBUG_CLICKS is on — for AuditClickNesting.
+	clickSite string
 	// onClickMods is the modifier-aware form of onClick, for elements whose
 	// click means something different with Shift / Cmd held — a
 	// multi-selectable list row being the canonical case. Both fire when
@@ -4483,29 +4494,36 @@ func (e *El) Handle(event qui.Event) bool {
 	case qui.EventMouseDown:
 		if e.earlyPress.SameDispatch(me) {
 			e.earlyPress = qui.MouseEvent{}
-		} else if e.onPointerDown != nil && e.onPointerDown(e.pointerEvent(me, nil)) {
-			return true
+		} else {
+			if e.onPointerDown != nil && e.onPointerDown(e.pointerEvent(me, nil)) {
+				return true
+			}
+			// A right press: every pointerdown up the path, then every
+			// contextmenu — the DOM's order (click_propagation.go).
+			if me.Button == qui.MouseButtonRight && e.bubblePressFromControl(me) {
+				return true
+			}
+		}
+		if me.Button == qui.MouseButtonRight && !e.heardEarly(me) {
+			e.dispatchContextMenu(me)
 		}
 	case qui.EventMouseMove:
 		if e.onPointerMove != nil && e.onPointerMove(e.pointerEvent(me, nil)) {
 			return true
 		}
 	case qui.EventMouseUp:
-		if e.onPointerUp != nil && e.onPointerUp(e.pointerEvent(me, nil)) {
+		if e.heardEarly(me) {
+			// A descendant dispatched this release for the whole path.
+			return handled
+		}
+		// The innermost element runs the release for the path: every
+		// pointerup, then — a left click — every click (Chrome semantics,
+		// click_propagation.go). Returning `handled` lets the event go on
+		// to non-element widgets above.
+		if e.dispatchRelease(me, me.ReleasedOver(e)) {
 			return true
 		}
-	}
-	if e.onContextMenu != nil && me.Type() == qui.EventMouseDown && me.Button == qui.MouseButtonRight {
-		// contextmenu follows the press's focus move, as in the DOM.
-		if win := e.Window(); win != nil {
-			win.FlushPressFocus()
-		}
-		// Event coordinates arrive in this element's own space; the handler
-		// anchors a window-level overlay, so map back out (a no-op outside
-		// scroll containers / transformed subtrees).
-		p := qui.LocalPointToWindow(e, qui.Point{X: me.X, Y: me.Y})
-		e.onContextMenu(p.X, p.Y)
-		return true
+		return handled
 	}
 	// A press inside an `app-region: drag` area moves the OS window (the
 	// browser title-bar gesture). Checked here — after the capture phase and
@@ -4517,97 +4535,40 @@ func (e *El) Handle(event qui.Event) bool {
 			return true
 		}
 	}
-	// A release that ended a drag is not a click: reordering a row by
-	// dropping it must not also fire the row's click handler (in the grid
-	// overview that meant every reorder closed the view).
-	if me.AfterDrag {
-		return handled
-	}
-	// A press dragged off the element and released elsewhere is a cancelled
-	// click — the "slide off the Delete button" escape. Mouse capture still
-	// delivers the release here (pointerup above fired); click, double
-	// click, built-in behavior and link navigation do not. An ancestor that
-	// contains both ends of the gesture still gets its click on bubble.
-	if me.Type() == qui.EventMouseUp && !me.ReleasedOver(e) {
-		return handled
-	}
-	if me.Type() == qui.EventMouseUp && me.Button == qui.MouseButtonLeft {
-		acted, prevented := e.fireClick(me)
-		// Built-in control behavior (color palette / file dialog / form
-		// submit) runs alongside any author handler — unless one called
-		// PreventDefault — and, crucially, independently of e.onClick,
-		// which the reconciler overwrites on every re-render.
-		if prevented {
-			return true
-		}
-		if e.runBuiltinClick() {
-			acted = true
-		}
-		if e.activateLabeledControl(me.Target()) {
-			acted = true
-		}
-		if acted {
-			// An author click handler on a link owns the click (the link
-			// doesn't also navigate) — the in-app router pattern.
-			return true
-		}
-	}
-	// Hyperlink navigation (anchor semantics without a reactive handler):
-	// a click on the element itself (<a href>) or on a folded link span
-	// inside one of its inline runs opens the target with the system
-	// handler — matching widgets.Anchor.
-	if me.Type() == qui.EventMouseUp && me.Button == qui.MouseButtonLeft {
-		if e.tag == "a" {
-			if href := e.attrs["href"]; href != "" {
-				e.followLink(href, e)
-				return true
-			}
-		}
-		for _, ib := range e.inlinePool {
-			if href, src, ok := ib.LinkSourceAt(qui.Point{X: me.X, Y: me.Y}); ok && href != "" {
-				// The link handler hears about the folded <a> itself, so a
-				// router can read its data-* / id, not only its href.
-				from := e
-				if a, ok := src.(*El); ok && a != nil {
-					from = a
-				}
-				e.followLink(href, from)
-				return true
-			}
-		}
-	}
 	return handled
 }
 
 // fireClick runs the element's click handlers for a left release that
-// completes a click, reporting whether any ran and whether one called
-// PreventDefault.
+// completes a click — none once the click was stopped below — and reports
+// whether any ran and whether the release completes a double click (the
+// dblclick handlers run in a second pass, after every click handler: the
+// DOM order is click, click, dblclick). PreventDefault / StopPropagation
+// land in cs.
 //
 // Double click: two releases close together in time and space. Timed off
 // the event's own timestamp (not the wall clock) so tests and replayed
-// recordings behave like live input. Detected BEFORE the click handlers run
-// (the release has to be recorded either way) but dispatched AFTER them,
-// because the DOM order is click, click, dblclick — a handler pair that
-// logs both must see it that way.
-func (e *El) fireClick(me qui.MouseEvent) (acted, prevented bool) {
-	isDouble := e.isDoubleClick(me)
+// recordings behave like live input. Recorded on every release, stopped
+// or not, so the next one can be compared.
+func (e *El) fireClick(me qui.MouseEvent, cs *clickDispatch) (acted, isDouble bool) {
+	isDouble = e.isDoubleClick(me)
+	if cs.stopped {
+		return false, isDouble
+	}
 	if e.onClickEvent != nil {
-		e.onClickEvent(e.pointerEvent(me, &prevented))
+		pe := e.pointerEvent(me, &cs.prevented)
+		pe.stopped = &cs.stopped
+		e.onClickEvent(pe)
 		acted = true
 	}
 	if e.onClick != nil {
 		e.onClick()
 		acted = true
 	}
-	if isDouble && e.onDoubleClick != nil {
-		e.onDoubleClick()
-		acted = true
-	}
 	if e.onClickMods != nil {
 		e.onClickMods(me.Mods)
 		acted = true
 	}
-	return acted, prevented
+	return acted, isDouble
 }
 
 // ownsControlTarget reports whether t is this element's backing control or
@@ -4651,13 +4612,9 @@ func (e *El) handleControlPointer(me qui.MouseEvent, handled bool) bool {
 		if e.bubblePressFromControl(me) {
 			return true
 		}
-		if e.onContextMenu != nil && me.Button == qui.MouseButtonRight {
-			// contextmenu follows the press's focus move, as in the DOM.
-			if win := e.Window(); win != nil {
-				win.FlushPressFocus()
-			}
-			p := qui.LocalPointToWindow(e, qui.Point{X: me.X, Y: me.Y})
-			e.onContextMenu(p.X, p.Y)
+		if me.Button == qui.MouseButtonRight && e.dispatchContextMenu(me) {
+			// A context-menu handler owns the right press: the control
+			// doesn't also act on it.
 			return true
 		}
 	case qui.EventMouseMove:
@@ -4665,16 +4622,13 @@ func (e *El) handleControlPointer(me qui.MouseEvent, handled bool) bool {
 			return true
 		}
 	case qui.EventMouseUp:
-		if e.onPointerUp != nil && e.onPointerUp(e.pointerEvent(me, nil)) {
-			return true
-		}
 		// Released over the element ends the click. A <select> press opens
 		// its dropdown, whose popup layer then lies under the release, so
 		// the element's own box counts too — the press began on it (the
 		// release is captured here), and sliding off it still cancels.
 		over := me.ReleasedOver(e) || e.Bounds().Contains(qui.Point{X: me.X, Y: me.Y})
-		if me.Button == qui.MouseButtonLeft && !me.AfterDrag && over {
-			e.fireClick(me)
+		if e.dispatchRelease(me, over) {
+			return true
 		}
 	}
 	return handled
@@ -4934,6 +4888,9 @@ func (e *El) pressFromKeyboard(mods qui.Modifiers) bool {
 		e.onClickMods(mods)
 		acted = true
 	}
+	// The synthetic click bubbles to the ancestors' handlers, as a
+	// browser's does; the default action follows the whole dispatch.
+	e.bubbleSyntheticClick(mods, syntheticClick())
 	if e.runBuiltinClick() {
 		acted = true
 	}
@@ -4950,6 +4907,7 @@ func (e *El) keyClick() {
 	if e.onClickMods != nil {
 		e.onClickMods(0)
 	}
+	e.bubbleSyntheticClick(0, syntheticClick())
 }
 
 // Click runs the element's click behavior as if it had been clicked —

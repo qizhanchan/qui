@@ -72,7 +72,8 @@ Dispatch is DOM-style and three-phase: capture (root→parent of target), target
 - hover enter/leave is synthesized by diffing the dispatch path;
 - focus updates on `MouseDown` and Tab cycling;
 - drag/drop is synthesized with a 4px dead-zone;
-- overlays hit-test top-down, and `Modal()` overlays trap focus.
+- overlays hit-test top-down, and `Modal()` overlays trap focus;
+- htmlcss elements follow Chrome above this: the innermost element runs a release for the whole path (every pointerup, then every click, then every dblclick) and a right press likewise (every pointerdown, then every contextmenu); a click stops at `PointerEvent.StopPropagation` or an element marked `SetStopClickPropagation` without stopping the release itself (`htmlcss/click_propagation.go`).
 
 ### Coordinate spaces
 

@@ -124,6 +124,9 @@ type Builder struct {
 	onPointerMove func(htmlcss.PointerEvent) bool
 	onPointerUp   func(htmlcss.PointerEvent) bool
 	onClickEvent  func(htmlcss.PointerEvent)
+	stopClicks    bool
+	hearsNested   bool
+	clickSite     string // QUI_DEBUG_CLICKS only
 	onFileDrop    func([]string)
 	onPaste       func(string) bool
 	onFormSubmit  func(map[string]string)
@@ -185,7 +188,22 @@ func (b *Builder) Attr(k, v string) *Builder {
 }
 
 // OnClick installs a click handler.
-func (b *Builder) OnClick(fn func()) *Builder { b.onClick = fn; return b }
+//
+// Clicks bubble, as in Chrome: an ancestor's click handler runs too,
+// unless this element (or one between) is StopClickPropagation.
+func (b *Builder) OnClick(fn func()) *Builder { b.onClick = fn; b.noteClickSite(); return b }
+
+// StopClickPropagation keeps clicks, double clicks and context menus on
+// this element (or inside it) from reaching an ancestor's handlers — the
+// DOM's `e.stopPropagation()` in the handler, declared. Use it on a button
+// inside a clickable row. Default actions (form submit, links) still run.
+func (b *Builder) StopClickPropagation() *Builder { b.stopClicks = true; return b }
+
+// HearsNestedClicks declares that this element's click / context-menu
+// handlers are meant to hear clicks bubbling up from inside it — a pane
+// that focuses on any click within. Dispatch is unchanged; the nested-click
+// audit (AuditClicks, QUI_DEBUG_CLICKS) stops reporting nestings under it.
+func (b *Builder) HearsNestedClicks() *Builder { b.hearsNested = true; return b }
 
 // OnClickEl is OnClick with the clicked element — what a dropdown trigger
 // needs to anchor its menu. Unlike capturing the element in a shared
@@ -193,19 +211,28 @@ func (b *Builder) OnClick(fn func()) *Builder { b.onClick = fn; return b }
 // toolbar button that also appears in the toolbar's overflow panel): each
 // mounted copy hands over itself. Both handlers fire when both are
 // installed (OnClick first).
-func (b *Builder) OnClickEl(fn func(el *htmlcss.El)) *Builder { b.onClickEl = fn; return b }
+func (b *Builder) OnClickEl(fn func(el *htmlcss.El)) *Builder {
+	b.onClickEl = fn
+	b.noteClickSite()
+	return b
+}
 
 // OnClickMods is OnClick with the keyboard modifiers held at click time —
 // what a row in a multi-selectable list needs so Shift can extend and Cmd
 // can toggle the selection. Both handlers fire when both are installed.
 func (b *Builder) OnClickMods(fn func(mods qui.Modifiers)) *Builder {
 	b.onClickMods = fn
+	b.noteClickSite()
 	return b
 }
 
 // OnContextMenu installs a right-click handler; it receives the cursor
 // position so a caller can anchor a context menu there (see ContextMenu).
-func (b *Builder) OnContextMenu(fn func(x, y float32)) *Builder { b.onContextMenu = fn; return b }
+func (b *Builder) OnContextMenu(fn func(x, y float32)) *Builder {
+	b.onContextMenu = fn
+	b.noteClickSite()
+	return b
+}
 
 // OnMouseEnter / OnMouseLeave fire once per pointer crossing (no bubbling,
 // DOM mouseenter/mouseleave semantics). Use them for hover logic that has to
@@ -218,7 +245,11 @@ func (b *Builder) OnMouseLeave(fn func()) *Builder { b.onMouseLeave = fn; return
 
 // OnDoubleClick installs a double-click handler. The OnClick handler still
 // fires for each of the two clicks, as in the DOM.
-func (b *Builder) OnDoubleClick(fn func()) *Builder { b.onDoubleClick = fn; return b }
+func (b *Builder) OnDoubleClick(fn func()) *Builder {
+	b.onDoubleClick = fn
+	b.noteClickSite()
+	return b
+}
 
 // OnWheel installs a scroll-wheel handler receiving the deltas in pixels (a
 // wheel notch is qui.WheelLinePixels, a trackpad its finger travel); return true
@@ -462,6 +493,7 @@ func (b *Builder) OnPointerUp(fn func(htmlcss.PointerEvent) bool) *Builder {
 // button submitting, a link navigating, a file input opening its dialog).
 func (b *Builder) OnClickEvent(fn func(htmlcss.PointerEvent)) *Builder {
 	b.onClickEvent = fn
+	b.noteClickSite()
 	return b
 }
 
@@ -619,6 +651,12 @@ func (b *Builder) Build() reactive.Element {
 				}
 			}
 			el.SetOnClick(onClick)
+			el.SetStopClickPropagation(bb.stopClicks)
+			el.SetHearsNestedClicks(bb.hearsNested)
+			if debugClicks {
+				el.SetClickSite(bb.clickSite)
+				auditClicksAfterCommit(el)
+			}
 			el.SetOnClickMods(bb.onClickMods)
 			el.SetOnContextMenu(bb.onContextMenu)
 			el.SetSuggestions(bb.suggestions)
