@@ -625,6 +625,11 @@ int quiCocoaCreateWindow(uintptr_t handle, int width, int height,
             [panel setExcludedFromWindowsMenu:YES];
             [panel setBecomesKeyOnlyIfNeeded:NO];
             [panel setWorksWhenModal:YES];
+            // No window-open animation: AppKit otherwise zooms a panel in
+            // from a scaled-down snapshot each time it is ordered front,
+            // which reads as the popup "growing" into place (and a pooled
+            // popup is ordered front on every open).
+            [panel setAnimationBehavior:NSWindowAnimationBehaviorNone];
             panel.keyable = NO;
             window = panel;
         } else if (overlay) {
@@ -662,6 +667,7 @@ int quiCocoaCreateWindow(uintptr_t handle, int width, int height,
             // Not in the window cycle, not in Exposé, no title.
             [panel setExcludedFromWindowsMenu:YES];
             [panel setBecomesKeyOnlyIfNeeded:YES];
+            [panel setAnimationBehavior:NSWindowAnimationBehaviorNone];
             window = panel;
         } else {
             NSWindowStyleMask style = NSWindowStyleMaskTitled |
