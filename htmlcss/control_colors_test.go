@@ -102,3 +102,20 @@ func TestTextAreaOverflowHiddenHidesScrollbars(t *testing.T) {
 		}
 	}
 }
+
+// `border: none; border-right: 1px solid …` on an <input> is just the
+// right-hand line (Chrome): the per-side borders replace the native uniform
+// frame on the backing control instead of being drawn on top of it.
+func TestControlSideBordersReplaceNativeFrame(t *testing.T) {
+	css := `#cell { border: none; border-right: 1px solid #ededed; border-bottom: 1px solid #ededed; }`
+	res := RenderDoc(`<body><input id="cell" type="text"></body>`, css, Options{})
+	el := res.ByID["cell"].(*El)
+	el.ensureBacking()
+	st := el.backing.(*widgets.Input).Style()
+	if st.BorderSize != 0 {
+		t.Errorf("BorderSize = %v, want 0 (native frame cleared)", st.BorderSize)
+	}
+	if st.BorderWidths.Right != 1 || st.BorderWidths.Bottom != 1 || st.BorderWidths.Top != 0 || st.BorderWidths.Left != 0 {
+		t.Errorf("BorderWidths = %+v, want right+bottom 1px only", st.BorderWidths)
+	}
+}

@@ -981,15 +981,36 @@ func (fl FlexLayout) Measure(children []Widget, padded Size) Size {
 	// parent decides whether to shrink us at Apply time. Without this, a
 	// flex column measured for its intrinsic height collapses its children
 	// toward their (often zero) min-main and reports a too-short height.
+	var basisSum float32
+	for i := range items {
+		if i > 0 {
+			basisSum += fl.Gap
+		}
+		basisSum += items[i].basis
+	}
 	if mainAvail <= 0 {
-		var basisSum float32
+		mainAvail = basisSum
+	}
+	// A column's intrinsic (content) height is the sum of its items'
+	// hypothetical sizes: flex-grow only distributes free space in a
+	// container whose height is definite, which is decided at Apply time,
+	// not here. Measuring against the offered height instead made a column
+	// with a growing child report "all of it" — a header holding a title
+	// column (`.title { flex-grow: 1 }`) swallowed its whole parent, as
+	// Chrome never does. Shrinking still applies (content too tall).
+	if fl.Direction == Vertical {
+		// Hypothetical size = the item's content height (a growing item's
+		// implied zero basis is not its content size), never below basis.
+		var contentSum float32
 		for i := range items {
 			if i > 0 {
-				basisSum += fl.Gap
+				contentSum += fl.Gap
 			}
-			basisSum += items[i].basis
+			contentSum += max(items[i].basis, items[i].natural.H)
 		}
-		mainAvail = basisSum
+		if mainAvail > contentSum {
+			mainAvail = contentSum
+		}
 	}
 	fl.resolveMainSizes(items, mainAvail)
 	fl.remeasureCross(items, paddedRect)

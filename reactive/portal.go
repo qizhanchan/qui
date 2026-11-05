@@ -155,6 +155,37 @@ type portalHost struct {
 	// pw is set while the content lives in its own popup window
 	// (PortalOptions.OwnWindow); the host is then that window's root.
 	pw *portalWindow
+	// win is the window an overlay host is pushed on: the runtime's, or
+	// the window of the portal it was opened from (enclosingPortalWindow).
+	win *qui.Window
+}
+
+// windowOr is the window the host shows in, or fallback when unknown.
+func (h *portalHost) windowOr(fallback *qui.Window) *qui.Window {
+	if h.pw != nil {
+		return h.pw.win
+	}
+	if h.win != nil {
+		return h.win
+	}
+	return fallback
+}
+
+// enclosingPortalWindow is the window of the portal that w sits in (an
+// OwnWindow popup, or the window an overlay was pushed on), or nil when
+// w is in the runtime's main tree. A popover opened from inside a popup
+// window's content belongs in that popup window, next to its anchor —
+// on the main window it would sit at the wrong place, or behind it.
+func enclosingPortalWindow(w qui.Widget) *qui.Window {
+	for ; w != nil; w = w.Parent() {
+		if h, ok := w.(*portalHost); ok {
+			if h.pw != nil {
+				return h.pw.win
+			}
+			return h.win
+		}
+	}
+	return nil
 }
 
 func newPortalHost(opts PortalOptions) *portalHost {

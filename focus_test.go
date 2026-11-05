@@ -281,3 +281,31 @@ func TestNextFocusIndexWrap(t *testing.T) {
 		t.Errorf("nil backward: got %d want 2", got)
 	}
 }
+
+// Ctrl+Tab (and Alt / Cmd+Tab) is a shortcut, not focus navigation — as
+// in Chrome — so an app's accelerator (a tab switcher) receives it.
+func TestModifiedTabIsNotFocusNavigation(t *testing.T) {
+	a := newFocusableSpy("a")
+	b := newFocusableSpy("b")
+	root := NewContainer(nil, a, b)
+	root.rect = Rect{X: 0, Y: 0, W: 100, H: 100}
+	w := &Window{root: root, lastSize: Size{W: 100, H: 100}}
+	fired := 0
+	reg := NewAcceleratorRegistry()
+	if err := reg.Register("Ctrl+Tab", func() { fired++ }); err != nil {
+		t.Fatal(err)
+	}
+	w.accels = reg
+
+	w.dispatch(newKeyEvent(KeyTab, 0))
+	if w.focused != a {
+		t.Fatalf("Tab should focus a; got %v", w.focused)
+	}
+	w.dispatch(newKeyEvent(KeyTab, ModControl))
+	if w.focused != a {
+		t.Errorf("Ctrl+Tab moved focus to %v", w.focused)
+	}
+	if fired != 1 {
+		t.Errorf("Ctrl+Tab accelerator fired %d times, want 1", fired)
+	}
+}

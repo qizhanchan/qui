@@ -504,7 +504,7 @@ func reconcileNode(prev *instance, next Element, pass *reconcilePass) (*instance
 		host.applyOpts(*next.portal)
 		prev.portalOpts = next.portal
 		if geometryChanged {
-			layoutPortal(host, pass.runtime.window)
+			layoutPortal(host, host.windowOr(pass.runtime.window))
 		}
 		children, childFlags := reconcileChildren(prev.children, next.Children, pass)
 		prev.children = children
@@ -513,9 +513,9 @@ func reconcileNode(prev *instance, next Element, pass *reconcilePass) (*instance
 			adoptStyleParent(prev.lastWidgets, prev.styleParent)
 		}
 		if synced != FlagNone || childFlags.has(FlagLayout) {
-			layoutPortal(host, pass.runtime.window)
+			layoutPortal(host, host.windowOr(pass.runtime.window))
 		} else if childFlags.has(FlagPaint) {
-			invalidatePortal(host, pass.runtime.window)
+			invalidatePortal(host, host.windowOr(pass.runtime.window))
 		}
 		// Overlay invalidation handled locally — nothing for the parent
 		// tree to do.
@@ -717,7 +717,7 @@ func visitDirty(node *instance, pass *reconcilePass) Flags {
 		// Overlay geometry is portal-owned; invalidate locally and don't
 		// bubble layout flags into the main tree.
 		if host, ok := node.widget.(*portalHost); ok && flags != FlagNone && pass.runtime != nil {
-			layoutPortal(host, pass.runtime.window)
+			layoutPortal(host, host.windowOr(pass.runtime.window))
 		}
 		return FlagNone
 	}
@@ -830,11 +830,15 @@ func mountPortal(elem Element, pass *reconcilePass) (*instance, Flags) {
 		panic("reactive: Portal requires a Runtime bound to a Window (use reactive.NewRuntime/Mount)")
 	}
 	window := rt.window
+	if w := enclosingPortalWindow(pass.currentHost()); w != nil {
+		window = w
+	}
 	if pass.metrics != nil {
 		pass.metrics.Mounts++
 	}
 
 	host := newPortalHost(*elem.portal)
+	host.win = window
 	node := &instance{
 		kind:       elem.Kind,
 		key:        elem.Key,
@@ -865,7 +869,9 @@ func mountPortal(elem Element, pass *reconcilePass) (*instance, Flags) {
 	adoptStyleParent(node.lastWidgets, node.styleParent)
 
 	if elem.portal.OwnWindow {
-		if pw := newPortalWindow(rt, window, host); pw != nil {
+		// Popup windows stay owned by the runtime's window, wherever the
+		// portal was opened from.
+		if pw := newPortalWindow(rt, rt.window, host); pw != nil {
 			opts := elem.portal
 			pw.onShown = func() {
 				// As for the overlay: give Escape / Enter a receiver unless

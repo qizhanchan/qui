@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+/* A column's intrinsic height ignores its items' flex-grow: a header row
+   holding a title column whose title grows (api-saw's settings header)
+   stays as tall as its content, and the body below takes the rest. */
+.main { display: flex; flex-direction: column; width: 600px; height: 400px; }
+.hdr { display: flex; flex-direction: row; align-items: center; padding: 10px 12px; }
+.titles { display: flex; flex-direction: column; flex-grow: 1; }
+.title { flex-grow: 1; font-size: 13px; }
+.sub { font-size: 10px; margin-top: 2px; }
+.btn { width: 80px; height: 30px; }
+.body { display: flex; flex-direction: column; flex-grow: 1; }
+</style></head><body>
+<div class="main" id="main">
+  <div class="hdr" id="hdr"><div class="titles" id="titles"><span class="title" id="title">Settings</span><span class="sub" id="sub">Variables are in scope for requests saved here.</span></div><div class="btn" id="btn"></div></div>
+  <div class="body" id="body"><div id="row" style="height: 30px"></div></div>
+</div>
+</body></html>

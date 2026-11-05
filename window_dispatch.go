@@ -223,8 +223,12 @@ func (w *Window) dispatch(event Event) {
 	// DOM order: the keydown dispatches first (capture → target → bubble),
 	// so element key listeners see Tab and can keep it by consuming it,
 	// then focus moves.
+	// Only plain Tab / Shift+Tab navigate (as in Chrome): Ctrl+Tab, Alt+Tab
+	// and Cmd+Tab are shortcuts — an app's tab switcher — and go on to the
+	// accelerators like any other chord.
 	tabHookRan := false
-	if ke, ok := event.(KeyEvent); ok && ke.eventType == EventKeyDown && ke.Key == KeyTab && !raw {
+	if ke, ok := event.(KeyEvent); ok && ke.eventType == EventKeyDown && ke.Key == KeyTab && !raw &&
+		ke.Mods&(ModControl|ModAlt|ModSuper) == 0 {
 		// The focused widget's OnKeyDown hooks see Tab before it navigates
 		// — an autocomplete accepts its suggestion on Tab.
 		if f := w.focused; f != nil && !w.keyTargetBehindModal(f) {

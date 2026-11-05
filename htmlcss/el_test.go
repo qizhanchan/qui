@@ -637,3 +637,28 @@ func TestOnClickModsKeepsElementUnfolded(t *testing.T) {
 		t.Error("an element with a modifier click handler must not fold into a text run")
 	}
 }
+
+// An explicit ARIA role overrides the tag's implicit one (Chrome: a
+// <div role="tab"> is exposed as a tab), and aria-selected reaches the AX
+// state, so agents can address custom tab strips and trees.
+func TestElExplicitARIARole(t *testing.T) {
+	eng := NewStyleEngine(``)
+	tab := eng.NewEl("div")
+	tab.SetAttr("role", "tab")
+	tab.SetAttr("aria-selected", "true")
+	if got := tab.Role(); got != "tab" {
+		t.Fatalf("Role = %q, want tab", got)
+	}
+	if tab.AccessibleState()&qui.AXStateSelected == 0 {
+		t.Fatal("aria-selected=true should set AXStateSelected")
+	}
+	item := eng.NewEl("div")
+	item.SetAttr("role", "treeitem fallback")
+	if got := item.Role(); got != "treeitem" {
+		t.Fatalf("Role = %q, want the first token treeitem", got)
+	}
+	plain := eng.NewEl("button")
+	if got := plain.Role(); got != qui.RoleButton {
+		t.Fatalf("Role without attribute = %q, want implicit button", got)
+	}
+}

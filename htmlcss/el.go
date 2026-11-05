@@ -3741,6 +3741,13 @@ func (e *El) updateScrollContentAt(cw, viewH float32) {
 			nat.H = e.scrollOverflowAt(cw, viewH)
 		}
 	}
+	// The content box is at least the viewport (CSS: a scroll container's
+	// content area is its padding box), so a flex-grow child — which a
+	// measure no longer grows into the offered height — still fills the
+	// visible area when the content is shorter.
+	if viewH > 0 && nat.H < viewH {
+		nat.H = viewH
+	}
 	if nat != e.scrollView.ContentSize || e.scrollView.Content != e.scrollInner {
 		e.scrollView.SetContent(e.scrollInner, nat)
 	}
@@ -5203,9 +5210,15 @@ func imageMIME(path string) string {
 	}
 }
 
-// Role reports the accessibility role derived from the tag, so the agent /
-// AX surface addresses live elements the same way it does one-shot ones.
+// Role reports the accessibility role, so the agent / AX surface addresses
+// live elements the same way it does one-shot ones. An explicit ARIA `role`
+// attribute wins over the tag's implicit role, as in the browser — a
+// `<div role="tab">` is a tab, a `<div role="treeitem">` a tree item.
 func (e *El) Role() string {
+	if r, _ := e.readAttr("role"); strings.TrimSpace(r) != "" {
+		// ARIA allows a fallback list ("switch checkbox"); take the first.
+		return strings.Fields(r)[0]
+	}
 	switch e.tag {
 	case "button":
 		return qui.RoleButton
@@ -5280,6 +5293,9 @@ func (e *El) AccessibleState() qui.AccessibleState {
 	}
 	if attrs["aria-expanded"] == "true" {
 		s |= qui.AXStateExpanded
+	}
+	if attrs["aria-selected"] == "true" {
+		s |= qui.AXStateSelected
 	}
 	if _, off := attrs["disabled"]; off {
 		s |= qui.AXStateDisabled
@@ -5364,6 +5380,7 @@ func (e *El) applyHostedControlStyle(cs *ComputedStyle) {
 			st.BorderWidths = cs.SideWidths
 			st.BorderColors = cs.SideColors
 			st.BorderStyle = cs.BorderStyle
+			st.BorderSize, st.Border = 0, qui.Color{}
 		} else if cs.HasBorder {
 			st.BorderSize = cs.BorderWidth
 			st.Border = cs.BorderColor

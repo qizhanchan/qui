@@ -174,3 +174,55 @@ func TestPopoverOwnWindowCoversTheOwnersPointer(t *testing.T) {
 		}
 	}
 }
+
+// A popover opened from inside an OwnWindow popup's content (a combo box in
+// a windowed dialog) is an overlay of that popup window, placed against its
+// anchor there — not an overlay of the main window.
+func TestPopoverInsideOwnWindowStaysInThatWindow(t *testing.T) {
+	owner, err := qui.NewHeadlessWindowForTest(800, 600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var setMenu func(bool)
+	anchor := new(*htmlcss.El)
+	css := `.dlg { width: 400px; height: 300px; } .btn { width: 40px; height: 20px; } .menu { width: 120px; height: 80px; }`
+	rt := h.Mount(owner, css, func() h.Node {
+		menu, set := reactive.UseState(false)
+		setMenu = set
+		var pop h.Node
+		if menu {
+			pop = h.Popover(*anchor, h.PopoverOptions{OnDismiss: func() { set(false) }}, h.Div().Class("menu"))
+		}
+		return h.Div(h.Span("doc"),
+			h.PopoverAt(func() qui.Rect { return qui.Rect{X: 10, Y: 10, W: 10, H: 10} },
+				h.PopoverOptions{OwnWindow: true},
+				h.Div(h.Div().Class("btn").RefTo(anchor), pop).Class("dlg")))
+	})
+	rt.Render()
+	dlg := popupRoot(t, owner)
+	pw := findClass(dlg, "dlg").Window()
+
+	setMenu(true)
+	rt.Render()
+	if n := len(owner.Overlays()); n != 0 {
+		t.Fatalf("the menu went on the main window (%d overlays)", n)
+	}
+	if n := len(pw.Overlays()); n != 1 {
+		t.Fatalf("popup window has %d overlays, want the menu", n)
+	}
+	pw.DrainJobsForTest()
+	pw.LayoutForTest()
+	menu := findClass(pw.Overlays()[0], "menu")
+	if menu == nil {
+		t.Fatal("menu content not in the popup window's overlay")
+	}
+	// Below the 40x20 button at the dialog's top-left, with the 4px gap.
+	if b := menu.Bounds(); b.Y != 24 || b.W != 120 {
+		t.Fatalf("menu at %v, want below its anchor in the popup window", b)
+	}
+	setMenu(false)
+	rt.Render()
+	if n := len(pw.Overlays()); n != 0 {
+		t.Fatalf("closed menu left %d overlays on the popup window", n)
+	}
+}

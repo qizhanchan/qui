@@ -418,9 +418,15 @@ func applyCommonStyle(st *qui.Style, cs *ComputedStyle) {
 		st.Background = cs.Background
 	}
 	if cs.HasSideBorders {
+		// The sides are complete (seeded from the uniform border, then the
+		// per-side overrides), so they replace the control's native uniform
+		// border: `border: none; border-right: 1px …` on an <input> is one
+		// right-hand line, not that line plus the native frame.
 		st.BorderWidths = cs.SideWidths
 		st.BorderColors = cs.SideColors
 		st.BorderStyle = cs.BorderStyle
+		st.BorderSize = 0
+		st.Border = qui.Color{}
 	} else if cs.BorderWidth > 0 {
 		st.BorderSize = cs.BorderWidth
 		st.Border = cs.BorderColor
@@ -654,6 +660,7 @@ func syncControlStates(ss *qui.StateStyle, cs *ComputedStyle, native **qui.State
 		if cs.HasSideBorders {
 			d.BorderWidths = cs.SideWidths
 			d.BorderColors = cs.SideColors
+			d.BorderSize, d.Border = 0, qui.Color{}
 		} else if cs.HasBorder {
 			d.Border = cs.BorderColor
 			d.BorderSize = cs.BorderWidth
