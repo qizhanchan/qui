@@ -104,7 +104,7 @@ func (w *Window) ClearDirtyRegion() {
 		return
 	}
 	w.assertUIThread("Window.ClearDirtyRegion")
-	w.dirtyRegion = Rect{}
+	w.resetDirty()
 }
 
 // SetHoverPath overrides the hover chain used by tooltip routing.

@@ -610,3 +610,12 @@ func (c metalCanvas) QueueGLDraw(func(GLState)) { c.needGL() }
 
 // QueueRetainedGLDraw implements RetainedGLCanvas (see metalCanvas).
 func (c metalCanvas) QueueRetainedGLDraw(any, gfx.Rect, func(GLState)) { c.needGL() }
+
+// CanScrollPixels implements PixelScroller.
+func (r *MetalRenderer) CanScrollPixels() bool { return r != nil && r.img != nil }
+
+// ScrollPixels implements PixelScroller: the CPU frame moves; the window
+// reports the moved area as damage, so the texture follows on upload.
+func (r *MetalRenderer) ScrollPixels(rect image.Rectangle, dx, dy int) bool {
+	return r != nil && scrollImage(r.img, rect, dx, dy)
+}

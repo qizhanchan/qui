@@ -14,5 +14,6 @@ func init() {
 	RegisterProtocolDomain(logDomain())
 	RegisterProtocolDomain(overlayDomain())
 	RegisterProtocolDomain(pageDomain())
+	RegisterProtocolDomain(performanceDomain())
 	RegisterProtocolDomain(runtimeDomain())
 }

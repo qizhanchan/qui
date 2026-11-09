@@ -20,6 +20,10 @@ func debugDomain() ProtocolDomain {
 					}
 					return debugDiagnosticsResult{Diagnostics: d}, nil
 				}),
+			NewProtocolCommand("invalidate", "Repaint the whole window on the next frame. A screenshot taken after it is a full-repaint reference, to compare against what partial repaints and pixel scrolls produced.",
+				func(ctx *ProtocolContext, _ empty) (empty, error) {
+					return empty{}, ctx.Window.synchronously(func() error { ctx.Window.Invalidate(); return nil })
+				}),
 		}, debugFlagCommands()...),
 	}
 }

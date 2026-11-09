@@ -58,6 +58,7 @@ type Window struct {
 	renderer       Renderer
 	// forceGL: this window fell back from Metal to GL (a widget needs raw
 	// GL, or Metal is unavailable); requested GLRenderers stay GL.
+	frameStats  frameStats
 	forceGL     bool
 	metalLogged bool // QUI_DEBUG_RENDERER reported Metal once
 	onRender    func(Canvas)
@@ -212,6 +213,10 @@ type Window struct {
 	// to the full window; InvalidateRect unions a subrect; Tick results
 	// and events contribute partial regions.
 	dirtyRegion Rect
+	// dirtyRects / dirtyRectsOverflow / pixelScrolls: see window_dirty.go.
+	dirtyRects         []Rect
+	dirtyRectsOverflow bool
+	pixelScrolls       []pixelScroll
 	// inLayoutPass + boundsChanged implement repaint scoping for layout
 	// changes: Step sets inLayoutPass around the frame's Measure+Layout;
 	// any widget whose bounds change during the pass sets boundsChanged

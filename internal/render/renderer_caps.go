@@ -76,3 +76,17 @@ type SelfPresentingRenderer interface {
 type GLFallbackRenderer interface {
 	WantsGL() bool
 }
+
+// PixelScroller moves pixels of the frame it keeps between frames, so
+// content that only moved need not be rasterized again
+// (Window.ScrollPixels).
+type PixelScroller interface {
+	// CanScrollPixels reports whether the renderer currently keeps its
+	// frame in memory (false under a GPU raster backend, or before the
+	// first frame).
+	CanScrollPixels() bool
+	// ScrollPixels moves the pixels inside rect (physical) by (dx, dy);
+	// pixels moved out of rect are dropped, the area they leave keeps its
+	// old content (the caller repaints it). False when it could not.
+	ScrollPixels(rect image.Rectangle, dx, dy int) bool
+}

@@ -58,7 +58,7 @@ func (w *Window) InvalidateRect(r Rect) {
 		return
 	}
 	w.assertUIThread("Window.InvalidateRect")
-	w.dirtyRegion = w.dirtyRegion.Union(r)
+	w.unionDirty(r)
 }
 
 // noteBoundsChange records that a widget's layout bounds changed (see
@@ -146,7 +146,7 @@ func (w *Window) tickAnimators(now time.Time) {
 			continue
 		}
 		dirty, done := a.Tick(now)
-		w.dirtyRegion = w.dirtyRegion.Union(dirty)
+		w.unionDirty(dirty)
 		if done {
 			w.animators[i] = nil
 		}
@@ -352,15 +352,15 @@ func (w *Window) Step() {
 	w.tickTooltip(now)
 	w.tickAnimators(w.anim.now(now))
 	if w.root != nil {
-		w.dirtyRegion = w.dirtyRegion.Union(tickWidget(w.root, now))
+		w.unionDirty(tickWidget(w.root, now))
 	}
 	// Overlays animate independently. A popup with its own blink/timer
 	// contributes its Tick Rect to the dirty region.
 	for _, ov := range w.overlays {
-		w.dirtyRegion = w.dirtyRegion.Union(tickWidget(ov, now))
+		w.unionDirty(tickWidget(ov, now))
 	}
 	for _, ov := range slices.Clone(w.exitingOverlays) {
-		w.dirtyRegion = w.dirtyRegion.Union(tickWidget(ov, now))
+		w.unionDirty(tickWidget(ov, now))
 	}
 	// Layout caching: skip Measure+Layout unless something explicitly
 	// invalidated the layout. This is the win for high-frequency
@@ -376,8 +376,10 @@ func (w *Window) Step() {
 	// nothing (text tick measuring to the same size) keeps the paint
 	// clipped to the mutated widget's rect.
 	w.lastSize = viewport
+	tLayout := time.Now()
 	w.layoutPass()
 	w.noteLayoutLifecycle()
+	layoutDur := time.Since(tLayout)
 	// A RequestGLRedraw is satisfied by any frame: a painted one replays
 	// retained GL draws anyway, so only a frame with nothing dirty needs
 	// the GL-only path.
@@ -388,7 +390,12 @@ func (w *Window) Step() {
 	}
 	if w.dirtyRegion.IsEmpty() {
 		if glOnly {
+			t := time.Now()
 			w.redrawGLOnly()
+			if w.framePainted {
+				d := time.Since(t)
+				w.frameStats.add(FrameTiming{Start: now, Present: d, Total: time.Since(now), RedrawOnly: true})
+			}
 		}
 		return
 	}
@@ -396,9 +403,13 @@ func (w *Window) Step() {
 
 	// Clamp dirty region to current window bounds (a widget could return
 	// a Rect that extends past a resized window).
+	// Pixels a ScrollPixels moved go first: the paint below fills what the
+	// move exposed. A move the renderer declines leaves stale pixels, so
+	// the frame repaints everything instead.
+	moved := w.applyPixelScrolls()
 	clip := w.dirtyRegion.Intersect(Rect{W: w.lastSize.W, H: w.lastSize.H})
 	if clip.IsEmpty() {
-		w.dirtyRegion = Rect{}
+		w.resetDirty()
 		return
 	}
 
@@ -410,6 +421,8 @@ func (w *Window) Step() {
 		fi.SetLogicalSize(w.lastSize)
 	}
 	w.bindMetal()
+	var clips []Rect
+	tDraw := time.Now()
 	canvas := w.renderer.Begin(Size{W: float32(fbWidth), H: float32(fbHeight)})
 	if canvas != nil {
 		// HiDPI: push the device-pixel ratio onto the canvas state stack
@@ -440,74 +453,42 @@ func (w *Window) Step() {
 			// every primitive agree; a partial repaint then reproduces the
 			// full repaint exactly.
 			clip = gfx.SnapRectOutward(clip, scaleX, scaleY)
+			clips = w.paintClips(clip, Rect{W: w.lastSize.W, H: w.lastSize.H}, scaleX, scaleY)
 			// Everything below is clipped to clip, so only those pixels
-			// need to reach the GPU.
+			// (and the ones a ScrollPixels moved) need to reach the GPU.
 			if fi, ok := w.renderer.(render.FrameInfoRenderer); ok {
-				fi.SetDamage(gfx.PhysicalRect(clip, scaleX, scaleY))
+				fi.SetDamage(gfx.PhysicalRect(clip, scaleX, scaleY).Union(moved))
 			}
 		}
-		// Route everything through clipCanvas so draws outside the dirty
-		// region are elided. Clear only repaints the clipped area; it no
-		// longer wipes the whole buffer, which is what preserves last
-		// frame's un-dirty pixels.
-		//
-		// Clear to the active theme's Surface so any gap between widgets
-		// (root container padding, inter-row gutters) reads as the
-		// background color the rest of the UI sits on, instead of an
-		// out-of-theme black that made showcases look like a
-		// half-painted page. A theme swap automatically picks up the new
-		// surface on the next paint.
-		// Dirty-region clip: scope every widget draw to the invalidated
-		// area so untouched pixels survive from the previous frame.
-		drawCanvas.ClipRect(clip)
-		// An overlay panel has no background of its own: it draws a rounded
-		// card and lets the corners composite through to whatever is behind
-		// the window. Clearing to Surface there would paint an opaque
-		// rectangle over exactly the pixels the transparency exists for.
-		if w.kind == WindowOverlayPanel || w.kind == WindowPopup {
-			drawCanvas.Clear(ColorTransparent)
-		} else {
-			drawCanvas.Clear(CurrentTheme().Surface)
+		if clips == nil {
+			clips = []Rect{clip}
 		}
 		w.inPaint = true
-		if w.root != nil {
-			w.root.Draw(drawCanvas)
+		for _, c := range clips {
+			w.paintClip(drawCanvas, c)
 		}
-		// Overlays paint after the main tree, bottom-of-stack first so
-		// a later-pushed overlay sits on top. They share the same clip
-		// so they're dirty-region-aware too.
-		for _, ov := range w.overlays {
-			if PaintBoundsOf(ov).Intersects(clip) {
-				ov.Draw(drawCanvas)
-			}
-		}
-		for _, ov := range w.exitingOverlays {
-			if PaintBoundsOf(ov).Intersects(clip) {
-				ov.Draw(drawCanvas)
-			}
-		}
-		if img := w.drag.image; img != nil && PaintBoundsOf(img).Intersects(clip) {
-			img.Draw(drawCanvas)
-		}
-		if w.onRender != nil {
-			w.onRender(drawCanvas)
-		}
-		if w.debugOverlayEnabled {
-			w.drawDebugOverlay(drawCanvas)
-		}
-		w.drawHighlight(drawCanvas)
 		w.inPaint = false
 		drawCanvas.RestoreTo(dprID)
 	}
+	tPresent := time.Now()
 	w.renderer.End()
 	w.present()
+	{
+		sx, sy := float32(fbWidth)/max(viewport.W, 1), float32(fbHeight)/max(viewport.H, 1)
+		w.frameStats.add(FrameTiming{
+			Start: now, Layout: layoutDur, Draw: tPresent.Sub(tDraw), Present: time.Since(tPresent),
+			Total: time.Since(now),
+			Dirty: dirtyArea(clips, clip, sx, sy), Full: fbWidth * fbHeight,
+			Scrolled: moved.Dx() * moved.Dy(),
+		})
+	}
 	// A popup's native shadow is computed from the alpha it drew; once the
 	// card changed shape the shadow of the old shape would linger.
 	if w.kind == WindowPopup {
 		w.InvalidateShadow()
 	}
 	w.afterPaintProtocol(clip, fullRepaintClip(clip, viewport))
-	w.dirtyRegion = Rect{}
+	w.resetDirty()
 	w.framePainted = true
 	w.checkGLFallback()
 }
