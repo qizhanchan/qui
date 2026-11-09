@@ -86,6 +86,24 @@ func (f *golangVideoFrame) RGBA() []byte {
 
 func (f *golangVideoFrame) Retain() { f.refs.Add(1) }
 
+// drawMetal implements metalVideoFrame: the I420 planes are uploaded and
+// converted in the compositor's shader with the same coefficients as the
+// GL path.
+func (f *golangVideoFrame) drawMetal(c qui.MetalCompositor, key any, src, physDst qui.Rect) bool {
+	fr := f.frame
+	if fr == nil || fr.Y == nil || fr.Cb == nil || fr.Cr == nil {
+		return false
+	}
+	plane := func(p *h264.Plane) qui.YUVPlane {
+		if len(p.Pix) == 0 {
+			return qui.YUVPlane{}
+		}
+		return qui.YUVPlane{Pix: unsafe.Pointer(&p.Pix[0]), Stride: p.Stride, W: p.W, H: p.H}
+	}
+	m, off, sc := colorMatrix(f.matrix, f.fullRange, fr.Height)
+	return c.DrawYUV420(key, [3]qui.YUVPlane{plane(fr.Y), plane(fr.Cb), plane(fr.Cr)}, m, off, sc, src, physDst)
+}
+
 func (f *golangVideoFrame) Release() {
 	if f.refs.Add(-1) > 0 {
 		return

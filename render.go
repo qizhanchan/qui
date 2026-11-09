@@ -66,6 +66,9 @@ type (
 
 	// MetalCompositor is what a retained Metal draw composites with.
 	MetalCompositor = render.MetalCompositor
+
+	// YUVPlane is one 8-bit plane for MetalCompositor.DrawYUV420.
+	YUVPlane = render.YUVPlane
 )
 
 // ActiveGLRenderer is always nil without OpenGL.

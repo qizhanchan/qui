@@ -30,6 +30,9 @@ package render
 @property (nonatomic, assign) CVMetalTextureCacheRef cvCache;
 // pixels: textures for DrawPixels, by the caller's key id.
 @property (nonatomic, strong) NSMutableDictionary<NSNumber*, id<MTLTexture>>* pixels;
+// yuv: the three plane textures DrawYUV420 keeps, by key id.
+@property (nonatomic, strong) NSMutableDictionary<NSNumber*, NSArray<id<MTLTexture>>*>* yuv;
+@property (nonatomic, strong) id<MTLRenderPipelineState> yuvPipeline;
 // holds keeps CVMetalTextures (and so their pixel buffers' IOSurfaces)
 // alive until the command buffer that sampled them has completed.
 @property (nonatomic, strong) NSMutableArray* holds;
@@ -37,6 +40,9 @@ package render
 @property (nonatomic, strong) id<MTLCommandBuffer> cmd;
 @property (nonatomic, strong) id<MTLRenderCommandEncoder> enc;
 @property (nonatomic, strong) id<CAMetalDrawable> drawable;
+// lastShown is the texture of the last presented drawable, kept only when
+// the layer allows reading it (tests: framebufferOnly = NO).
+@property (nonatomic, strong) id<MTLTexture> lastShown;
 @end
 
 @implementation QuiMetal
@@ -72,6 +78,15 @@ static NSString* const quiMetalShaders =
      "fragment float4 qui_tex(VOut in [[stage_in]], texture2d<float> tex [[texture(0)]],\n"
      "                        sampler smp [[sampler(0)]]) {\n"
      "    return tex.sample(smp, in.uv);\n"
+     "}\n"
+     "struct YUVConv { float4 c0; float4 c1; float4 c2; float4 off; float4 scale; };\n"
+     "fragment float4 qui_yuv(VOut in [[stage_in]], texture2d<float> ty [[texture(0)]],\n"
+     "                        texture2d<float> tu [[texture(1)]], texture2d<float> tv [[texture(2)]],\n"
+     "                        sampler smp [[sampler(0)]], constant YUVConv& k [[buffer(0)]]) {\n"
+     "    float3 yuv = float3(ty.sample(smp, in.uv).r, tu.sample(smp, in.uv).r, tv.sample(smp, in.uv).r);\n"
+     "    yuv = (yuv - k.off.xyz) * k.scale.xyz;\n"
+     "    float3x3 m = float3x3(k.c0.xyz, k.c1.xyz, k.c2.xyz);\n"
+     "    return float4(clamp(m * yuv, 0.0, 1.0), 1.0);\n"
      "}\n";
 
 static id<MTLRenderPipelineState> quiMetalPipeline(id<MTLDevice> device, id<MTLLibrary> lib,
@@ -113,7 +128,8 @@ static void* quiMetalCreate(void* layerPtr) {
         }
         id<MTLRenderPipelineState> layerPipeline = quiMetalPipeline(device, lib, @"qui_layer");
         id<MTLRenderPipelineState> texPipeline = quiMetalPipeline(device, lib, @"qui_tex");
-        if (layerPipeline == nil || texPipeline == nil) return NULL;
+        id<MTLRenderPipelineState> yuvPipeline = quiMetalPipeline(device, lib, @"qui_yuv");
+        if (layerPipeline == nil || texPipeline == nil || yuvPipeline == nil) return NULL;
         MTLSamplerDescriptor* sd = [[MTLSamplerDescriptor alloc] init];
         sd.minFilter = MTLSamplerMinMagFilterLinear;
         sd.magFilter = MTLSamplerMinMagFilterLinear;
@@ -126,6 +142,8 @@ static void* quiMetalCreate(void* layerPtr) {
         m.queue = [device newCommandQueue];
         m.layerPipeline = layerPipeline;
         m.texPipeline = texPipeline;
+        m.yuvPipeline = yuvPipeline;
+        m.yuv = [NSMutableDictionary dictionary];
         m.sampler = [device newSamplerStateWithDescriptor:sd];
         m.layer = layer;
         m.pixels = [NSMutableDictionary dictionary];
@@ -148,6 +166,66 @@ static void quiMetalDestroy(void* ctx) {
 static void quiMetalForgetPixels(void* ctx, uintptr_t key) {
     QuiMetal* m = (__bridge QuiMetal*)ctx;
     [m.pixels removeObjectForKey:@(key)];
+    [m.yuv removeObjectForKey:@(key)];
+}
+
+static id<MTLTexture> quiMetalSharedTexture(QuiMetal* m, MTLPixelFormat fmt, int w, int h) {
+    MTLTextureDescriptor* td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:fmt
+                                                                                  width:w
+                                                                                 height:h
+                                                                              mipmapped:NO];
+    td.usage = MTLTextureUsageShaderRead;
+    td.storageMode = m.device.hasUnifiedMemory ? MTLStorageModeShared : MTLStorageModeManaged;
+    return [m.device newTextureWithDescriptor:td];
+}
+
+// quiMetalDrawYUV420 uploads three 8-bit planes (Y full size, Cb / Cr
+// half) into the textures kept under key and composites the src rect
+// (luma pixels) at dst, converting YCbCr to RGB in the shader. conv is
+// the column-major 3x3 matrix, then offset and scale (15 floats).
+static int quiMetalDrawYUV420(void* ctx, uintptr_t key,
+                              const uint8_t* p0, const uint8_t* p1, const uint8_t* p2,
+                              const int* stride, const int* pw, const int* ph, const float* conv,
+                              float sx, float sy, float sw, float sh, float x, float y, float w, float h) {
+    const uint8_t* pix[3] = {p0, p1, p2};
+    QuiMetal* m = (__bridge QuiMetal*)ctx;
+    if (m.enc == nil) return 0;
+    for (int i = 0; i < 3; i++) if (pix[i] == NULL || pw[i] <= 0 || ph[i] <= 0) return 0;
+    NSArray<id<MTLTexture>>* tex = m.yuv[@(key)];
+    BOOL ok = tex != nil;
+    for (int i = 0; ok && i < 3; i++) ok = (int)tex[i].width == pw[i] && (int)tex[i].height == ph[i];
+    if (!ok) {
+        id<MTLTexture> t0 = quiMetalSharedTexture(m, MTLPixelFormatR8Unorm, pw[0], ph[0]);
+        id<MTLTexture> t1 = quiMetalSharedTexture(m, MTLPixelFormatR8Unorm, pw[1], ph[1]);
+        id<MTLTexture> t2 = quiMetalSharedTexture(m, MTLPixelFormatR8Unorm, pw[2], ph[2]);
+        if (t0 == nil || t1 == nil || t2 == nil) return 0;
+        tex = @[t0, t1, t2];
+        m.yuv[@(key)] = tex;
+    }
+    // The previous frame may still be sampling these textures.
+    [m.last waitUntilCompleted];
+    for (int i = 0; i < 3; i++) {
+        [tex[i] replaceRegion:MTLRegionMake2D(0, 0, pw[i], ph[i]) mipmapLevel:0
+                    withBytes:pix[i] bytesPerRow:stride[i]];
+    }
+    float fw = (float)m.drawable.texture.width, fh = (float)m.drawable.texture.height;
+    float lw = (float)pw[0], lh = (float)ph[0];
+    if (fw <= 0 || fh <= 0) return 0;
+    float r[8] = {
+        x / fw * 2 - 1, 1 - y / fh * 2, (x + w) / fw * 2 - 1, 1 - (y + h) / fh * 2,
+        sx / lw, sy / lh, (sx + sw) / lw, (sy + sh) / lh,
+    };
+    float k[20] = {
+        conv[0], conv[1], conv[2], 0,  conv[3], conv[4], conv[5], 0,  conv[6], conv[7], conv[8], 0,
+        conv[9], conv[10], conv[11], 0,  conv[12], conv[13], conv[14], 0,
+    };
+    [m.enc setRenderPipelineState:m.yuvPipeline];
+    [m.enc setVertexBytes:r length:sizeof r atIndex:0];
+    for (int i = 0; i < 3; i++) [m.enc setFragmentTexture:tex[i] atIndex:i];
+    [m.enc setFragmentSamplerState:m.sampler atIndex:0];
+    [m.enc setFragmentBytes:k length:sizeof k atIndex:0];
+    [m.enc drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
+    return 1;
 }
 
 static id<MTLTexture> quiMetalPrivateTexture(QuiMetal* m, int width, int height) {
@@ -357,6 +435,52 @@ static int quiMetalReadFrame(void* ctx, uint8_t* out, int stride, int width, int
     }
 }
 
+// quiMetalNewTestLayer is an offscreen CAMetalLayer (in no window) whose
+// drawables can be read back: what tests render into. Retained (+1).
+static void* quiMetalNewTestLayer(int width, int height) {
+    @autoreleasepool {
+        CAMetalLayer* layer = [CAMetalLayer layer];
+        layer.framebufferOnly = NO;
+        layer.opaque = YES;
+        layer.drawableSize = CGSizeMake(width, height);
+        return (__bridge_retained void*)layer;
+    }
+}
+
+static void quiMetalReleaseTestLayer(void* layer) {
+    if (layer) CFRelease(layer);
+}
+
+// quiMetalReadShown copies the last presented drawable (BGRA) into out as
+// RGBA, waiting for the GPU. 0 when there is none (or it is not readable).
+static int quiMetalReadShown(void* ctx, uint8_t* out, int stride, int width, int height) {
+    @autoreleasepool {
+        QuiMetal* m = (__bridge QuiMetal*)ctx;
+        id<MTLTexture> t = m.lastShown;
+        if (t == nil || (int)t.width != width || (int)t.height != height) return 0;
+        [m.last waitUntilCompleted];
+        size_t row = (size_t)width * 4;
+        id<MTLBuffer> buf = [m.device newBufferWithLength:row * height options:MTLResourceStorageModeShared];
+        id<MTLCommandBuffer> cmd = [m.queue commandBuffer];
+        id<MTLBlitCommandEncoder> blit = [cmd blitCommandEncoder];
+        [blit copyFromTexture:t sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+                   sourceSize:MTLSizeMake(width, height, 1) toBuffer:buf destinationOffset:0
+          destinationBytesPerRow:row destinationBytesPerImage:row * height];
+        [blit endEncoding];
+        [cmd commit];
+        [cmd waitUntilCompleted];
+        const uint8_t* src = buf.contents;
+        for (int y = 0; y < height; y++) {
+            const uint8_t* s = src + (size_t)y * row;
+            uint8_t* d = out + (size_t)y * stride;
+            for (int x = 0; x < width; x++) {
+                d[4*x] = s[4*x+2]; d[4*x+1] = s[4*x+1]; d[4*x+2] = s[4*x]; d[4*x+3] = s[4*x+3];
+            }
+        }
+        return 1;
+    }
+}
+
 // quiMetalEndFrame lays the 2D layer over whatever retained draws put
 // down, presents and commits.
 static void quiMetalEndFrame(void* ctx) {
@@ -371,6 +495,7 @@ static void quiMetalEndFrame(void* ctx) {
         [m.enc endEncoding];
         id<MTLCommandBuffer> cmd = m.cmd;
         id<CAMetalDrawable> drawable = m.drawable;
+        m.lastShown = m.layer.framebufferOnly ? nil : drawable.texture;
         // CVMetalTextures (and the IOSurfaces under them) must outlive the
         // GPU's reads: the handler keeps them until the frame completes.
         NSArray* holds = m.holds;
@@ -730,11 +855,8 @@ func (c metalCompositor) DrawPixelBuffer(pb unsafe.Pointer, src, dst gfx.Rect) b
 		C.float(dst.X), C.float(dst.Y), C.float(dst.W), C.float(dst.H)) != 0
 }
 
-func (c metalCompositor) DrawPixels(key any, pix unsafe.Pointer, stride, w, h int, bgra bool, src, dst gfx.Rect) bool {
-	if key == nil || pix == nil {
-		return false
-	}
-	r := c.r
+// keyID is the integer the C side files key's textures under.
+func (r *MetalRenderer) keyID(key any) uintptr {
 	id, ok := r.keys[key]
 	if !ok {
 		if r.keys == nil {
@@ -744,6 +866,43 @@ func (c metalCompositor) DrawPixels(key any, pix unsafe.Pointer, stride, w, h in
 		id = r.nextID
 		r.keys[key] = id
 	}
+	return id
+}
+
+func (c metalCompositor) DrawYUV420(key any, planes [3]YUVPlane, m [9]float32, off, scale [3]float32, src, dst gfx.Rect) bool {
+	if key == nil {
+		return false
+	}
+	var pix [3]*C.uint8_t
+	var stride, w, h [3]C.int
+	for i, p := range planes {
+		if p.Pix == nil {
+			return false
+		}
+		pix[i] = (*C.uint8_t)(p.Pix)
+		stride[i], w[i], h[i] = C.int(p.Stride), C.int(p.W), C.int(p.H)
+	}
+	var conv [15]C.float
+	for i, v := range m {
+		conv[i] = C.float(v)
+	}
+	for i := 0; i < 3; i++ {
+		conv[9+i], conv[12+i] = C.float(off[i]), C.float(scale[i])
+	}
+	// The planes go as separate arguments: cgo forbids passing Go memory
+	// that itself holds Go pointers.
+	return C.quiMetalDrawYUV420(c.r.ctx, C.uintptr_t(c.r.keyID(key)), pix[0], pix[1], pix[2],
+		&stride[0], &w[0], &h[0], &conv[0],
+		C.float(src.X), C.float(src.Y), C.float(src.W), C.float(src.H),
+		C.float(dst.X), C.float(dst.Y), C.float(dst.W), C.float(dst.H)) != 0
+}
+
+func (c metalCompositor) DrawPixels(key any, pix unsafe.Pointer, stride, w, h int, bgra bool, src, dst gfx.Rect) bool {
+	if key == nil || pix == nil {
+		return false
+	}
+	r := c.r
+	id := r.keyID(key)
 	b := C.int(0)
 	if bgra {
 		b = 1
@@ -801,4 +960,23 @@ func (r *MetalRenderer) ScrollPixels(rect image.Rectangle, dx, dy int) bool {
 	rr := rect.Sub(r.img.Rect.Min)
 	r.moves = append(r.moves, int32(rr.Min.X), int32(rr.Min.Y), int32(rr.Dx()), int32(rr.Dy()), int32(dx), int32(dy))
 	return true
+}
+
+// newTestMetalLayer / releaseTestMetalLayer / readShown exist for the
+// package's tests (test files cannot use cgo): an offscreen layer to render
+// into and a readback of what the last frame presented.
+func newTestMetalLayer(w, h int) unsafe.Pointer { return C.quiMetalNewTestLayer(C.int(w), C.int(h)) }
+
+func releaseTestMetalLayer(l unsafe.Pointer) { C.quiMetalReleaseTestLayer(l) }
+
+func (r *MetalRenderer) readShown() *image.RGBA {
+	if r.ctx == nil || r.img == nil {
+		return nil
+	}
+	out := image.NewRGBA(r.img.Rect)
+	if C.quiMetalReadShown(r.ctx, (*C.uint8_t)(unsafe.Pointer(&out.Pix[0])), C.int(out.Stride),
+		C.int(out.Rect.Dx()), C.int(out.Rect.Dy())) == 0 {
+		return nil
+	}
+	return out
 }

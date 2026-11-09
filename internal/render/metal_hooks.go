@@ -30,8 +30,19 @@ type MetalCompositor interface {
 	// bgra) into a texture cached under key and shows its src part at dst.
 	// ForgetRetainedGLDraw(key) releases that texture too.
 	DrawPixels(key any, pix unsafe.Pointer, stride, w, h int, bgra bool, src, dst gfx.Rect) bool
+	// DrawYUV420 uploads planar YCbCr 4:2:0 (one 8-bit plane each, chroma
+	// at half size) into textures cached under key and shows the src part
+	// (luma pixels) at dst, converting on the GPU: rgb = m · ((yuv − off)
+	// ∘ scale), m column-major. ForgetRetainedGLDraw(key) releases them.
+	DrawYUV420(key any, planes [3]YUVPlane, m [9]float32, off, scale [3]float32, src, dst gfx.Rect) bool
 	// FramebufferSize is the frame's physical size.
 	FramebufferSize() gfx.Size
+}
+
+// YUVPlane is one 8-bit plane of a planar YCbCr picture.
+type YUVPlane struct {
+	Pix          unsafe.Pointer
+	Stride, W, H int
 }
 
 // RetainedMetalCanvas is implemented by the Metal renderer's canvas.

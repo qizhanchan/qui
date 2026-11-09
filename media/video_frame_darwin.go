@@ -114,6 +114,15 @@ func (f *darwinVideoFrame) Retain() {
 // Release drops one reference. When the count hits zero the
 // underlying Core Foundation objects are released. Order matters:
 // cvTex aliases cvBuf's IOSurface, so cvTex must die first.
+// drawMetal implements metalVideoFrame: the IOSurface-backed BGRA buffer
+// is sampled in place.
+func (f *darwinVideoFrame) drawMetal(c qui.MetalCompositor, _ any, src, physDst qui.Rect) bool {
+	if f.cvBuf == nil {
+		return false
+	}
+	return c.DrawPixelBuffer(f.cvBuf, src, physDst)
+}
+
 func (f *darwinVideoFrame) Release() {
 	if atomic.AddInt32(&f.refs, -1) != 0 {
 		return

@@ -56,7 +56,7 @@ macOS 从 10.14 起废弃 OpenGL（冻结在 4.1，Apple Silicon 上是跑在 Me
 与保留式 GL 绘制同一套存活规则（`RetainedSet[F]` 泛型共用）：`QueueRetainedMetalDraw(key, physBounds, fn)`，`Window.RequestGLRedraw` 对 Metal 窗口同样有效（只重放保留绘制、不重新光栅化）。绘制拿到的不是原始 API，而是渲染器提供的 `MetalCompositor`：`DrawPixelBuffer`（CVPixelBuffer → `CVMetalTextureCache`，零拷贝）与 `DrawPixels`（RGBA / BGRA 上传到按 key 缓存的纹理）。合成顺序与 GL 相同：先清屏、画保留绘制，再以预乘 src-over 叠 2D 层，ClearRect 打出的洞露出下面的视频。
 
 - media 的 **FrameView** 已接入（RGBA 推帧、CVPixelBuffer 推帧都不再回退 GL）。
-- **VideoView**（AVFoundation 的 YUV 双平面纹理 + GL 着色器）仍走 GL 回退；接入需要一个 NV12 → RGB 的 Metal 合成图元。
+- **VideoView** 已接入：AVFoundation 后端的帧是 IOSurface 上的 BGRA，走 `DrawPixelBuffer` 零拷贝；纯 Go 后端的 I420 走新增的 `DrawYUV420`（三个 R8 纹理，着色器里按与 GL 相同的系数转 RGB）。
 
 ## 阶段
 
@@ -64,7 +64,8 @@ macOS 从 10.14 起废弃 OpenGL（冻结在 4.1，Apple Silicon 上是跑在 Me
 |---|---|---|
 | M1 | MetalRenderer + cocoa Metal 模式 + 选择 / 环境变量 + GL 自动回退 | go-code 在 Metal 下日常使用正常；截图、弹窗、透明窗口、改尺寸、多显示器；scene3d 示例自动回退 GL |
 | M2 | Metal GPU 光栅后端（暂缓） | `QUI_GPU_RASTER=1` 下与 CPU 栅格像素一致（容差内），render 一致性测试通过 |
-| M3 | 保留式 Metal 绘制 + FrameView 零拷贝 | 远程桌面 / FrameView 画面在 Metal 窗口里不回退 GL（VideoView 待补） |
+| M3 | 保留式 Metal 绘制 + FrameView / VideoView | 视频、远程桌面画面在 Metal 窗口里不回退 GL |
+| 后续 | 滚动平移（`Window.ScrollPixels`，GPU 端移动纹理）、多矩形脏区、帧统计（`Performance.getFrames`） | go-code 1720×1080 滚动帧 p95 10.3 → 2.3 ms |
 
 ## 环境变量
 

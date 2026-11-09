@@ -150,6 +150,8 @@ type VideoView struct {
 	retained bool
 	glSrc    qui.Rect
 	glDst    qui.Rect
+	// mtlDst is the physical destination rect of the retained Metal draw.
+	mtlDst qui.Rect
 
 	scrub ScrubDecoder // lazy
 
@@ -1141,6 +1143,19 @@ func (v *VideoView) Draw(canvas qui.Canvas) {
 	// the-frame UI works the same way.
 	canvas.ClearRect(bounds)
 
+	// A Metal window composites the frame natively (zero-copy for the
+	// AVFoundation backend's IOSurfaces, GPU colour conversion for the
+	// pure-Go backend's I420). Checked before RetainedGLCanvas, which the
+	// Metal canvas answers only to switch GL-only windows over.
+	if mk, ok := canvas.(qui.RetainedMetalCanvas); ok {
+		if _, can := frame.(metalVideoFrame); can {
+			m := canvas.CurrentMatrix()
+			v.glSrc, v.mtlDst = src, m.TransformRect(dst)
+			mk.QueueRetainedMetalDraw(v, m.TransformRect(bounds), v.metalDraw)
+			v.retained = true
+			return
+		}
+	}
 	if rk, ok := canvas.(qui.RetainedGLCanvas); ok {
 		v.glSrc, v.glDst = src, dst
 		rk.QueueRetainedGLDraw(v, canvas.CurrentMatrix().TransformRect(bounds), v.glDraw)
@@ -1165,6 +1180,30 @@ func (v *VideoView) glDraw(state qui.GLState) {
 		drawVideoFrame(state, frame, src, dst)
 		frame.Release()
 	}
+}
+
+// metalVideoFrame is a VideoFrame that can composite itself in a Metal
+// window. key identifies the owner, for the compositor's texture cache.
+type metalVideoFrame interface {
+	drawMetal(c qui.MetalCompositor, key any, src, physDst qui.Rect) bool
+}
+
+// metalDraw is the retained Metal draw: like glDraw, it shows whatever
+// frame is current when the frame is produced.
+func (v *VideoView) metalDraw(c qui.MetalCompositor) {
+	v.mu.Lock()
+	frame, src, dst := v.currentFrame, v.glSrc, v.mtlDst
+	if frame != nil {
+		frame.Retain()
+	}
+	v.mu.Unlock()
+	if frame == nil {
+		return
+	}
+	if mf, ok := frame.(metalVideoFrame); ok {
+		mf.drawMetal(c, v, src, dst)
+	}
+	frame.Release()
 }
 
 // drawVideoFrame composites the src rect of frame (frame pixels) into
