@@ -4,11 +4,12 @@ package render
 
 /*
 #cgo CFLAGS: -x objective-c -fobjc-arc
-#cgo LDFLAGS: -framework Metal -framework QuartzCore -framework CoreVideo -framework Foundation
+#cgo LDFLAGS: -framework Metal -framework QuartzCore -framework CoreVideo -framework IOSurface -framework Foundation
 
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
 #import <CoreVideo/CoreVideo.h>
+#import <IOSurface/IOSurface.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,6 +41,9 @@ package render
 @property (nonatomic, strong) id<MTLCommandBuffer> cmd;
 @property (nonatomic, strong) id<MTLRenderCommandEncoder> enc;
 @property (nonatomic, strong) id<CAMetalDrawable> drawable;
+// surface backs the frame texture with memory the CPU raster writes
+// directly (quiMetalSurface): nothing is uploaded. NULL in upload mode.
+@property (nonatomic, assign) IOSurfaceRef surface;
 // lastShown is the texture of the last presented drawable, kept only when
 // the layer allows reading it (tests: framebufferOnly = NO).
 @property (nonatomic, strong) id<MTLTexture> lastShown;
@@ -48,6 +52,7 @@ package render
 @implementation QuiMetal
 - (void)dealloc {
     if (_cvCache) CFRelease(_cvCache);
+    if (_surface) CFRelease(_surface);
 }
 @end
 
@@ -241,6 +246,100 @@ static id<MTLTexture> quiMetalPrivateTexture(QuiMetal* m, int width, int height)
     return [m.device newTextureWithDescriptor:td];
 }
 
+// quiMetalSurface returns the base address of an IOSurface of width x
+// height RGBA pixels whose memory is also the frame texture's — the CPU
+// raster draws straight into what the GPU samples, so a frame uploads
+// nothing (unified memory). *stride receives its bytes per row. The surface
+// is (re)created when the size changes; its contents are then undefined.
+// NULL when IOSurface-backed textures are unavailable (upload mode).
+static void* quiMetalSurface(void* ctx, int width, int height, int* stride) {
+    @autoreleasepool {
+        QuiMetal* m = (__bridge QuiMetal*)ctx;
+        if (m == nil || width <= 0 || height <= 0) return NULL;
+        if (m.surface && (int)IOSurfaceGetWidth(m.surface) == width &&
+            (int)IOSurfaceGetHeight(m.surface) == height && m.frame != nil) {
+            *stride = (int)IOSurfaceGetBytesPerRow(m.surface);
+            return IOSurfaceGetBaseAddress(m.surface);
+        }
+        if (!m.device.hasUnifiedMemory) return NULL; // discrete GPU: upload
+        [m.last waitUntilCompleted];
+        size_t row = IOSurfaceAlignProperty(kIOSurfaceBytesPerRow, (size_t)width * 4);
+        NSDictionary* props = @{
+            (id)kIOSurfaceWidth: @(width),
+            (id)kIOSurfaceHeight: @(height),
+            (id)kIOSurfaceBytesPerElement: @4,
+            (id)kIOSurfaceBytesPerRow: @(row),
+            (id)kIOSurfacePixelFormat: @((uint32_t)'RGBA'),
+        };
+        IOSurfaceRef surf = IOSurfaceCreate((__bridge CFDictionaryRef)props);
+        if (surf == NULL) return NULL;
+        MTLTextureDescriptor* td =
+            [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                                               width:width
+                                                              height:height
+                                                           mipmapped:NO];
+        td.usage = MTLTextureUsageShaderRead;
+        td.storageMode = MTLStorageModeShared;
+        id<MTLTexture> tex = [m.device newTextureWithDescriptor:td iosurface:surf plane:0];
+        if (tex == nil) {
+            CFRelease(surf);
+            return NULL;
+        }
+        if (m.surface) CFRelease(m.surface);
+        m.surface = surf;
+        m.frame = tex;
+        m.scratch = nil;
+        *stride = (int)IOSurfaceGetBytesPerRow(surf);
+        return IOSurfaceGetBaseAddress(surf);
+    }
+}
+
+// quiMetalLockSurface makes the surface safe for the CPU to write: the GPU
+// has finished the previous frame (which sampled it) and the surface is
+// locked for CPU access. quiMetalUnlockSurface ends that.
+static void quiMetalLockSurface(void* ctx) {
+    QuiMetal* m = (__bridge QuiMetal*)ctx;
+    if (m.surface == NULL) return;
+    [m.last waitUntilCompleted];
+    IOSurfaceLock(m.surface, 0, NULL);
+}
+
+static void quiMetalUnlockSurface(void* ctx) {
+    QuiMetal* m = (__bridge QuiMetal*)ctx;
+    if (m.surface) IOSurfaceUnlock(m.surface, 0, NULL);
+}
+
+// quiMetalMoveNow moves the pixels of the surface-backed frame inside
+// (x, y, w, h) by (dx, dy) on the GPU and waits for it, so the CPU can draw
+// the exposed part right after. 0 when it could not (no surface).
+static int quiMetalMoveNow(void* ctx, int x, int y, int w, int h, int dx, int dy) {
+    @autoreleasepool {
+        QuiMetal* m = (__bridge QuiMetal*)ctx;
+        if (m.surface == NULL || m.frame == nil) return 0;
+        int width = (int)m.frame.width, height = (int)m.frame.height;
+        int sx = x + (dx < 0 ? -dx : 0), sy = y + (dy < 0 ? -dy : 0);
+        int cw = w - abs(dx), ch = h - abs(dy);
+        if (cw <= 0 || ch <= 0 || x < 0 || y < 0 || x + w > width || y + h > height) return 0;
+        if (m.scratch == nil) m.scratch = quiMetalPrivateTexture(m, width, height);
+        if (m.scratch == nil) return 0;
+        id<MTLCommandBuffer> cmd = [m.queue commandBuffer];
+        id<MTLBlitCommandEncoder> blit = [cmd blitCommandEncoder];
+        [blit copyFromTexture:m.frame sourceSlice:0 sourceLevel:0
+                 sourceOrigin:MTLOriginMake(sx, sy, 0) sourceSize:MTLSizeMake(cw, ch, 1)
+                    toTexture:m.scratch destinationSlice:0 destinationLevel:0
+            destinationOrigin:MTLOriginMake(sx, sy, 0)];
+        [blit copyFromTexture:m.scratch sourceSlice:0 sourceLevel:0
+                 sourceOrigin:MTLOriginMake(sx, sy, 0) sourceSize:MTLSizeMake(cw, ch, 1)
+                    toTexture:m.frame destinationSlice:0 destinationLevel:0
+            destinationOrigin:MTLOriginMake(sx + dx, sy + dy, 0)];
+        [blit endEncoding];
+        [cmd commit];
+        [cmd waitUntilCompleted];
+        m.last = cmd;
+        return 1;
+    }
+}
+
 // quiMetalBeginFrame brings the frame texture up to date with the CPU
 // raster and opens a render pass on the next drawable, cleared to
 // transparent (panels) or opaque black. Returns 1 when drawing can go on,
@@ -261,7 +360,10 @@ static int quiMetalBeginFrame(void* ctx, const uint8_t* pix, int stride, int wid
     m.holds = [NSMutableArray array];
     if (m.cvCache) CVMetalTextureCacheFlush(m.cvCache, 0);
     int32_t full[4] = {0, 0, width, height};
-    if (m.frame == nil || (int)m.frame.width != width || (int)m.frame.height != height) {
+    if (m.surface != NULL) {
+        // The texture IS the CPU frame: nothing to move or upload.
+        nrects = 0; nmoves = 0;
+    } else if (m.frame == nil || (int)m.frame.width != width || (int)m.frame.height != height) {
         m.frame = quiMetalPrivateTexture(m, width, height);
         m.scratch = nil;
         if (m.frame == nil) return -1;
@@ -574,6 +676,11 @@ type MetalRenderer struct {
 	damageRects []image.Rectangle
 	moves       []int32
 	stale       bool
+
+	// surfaceBase is the IOSurface memory img points into (nil: img is
+	// Go memory and frames are uploaded); locked while the CPU draws.
+	surfaceBase unsafe.Pointer
+	locked      bool
 }
 
 // NewMetalRenderer creates a renderer that presents through Metal. It
@@ -603,11 +710,76 @@ func (r *MetalRenderer) SetMetalLayer(layer unsafe.Pointer) bool {
 }
 
 func (r *MetalRenderer) release() {
+	r.detachSurface()
 	if r.ctx != nil {
 		C.quiMetalDestroy(r.ctx)
 		r.ctx = nil
 	}
 	r.keys = nil
+}
+
+// detachSurface moves the frame back into Go memory before the surface
+// it lives in goes away (Snapshot keeps working, nothing dangles).
+func (r *MetalRenderer) detachSurface() {
+	if r.surfaceBase == nil {
+		return
+	}
+	r.unlock()
+	if r.img != nil {
+		cp := image.NewRGBA(r.img.Rect)
+		for y := 0; y < r.img.Rect.Dy(); y++ {
+			copy(cp.Pix[y*cp.Stride:y*cp.Stride+cp.Rect.Dx()*4], r.img.Pix[y*r.img.Stride:])
+		}
+		r.img = cp
+		if r.backend != nil {
+			r.backend.SetBase(cp)
+		}
+	}
+	r.surfaceBase = nil
+}
+
+func (r *MetalRenderer) unlock() {
+	if r.locked {
+		C.quiMetalUnlockSurface(r.ctx)
+		r.locked = false
+	}
+}
+
+// frameBuffer returns the image the next frame draws into: the IOSurface
+// shared with the GPU when there is one, else Go memory. The previous
+// frame's pixels carry over (copied once when switching buffers).
+func (r *MetalRenderer) frameBuffer(w, h int) *image.RGBA {
+	if r.ctx != nil {
+		var stride C.int
+		if base := C.quiMetalSurface(r.ctx, C.int(w), C.int(h), &stride); base != nil {
+			if base != r.surfaceBase || r.img == nil || r.img.Rect.Dx() != w || r.img.Rect.Dy() != h {
+				old := r.img
+				img := &image.RGBA{
+					Pix:    unsafe.Slice((*byte)(base), int(stride)*h),
+					Stride: int(stride),
+					Rect:   image.Rect(0, 0, w, h),
+				}
+				C.quiMetalLockSurface(r.ctx)
+				r.locked = true
+				if old != nil && old.Rect == img.Rect {
+					for y := 0; y < h; y++ {
+						copy(img.Pix[y*img.Stride:y*img.Stride+w*4], old.Pix[y*old.Stride:])
+					}
+				} else {
+					r.damage = image.Rectangle{}
+				}
+				r.surfaceBase = base
+				r.img = img
+			}
+			return r.img
+		}
+		r.detachSurface()
+	}
+	if r.img == nil || r.img.Rect.Dx() != w || r.img.Rect.Dy() != h {
+		r.img = image.NewRGBA(image.Rect(0, 0, w, h))
+		r.damage = image.Rectangle{}
+	}
+	return r.img
 }
 
 // Close releases the Metal objects. The renderer can be bound again.
@@ -623,9 +795,11 @@ func (r *MetalRenderer) Close() {
 func (r *MetalRenderer) Begin(windowSize gfx.Size) gfx.Canvas {
 	w := int(maxFloat(windowSize.W, 1))
 	h := int(maxFloat(windowSize.H, 1))
-	if r.img == nil || r.img.Rect.Dx() != w || r.img.Rect.Dy() != h {
-		r.img = image.NewRGBA(image.Rect(0, 0, w, h))
-		r.damage = image.Rectangle{}
+	r.frameBuffer(w, h)
+	if r.surfaceBase != nil && !r.locked {
+		// The GPU may still be sampling the last frame from this memory.
+		C.quiMetalLockSurface(r.ctx)
+		r.locked = true
 	}
 	if r.logicalSize.W == 0 || r.logicalSize.H == 0 {
 		r.logicalSize = windowSize
@@ -648,6 +822,7 @@ func (r *MetalRenderer) End() {
 	if r.backend != nil {
 		r.backend.End()
 	}
+	r.unlock()
 	r.painted = true
 	damage := r.damage
 	rects := r.damageRects
@@ -952,7 +1127,22 @@ func (r *MetalRenderer) CanScrollPixels() bool { return r != nil && r.img != nil
 // ScrollPixels implements PixelScroller: the CPU frame moves now, the
 // texture on the GPU at the next present.
 func (r *MetalRenderer) ScrollPixels(rect image.Rectangle, dx, dy int) bool {
-	if r == nil || !scrollImage(r.img, rect, dx, dy) {
+	if r == nil || r.img == nil {
+		return false
+	}
+	if r.surfaceBase != nil {
+		// One buffer for CPU and GPU: move it on the GPU (fast, and done
+		// before this frame draws the exposed part), or by hand.
+		rr := rect.Sub(r.img.Rect.Min)
+		if C.quiMetalMoveNow(r.ctx, C.int(rr.Min.X), C.int(rr.Min.Y), C.int(rr.Dx()), C.int(rr.Dy()), C.int(dx), C.int(dy)) != 0 {
+			return true
+		}
+		C.quiMetalLockSurface(r.ctx)
+		ok := scrollImage(r.img, rect, dx, dy)
+		C.quiMetalUnlockSurface(r.ctx)
+		return ok
+	}
+	if !scrollImage(r.img, rect, dx, dy) {
 		return false
 	}
 	// The texture makes the same move on the GPU before this frame's

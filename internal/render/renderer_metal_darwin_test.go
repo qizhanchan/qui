@@ -88,6 +88,7 @@ func TestMetalScrollPixelsOnTheGPU(t *testing.T) {
 	c := r.Begin(gfx.Size{W: 64, H: 64})
 	stripeFrame(c, 0, 0, 64)
 	r.End()
+	t.Logf("IOSurface frame buffer: %v", r.surfaceBase != nil)
 
 	// Content scrolls by 10 rows: move the pixels up, paint the 10 new
 	// rows at the bottom, upload only those.
@@ -104,9 +105,19 @@ func TestMetalScrollPixelsOnTheGPU(t *testing.T) {
 	if got == nil {
 		t.Fatal("no presented frame to read")
 	}
+	// Reference: the scrolled content painted from scratch. (With an
+	// IOSurface the CPU frame and the texture are one buffer, so comparing
+	// them alone would not catch a move that never happened.)
+	ref := newOffscreenMetal(t, 64, 64)
+	stripeFrame(ref.Begin(gfx.Size{W: 64, H: 64}), 10, 0, 64)
+	ref.End()
+	want := ref.readShown()
 	for y := 0; y < 64; y++ {
 		for x := 0; x < 64; x += 16 {
 			i := got.PixOffset(x, y)
+			if string(got.Pix[i:i+3]) != string(want.Pix[i:i+3]) {
+				t.Fatalf("presented (%d,%d) = %v, want %v", x, y, got.Pix[i:i+4], want.Pix[i:i+4])
+			}
 			if string(got.Pix[i:i+3]) != string(r.img.Pix[i:i+3]) {
 				t.Fatalf("presented (%d,%d) = %v, CPU frame %v", x, y, got.Pix[i:i+4], r.img.Pix[i:i+4])
 			}
