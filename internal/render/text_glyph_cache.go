@@ -191,7 +191,7 @@ func (c *glyphMaskCache) Stats() (entries, bytes int) {
 }
 
 func (b *CPUBackend) blendCoverage(cov []float32, bounds, clip image.Rectangle, col gfx.Color) {
-	img := b.activeImg()
+	img := b.target(bounds.Intersect(clip))
 	if img == nil {
 		return
 	}

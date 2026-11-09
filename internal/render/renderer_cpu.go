@@ -49,6 +49,7 @@ func (r *CPURenderer) Begin(windowSize gfx.Size) gfx.Canvas {
 	}
 	if r.backend == nil {
 		r.backend = newCPUBackend(r.img)
+		r.backend.SetDeferFills(deferFillsDefault)
 	} else {
 		r.backend.SetBase(r.img)
 	}

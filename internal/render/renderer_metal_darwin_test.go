@@ -124,3 +124,26 @@ func TestMetalScrollPixelsOnTheGPU(t *testing.T) {
 		}
 	}
 }
+
+// An IOSurface pads its rows; Snapshot must still return the frame, not
+// a sheared copy of the surface memory.
+func TestMetalSnapshotOfPaddedSurface(t *testing.T) {
+	const w, h = 37, 23
+	r := newOffscreenMetal(t, w, h)
+	c := r.Begin(gfx.Size{W: w, H: h})
+	stripeFrame(c, 0, 0, h)
+	r.End()
+	if r.surfaceBase != nil && r.img.Stride == w*4 {
+		t.Logf("surface rows not padded at width %d; test is weaker", w)
+	}
+	got := r.Snapshot()
+	shown := r.readShown()
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			i, j := got.PixOffset(x, y), shown.PixOffset(x, y)
+			if string(got.Pix[i:i+3]) != string(shown.Pix[j:j+3]) {
+				t.Fatalf("Snapshot (%d,%d) = %v, presented %v", x, y, got.Pix[i:i+4], shown.Pix[j:j+4])
+			}
+		}
+	}
+}

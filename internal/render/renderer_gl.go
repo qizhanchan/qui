@@ -249,6 +249,7 @@ func (r *GLRenderer) Begin(windowSize gfx.Size) gfx.Canvas {
 	} else {
 		if r.cachedCPU == nil {
 			r.cachedCPU = newCPUBackend(r.img)
+			r.cachedCPU.SetDeferFills(deferFillsDefault)
 		} else {
 			r.cachedCPU.SetBase(r.img)
 		}

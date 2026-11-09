@@ -30,6 +30,11 @@ import (
 type CPUBackend struct {
 	base   *image.RGBA
 	layers *layerStack
+
+	// Deferred opaque fills (backend_cpu_defer.go).
+	deferFills bool
+	pending    []pendingFill
+	scratch    []pendingFill
 }
 
 // newCPUBackend constructs a fresh backend. The caller supplies the
@@ -41,12 +46,25 @@ func newCPUBackend(base *image.RGBA) *CPUBackend {
 
 // SetBase swaps the framebuffer target. GLRenderer.Begin calls this
 // on resize.
-func (b *CPUBackend) SetBase(img *image.RGBA) { b.base = img }
+func (b *CPUBackend) SetBase(img *image.RGBA) {
+	if img != b.base {
+		b.flushAll()
+	}
+	b.base = img
+}
+
+func (b *CPUBackend) flushAll() {
+	if b.base != nil {
+		b.flushPending(b.base.Bounds())
+	}
+	b.pending = b.pending[:0]
+}
 
 // Begin resets the layer stack for a new frame. The framebuffer image
 // itself is managed by GLRenderer (which owns the RGBA lifecycle and
 // hands us a fresh pointer via SetBase on resize).
 func (b *CPUBackend) Begin(_ gfx.Size) {
+	b.flushAll()
 	if b.layers == nil {
 		b.layers = newLayerStack()
 		return
@@ -54,12 +72,15 @@ func (b *CPUBackend) Begin(_ gfx.Size) {
 	b.layers.frames = b.layers.frames[:0]
 }
 
-// End is a no-op for the CPU backend — the framebuffer image already
-// holds final pixels for the GL blit that follows.
-func (b *CPUBackend) End() {}
+// End draws the fills still deferred; the framebuffer image then holds
+// the final pixels.
+func (b *CPUBackend) End() { b.flushAll() }
 
 // CPUImage returns the framebuffer for GLRenderer's blit step.
-func (b *CPUBackend) CPUImage() *image.RGBA { return b.base }
+func (b *CPUBackend) CPUImage() *image.RGBA {
+	b.flushAll()
+	return b.base
+}
 
 // activeImg returns the innermost layer's buffer, or the base
 // framebuffer if no layer is active. Every rasterization method
@@ -128,22 +149,39 @@ func (b *CPUBackend) PopLayer(mask *image.Alpha) {
 	// invalidated, so nothing repaints them: a menu hover left a blurred
 	// rim around the row that survived until the next full repaint, and
 	// darkened again on every hover.
+	if f.outer == b.base {
+		b.flushPending(f.clip)
+	}
 	compositeLayerClipped(f.outer, src, mask, f.paint, f.clip)
 }
 
 // Clear sets the entire active target to `color`. Ignores clip —
 // matches the old Canvas.Clear semantics (the ENTIRE current target).
 func (b *CPUBackend) Clear(color gfx.Color) {
+	if b.replaceTarget() {
+		if c, ok := opaqueRGBA(color); ok {
+			b.deferReplace(b.base.Bounds(), c)
+			return
+		} else if color.A <= 0 {
+			b.deferReplace(b.base.Bounds(), colorTransparent)
+			return
+		}
+	}
 	img := b.activeImg()
 	if img == nil {
 		return
 	}
+	b.flushAll()
 	replaceRect(img, img.Bounds(), color)
 }
 
 // ClearRect makes dst transparent.
 func (b *CPUBackend) ClearRect(dst image.Rectangle) {
-	img := b.activeImg()
+	if b.replaceTarget() {
+		b.deferReplace(dst, colorTransparent)
+		return
+	}
+	img := b.target(dst)
 	if img == nil {
 		return
 	}
@@ -155,8 +193,17 @@ func (b *CPUBackend) ClearRect(dst image.Rectangle) {
 // FillRect writes color into dst (already clipped by the frontend to
 // the intersection of physical rect, physical clip, and target bounds).
 func (b *CPUBackend) FillRect(dst image.Rectangle, color gfx.Color) {
-	img := b.activeImg()
-	if img == nil || dst.Empty() {
+	if dst.Empty() {
+		return
+	}
+	if b.replaceTarget() {
+		if c, ok := opaqueRGBA(color); ok {
+			b.deferReplace(dst, c)
+			return
+		}
+	}
+	img := b.target(dst)
+	if img == nil {
 		return
 	}
 	dst = dst.Intersect(img.Bounds())
@@ -168,7 +215,7 @@ func (b *CPUBackend) FillRect(dst image.Rectangle, color gfx.Color) {
 
 // FillRoundedRect emits an AA rounded fill. Physical coordinates.
 func (b *CPUBackend) FillRoundedRect(rect gfx.Rect, radius float32, clip gfx.Rect, color gfx.Color) {
-	img := b.activeImg()
+	img := b.target(outPix(rect).Intersect(outPix(clip)))
 	if img == nil {
 		return
 	}
@@ -180,7 +227,7 @@ func (b *CPUBackend) FillRoundedRect(rect gfx.Rect, radius float32, clip gfx.Rec
 	if radius <= 0 {
 		dst := rectToPixelRect(rect).Intersect(imgBounds).Intersect(clipPix)
 		if !dst.Empty() {
-			fillRectBlend(img, dst, color)
+			b.fillRectOn(img, dst, color)
 		}
 		return
 	}
@@ -194,7 +241,7 @@ func (b *CPUBackend) FillRoundedRect(rect gfx.Rect, radius float32, clip gfx.Rec
 	if radius <= 0.5 {
 		dst := rectToPixelRect(rect).Intersect(imgBounds).Intersect(clipPix)
 		if !dst.Empty() {
-			fillRectBlend(img, dst, color)
+			b.fillRectOn(img, dst, color)
 		}
 		return
 	}
@@ -208,15 +255,15 @@ func (b *CPUBackend) FillRoundedRect(rect gfx.Rect, radius float32, clip gfx.Rec
 
 	center := image.Rect(left, top+rInt, right, bottom-rInt).Intersect(clipPix)
 	if !center.Empty() {
-		fillRectBlend(img, center, color)
+		b.fillRectOn(img, center, color)
 	}
 	topStrip := image.Rect(left+rInt, top, right-rInt, top+rInt).Intersect(clipPix)
 	if !topStrip.Empty() {
-		fillRectBlend(img, topStrip, color)
+		b.fillRectOn(img, topStrip, color)
 	}
 	botStrip := image.Rect(left+rInt, bottom-rInt, right-rInt, bottom).Intersect(clipPix)
 	if !botStrip.Empty() {
-		fillRectBlend(img, botStrip, color)
+		b.fillRectOn(img, botStrip, color)
 	}
 
 	tl := image.Rect(left, top, left+rInt, top+rInt).Intersect(clipPix)
@@ -224,22 +271,26 @@ func (b *CPUBackend) FillRoundedRect(rect gfx.Rect, radius float32, clip gfx.Rec
 	bl := image.Rect(left, bottom-rInt, left+rInt, bottom).Intersect(clipPix)
 	br := image.Rect(right-rInt, bottom-rInt, right, bottom).Intersect(clipPix)
 	if !tl.Empty() {
+		b.target(tl)
 		drawCornerAA(img, float32(left)+radius, float32(top)+radius, radius, tl.Min.X, tl.Min.Y, tl.Max.X, tl.Max.Y, rgba)
 	}
 	if !tr.Empty() {
+		b.target(tr)
 		drawCornerAA(img, float32(right)-radius, float32(top)+radius, radius, tr.Min.X, tr.Min.Y, tr.Max.X, tr.Max.Y, rgba)
 	}
 	if !bl.Empty() {
+		b.target(bl)
 		drawCornerAA(img, float32(left)+radius, float32(bottom)-radius, radius, bl.Min.X, bl.Min.Y, bl.Max.X, bl.Max.Y, rgba)
 	}
 	if !br.Empty() {
+		b.target(br)
 		drawCornerAA(img, float32(right)-radius, float32(bottom)-radius, radius, br.Min.X, br.Min.Y, br.Max.X, br.Max.Y, rgba)
 	}
 }
 
 // StrokeRect paints a hollow rectangle outline.
 func (b *CPUBackend) StrokeRect(rect gfx.Rect, clip gfx.Rect, color gfx.Color, width float32) {
-	img := b.activeImg()
+	img := b.target(outPix(gfx.Rect{X: rect.X - width, Y: rect.Y - width, W: rect.W + 2*width, H: rect.H + 2*width}).Intersect(outPix(clip)))
 	if img == nil || width <= 0 {
 		return
 	}
@@ -249,7 +300,7 @@ func (b *CPUBackend) StrokeRect(rect gfx.Rect, clip gfx.Rect, color gfx.Color, w
 	paintEdge := func(r gfx.Rect) {
 		dst := rectToPixelRect(r).Intersect(clipInt).Intersect(imgBounds)
 		if !dst.Empty() {
-			fillRectBlend(img, dst, color)
+			b.fillRectOn(img, dst, color)
 		}
 	}
 	paintEdge(gfx.Rect{X: rect.X, Y: rect.Y, W: rect.W, H: w})
@@ -260,7 +311,7 @@ func (b *CPUBackend) StrokeRect(rect gfx.Rect, clip gfx.Rect, color gfx.Color, w
 
 // StrokeRoundedRect paints an outlined rounded rectangle.
 func (b *CPUBackend) StrokeRoundedRect(rect gfx.Rect, radius float32, clip gfx.Rect, color gfx.Color, width float32) {
-	img := b.activeImg()
+	img := b.target(outPix(gfx.Rect{X: rect.X - width, Y: rect.Y - width, W: rect.W + 2*width, H: rect.H + 2*width}).Intersect(outPix(clip)))
 	if img == nil || width <= 0 {
 		return
 	}
@@ -359,7 +410,7 @@ func (b *CPUBackend) strokeThickRoundedRect(rect gfx.Rect, radius float32, clipP
 // physical → logical so shader sampling stays in the original coord
 // space; consumed only when paint.Shader != nil.
 func (b *CPUBackend) FillPath(subs [][]gfx.Point, clip image.Rectangle, paint gfx.Paint, invMatrix gfx.Matrix) {
-	img := b.activeImg()
+	img := b.target(pointsBounds(subs, 0).Intersect(clip))
 	if img == nil {
 		return
 	}
@@ -374,7 +425,7 @@ func (b *CPUBackend) FillPath(subs [][]gfx.Point, clip image.Rectangle, paint gf
 // already in physical coords, so the transform passed to StrokePolyline
 // is identity.
 func (b *CPUBackend) StrokePath(subs [][]gfx.Point, closedFlags []bool, clip image.Rectangle, width float32, paint gfx.Paint) {
-	img := b.activeImg()
+	img := b.target(pointsBounds(subs, width*2+paint.MiterLimit*width).Intersect(clip))
 	if img == nil {
 		return
 	}
@@ -398,7 +449,7 @@ func (b *CPUBackend) StrokePath(subs [][]gfx.Point, closedFlags []bool, clip ima
 
 // DrawLine paints a single straight-line segment.
 func (b *CPUBackend) DrawLine(p1, p2 gfx.Point, clip gfx.Rect, color gfx.Color, width float32, cap gfx.StrokeCap) {
-	img := b.activeImg()
+	img := b.target(pointsBounds([][]gfx.Point{{p1, p2}}, width*2).Intersect(outPix(clip)))
 	if img == nil {
 		return
 	}
@@ -407,7 +458,7 @@ func (b *CPUBackend) DrawLine(p1, p2 gfx.Point, clip gfx.Rect, color gfx.Color, 
 
 // DrawPolyline paints an open polyline using round caps by default.
 func (b *CPUBackend) DrawPolyline(pts []gfx.Point, clip gfx.Rect, color gfx.Color, width float32) {
-	img := b.activeImg()
+	img := b.target(pointsBounds([][]gfx.Point{pts}, width*2).Intersect(outPix(clip)))
 	if img == nil || len(pts) < 2 {
 		return
 	}
@@ -426,7 +477,7 @@ func (b *CPUBackend) DrawPolyline(pts []gfx.Point, clip gfx.Rect, color gfx.Colo
 func (b *CPUBackend) DrawShadow(rect gfx.Rect, radius float32, spec gfx.ElevationSpec, shadowColor gfx.Color, clip gfx.Rect) {
 	// Reuse the existing implementation attached to ImageCanvas. The
 	// image target argument is our active buffer.
-	img := b.activeImg()
+	img := b.target(outPix(clip))
 	if img == nil {
 		return
 	}
@@ -436,7 +487,7 @@ func (b *CPUBackend) DrawShadow(rect gfx.Rect, radius float32, spec gfx.Elevatio
 // DrawText renders `text` inside `rect`, clipped to `clip`. Uses the
 // same clip-then-SubImage trick the pre-refactor drawTextClipped did.
 func (b *CPUBackend) DrawText(text string, rect gfx.Rect, clip gfx.Rect, color gfx.Color, fontSpec gfx.Font) {
-	img := b.activeImg()
+	img := b.target(outPix(clip))
 	if img == nil || text == "" {
 		return
 	}
@@ -456,7 +507,7 @@ func (b *CPUBackend) DrawText(text string, rect gfx.Rect, clip gfx.Rect, color g
 
 // DrawImage blits `img` into `dst` with bilinear resample.
 func (b *CPUBackend) DrawImage(img image.Image, dst gfx.Rect, clip gfx.Rect) {
-	target := b.activeImg()
+	target := b.target(outPix(dst).Intersect(outPix(clip)))
 	if target == nil || img == nil || dst.W <= 0 || dst.H <= 0 {
 		return
 	}
@@ -498,7 +549,7 @@ func (b *CPUBackend) DrawImage(img image.Image, dst gfx.Rect, clip gfx.Rect) {
 // inverse is affine, one destination pixel always maps to the same
 // parallelogram in source space, so its half-extent is a constant.
 func (b *CPUBackend) DrawImageTransformed(img image.Image, m gfx.Matrix, clip gfx.Rect) {
-	target := b.activeImg()
+	target := b.target(outPix(clip))
 	if target == nil || img == nil {
 		return
 	}
@@ -684,7 +735,7 @@ func rectToPixelRectOut(r gfx.Rect) image.Rectangle {
 
 // DrawVector rasterizes `src` at `dst`'s physical size then blits.
 func (b *CPUBackend) DrawVector(src gfx.VectorSource, dst gfx.Rect, clip gfx.Rect, tint gfx.Color) {
-	target := b.activeImg()
+	target := b.target(outPix(dst).Intersect(outPix(clip)))
 	if target == nil || src == nil {
 		return
 	}

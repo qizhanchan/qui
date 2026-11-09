@@ -806,6 +806,7 @@ func (r *MetalRenderer) Begin(windowSize gfx.Size) gfx.Canvas {
 	}
 	if r.backend == nil {
 		r.backend = newCPUBackend(r.img)
+		r.backend.SetDeferFills(deferFillsDefault)
 	} else {
 		r.backend.SetBase(r.img)
 	}
@@ -1012,8 +1013,12 @@ func (r *MetalRenderer) Snapshot() *image.RGBA {
 	if r == nil || r.img == nil {
 		return nil
 	}
+	// The IOSurface's rows are padded (Stride > 4·width): copy row by row.
 	dst := image.NewRGBA(r.img.Rect)
-	copy(dst.Pix, r.img.Pix)
+	n := r.img.Rect.Dx() * 4
+	for y := 0; y < r.img.Rect.Dy(); y++ {
+		copy(dst.Pix[y*dst.Stride:y*dst.Stride+n], r.img.Pix[y*r.img.Stride:])
+	}
 	return dst
 }
 
