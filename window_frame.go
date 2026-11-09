@@ -259,7 +259,10 @@ func (w *Window) SetRenderer(renderer Renderer) {
 		w.renderer = NoopRenderer{}
 		return
 	}
-	renderer = rendererForPlatform(w.plat, renderer)
+	renderer = rendererForPlatform(w.plat, w.preferredRenderer(renderer))
+	if w.renderer != renderer {
+		w.closeRenderer()
+	}
 	w.renderer = renderer
 	// An overlay panel's framebuffer must stay transparent where the widget
 	// tree drew nothing. Wire it here rather than making every caller
@@ -406,6 +409,7 @@ func (w *Window) Step() {
 	if fi, ok := w.renderer.(render.FrameInfoRenderer); ok {
 		fi.SetLogicalSize(w.lastSize)
 	}
+	w.bindMetal()
 	canvas := w.renderer.Begin(Size{W: float32(fbWidth), H: float32(fbHeight)})
 	if canvas != nil {
 		// HiDPI: push the device-pixel ratio onto the canvas state stack
@@ -505,6 +509,7 @@ func (w *Window) Step() {
 	w.afterPaintProtocol(clip, fullRepaintClip(clip, viewport))
 	w.dirtyRegion = Rect{}
 	w.framePainted = true
+	w.checkGLFallback()
 }
 
 // runAfterFrame runs the work queued for the end of this Step. Work queued
@@ -529,6 +534,9 @@ func (w *Window) runAfterFrame() {
 // the GL path must do every frame. When either side declines, the GPU path
 // presents whatever was drawn into the backbuffer.
 func (w *Window) present() {
+	if w.rendererPresentsItself() {
+		return
+	}
 	surface := w.plat.surface()
 	if surface == nil {
 		return

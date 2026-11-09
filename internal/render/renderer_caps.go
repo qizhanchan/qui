@@ -2,6 +2,7 @@ package render
 
 import (
 	"image"
+	"unsafe"
 
 	"github.com/qizhanchan/qui/internal/gfx"
 )
@@ -53,4 +54,25 @@ type GPUContextRenderer interface {
 // last frame changed, so a surface can composite only that.
 type FrameDamageSource interface {
 	FrameDamage() image.Rectangle
+}
+
+// MetalLayerRenderer draws into a CAMetalLayer the window hands it before
+// each frame (SetMetalLayer, nil to detach). SetMetalLayer reports whether
+// the renderer can use the layer; false means no Metal device, and the
+// window falls back to another renderer.
+type MetalLayerRenderer interface {
+	SetMetalLayer(layer unsafe.Pointer) bool
+}
+
+// SelfPresentingRenderer presents its own frames (a Metal renderer
+// presents the drawable it drew), so Window must not present again.
+type SelfPresentingRenderer interface {
+	PresentsItself() bool
+}
+
+// GLFallbackRenderer reports that something drawn into it asked for raw
+// GL (GPUCanvas / RetainedGLCanvas), which it cannot honor; the window
+// replaces it with a GLRenderer.
+type GLFallbackRenderer interface {
+	WantsGL() bool
 }

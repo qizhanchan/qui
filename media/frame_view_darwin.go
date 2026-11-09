@@ -145,6 +145,24 @@ func (f *cvFrame) draw(v *FrameView, state qui.GLState, src, dst qui.Rect) bool 
 	return v.uploadAndDraw(base, int(stride), f.w, f.h, gl.BGRA, src, dst)
 }
 
+// drawMetal shows the buffer zero-copy through its IOSurface, or uploads
+// its pixels when it has none.
+func (f *cvFrame) drawMetal(v *FrameView, c qui.MetalCompositor, src, dst qui.Rect) bool {
+	if f.pb == nil {
+		return false
+	}
+	if c.DrawPixelBuffer(f.pb, src, dst) {
+		return true
+	}
+	var stride C.size_t
+	base := C.qfvLock(f.pb, &stride)
+	if base == nil {
+		return false
+	}
+	defer C.qfvUnlock(f.pb)
+	return c.DrawPixels(v, base, int(stride), f.w, f.h, true, src, dst)
+}
+
 // release drops the GL texture view first (it aliases the IOSurface), then
 // the buffer.
 func (f *cvFrame) release() {

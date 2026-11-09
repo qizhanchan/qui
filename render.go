@@ -27,6 +27,12 @@ type (
 	// GLRenderer is CPURenderer in builds without OpenGL.
 	GLRenderer = render.GLRenderer
 
+	// MetalRenderer rasterizes on the CPU and presents through a
+	// CAMetalLayer (macOS). On a Metal-capable window a requested
+	// GLRenderer becomes one automatically (QUI_RENDERER=gl opts out); it
+	// is CPURenderer in builds without Metal.
+	MetalRenderer = render.MetalRenderer
+
 	// GLState carries framebuffer/window sizing info to raw GL callbacks.
 	// It deliberately doesn't expose the *Window or *GLRenderer so
 	// callbacks stay decoupled from the Window's internal state — they
@@ -51,6 +57,15 @@ type (
 
 	// TextureOpts tunes a DrawTexture call.
 	TextureOpts = render.TextureOpts
+
+	// RetainedMetalCanvas is implemented by the Metal renderer's canvas:
+	// retained draws that composite video-like content under the 2D layer
+	// (the Metal counterpart of RetainedGLCanvas). Type-assert it before
+	// RetainedGLCanvas.
+	RetainedMetalCanvas = render.RetainedMetalCanvas
+
+	// MetalCompositor is what a retained Metal draw composites with.
+	MetalCompositor = render.MetalCompositor
 )
 
 // ActiveGLRenderer is always nil without OpenGL.
@@ -62,6 +77,14 @@ func NewCPURenderer() *CPURenderer { return render.NewCPURenderer() }
 
 // NewGLRenderer returns a CPURenderer in builds without OpenGL.
 func NewGLRenderer() *GLRenderer { return render.NewGLRenderer() }
+
+// NewMetalRenderer creates a Metal-presenting renderer (a CPURenderer in
+// builds without Metal).
+func NewMetalRenderer() *MetalRenderer { return render.NewMetalRenderer() }
+
+// MetalRendererAvailable reports whether this build contains the Metal
+// renderer.
+const MetalRendererAvailable = render.MetalRendererAvailable
 
 // PhysicalScissor converts a logical-pixel clip rectangle into the
 // physical-pixel, bottom-origin GL scissor box that glScissor expects.

@@ -344,12 +344,20 @@ static NSCursor* quiCocoaCursorFor(int shape) {
 // plain C pointer to it.
 @property (nonatomic, assign) atomic_int* vsync;
 @property (nonatomic, assign) CVDisplayLinkRef displayLink;
+// Metal presentation (quiCocoaEnterMetalMode). The view hosts a
+// CAMetalLayer the renderer draws into and presents itself; unlike CPU
+// mode it can be left again (quiCocoaExitMetalMode) when a window turns
+// out to need raw GL.
+@property (nonatomic, assign) BOOL metalMode;
+@property (nonatomic, strong) CAMetalLayer* metalLayer;
 @end
 
 @implementation QuiWindowBox
 @end
 
 static NSMutableDictionary<NSNumber*, QuiWindowBox*>* gQuiWindows = nil;
+
+static void quiCocoaStopDisplayLink(QuiWindowBox* box);
 
 static QuiWindowBox* quiBox(uintptr_t handle) {
     if (gQuiWindows == nil) return nil;
@@ -366,6 +374,13 @@ static void quiCocoaSyncLayerGeometry(QuiWindowBox* box) {
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     layer.contentsScale = scale > 0 ? scale : 1;
+    if (box.metalMode && box.metalLayer) {
+        // One drawable pixel per device pixel. The renderer re-sets it
+        // to the frame's exact size before each present; this keeps the
+        // layer right between frames (a resize before the next paint).
+        NSRect backing = [box.view convertRectToBacking:[box.view bounds]];
+        box.metalLayer.drawableSize = backing.size;
+    }
     [CATransaction commit];
     if (box.displayLink) {
         NSNumber* screen = box.window.screen.deviceDescription[@"NSScreenNumber"];
@@ -382,8 +397,8 @@ static void quiCocoaNotifyGeometry(QuiWindowBox* box, uintptr_t handle) {
     if (box == nil) return;
     NSRect bounds = [box.view bounds];
     NSRect backing = [box.view convertRectToBacking:bounds];
-    if (box.glContext && !box.cpuMode) [box.glContext update];
-    if (box.cpuMode) quiCocoaSyncLayerGeometry(box);
+    if (box.glContext && !box.cpuMode && !box.metalMode) [box.glContext update];
+    if (box.cpuMode || box.metalMode) quiCocoaSyncLayerGeometry(box);
     quiCocoaOnResize(handle, (int)bounds.size.width, (int)bounds.size.height);
     quiCocoaOnFramebufferResize(handle, (int)backing.size.width, (int)backing.size.height);
     quiCocoaOnRefresh(handle);
@@ -407,6 +422,20 @@ static void quiCocoaNotifyGeometry(QuiWindowBox* box, uintptr_t handle) {
 // what keeps content live under the cursor during a drag.
 - (void)windowDidResize:(NSNotification*)note {
     quiCocoaNotifyGeometry(quiBox(self.handle), self.handle);
+}
+
+// A Metal window presents inside the resize transaction while the user
+// drags its edge, so each new-size frame lands together with the new
+// window frame instead of a frame later (content wobbling against the
+// border). Outside a live resize the cheaper asynchronous present is used.
+- (void)windowWillStartLiveResize:(NSNotification*)note {
+    QuiWindowBox* box = quiBox(self.handle);
+    if (box.metalLayer) box.metalLayer.presentsWithTransaction = YES;
+}
+
+- (void)windowDidEndLiveResize:(NSNotification*)note {
+    QuiWindowBox* box = quiBox(self.handle);
+    if (box.metalLayer) box.metalLayer.presentsWithTransaction = NO;
 }
 
 - (void)windowDidChangeScreen:(NSNotification*)note {
@@ -828,15 +857,8 @@ void quiCocoaDestroyWindow(uintptr_t handle) {
     @autoreleasepool {
         QuiWindowBox* box = quiBox(handle);
         if (box == nil) return;
-        if (box.displayLink) {
-            CVDisplayLinkStop(box.displayLink);
-            CVDisplayLinkRelease(box.displayLink);
-            box.displayLink = NULL;
-        }
-        // The link is stopped (CVDisplayLinkStop waits for an in-flight
-        // callback), so nothing can touch vsync any more.
-        free(box.vsync);
-        box.vsync = NULL;
+        quiCocoaStopDisplayLink(box);
+        box.metalLayer = nil;
         if (box.bitmap) {
             CGContextRelease(box.bitmap);
             box.bitmap = NULL;
@@ -1110,12 +1132,12 @@ void quiCocoaSetClipboardText(const char* text) {
 
 void quiCocoaMakeCurrent(uintptr_t handle) {
     QuiWindowBox* box = quiBox(handle);
-    if (box && !box.cpuMode) [box.glContext makeCurrentContext];
+    if (box && !box.cpuMode && !box.metalMode) [box.glContext makeCurrentContext];
 }
 
 void quiCocoaPresent(uintptr_t handle) {
     QuiWindowBox* box = quiBox(handle);
-    if (box && !box.cpuMode) [box.glContext flushBuffer];
+    if (box && !box.cpuMode && !box.metalMode) [box.glContext flushBuffer];
 }
 
 // The display link callback runs on CoreVideo's own thread. It only flags
@@ -1213,6 +1235,75 @@ int quiCocoaPresentCPU(uintptr_t handle, const uint8_t* pix, int stride, int wid
         [CATransaction commit];
         CGImageRelease(image);
         return 1;
+    }
+}
+
+// quiCocoaStopDisplayLink undoes quiCocoaStartDisplayLink.
+static void quiCocoaStopDisplayLink(QuiWindowBox* box) {
+    if (box.displayLink) {
+        CVDisplayLinkStop(box.displayLink);
+        CVDisplayLinkRelease(box.displayLink);
+        box.displayLink = NULL;
+    }
+    // Stopped (CVDisplayLinkStop waits for an in-flight callback), so
+    // nothing can touch vsync any more.
+    free(box.vsync);
+    box.vsync = NULL;
+}
+
+// quiCocoaEnterMetalMode moves a window from GL to Metal presentation and
+// returns its CAMetalLayer (unretained; the box keeps it alive), or NULL
+// when the window is already in CPU mode. The renderer owns the device:
+// it sets layer.device and draws into the layer's drawables.
+void* quiCocoaEnterMetalMode(uintptr_t handle) {
+    @autoreleasepool {
+        QuiWindowBox* box = quiBox(handle);
+        if (box == nil || box.cpuMode) return NULL;
+        if (box.metalMode) return (__bridge void*)box.metalLayer;
+        [box.glContext clearDrawable];
+        CAMetalLayer* layer = [CAMetalLayer layer];
+        // The CPU rasterizer produces sRGB-encoded, premultiplied pixels;
+        // tag the layer so the compositor color-matches them exactly as it
+        // did the GL and CGImage paths.
+        CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+        layer.colorspace = cs;
+        CGColorSpaceRelease(cs);
+        layer.framebufferOnly = YES;
+        layer.opaque = [box.window isOpaque];
+        // During a live resize the old drawable stays pinned top-left
+        // rather than stretched until the new-size frame arrives.
+        layer.contentsGravity = kCAGravityTopLeft;
+        layer.needsDisplayOnBoundsChange = NO;
+        layer.actions = @{@"contents": [NSNull null], @"bounds": [NSNull null],
+                          @"position": [NSNull null]};
+        layer.presentsWithTransaction = [box.window inLiveResize];
+        [box.view setLayer:layer];
+        [box.view setWantsLayer:YES];
+        box.metalLayer = layer;
+        box.metalMode = YES;
+        quiCocoaSyncLayerGeometry(box);
+        // No display link: CAMetalLayer.nextDrawable already holds the
+        // renderer to the display's pace (it blocks while every drawable
+        // is queued), so frames are paced like GL's swap interval rather
+        // than gated on a second, unsynchronized vsync flag — which made
+        // a 60 fps producer drop every frame that landed between ticks.
+        return (__bridge void*)layer;
+    }
+}
+
+// quiCocoaExitMetalMode returns a Metal-mode window to GL presentation
+// (a widget in it needs raw GL). No-op outside Metal mode.
+void quiCocoaExitMetalMode(uintptr_t handle) {
+    @autoreleasepool {
+        QuiWindowBox* box = quiBox(handle);
+        if (box == nil || !box.metalMode) return;
+        quiCocoaStopDisplayLink(box);
+        box.metalMode = NO;
+        box.metalLayer = nil;
+        [box.view setWantsLayer:NO];
+        [box.view setLayer:nil];
+        [box.glContext setView:box.view];
+        [box.glContext update];
     }
 }
 

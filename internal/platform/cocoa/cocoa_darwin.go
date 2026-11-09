@@ -57,6 +57,8 @@ int  quiCocoaPresentCPU(uintptr_t handle, const uint8_t* pix, int stride, int wi
                         int dx, int dy, int dw, int dh);
 int  quiCocoaTakeFrameReady(uintptr_t handle);
 void quiCocoaPresent(uintptr_t handle);
+void* quiCocoaEnterMetalMode(uintptr_t handle);
+void  quiCocoaExitMetalMode(uintptr_t handle);
 
 int   quiCocoaScreenCount(void);
 void  quiCocoaScreenInfo(int index, int* x, int* y, int* w, int* h,
@@ -505,6 +507,14 @@ func (s cocoaSurface) PresentCPU(img *image.RGBA, damage image.Rectangle) bool {
 }
 
 func (s cocoaSurface) Present() { C.quiCocoaPresent(s.win.cid()) }
+
+// MetalLayer implements contract.MetalSurface: the first call moves the
+// window to Metal presentation (a CAMetalLayer-hosting view, paced by the
+// display link like CPU mode). nil once the window is in CPU mode.
+func (s cocoaSurface) MetalLayer() unsafe.Pointer { return C.quiCocoaEnterMetalMode(s.win.cid()) }
+
+// ExitMetal implements contract.MetalSurface: back to GL presentation.
+func (s cocoaSurface) ExitMetal() { C.quiCocoaExitMetalMode(s.win.cid()) }
 
 // --- keyboard --------------------------------------------------------
 

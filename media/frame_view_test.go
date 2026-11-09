@@ -26,6 +26,11 @@ func (f *fakePayload) draw(*FrameView, qui.GLState, qui.Rect, qui.Rect) bool {
 	return true
 }
 
+func (f *fakePayload) drawMetal(*FrameView, qui.MetalCompositor, qui.Rect, qui.Rect) bool {
+	f.drawn++
+	return true
+}
+
 func approx(a, b float64) bool { return math.Abs(a-b) < 1e-3 }
 
 func TestFrameViewMapToFrameContain(t *testing.T) {

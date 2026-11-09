@@ -50,23 +50,27 @@ type RetainedGLCanvas interface {
 	QueueRetainedGLDraw(key any, physBounds gfx.Rect, fn func(GLState))
 }
 
-// retainedGLEntry is one registration. seen marks a re-queue during the
+// retainedEntry is one registration. seen marks a re-queue during the
 // frame being produced.
-type retainedGLEntry struct {
+type retainedEntry[F any] struct {
 	key    any
 	bounds image.Rectangle
-	fn     func(GLState)
+	fn     F
 	seen   bool
 }
 
-// RetainedGLSet is the renderer's book of retained draws. Pure bookkeeping
-// with no GL in it, so the survival rule is unit-testable.
-type RetainedGLSet struct {
-	entries []retainedGLEntry
+// RetainedSet is a renderer's book of retained draws, for any draw
+// signature (GL draws, Metal draws). Pure bookkeeping with no GPU in it,
+// so the survival rule is unit-testable.
+type RetainedSet[F any] struct {
+	entries []retainedEntry[F]
 }
 
-// put registers (or replaces) key's draw for the current frame.
-func (s *RetainedGLSet) Put(key any, bounds gfx.Rect, fn func(GLState)) {
+// RetainedGLSet is the GLRenderer's book of retained GL draws.
+type RetainedGLSet = RetainedSet[func(GLState)]
+
+// Put registers (or replaces) key's draw for the current frame.
+func (s *RetainedSet[F]) Put(key any, bounds gfx.Rect, fn F) {
 	b := rectToPixelBounds(bounds)
 	for i := range s.entries {
 		if s.entries[i].key == key {
@@ -74,7 +78,7 @@ func (s *RetainedGLSet) Put(key any, bounds gfx.Rect, fn func(GLState)) {
 			return
 		}
 	}
-	s.entries = append(s.entries, retainedGLEntry{key: key, bounds: b, fn: fn, seen: true})
+	s.entries = append(s.entries, retainedEntry[F]{key: key, bounds: b, fn: fn, seen: true})
 }
 
 // CarryOver drops the entries a frame with the given damage invalidated
@@ -85,8 +89,8 @@ func (s *RetainedGLSet) Put(key any, bounds gfx.Rect, fn func(GLState)) {
 //
 // Entries that were re-queued this frame are kept but not returned: their
 // fresh draw is already in the frame's deferred queue.
-func (s *RetainedGLSet) CarryOver(damage image.Rectangle, damageNone bool) []func(GLState) {
-	var replay []func(GLState)
+func (s *RetainedSet[F]) CarryOver(damage image.Rectangle, damageNone bool) []F {
+	var replay []F
 	kept := s.entries[:0]
 	for _, e := range s.entries {
 		switch {
@@ -98,21 +102,21 @@ func (s *RetainedGLSet) CarryOver(damage image.Rectangle, damageNone bool) []fun
 		}
 	}
 	for i := len(kept); i < len(s.entries); i++ {
-		s.entries[i] = retainedGLEntry{}
+		s.entries[i] = retainedEntry[F]{}
 	}
 	s.entries = kept
 	return replay
 }
 
 // EndFrame clears the per-frame seen marks.
-func (s *RetainedGLSet) EndFrame() {
+func (s *RetainedSet[F]) EndFrame() {
 	for i := range s.entries {
 		s.entries[i].seen = false
 	}
 }
 
-// forget drops key's registration, if any.
-func (s *RetainedGLSet) Forget(key any) {
+// Forget drops key's registration, if any.
+func (s *RetainedSet[F]) Forget(key any) {
 	for i := range s.entries {
 		if s.entries[i].key == key {
 			s.entries = append(s.entries[:i], s.entries[i+1:]...)
@@ -121,7 +125,7 @@ func (s *RetainedGLSet) Forget(key any) {
 	}
 }
 
-func (s *RetainedGLSet) Len() int { return len(s.entries) }
+func (s *RetainedSet[F]) Len() int { return len(s.entries) }
 
 // rectToPixelBounds grows a float physical rect outward to whole pixels.
 func rectToPixelBounds(r gfx.Rect) image.Rectangle {

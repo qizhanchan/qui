@@ -97,6 +97,9 @@ type framePayload interface {
 	// draw composites the src texel rect of the frame onto physDst in the
 	// current framebuffer. UI thread, GL context current.
 	draw(v *FrameView, state qui.GLState, src, physDst qui.Rect) bool
+	// drawMetal is draw for a Metal-presented window: composite through
+	// the renderer's MetalCompositor. UI thread.
+	drawMetal(v *FrameView, c qui.MetalCompositor, src, physDst qui.Rect) bool
 	// cpuImage returns the frame as an image for the non-GL fallback, or
 	// nil if it has none.
 	cpuImage() image.Image
@@ -429,6 +432,22 @@ func (v *FrameView) Draw(canvas qui.Canvas) {
 	canvas.FillRect(bounds, bg)
 
 	content := v.ContentRect()
+	// A Metal window composites the frame natively. Checked first: the
+	// Metal canvas also answers RetainedGLCanvas, only to switch a window
+	// with GL-only widgets over to GL.
+	if mk, ok := canvas.(qui.RetainedMetalCanvas); ok {
+		if content.IsEmpty() {
+			v.retained.Store(false)
+			return
+		}
+		if hole := content.Intersect(bounds); !hole.IsEmpty() {
+			canvas.ClearRect(hole)
+		}
+		v.physBox = canvas.CurrentMatrix().TransformRect(bounds)
+		mk.QueueRetainedMetalDraw(v, v.physBox, v.metalDraw)
+		v.retained.Store(true)
+		return
+	}
 	rk, ok := canvas.(qui.RetainedGLCanvas)
 	if !ok {
 		v.retained.Store(false)
@@ -470,6 +489,23 @@ func (v *FrameView) glDraw(state qui.GLState) {
 		return
 	}
 	if f.draw(v, state, src, dst) {
+		v.notePresented(f)
+	}
+}
+
+// metalDraw is glDraw for a Metal-presented window.
+func (v *FrameView) metalDraw(c qui.MetalCompositor) {
+	f := v.promote()
+	if f == nil {
+		return
+	}
+	fw, fh := f.size()
+	dst := fitDstRect(v.FitMode(), v.physBox, float32(fw), float32(fh))
+	src, dst, ok := cropToVisible(dst, v.physBox, float32(fw), float32(fh))
+	if !ok {
+		return
+	}
+	if f.drawMetal(v, c, src, dst) {
 		v.notePresented(f)
 	}
 }
@@ -538,6 +574,15 @@ type rgbaFrame struct{ img *image.RGBA }
 func (f *rgbaFrame) size() (int, int)      { return f.img.Rect.Dx(), f.img.Rect.Dy() }
 func (f *rgbaFrame) cpuImage() image.Image { return f.img }
 func (f *rgbaFrame) release()              { f.img = nil }
+
+func (f *rgbaFrame) drawMetal(v *FrameView, c qui.MetalCompositor, src, dst qui.Rect) bool {
+	img := f.img
+	if img == nil || len(img.Pix) == 0 {
+		return false
+	}
+	return c.DrawPixels(v, unsafe.Pointer(&img.Pix[img.PixOffset(img.Rect.Min.X, img.Rect.Min.Y)]),
+		img.Stride, img.Rect.Dx(), img.Rect.Dy(), false, src, dst)
+}
 
 func (f *rgbaFrame) draw(v *FrameView, _ qui.GLState, src, dst qui.Rect) bool {
 	img := f.img

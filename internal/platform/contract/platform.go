@@ -271,6 +271,19 @@ type Surface interface {
 	Present()
 }
 
+// MetalSurface is the optional Metal presentation path of a Surface
+// (cocoa). A Metal renderer draws into the layer's drawables and presents
+// them itself; Present and PresentCPU are then not used.
+type MetalSurface interface {
+	// MetalLayer switches the surface to Metal presentation (first call)
+	// and returns its CAMetalLayer, or nil when it cannot (the surface
+	// already committed to another path).
+	MetalLayer() unsafe.Pointer
+	// ExitMetal returns the surface to GL presentation, for a window
+	// that turned out to need raw GL. No-op when not in Metal mode.
+	ExitMetal()
+}
+
 // Handler receives everything a platform window produces. The
 // engine's *Window implements it (qui/window_handler.go); backends only
 // ever see this interface, never Window's internals.

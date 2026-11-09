@@ -56,9 +56,13 @@ type Window struct {
 	platformBacked bool
 	root           Widget
 	renderer       Renderer
-	onRender       func(Canvas)
-	lastSize       Size
-	focused        Widget
+	// forceGL: this window fell back from Metal to GL (a widget needs raw
+	// GL, or Metal is unavailable); requested GLRenderers stay GL.
+	forceGL     bool
+	metalLogged bool // QUI_DEBUG_RENDERER reported Metal once
+	onRender    func(Canvas)
+	lastSize    Size
+	focused     Widget
 	// overlayFocusScopes parallels overlays. Each entry remembers where
 	// focus should return if that overlay owns focus when it is removed.
 	overlayFocusScopes []overlayFocusScope
@@ -376,6 +380,7 @@ func newWindowFromConfig(plat platformApp, cfg platformWindowConfig) (*Window, e
 		cursorShape:    CursorDefault,
 	}
 	w.initUIThreadOwnership()
+	w.renderer = w.preferredRenderer(w.renderer)
 	// Whether the OS window has keyboard focus right now; onFocus tracks
 	// it from here on. Asked, not assumed: a process launched from a
 	// terminal is not necessarily the active app.
@@ -792,6 +797,7 @@ func (w *Window) Destroy() {
 	for _, ov := range overlays {
 		DetachWidgetTree(ov)
 	}
+	w.closeRenderer()
 	w.platMu.Lock()
 	plat := w.plat
 	w.plat = nil
