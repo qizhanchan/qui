@@ -700,7 +700,16 @@ int quiCocoaCreateWindow(uintptr_t handle, int width, int height,
         [window setReleasedWhenClosed:NO];
         [window makeFirstResponder:view];
 
+        // NSOpenGLPFABackingStore keeps the back buffer equal to the frame
+        // just shown after every flushBuffer. Without it the back buffer
+        // holds the frame BEFORE that one, and AppKit sometimes composites
+        // the window from it without asking us to draw — attaching a child
+        // popup window (a hover card) did exactly that, so right after a
+        // scroll the editor flashed back one wheel step while qui's own
+        // state (and every hit test) stayed on the current frame. Kept
+        // first in the list so the fallback below can drop it.
         NSOpenGLPixelFormatAttribute attrs[] = {
+            NSOpenGLPFABackingStore,
             NSOpenGLPFAAccelerated,
             NSOpenGLPFADoubleBuffer,
             NSOpenGLPFAClosestPolicy,
@@ -715,6 +724,11 @@ int quiCocoaCreateWindow(uintptr_t handle, int width, int height,
         };
         NSOpenGLPixelFormat* format =
             [[NSOpenGLPixelFormat alloc] initWithAttributes:attrs];
+        if (format == nil) {
+            // A renderer that can't preserve the back buffer: same format
+            // without it (attrs[0] is NSOpenGLPFABackingStore).
+            format = [[NSOpenGLPixelFormat alloc] initWithAttributes:attrs + 1];
+        }
         if (format == nil) return 0;
 
         NSOpenGLContext* share = nil;
