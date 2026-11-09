@@ -10,6 +10,8 @@ package render
 #import <QuartzCore/QuartzCore.h>
 #import <CoreVideo/CoreVideo.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 // QuiMetal is everything one window's Metal presentation needs: device,
 // queue and pipelines, the frame texture the CPU raster is uploaded into,
@@ -21,6 +23,8 @@ package render
 @property (nonatomic, strong) id<MTLRenderPipelineState> texPipeline;
 @property (nonatomic, strong) id<MTLSamplerState> sampler;
 @property (nonatomic, strong) id<MTLTexture> frame;
+// scratch is the bounce texture pixel moves copy through.
+@property (nonatomic, strong) id<MTLTexture> scratch;
 @property (nonatomic, strong) id<MTLCommandBuffer> last;
 @property (nonatomic, strong) CAMetalLayer* layer;
 @property (nonatomic, assign) CVMetalTextureCacheRef cvCache;
@@ -146,47 +150,96 @@ static void quiMetalForgetPixels(void* ctx, uintptr_t key) {
     [m.pixels removeObjectForKey:@(key)];
 }
 
-static int quiMetalSetFrame(QuiMetal* m, int width, int height) {
-    if (m.frame != nil && (int)m.frame.width == width && (int)m.frame.height == height) return 0;
+static id<MTLTexture> quiMetalPrivateTexture(QuiMetal* m, int width, int height) {
     MTLTextureDescriptor* td =
         [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
                                                            width:width
                                                           height:height
                                                        mipmapped:NO];
     td.usage = MTLTextureUsageShaderRead;
-    td.storageMode = m.device.hasUnifiedMemory ? MTLStorageModeShared : MTLStorageModeManaged;
-    m.frame = [m.device newTextureWithDescriptor:td];
-    return 1;
+    // GPU-only: every write goes through a blit, ordered with the frames
+    // that sample it, so the CPU never waits for the GPU to let go.
+    td.storageMode = MTLStorageModePrivate;
+    return [m.device newTextureWithDescriptor:td];
 }
 
-// quiMetalBeginFrame waits for the previous frame's GPU work (it sampled
-// the textures about to be rewritten), uploads the damaged rectangle
-// (dx,dy,dw,dh) of the CPU raster — all of it when the frame texture is
-// (re)allocated; dw = 0 uploads nothing — and opens a render pass on the
-// next drawable, cleared to transparent (panels) or opaque black. Returns 0
-// when there is no drawable to draw into (the frame is skipped).
+// quiMetalBeginFrame brings the frame texture up to date with the CPU
+// raster and opens a render pass on the next drawable, cleared to
+// transparent (panels) or opaque black. Returns 1 when drawing can go on,
+// 0 when there is no drawable (the texture is updated, the frame is not
+// shown) and -1 when the texture could not be updated at all.
+//
+// The update is GPU work in the frame's own command buffer, in order:
+// first the nmoves pixel moves (x, y, w, h, dx, dy each — Window.ScrollPixels
+// done on the texture, through a scratch texture since a blit may not
+// overlap itself), then the nrects damaged rectangles (x, y, w, h each)
+// copied from the CPU raster through a staging buffer. A (re)allocated
+// texture gets the whole frame instead. Because the GPU orders all of it
+// after the previous frame's sampling, nothing here waits for that frame.
 static int quiMetalBeginFrame(void* ctx, const uint8_t* pix, int stride, int width, int height,
-                              int dx, int dy, int dw, int dh) {
+                              const int32_t* rects, int nrects, const int32_t* moves, int nmoves) {
     QuiMetal* m = (__bridge QuiMetal*)ctx;
-    if (m == nil || width <= 0 || height <= 0) return 0;
-    [m.last waitUntilCompleted];
-    m.last = nil;
-    [m.holds removeAllObjects];
+    if (m == nil || pix == NULL || width <= 0 || height <= 0) return -1;
+    m.holds = [NSMutableArray array];
     if (m.cvCache) CVMetalTextureCacheFlush(m.cvCache, 0);
-    if (quiMetalSetFrame(m, width, height)) {
-        if (m.frame == nil) return 0;
-        dx = 0; dy = 0; dw = width; dh = height;
-        if (pix == NULL) return 0; // nothing to show yet
+    int32_t full[4] = {0, 0, width, height};
+    if (m.frame == nil || (int)m.frame.width != width || (int)m.frame.height != height) {
+        m.frame = quiMetalPrivateTexture(m, width, height);
+        m.scratch = nil;
+        if (m.frame == nil) return -1;
+        rects = full; nrects = 1;
+        nmoves = 0; // nothing to move: the texture holds no frame yet
     }
-    if (dx < 0) { dw += dx; dx = 0; }
-    if (dy < 0) { dh += dy; dy = 0; }
-    if (dx + dw > width) dw = width - dx;
-    if (dy + dh > height) dh = height - dy;
-    if (pix != NULL && dw > 0 && dh > 0) {
-        [m.frame replaceRegion:MTLRegionMake2D(dx, dy, dw, dh)
-                   mipmapLevel:0
-                     withBytes:pix + (size_t)dy * stride + (size_t)dx * 4
-                   bytesPerRow:stride];
+    m.cmd = [m.queue commandBuffer];
+
+    if (nmoves > 0 || nrects > 0) {
+        id<MTLBlitCommandEncoder> blit = [m.cmd blitCommandEncoder];
+        for (int i = 0; i < nmoves; i++) {
+            const int32_t* mv = moves + i * 6;
+            int x = mv[0], y = mv[1], w = mv[2], h = mv[3], dx = mv[4], dy = mv[5];
+            // Source part that stays inside the rect after the move.
+            int sx = x + (dx < 0 ? -dx : 0), sy = y + (dy < 0 ? -dy : 0);
+            int cw = w - abs(dx), ch = h - abs(dy);
+            if (cw <= 0 || ch <= 0 || x < 0 || y < 0 || x + w > width || y + h > height) continue;
+            if (m.scratch == nil) m.scratch = quiMetalPrivateTexture(m, width, height);
+            if (m.scratch == nil) continue;
+            [blit copyFromTexture:m.frame sourceSlice:0 sourceLevel:0
+                     sourceOrigin:MTLOriginMake(sx, sy, 0) sourceSize:MTLSizeMake(cw, ch, 1)
+                        toTexture:m.scratch destinationSlice:0 destinationLevel:0
+                destinationOrigin:MTLOriginMake(sx, sy, 0)];
+            [blit copyFromTexture:m.scratch sourceSlice:0 sourceLevel:0
+                     sourceOrigin:MTLOriginMake(sx, sy, 0) sourceSize:MTLSizeMake(cw, ch, 1)
+                        toTexture:m.frame destinationSlice:0 destinationLevel:0
+                destinationOrigin:MTLOriginMake(sx + dx, sy + dy, 0)];
+        }
+        if (nrects > 0) {
+            size_t total = 0;
+            for (int i = 0; i < nrects; i++) {
+                const int32_t* r = rects + i * 4;
+                if (r[2] > 0 && r[3] > 0) total += (size_t)r[2] * r[3] * 4;
+            }
+            id<MTLBuffer> staging = total ? [m.device newBufferWithLength:total
+                                                                  options:MTLResourceStorageModeShared |
+                                                                          MTLResourceCPUCacheModeWriteCombined]
+                                          : nil;
+            uint8_t* dst = staging.contents;
+            size_t off = 0;
+            for (int i = 0; staging && i < nrects; i++) {
+                const int32_t* r = rects + i * 4;
+                int x = r[0], y = r[1], w = r[2], h = r[3];
+                if (w <= 0 || h <= 0 || x < 0 || y < 0 || x + w > width || y + h > height) continue;
+                size_t row = (size_t)w * 4;
+                for (int j = 0; j < h; j++) {
+                    memcpy(dst + off + (size_t)j * row, pix + (size_t)(y + j) * stride + (size_t)x * 4, row);
+                }
+                [blit copyFromBuffer:staging sourceOffset:off sourceBytesPerRow:row
+                     sourceBytesPerImage:row * h sourceSize:MTLSizeMake(w, h, 1)
+                               toTexture:m.frame destinationSlice:0 destinationLevel:0
+                       destinationOrigin:MTLOriginMake(x, y, 0)];
+                off += row * h;
+            }
+        }
+        [blit endEncoding];
     }
 
     CAMetalLayer* layer = m.layer;
@@ -198,13 +251,18 @@ static int quiMetalBeginFrame(void* ctx, const uint8_t* pix, int stride, int wid
         [CATransaction commit];
     }
     id<CAMetalDrawable> drawable = [layer nextDrawable];
-    if (drawable == nil) return 0;
+    if (drawable == nil) {
+        // Keep the texture update: commit it without presenting.
+        [m.cmd commit];
+        m.last = m.cmd;
+        m.cmd = nil;
+        return 0;
+    }
     MTLRenderPassDescriptor* rp = [MTLRenderPassDescriptor renderPassDescriptor];
     rp.colorAttachments[0].texture = drawable.texture;
     rp.colorAttachments[0].loadAction = MTLLoadActionClear;
     rp.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, layer.opaque ? 1 : 0);
     rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-    m.cmd = [m.queue commandBuffer];
     m.enc = [m.cmd renderCommandEncoderWithDescriptor:rp];
     m.drawable = drawable;
     return 1;
@@ -268,11 +326,35 @@ static int quiMetalDrawPixels(void* ctx, uintptr_t key, const uint8_t* pix, int 
         if (tex == nil) return 0;
         m.pixels[@(key)] = tex;
     }
-    // Safe to overwrite: BeginFrame waited for the frame that last
-    // sampled it.
+    // The previous frame may still be sampling this texture. (Pushed RGBA
+    // video is the only caller; zero-copy pixel buffers never get here.)
+    [m.last waitUntilCompleted];
     [tex replaceRegion:MTLRegionMake2D(0, 0, pw, ph) mipmapLevel:0 withBytes:pix bytesPerRow:stride];
     quiMetalQuad(m, tex, sx / pw, sy / ph, (sx + sw) / pw, (sy + sh) / ph, x, y, w, h);
     return 1;
+}
+
+// quiMetalReadFrame copies the frame texture into out (width x height
+// RGBA, stride bytes per row), waiting for the GPU: a debug check that the
+// texture matches the CPU raster (QUI_DEBUG_METAL_VERIFY).
+static int quiMetalReadFrame(void* ctx, uint8_t* out, int stride, int width, int height) {
+    @autoreleasepool {
+        QuiMetal* m = (__bridge QuiMetal*)ctx;
+        if (m.frame == nil || (int)m.frame.width != width || (int)m.frame.height != height) return 0;
+        size_t row = (size_t)width * 4;
+        id<MTLBuffer> buf = [m.device newBufferWithLength:row * height options:MTLResourceStorageModeShared];
+        id<MTLCommandBuffer> cmd = [m.queue commandBuffer];
+        id<MTLBlitCommandEncoder> blit = [cmd blitCommandEncoder];
+        [blit copyFromTexture:m.frame sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+                   sourceSize:MTLSizeMake(width, height, 1) toBuffer:buf destinationOffset:0
+          destinationBytesPerRow:row destinationBytesPerImage:row * height];
+        [blit endEncoding];
+        [cmd commit];
+        [cmd waitUntilCompleted];
+        const uint8_t* src = buf.contents;
+        for (int y = 0; y < height; y++) memcpy(out + (size_t)y * stride, src + (size_t)y * row, row);
+        return 1;
+    }
 }
 
 // quiMetalEndFrame lays the 2D layer over whatever retained draws put
@@ -289,6 +371,10 @@ static void quiMetalEndFrame(void* ctx) {
         [m.enc endEncoding];
         id<MTLCommandBuffer> cmd = m.cmd;
         id<CAMetalDrawable> drawable = m.drawable;
+        // CVMetalTextures (and the IOSurfaces under them) must outlive the
+        // GPU's reads: the handler keeps them until the frame completes.
+        NSArray* holds = m.holds;
+        [cmd addCompletedHandler:^(id<MTLCommandBuffer> b) { (void)holds; }];
         if (m.layer.presentsWithTransaction) {
             // Live resize: show the frame in the same Core Animation
             // transaction as the window's new size.
@@ -311,6 +397,7 @@ import "C"
 import (
 	"image"
 	"log"
+	"os"
 	"unsafe"
 
 	"github.com/qizhanchan/qui/internal/gfx"
@@ -354,6 +441,14 @@ type MetalRenderer struct {
 	// their textures under.
 	keys   map[any]uintptr
 	nextID uintptr
+
+	// damageRects (SetDamageRects) are the frame's painted rectangles,
+	// uploaded one by one; moves are pending ScrollPixels moves for the
+	// texture, as x, y, w, h, dx, dy. stale forces the next upload to
+	// cover the whole frame (an update was lost).
+	damageRects []image.Rectangle
+	moves       []int32
+	stale       bool
 }
 
 // NewMetalRenderer creates a renderer that presents through Metal. It
@@ -430,20 +525,38 @@ func (r *MetalRenderer) End() {
 	}
 	r.painted = true
 	damage := r.damage
-	r.damage = image.Rectangle{}
+	rects := r.damageRects
+	r.damage, r.damageRects = image.Rectangle{}, nil
 	if r.ctx == nil || r.img == nil {
 		r.queued = r.queued[:0]
+		r.moves = r.moves[:0]
 		r.retained.EndFrame()
 		return
 	}
 	img := r.img
-	up := img.Rect
-	if d := damage.Intersect(img.Rect); !d.Empty() {
-		// One-pixel guard band, as GLRenderer's upload: the damage is
-		// snapped outward already, this only absorbs rounding.
-		up = d.Inset(-1).Intersect(img.Rect)
+	var up []image.Rectangle
+	switch {
+	case r.stale:
+		up = []image.Rectangle{img.Rect}
+	case len(rects) > 0:
+		// Moves are done on the GPU, so only what was painted goes up.
+		for _, d := range rects {
+			if d = d.Inset(-1).Intersect(img.Rect); !d.Empty() {
+				up = append(up, d)
+			}
+		}
+	default:
+		d := damage.Intersect(img.Rect)
+		if d.Empty() {
+			d = img.Rect
+		} else {
+			// One-pixel guard band, as GLRenderer's upload: the damage is
+			// snapped outward already, this only absorbs rounding.
+			d = d.Inset(-1).Intersect(img.Rect)
+		}
+		up = []image.Rectangle{d}
 	}
-	r.present(up.Sub(img.Rect.Min), damage, false)
+	r.present(up, damage, false)
 }
 
 // RedrawRetained implements RetainedGLRenderer for Window.RequestGLRedraw:
@@ -453,23 +566,42 @@ func (r *MetalRenderer) RedrawRetained() bool {
 	if r == nil || r.ctx == nil || r.img == nil || !r.painted || r.retained.Len() == 0 {
 		return false
 	}
-	r.present(image.Rectangle{}, image.Rectangle{}, true)
+	var up []image.Rectangle
+	if r.stale {
+		up = []image.Rectangle{r.img.Rect}
+	}
+	r.present(up, image.Rectangle{}, true)
 	return true
 }
 
-// present uploads the up rectangle of the frame (none when empty and the
-// texture is current), replays the retained draws the frame's damage left
-// alive plus this frame's fresh ones, lays the 2D layer on top and shows
-// it.
-func (r *MetalRenderer) present(up, damage image.Rectangle, damageNone bool) {
+// present brings the texture up to date (pending moves, then the up
+// rectangles of the CPU frame), replays the retained draws the frame's
+// damage left alive plus this frame's fresh ones, lays the 2D layer on
+// top and shows it.
+func (r *MetalRenderer) present(up []image.Rectangle, damage image.Rectangle, damageNone bool) {
 	img := r.img
 	w, h := img.Rect.Dx(), img.Rect.Dy()
 	replay := r.retained.CarryOver(damage, damageNone)
 	fresh := r.queued
 	r.queued = r.queued[:0]
 	defer r.retained.EndFrame()
-	if C.quiMetalBeginFrame(r.ctx, (*C.uint8_t)(unsafe.Pointer(&img.Pix[0])), C.int(img.Stride),
-		C.int(w), C.int(h), C.int(up.Min.X), C.int(up.Min.Y), C.int(up.Dx()), C.int(up.Dy())) == 0 {
+	rects := make([]int32, 0, 4*len(up))
+	for _, u := range up {
+		u = u.Sub(img.Rect.Min)
+		rects = append(rects, int32(u.Min.X), int32(u.Min.Y), int32(u.Dx()), int32(u.Dy()))
+	}
+	var rp, mp *C.int32_t
+	if len(rects) > 0 {
+		rp = (*C.int32_t)(unsafe.Pointer(&rects[0]))
+	}
+	if len(r.moves) > 0 {
+		mp = (*C.int32_t)(unsafe.Pointer(&r.moves[0]))
+	}
+	res := C.quiMetalBeginFrame(r.ctx, (*C.uint8_t)(unsafe.Pointer(&img.Pix[0])), C.int(img.Stride),
+		C.int(w), C.int(h), rp, C.int(len(up)), mp, C.int(len(r.moves)/6))
+	r.moves = r.moves[:0]
+	r.stale = res < 0
+	if res <= 0 {
 		return
 	}
 	comp := metalCompositor{r: r}
@@ -480,6 +612,50 @@ func (r *MetalRenderer) present(up, damage image.Rectangle, damageNone bool) {
 		fn(comp)
 	}
 	C.quiMetalEndFrame(r.ctx)
+	if metalVerify {
+		r.verifyTexture()
+	}
+}
+
+// metalVerify (QUI_DEBUG_METAL_VERIFY=1) reads the frame texture back
+// after every present and compares it with the CPU raster — slow, for
+// checking the GPU-side moves and partial uploads.
+var metalVerify = os.Getenv("QUI_DEBUG_METAL_VERIFY") != ""
+
+func (r *MetalRenderer) verifyTexture() {
+	img := r.img
+	got := image.NewRGBA(img.Rect)
+	if C.quiMetalReadFrame(r.ctx, (*C.uint8_t)(unsafe.Pointer(&got.Pix[0])), C.int(got.Stride),
+		C.int(img.Rect.Dx()), C.int(img.Rect.Dy())) == 0 {
+		return
+	}
+	diff, first := 0, image.Point{-1, -1}
+	for y := 0; y < img.Rect.Dy(); y++ {
+		a := img.Pix[y*img.Stride : y*img.Stride+img.Rect.Dx()*4]
+		b := got.Pix[y*got.Stride : y*got.Stride+img.Rect.Dx()*4]
+		if string(a) == string(b) {
+			continue
+		}
+		for x := 0; x < len(a); x += 4 {
+			if a[x] != b[x] || a[x+1] != b[x+1] || a[x+2] != b[x+2] || a[x+3] != b[x+3] {
+				if diff == 0 {
+					first = image.Point{x / 4, y}
+				}
+				diff++
+			}
+		}
+	}
+	if diff > 0 {
+		log.Printf("qui: Metal texture differs from the CPU frame in %d pixels (first at %v)", diff, first)
+	}
+}
+
+// SetDamageRects implements DamageRectsRenderer: the rectangles (physical)
+// the coming frame paints.
+func (r *MetalRenderer) SetDamageRects(rects []image.Rectangle) {
+	if r != nil {
+		r.damageRects = append(r.damageRects[:0], rects...)
+	}
 }
 
 // PresentsItself implements SelfPresentingRenderer: with a layer bound,
@@ -614,8 +790,15 @@ func (c metalCanvas) QueueRetainedGLDraw(any, gfx.Rect, func(GLState)) { c.needG
 // CanScrollPixels implements PixelScroller.
 func (r *MetalRenderer) CanScrollPixels() bool { return r != nil && r.img != nil }
 
-// ScrollPixels implements PixelScroller: the CPU frame moves; the window
-// reports the moved area as damage, so the texture follows on upload.
+// ScrollPixels implements PixelScroller: the CPU frame moves now, the
+// texture on the GPU at the next present.
 func (r *MetalRenderer) ScrollPixels(rect image.Rectangle, dx, dy int) bool {
-	return r != nil && scrollImage(r.img, rect, dx, dy)
+	if r == nil || !scrollImage(r.img, rect, dx, dy) {
+		return false
+	}
+	// The texture makes the same move on the GPU before this frame's
+	// upload, so the moved pixels never cross the bus again.
+	rr := rect.Sub(r.img.Rect.Min)
+	r.moves = append(r.moves, int32(rr.Min.X), int32(rr.Min.Y), int32(rr.Dx()), int32(rr.Dy()), int32(dx), int32(dy))
+	return true
 }

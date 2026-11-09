@@ -459,6 +459,13 @@ func (w *Window) Step() {
 			if fi, ok := w.renderer.(render.FrameInfoRenderer); ok {
 				fi.SetDamage(gfx.PhysicalRect(clip, scaleX, scaleY).Union(moved))
 			}
+			if dr, ok := w.renderer.(render.DamageRectsRenderer); ok {
+				phys := make([]image.Rectangle, len(clips))
+				for i, c := range clips {
+					phys[i] = gfx.PhysicalRect(c, scaleX, scaleY)
+				}
+				dr.SetDamageRects(phys)
+			}
 		}
 		if clips == nil {
 			clips = []Rect{clip}

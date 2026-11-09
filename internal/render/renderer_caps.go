@@ -90,3 +90,10 @@ type PixelScroller interface {
 	// old content (the caller repaints it). False when it could not.
 	ScrollPixels(rect image.Rectangle, dx, dy int) bool
 }
+
+// DamageRectsRenderer takes the frame's painted rectangles one by one
+// (physical pixels), in addition to their bounds (SetDamage), so it can
+// upload just those. Window calls it between Begin and End.
+type DamageRectsRenderer interface {
+	SetDamageRects(rects []image.Rectangle)
+}
