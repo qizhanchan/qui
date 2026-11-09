@@ -88,6 +88,8 @@ type actionScope int
 const (
 	// scopeMainMenu is the application's NSMenu / native menu bar.
 	scopeMainMenu actionScope = 1
+	// scopeDockMenu is the Dock icon's menu (App.SetDockMenu).
+	scopeDockMenu actionScope = 2
 	// scopeStatusItemBase is the start of per-status-item scope IDs.
 	// Each StatusItem allocates a fresh scope via nextStatusItemScope.
 	scopeStatusItemBase actionScope = 1000

@@ -162,3 +162,37 @@ void quiSetWindowsMenu(void* menu) {
 void quiSetHelpMenu(void* menu) {
     [NSApp setHelpMenu:(__bridge NSMenu*)menu];
 }
+
+// --- Dock menu ---------------------------------------------------------
+//
+// AppKit asks the application delegate for the Dock icon's menu
+// (-applicationDockMenu:) every time the user opens it, and lists the
+// app's windows above it on its own. The delegate belongs to the
+// windowing backend; the method is added to its class at runtime so this
+// package needs no link-time tie to it.
+
+#import <objc/runtime.h>
+
+static NSMenu* g_dockMenu = nil;
+
+static NSMenu* quiDockMenuIMP(id self, SEL _cmd, NSApplication* sender) {
+    return g_dockMenu;
+}
+
+// quiSetDockMenu installs menu (from quiBeginSubmenu, consuming its
+// retain) as the Dock menu; NULL removes it. Returns 0 when there is no
+// application delegate to answer for it.
+int quiSetDockMenu(void* menu) {
+    NSMenu* m = menu ? (__bridge_transfer NSMenu*)menu : nil;
+    id delegate = [NSApp delegate];
+    if (delegate == nil) {
+        return 0;
+    }
+    SEL sel = @selector(applicationDockMenu:);
+    Class cls = [delegate class];
+    if (!class_getInstanceMethod(cls, sel)) {
+        class_addMethod(cls, sel, (IMP)quiDockMenuIMP, "@@:@");
+    }
+    g_dockMenu = m;
+    return 1;
+}

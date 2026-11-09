@@ -13,6 +13,7 @@ void quiInstallMainMenu(void);
 void quiAddRoleItem(void* parent, const char* title, int role, const char* keyEq, int mods);
 void quiSetWindowsMenu(void* menu);
 void quiSetHelpMenu(void* menu);
+int quiSetDockMenu(void* menu);
 */
 import "C"
 
@@ -62,3 +63,8 @@ func SetWindowsMenu(menu unsafe.Pointer) { C.quiSetWindowsMenu(menu) }
 
 // SetHelpMenu marks menu as the application's Help menu.
 func SetHelpMenu(menu unsafe.Pointer) { C.quiSetHelpMenu(menu) }
+
+// SetDockMenu installs a menu from BeginSubmenu (consuming its retain) as
+// the Dock icon's menu; nil removes it. It reports false when the app has
+// no delegate to serve the menu (no NSApplication set up yet).
+func SetDockMenu(menu unsafe.Pointer) bool { return C.quiSetDockMenu(menu) != 0 }

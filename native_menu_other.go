@@ -10,3 +10,6 @@ func (a *App) SetMenuBar(bar *NativeMenuBar) {
 	// no-op; actions from the passed bar are not wired.
 	_ = bar
 }
+
+// SetDockMenu is macOS-only; elsewhere it is a no-op.
+func (a *App) SetDockMenu(m *NativeMenu) { _ = m }

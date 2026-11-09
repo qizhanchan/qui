@@ -26,6 +26,26 @@ func (a *App) SetMenuBar(bar *NativeMenuBar) {
 	macos.InstallMainMenu()
 }
 
+// SetDockMenu sets the items of the Dock icon's menu (right-click or
+// long-press on the icon), shown below the list of the app's windows that
+// macOS adds itself — e.g. recent documents or "New Window". Item actions
+// run on the main goroutine like main-menu actions; shortcuts are ignored.
+// nil (or a menu without items) removes it. Call it again to change the
+// items: the Dock asks for the menu each time it opens it.
+func (a *App) SetDockMenu(m *NativeMenu) {
+	if a == nil {
+		return
+	}
+	resetActionsForScope(scopeDockMenu)
+	if m == nil || len(m.Items) == 0 {
+		macos.SetDockMenu(nil)
+		return
+	}
+	menu := macos.BeginSubmenu(m.Title)
+	buildMenuItems(menu, m.Items, scopeDockMenu)
+	macos.SetDockMenu(menu)
+}
+
 // menuWindowKeys are the main menu's KeyToWindow shortcuts: the key
 // monitor hands these chords to the window instead of the menu bar.
 // Touched only on the main thread (SetMenuBar, the key monitor).
