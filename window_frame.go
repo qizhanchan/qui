@@ -354,6 +354,13 @@ func (w *Window) Step() {
 	}
 	fbWidth, fbHeight := w.plat.framebufferSize()
 
+	// Bind the surface before anything reads the dirty region: a renderer
+	// that cannot use it (device lost, surface broken) is replaced by the
+	// CPU path here, and that fresh frame needs a full repaint — which
+	// rendererFailed's Invalidate must reach this frame's clip rather than
+	// be wiped by resetDirty at its end.
+	w.bindSurface()
+
 	// Clamp dirty region to current window bounds (a widget could return
 	// a Rect that extends past a resized window).
 	// Pixels a ScrollPixels moved go first: the paint below fills what the
@@ -373,7 +380,6 @@ func (w *Window) Step() {
 	if fi, ok := w.renderer.(render.FrameInfoRenderer); ok {
 		fi.SetLogicalSize(w.lastSize)
 	}
-	w.bindSurface()
 	var clips []Rect
 	tDraw := time.Now()
 	canvas := w.renderer.Begin(Size{W: float32(fbWidth), H: float32(fbHeight)})
@@ -450,6 +456,7 @@ func (w *Window) Step() {
 	w.afterPaintProtocol(clip, fullRepaintClip(clip, viewport))
 	w.resetDirty()
 	w.framePainted = true
+	w.retryDroppedFrame()
 }
 
 // runAfterFrame runs the work queued for the end of this Step. Work queued

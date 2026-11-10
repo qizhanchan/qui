@@ -144,7 +144,7 @@
 | `anim` | `Tween[T]`、`Spring`、`Timeline`；缓动目录；满足 `qui.Animator` |
 | `graphs` | 稳定的 scale/data 基础能力，以及两个原生方案：`graphs/chart`（ECharts 形状的声明式图表）和 `graphs/diagram`（draw.io 级页面、图层、分组、形状、端口路由、交互编辑、撤销/重做、AX、JSON/draw.io XML 与 PNG/SVG/PDF 导出） |
 | `svg` | SVG 1.1 子集：解析 / 构建 / 光栅化（可染色）/ 序列化；`Document` 满足 `qui.VectorSource` |
-| `scene3d` | 场景图（节点、mesh、材质、灯光、相机）、WebGPU `Viewport` 控件（自己的 4× MSAA 颜色 + 深度纹理，经 `QueueRetainedGPUDraw` 合成；无 cgo 时画占位图）、WGSL 材质（`Material`：`WGSL()`、`Params`、`Destroy`；`Preamble` 声明 frame/obj uniform 与 `clip_from_world`；`CustomMaterial{Source, OnParams}`）、`Drawable.DrawGPU(*DrawContext)` 逃生舱、轨道控制、拾取、`Vec3Field` |
+| `scene3d` | 场景图（节点、mesh、材质、灯光、相机）、WebGPU `Viewport` 控件（自己的 4× MSAA 颜色 + 深度纹理，经 `QueueRetainedGPUDraw` 合成；CPU 路径——没有 Dawn 或没有 cgo——画占位图）、WGSL 材质（`Material`：`WGSL()`、`Params`、`Destroy`；`Preamble` 声明 frame/obj uniform 与 `clip_from_world`；`CustomMaterial{Source, OnParams}`）、`Drawable.DrawGPU(*DrawContext)` 逃生舱、轨道控制、拾取、`Vec3Field` |
 | `media` | 不依赖 ffmpeg 的 `AudioPlayer`（服务）与 `VideoView`（控件）；macOS 使用 AVFoundation 后端。`FrameView` 显示从任意 goroutine 推送的帧 —— `PushCVPixelBuffer`（macOS，IOSurface 经渲染器的 `Compositor` 零拷贝）或 `PushRGBA` —— 只保留最新帧、空闲零开销，支持适配模式、`MapToFrame` 输入映射、`Stats` / `OnPresent` 延迟统计与原始键盘。FrameView / VideoView 只走 `Compositor` 路径；`VideoFrame.Composite(c, key, src, physDst)` |
 | `webview` | 基于 CEF 的内嵌浏览器控件，受 `webview_cef` 门控；只有 CPU 帧路径，零拷贝 IOSurface 合成待实现；JS↔Go 桥只传 JSON |
 | `physics` / `p2` / `p3` | 与维度无关的词汇，以及 API 对称的 2D/3D 引擎：扫掠 AABB、空间哈希、接触标志、单向平台、传感器 |

@@ -1,3 +1,5 @@
+//go:build cgo && !js
+
 package wgpu
 
 import "testing"

@@ -242,6 +242,18 @@ func (w *Window) redrawRetainedOnly() {
 	}
 	w.present()
 	w.framePainted = true
+	w.retryDroppedFrame()
+}
+
+// retryDroppedFrame asks for a redraw-only frame when the renderer could
+// not present the one just made (no surface texture this time): its
+// pixels are in the renderer's frame already, so the next frame shows them
+// without repainting — otherwise the screen would keep the previous frame
+// until something else invalidates.
+func (w *Window) retryDroppedFrame() {
+	if d, ok := w.renderer.(render.DroppedFrameRenderer); ok && d.TakeDroppedFrame() {
+		w.RequestGPURedraw()
+	}
 }
 
 // defaultRenderer is the renderer a platform window starts with, so an app

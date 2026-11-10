@@ -36,7 +36,7 @@ WebGPU 正好是这个缺口的答案：一套 API、一种着色语言（WGSL�
   - 好处：没装 Dawn 的机器照样 `go build` / `go test`（WebGPU 不可用，窗口走 CPU 呈现）；交叉编译不需要 Dawn；go module 缓存里的 qui 不需要附带二进制。
 - **固定版本**：`wgpu.DawnRevision`（Dawn 提交）与 `wgpu.DawnRelease`（github.com/google/dawn 的 nightly 标签）。`webgpu.h` 的扩展结构体在不同 Dawn 版本之间不保证 ABI 兼容，所以头文件、库、安装目录都以这个修订号为准；升级 Dawn = 一次显式的换头文件 + 换哈希的提交。
 - **`cmd/qui-dawn`**：下载固定版本的官方预编译包，核对 SHA-256（写死在源码里），取出单体静态库 `libwebgpu_dawn.a`，链接成只导出 `wgpu*` 的共享库（macOS arm64 约 8 MB），装到 `<用户缓存>/qui/dawn/<修订>/<os>-<arch>/`。`-o DIR` 顺带复制一份（打包 .app 时放进 `Contents/Frameworks`）。
-- **查找顺序**（`wgpu.LibraryCandidates`）：`$QUI_DAWN_LIB` → 可执行文件同目录 → `../Frameworks`（.app）→ 用户缓存 → 系统搜索路径。`QUI_WEBGPU=0` 关闭 WebGPU。
+- **查找顺序**（`wgpu.LibraryCandidates`）：`$QUI_DAWN_LIB` → 可执行文件同目录 → `../Frameworks`（.app）→ 用户缓存，全部是绝对路径（不再用裸库名走系统搜索路径，避免加载到版本不明或被植入的库）。某个候选符号不全或旁边的 `.revision` 标记写着别的 Dawn 版本时跳过它、继续找下一个。`QUI_WEBGPU=0` 关闭 WebGPU。
 - 平台：darwin/arm64、darwin/amd64 有固定哈希；linux/amd64 有链接配方（未验证）；Windows 的发布包是 MSVC 静态库，需要另行构建 DLL，后续阶段处理。
 
 ### 2. `internal/wgpu`：Go 绑定
@@ -47,6 +47,8 @@ WebGPU 正好是这个缺口的答案：一套 API、一种着色语言（WGSL�
 - 所有异步调用（请求适配器 / 设备、`mapAsync`、`onSubmittedWorkDone`、`popErrorScope`）都以 `WaitAnyOnly` 模式 + `wgpuInstanceWaitAny` 同步等待，回调在调用线程上执行，不会有 C 线程回调 Go。唯一的例外是未捕获错误 / 设备丢失回调，转发给 `wgpu.SetErrorHandler`（默认写日志；测试里设为失败）。
 - 描述符在 C 内存里构造（cgo 不允许传含 Go 指针的 Go 内存），每次调用一个 arena。
 - 对象需要显式 `Release`（不用 finalizer：finalizer 跑在别的 goroutine，而所有 GPU 调用都在 UI 线程）。
+- `Buffer.Release` 只释放引用，GPU 用完才回收，帧中途释放也安全；`Destroy` 立即回收（之后未提交的使用会校验失败）。`BlendPremultiplied()` / `BlendAlpha()` 每次返回新对象，调用方改了也不会影响别处的管线。
+- **没有 cgo 的构建**（`CGO_ENABLED=0`、js/wasm）用 `stub_gen.go`：由 `gen/genstub.go` 从 cgo 文件生成，导出同一套类型、常量（取 `dawn_webgpu.h` 的值）和函数，函数返回零值，`Shared` / `Load` 返回 `ErrUnavailable`。因此 `gpu`、`internal/render` 的 WebGPU 渲染器、根包的 GPU API 和 scene3d 在任何构建下都能编译，运行时走 CPU 路径。`TestStubUpToDate` 检查生成文件没过期。
 - 公开包 **`gpu`** 用类型别名重新导出这套 API，供 scene3d 与应用使用（与 `pdf`/`svg` 直接触达内部层的做法一致，archtest 增加对应的边）。
 
 ### 3. 渲染器

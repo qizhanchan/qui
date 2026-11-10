@@ -1,5 +1,3 @@
-//go:build cgo && !js
-
 package render
 
 import (

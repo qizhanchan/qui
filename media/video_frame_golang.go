@@ -68,7 +68,7 @@ func (f *golangVideoFrame) Composite(c qui.Compositor, key any, src, physDst qui
 		return qui.YUVPlane{Pix: unsafe.Pointer(&p.Pix[0]), Stride: p.Stride, W: p.W, H: p.H}
 	}
 	m, off, sc := colorMatrix(f.matrix, f.fullRange, fr.Height)
-	return c.DrawYUV420(key, [3]qui.YUVPlane{plane(fr.Y), plane(fr.Cb), plane(fr.Cr)}, m, off, sc, src, physDst)
+	return c.DrawYUV420(key, f.gen, [3]qui.YUVPlane{plane(fr.Y), plane(fr.Cb), plane(fr.Cr)}, m, off, sc, src, physDst)
 }
 
 func (f *golangVideoFrame) Release() {

@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"unsafe"
@@ -37,10 +36,12 @@ func Load() error {
 		}
 		var tried []string
 		for _, p := range LibraryCandidates() {
-			if filepath.IsAbs(p) {
-				if _, err := os.Stat(p); err != nil {
-					continue
-				}
+			if _, err := os.Stat(p); err != nil {
+				continue
+			}
+			if rev, ok := readRevisionMarker(p); ok && rev != DawnRevision {
+				tried = append(tried, fmt.Sprintf("%s: built from Dawn %.12s, need %.12s", p, rev, DawnRevision))
+				continue
 			}
 			cp := C.CString(p)
 			var buf [512]C.char
@@ -52,9 +53,9 @@ func Load() error {
 				loadPath = p
 				return
 			case rc > 0:
-				// Opened, but it is not the revision our header describes.
-				loadErr = fmt.Errorf("wgpu: %s: %s (expected Dawn %s)", p, msg, DawnRevision[:12])
-				return
+				// Opened, but it is not the revision our header describes
+				// (the C side unloaded it): keep looking.
+				msg += " (expected Dawn " + DawnRevision[:12] + ")"
 			}
 			tried = append(tried, p+": "+msg)
 		}

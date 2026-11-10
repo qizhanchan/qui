@@ -44,7 +44,10 @@ type darwinVideoFrame struct {
 	w, h  int
 	cvBuf unsafe.Pointer // CVPixelBufferRef, retained
 	refs  int32          // atomic
+	gen   uint64         // content version for the upload fallback
 }
+
+var darwinFrameGen atomic.Uint64
 
 func newDarwinVideoFrame(cvBuf unsafe.Pointer, pts time.Duration, w, h int) *darwinVideoFrame {
 	return &darwinVideoFrame{
@@ -53,6 +56,7 @@ func newDarwinVideoFrame(cvBuf unsafe.Pointer, pts time.Duration, w, h int) *dar
 		h:     h,
 		cvBuf: cvBuf,
 		refs:  1,
+		gen:   darwinFrameGen.Add(1),
 	}
 }
 
@@ -65,12 +69,21 @@ func (f *darwinVideoFrame) Retain() {
 }
 
 // Composite implements VideoFrame: the IOSurface-backed buffer is shown
-// zero-copy.
-func (f *darwinVideoFrame) Composite(c qui.Compositor, _ any, src, physDst qui.Rect) bool {
+// zero-copy, or its pixels uploaded where the device cannot import
+// IOSurfaces.
+func (f *darwinVideoFrame) Composite(c qui.Compositor, key any, src, physDst qui.Rect) bool {
 	if f.cvBuf == nil {
 		return false
 	}
-	return c.DrawPixelBuffer(f.cvBuf, src, physDst)
+	if c.DrawPixelBuffer(f.cvBuf, src, physDst) {
+		return true
+	}
+	base, stride, unlock := lockPixelBuffer(f.cvBuf)
+	if base == nil {
+		return false
+	}
+	defer unlock()
+	return c.DrawPixels(key, f.gen, base, stride, f.w, f.h, true, src, physDst)
 }
 
 func (f *darwinVideoFrame) Release() {

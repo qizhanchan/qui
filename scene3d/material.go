@@ -16,9 +16,10 @@ import "github.com/qizhanchan/qui"
 //	@group(0) @binding(1) var<uniform> obj: Object;
 //	fn clip_from_world(world: vec4f) -> vec4f
 //
-// and must define vs_main / fs_main. Triangle meshes feed
-// @location(0) position: vec3f, @location(1) normal: vec3f,
-// @location(2) uv: vec2f; line meshes only @location(0). light_dir points
+// and must define vs_main / fs_main. Meshes feed @location(0) position:
+// vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f (zero for
+// line meshes). fs_main returns PREMULTIPLIED color: the pipeline blends
+// one / one-minus-src-alpha. light_dir points
 // from the surface TOWARD the light; light_color is premultiplied by the
 // intensity. Shaders compile on the first frame that draws them.
 
@@ -93,7 +94,7 @@ const unlitWGSL = `
     return clip_from_world(obj.model * vec4f(position, 1.0));
 }
 @fragment fn fs_main() -> @location(0) vec4f {
-    return obj.color;
+    return vec4f(obj.color.rgb * obj.color.a, obj.color.a);
 }
 `
 

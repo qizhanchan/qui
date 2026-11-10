@@ -2,7 +2,11 @@
 
 package media
 
-import "testing"
+import (
+	"image"
+	"testing"
+	"unsafe"
+)
 
 // TestPushCVPixelBufferRetainBalance checks the CF reference discipline
 // on real IOSurface-backed buffers: a push takes one reference, a frame
@@ -49,5 +53,30 @@ func TestPushCVPixelBufferRetainBalance(t *testing.T) {
 func TestPushCVPixelBufferRejectsNil(t *testing.T) {
 	if err := NewFrameView().PushCVPixelBuffer(nil); err == nil {
 		t.Fatal("nil buffer accepted")
+	}
+}
+
+// On the CPU path a pushed CVPixelBuffer is drawn from an RGBA copy.
+func TestCVFrameCPUImage(t *testing.T) {
+	pb := newTestPixelBuffer(3, 2)
+	if pb == nil {
+		t.Skip("cannot create a CVPixelBuffer")
+	}
+	defer cfRelease(pb)
+	base, stride, unlock := lockPixelBuffer(pb)
+	if base == nil {
+		t.Fatal("lock failed")
+	}
+	px := unsafe.Slice((*byte)(base), stride*2)
+	copy(px[stride+4:], []byte{10, 20, 30, 255}) // BGRA at (1,1)
+	unlock()
+
+	f := &cvFrame{pb: pb, w: 3, h: 2}
+	img, ok := f.cpuImage().(*image.RGBA)
+	if !ok || img == nil {
+		t.Fatalf("cpuImage = %T", f.cpuImage())
+	}
+	if c := img.RGBAAt(1, 1); c.R != 30 || c.G != 20 || c.B != 10 || c.A != 255 {
+		t.Fatalf("pixel = %v, want BGRA swizzled to RGBA", c)
 	}
 }

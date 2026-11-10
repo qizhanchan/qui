@@ -10,6 +10,7 @@ import "C"
 
 import (
 	"errors"
+	"fmt"
 	"unsafe"
 )
 
@@ -21,6 +22,12 @@ type Surface struct {
 	format TextureFormat
 	w, h   int
 	alpha  bool
+
+	// What the surface supports on this adapter (queried once).
+	capsDone   bool
+	capUsages  TextureUsage
+	capFormats []TextureFormat
+	capAlpha   []C.WGPUCompositeAlphaMode
 }
 
 func (d *Device) createSurface(chain *C.WGPUChainedStruct) (*Surface, error) {
@@ -61,47 +68,139 @@ func (d *Device) CreateSurfaceXlib(display unsafe.Pointer, window uint64) (*Surf
 	return d.createSurface(&src.chain)
 }
 
-// Configure (re)sizes the swap chain. premultiplied selects alpha
+// Configure (re)sizes the swap chain. premultiplied asks for alpha
 // compositing with the desktop (transparent windows); vsync FIFO
-// presentation is used.
-func (s *Surface) Configure(w, h int, format TextureFormat, premultiplied bool) {
+// presentation is used. It checks the request against the surface's
+// capabilities: an unsupported format is an error, an unsupported alpha
+// mode falls back to one the surface offers (Vulkan on X11 often has only
+// Opaque or Inherit), and CopySrc is requested only where supported. A
+// zero size is not configured (a minimized window) and reports no error.
+func (s *Surface) Configure(w, h int, format TextureFormat, premultiplied bool) error {
+	if w <= 0 || h <= 0 {
+		return nil
+	}
 	if w == s.w && h == s.h && format == s.format && premultiplied == s.alpha {
-		return
+		return nil
+	}
+	s.queryCaps()
+	if len(s.capFormats) > 0 && !containsFormat(s.capFormats, format) {
+		return fmt.Errorf("wgpu: surface does not support format %d (supports %v)", format, s.capFormats)
+	}
+	usage := UsageRenderAttachment
+	if s.capUsages == 0 || s.capUsages&UsageCopySrc != 0 {
+		usage |= UsageCopySrc
 	}
 	cfg := C.WGPUSurfaceConfiguration{
 		device:      s.dev.c,
 		format:      C.WGPUTextureFormat(format),
-		usage:       C.WGPUTextureUsage(UsageRenderAttachment | UsageCopySrc),
+		usage:       C.WGPUTextureUsage(usage),
 		width:       C.uint32_t(w),
 		height:      C.uint32_t(h),
-		alphaMode:   C.WGPUCompositeAlphaMode_Opaque,
+		alphaMode:   s.pickAlpha(premultiplied),
 		presentMode: C.WGPUPresentMode_Fifo,
-	}
-	if premultiplied {
-		cfg.alphaMode = C.WGPUCompositeAlphaMode_Premultiplied
 	}
 	C.wgpuSurfaceConfigure(s.c, &cfg)
 	s.w, s.h, s.format, s.alpha = w, h, format, premultiplied
+	return nil
+}
+
+func (s *Surface) queryCaps() {
+	if s.capsDone {
+		return
+	}
+	s.capsDone = true
+	var c C.WGPUSurfaceCapabilities
+	if C.wgpuSurfaceGetCapabilities(s.c, s.dev.adapter, &c) != C.WGPUStatus_Success {
+		return
+	}
+	s.capUsages = TextureUsage(c.usages)
+	if c.formatCount > 0 {
+		for _, f := range unsafe.Slice(c.formats, c.formatCount) {
+			s.capFormats = append(s.capFormats, TextureFormat(f))
+		}
+	}
+	if c.alphaModeCount > 0 {
+		s.capAlpha = append(s.capAlpha, unsafe.Slice(c.alphaModes, c.alphaModeCount)...)
+	}
+	C.wgpuSurfaceCapabilitiesFreeMembers(c)
+}
+
+// pickAlpha is the composite alpha mode closest to the request that the
+// surface supports.
+func (s *Surface) pickAlpha(premultiplied bool) C.WGPUCompositeAlphaMode {
+	var prefs []C.WGPUCompositeAlphaMode
+	if premultiplied {
+		prefs = []C.WGPUCompositeAlphaMode{C.WGPUCompositeAlphaMode_Premultiplied, C.WGPUCompositeAlphaMode_Inherit,
+			C.WGPUCompositeAlphaMode_Opaque}
+	} else {
+		prefs = []C.WGPUCompositeAlphaMode{C.WGPUCompositeAlphaMode_Opaque, C.WGPUCompositeAlphaMode_Inherit}
+	}
+	if len(s.capAlpha) == 0 {
+		return prefs[0]
+	}
+	for _, p := range prefs {
+		for _, a := range s.capAlpha {
+			if a == p {
+				return p
+			}
+		}
+	}
+	return s.capAlpha[0]
+}
+
+func containsFormat(fs []TextureFormat, f TextureFormat) bool {
+	for _, x := range fs {
+		if x == f {
+			return true
+		}
+	}
+	return false
 }
 
 // Size is the configured size.
 func (s *Surface) Size() (int, int) { return s.w, s.h }
 
-// CurrentTexture returns the texture to draw the next frame into, or nil
-// when there is none (window minimized, surface lost — reconfigure).
-func (s *Surface) CurrentTexture() *Texture {
+// AcquireStatus is why Acquire returned no texture.
+type AcquireStatus int
+
+const (
+	AcquireOK      AcquireStatus = iota
+	AcquireSkipped               // no frame this time (timeout, outdated, not configured): try the next one
+	AcquireLost                  // the surface is gone: recreate it
+	AcquireFailed                // the surface cannot present
+)
+
+// Acquire returns the texture to draw the next frame into, or nil and why
+// not. After a skip the surface reconfigures on the next Configure.
+func (s *Surface) Acquire() (*Texture, AcquireStatus) {
+	if s.w == 0 || s.h == 0 {
+		return nil, AcquireSkipped
+	}
 	var st C.WGPUSurfaceTexture
 	C.wgpuSurfaceGetCurrentTexture(s.c, &st)
-	if st.texture == nil ||
-		(st.status != C.WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
-			st.status != C.WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
-		if st.texture != nil {
-			C.wgpuTextureRelease(st.texture)
-		}
-		s.w, s.h = 0, 0 // force a reconfigure
-		return nil
+	if st.texture != nil &&
+		(st.status == C.WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal ||
+			st.status == C.WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
+		return &Texture{c: st.texture, w: s.w, h: s.h, format: s.format}, AcquireOK
 	}
-	return &Texture{c: st.texture, w: s.w, h: s.h, format: s.format}
+	if st.texture != nil {
+		C.wgpuTextureRelease(st.texture)
+	}
+	s.w, s.h = 0, 0 // force a reconfigure
+	switch st.status {
+	case C.WGPUSurfaceGetCurrentTextureStatus_Timeout, C.WGPUSurfaceGetCurrentTextureStatus_Outdated:
+		return nil, AcquireSkipped
+	case C.WGPUSurfaceGetCurrentTextureStatus_Lost:
+		return nil, AcquireLost
+	}
+	return nil, AcquireFailed
+}
+
+// CurrentTexture returns the texture to draw the next frame into, or nil
+// when there is none (see Acquire for why).
+func (s *Surface) CurrentTexture() *Texture {
+	t, _ := s.Acquire()
+	return t
 }
 
 // Present shows the texture CurrentTexture returned.

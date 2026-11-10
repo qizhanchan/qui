@@ -60,6 +60,13 @@ func (t SurfaceTarget) IsZero() bool {
 	return t.MetalLayer == nil && t.HWND == nil && t.XWindow == 0
 }
 
+// DroppedFrameRenderer reports a frame it could not present (the surface
+// had no texture to give: timeout, outdated, recreated), so the window
+// asks for a redraw-only frame (RedrawRetained) that shows it.
+type DroppedFrameRenderer interface {
+	TakeDroppedFrame() bool
+}
+
 // SelfPresentingRenderer presents its own frames (the WebGPU renderer
 // presents the drawable it drew), so Window must not present
 // again.

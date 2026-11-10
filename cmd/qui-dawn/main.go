@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/qizhanchan/qui/internal/wgpu"
 )
@@ -71,7 +72,7 @@ func main() {
 		log.Printf("qui-dawn: %s already installed", dst)
 	}
 	if *out != "" {
-		if err := copyFile(dst, filepath.Join(*out, wgpu.LibraryName())); err != nil {
+		if err := installCopy(dst, filepath.Join(*out, wgpu.LibraryName())); err != nil {
 			log.Fatalf("qui-dawn: %v", err)
 		}
 		log.Printf("qui-dawn: copied to %s", *out)
@@ -109,15 +110,25 @@ func install(dst string) error {
 	if err := link(lib, built); err != nil {
 		return err
 	}
-	if err := copyFile(built, dst); err != nil {
+	if err := installCopy(built, dst); err != nil {
 		return err
 	}
 	log.Printf("qui-dawn: installed %s", dst)
 	return nil
 }
 
+// installCopy copies a library and writes its revision marker next to it,
+// so wgpu.Load can tell a stale copy from the revision it was built for.
+func installCopy(src, dst string) error {
+	if err := copyFile(src, dst); err != nil {
+		return err
+	}
+	return os.WriteFile(wgpu.RevisionMarkerPath(dst), []byte(wgpu.DawnRevision+"\n"), 0o644)
+}
+
 func download(url, path, want string) error {
-	resp, err := http.Get(url)
+	client := &http.Client{Timeout: 10 * time.Minute}
+	resp, err := client.Get(url)
 	if err != nil {
 		return err
 	}

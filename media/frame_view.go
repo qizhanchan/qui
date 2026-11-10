@@ -501,6 +501,6 @@ func (f *rgbaFrame) draw(v *FrameView, c qui.Compositor, src, dst qui.Rect) bool
 	if img == nil || len(img.Pix) == 0 {
 		return false
 	}
-	return c.DrawPixels(v, unsafe.Pointer(&img.Pix[img.PixOffset(img.Rect.Min.X, img.Rect.Min.Y)]),
+	return c.DrawPixels(v, v.curSeq, unsafe.Pointer(&img.Pix[img.PixOffset(img.Rect.Min.X, img.Rect.Min.Y)]),
 		img.Stride, img.Rect.Dx(), img.Rect.Dy(), false, src, dst)
 }

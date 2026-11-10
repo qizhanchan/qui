@@ -1,5 +1,3 @@
-//go:build cgo && !js
-
 package main
 
 // Demonstrates Window.SetPreRender — a WebGPU hook that draws straight

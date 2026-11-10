@@ -11,6 +11,7 @@
 #include "helpers.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #ifdef _WIN32
@@ -29,7 +30,21 @@ int quiWGPULoadProcs(void* (*sym)(const char*));
 
 int quiWGPUOpen(const char* path, char* err, size_t errlen) {
 #ifdef _WIN32
-    quiLib = LoadLibraryA(path);
+    // The path is UTF-8 (from Go): convert it so profile directories with
+    // non-ASCII names load too (LoadLibraryA would use the ANSI code page).
+    int wn = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
+    if (wn <= 0) {
+        snprintf(err, errlen, "invalid UTF-8 path");
+        return -1;
+    }
+    wchar_t* wpath = (wchar_t*)malloc(sizeof(wchar_t) * (size_t)wn);
+    if (wpath == NULL) {
+        snprintf(err, errlen, "out of memory");
+        return -1;
+    }
+    MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, wn);
+    quiLib = LoadLibraryW(wpath);
+    free(wpath);
     if (quiLib == NULL) {
         snprintf(err, errlen, "LoadLibrary failed (%lu)", (unsigned long)GetLastError());
         return -1;
@@ -43,7 +58,16 @@ int quiWGPUOpen(const char* path, char* err, size_t errlen) {
     }
 #endif
     int missing = quiWGPULoadProcs(quiSym);
-    if (missing > 0) snprintf(err, errlen, "%d WebGPU entry points missing", missing);
+    if (missing > 0) {
+        snprintf(err, errlen, "%d WebGPU entry points missing", missing);
+        // Not ours: unload it so the next candidate can be tried.
+#ifdef _WIN32
+        FreeLibrary(quiLib);
+#else
+        dlclose(quiLib);
+#endif
+        quiLib = NULL;
+    }
     return missing;
 }
 

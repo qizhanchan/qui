@@ -11,9 +11,10 @@ import (
 // out a layer (there is no compositor in a test).
 type fakeLayerSurface struct {
 	*fakeSurface
+	layer unsafe.Pointer // nil unless a test sets one
 }
 
-func (s *fakeLayerSurface) MetalLayer() unsafe.Pointer { return nil }
+func (s *fakeLayerSurface) MetalLayer() unsafe.Pointer { return s.layer }
 
 // layerFakeWindow is a fake platform window whose surface offers a GPU
 // target (like cocoa).
@@ -119,5 +120,53 @@ func TestBindSurfaceFallsBackToCPU(t *testing.T) {
 	w.SetRenderer(NewAutoRenderer())
 	if !isCPU(w.renderer) {
 		t.Fatalf("after the failure AutoRenderer gave %T again", w.renderer)
+	}
+}
+
+// flakyWebGPURenderer binds its surface until fail is set (a device lost
+// mid-run).
+type flakyWebGPURenderer struct {
+	CPURenderer
+	fail *bool
+}
+
+func (r *flakyWebGPURenderer) SetMetalLayer(unsafe.Pointer) bool          { return !*r.fail }
+func (r *flakyWebGPURenderer) SetSurfaceTarget(render.SurfaceTarget) bool { return !*r.fail }
+
+// Falling back to the CPU path mid-run must repaint the whole window, even
+// when the frame that noticed only had a small dirty rect: the new
+// renderer's frame starts empty.
+func TestRendererFailureRepaintsEverything(t *testing.T) {
+	w := newLayerFakeWindow(t)
+	w.plat.(*layerFakeWindow).ms.layer = unsafe.Pointer(&w)
+	fail := false
+	w.SetRenderer(&flakyWebGPURenderer{fail: &fail})
+	red := Color{R: 1, A: 1}
+	w.SetRoot(&fillWidget{c: red})
+	w.Step()
+	if _, ok := w.renderer.(*flakyWebGPURenderer); !ok {
+		t.Fatalf("first frame: renderer = %T, want the GPU stand-in", w.renderer)
+	}
+
+	fail = true
+	webgpuOld := webgpuUsable
+	t.Cleanup(func() { webgpuUsable = webgpuOld })
+	webgpuUsable = func() bool { return false }
+	w.resetDirty()
+	w.InvalidateRect(Rect{X: 10, Y: 10, W: 4, H: 4})
+	w.Step()
+
+	src, ok := w.renderer.(CPUFrameSource)
+	if !ok || !isCPU(w.renderer) {
+		t.Fatalf("renderer = %T, want the CPU path", w.renderer)
+	}
+	img := src.FrameImage()
+	if img == nil {
+		t.Fatal("no CPU frame")
+	}
+	b := img.Bounds()
+	c := img.RGBAAt(b.Max.X-5, b.Max.Y-5)
+	if c.R != 255 || c.A != 255 {
+		t.Fatalf("far corner = %v after the fallback, want red (whole window repainted)", c)
 	}
 }

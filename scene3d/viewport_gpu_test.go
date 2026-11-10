@@ -84,3 +84,34 @@ func TestViewportCullsBackFaces(t *testing.T) {
 		}
 	}
 }
+
+// Translucent Unlit color blends source-over (the shader premultiplies),
+// and a Lit material draws lines (normal / uv read as zero).
+func TestViewportTranslucentUnlitAndLitLines(t *testing.T) {
+	if _, err := gpu.Shared(); err != nil {
+		t.Skipf("WebGPU unavailable: %v", err)
+	}
+	gpu.SetErrorHandler(func(kind int, msg string) { t.Errorf("WebGPU error %d: %s", kind, msg) })
+	defer gpu.SetErrorHandler(nil)
+
+	scene := NewScene()
+	scene.Camera.Position = Vec3{Z: 3}
+	node := NewNode("quad")
+	node.Mesh = NewMesh([]Vec3{{X: -1, Y: -1}, {X: 1, Y: -1}, {X: 1, Y: 1}, {X: -1, Y: 1}},
+		[]Vec3{{Z: 1}, {Z: 1}, {Z: 1}, {Z: 1}}, nil, []uint32{0, 1, 2, 0, 2, 3})
+	node.Material = NewUnlitMaterial(qui.Color{R: 1, A: 0.5})
+	node.Lines = NewLineMesh([]Vec3{{X: -2, Y: -1.2}, {X: 2, Y: -1.2}})
+	node.LineMaterial = NewLitMaterial(qui.Color{G: 1, A: 1})
+	scene.Root.AddChild(node)
+	vp := NewViewport(scene)
+	vp.ClearColor = qui.Color{B: 1, A: 1}
+	img, err := qui.RenderWithWebGPUForTest(vp, qui.Size{W: 32, H: 32}, 1)
+	if err != nil {
+		t.Skip(err)
+	}
+	// 50% red over opaque blue: about (128, 0, 128), not (255, 0, 128).
+	c := img.RGBAAt(16, 16)
+	if c.R < 118 || c.R > 138 || c.B < 118 || c.B > 138 {
+		t.Errorf("center = %v, want ~50%% red over blue", c)
+	}
+}

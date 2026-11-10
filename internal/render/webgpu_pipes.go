@@ -1,5 +1,3 @@
-//go:build cgo && !js
-
 package render
 
 import (
@@ -113,7 +111,7 @@ func webgpuPipesFor(dev *wgpu.Device) (*webgpuPipes, error) {
 		return dev.CreateRenderPipeline(wgpu.RenderPipelineDescriptor{
 			Label: label, Module: m, FragmentEntry: fs, Buffers: quads,
 			Topology: wgpu.TopologyTriangleStrip,
-			Targets:  []wgpu.ColorTarget{{Format: wgpu.FormatBGRA8Unorm, Blend: wgpu.BlendPremultiplied}},
+			Targets:  []wgpu.ColorTarget{{Format: wgpu.FormatBGRA8Unorm, Blend: wgpu.BlendPremultiplied()}},
 		})
 	}
 	p := &webgpuPipes{dev: dev}
@@ -148,9 +146,10 @@ func (p *webgpuPipes) textureBindGroup(view *wgpu.TextureView, nearest bool) *wg
 // ---- compositor ----
 
 type pixelTex struct {
-	tex  *wgpu.Texture
-	view *wgpu.TextureView
-	bg   *wgpu.BindGroup
+	tex     *wgpu.Texture
+	view    *wgpu.TextureView
+	bg      *wgpu.BindGroup
+	version uint64 // content last uploaded (0: unknown)
 }
 
 func (t *pixelTex) release() {
@@ -160,10 +159,11 @@ func (t *pixelTex) release() {
 }
 
 type yuvTex struct {
-	planes [3]*wgpu.Texture
-	views  [3]*wgpu.TextureView
-	conv   *wgpu.Buffer
-	bg     *wgpu.BindGroup
+	planes  [3]*wgpu.Texture
+	views   [3]*wgpu.TextureView
+	conv    *wgpu.Buffer
+	bg      *wgpu.BindGroup
+	version uint64 // content last uploaded (0: unknown)
 }
 
 func (t *yuvTex) release() {
@@ -192,7 +192,7 @@ func (c webgpuCompositor) FramebufferSize() gfx.Size {
 	return gfx.Size{W: float32(c.r.img.Rect.Dx()), H: float32(c.r.img.Rect.Dy())}
 }
 
-func (c webgpuCompositor) DrawPixels(key any, pix unsafe.Pointer, stride, w, h int, bgra bool, src, dst gfx.Rect) bool {
+func (c webgpuCompositor) DrawPixels(key any, version uint64, pix unsafe.Pointer, stride, w, h int, bgra bool, src, dst gfx.Rect) bool {
 	r := c.r
 	if key == nil || pix == nil || w <= 0 || h <= 0 {
 		return false
@@ -218,12 +218,15 @@ func (c webgpuCompositor) DrawPixels(key any, pix unsafe.Pointer, stride, w, h i
 		}
 		r.pixels[key] = t
 	}
-	r.dev.WriteTexture(t.tex, 0, 0, w, h, pix, stride)
+	if version == 0 || t.version != version {
+		r.dev.WriteTexture(t.tex, 0, 0, w, h, pix, stride)
+		t.version = version
+	}
 	r.addQuad(r.pipes.tex, t.bg, dst, src, gfx.Rect{}, w, h, 1, false)
 	return true
 }
 
-func (c webgpuCompositor) DrawYUV420(key any, planes [3]YUVPlane, m [9]float32, off, scale [3]float32, src, dst gfx.Rect) bool {
+func (c webgpuCompositor) DrawYUV420(key any, version uint64, planes [3]YUVPlane, m [9]float32, off, scale [3]float32, src, dst gfx.Rect) bool {
 	r := c.r
 	if key == nil {
 		return false
@@ -260,8 +263,11 @@ func (c webgpuCompositor) DrawYUV420(key any, planes [3]YUVPlane, m [9]float32, 
 		}
 		r.yuv[key] = t
 	}
-	for i, p := range planes {
-		r.dev.WriteTexture(t.planes[i], 0, 0, p.W, p.H, p.Pix, p.Stride)
+	if version == 0 || t.version != version {
+		for i, p := range planes {
+			r.dev.WriteTexture(t.planes[i], 0, 0, p.W, p.H, p.Pix, p.Stride)
+		}
+		t.version = version
 	}
 	k := [20]float32{
 		m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0,

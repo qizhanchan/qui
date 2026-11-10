@@ -1,5 +1,3 @@
-//go:build cgo && !js
-
 package qui
 
 import "github.com/qizhanchan/qui/internal/render"

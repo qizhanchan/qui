@@ -336,19 +336,6 @@ const (
 	AddressMirror      AddressMode = C.WGPUAddressMode_MirrorRepeat
 )
 
-// BlendPremultiplied is source-over for premultiplied colors — what qui's
-// 2D layer, video frames and CAMetalLayer compositing all use.
-var BlendPremultiplied = &BlendState{
-	Color: BlendComponent{Op: BlendAdd, Src: BlendOne, Dst: BlendOneMinusSrcAlpha},
-	Alpha: BlendComponent{Op: BlendAdd, Src: BlendOne, Dst: BlendOneMinusSrcAlpha},
-}
-
-// BlendAlpha is source-over for straight (non-premultiplied) colors.
-var BlendAlpha = &BlendState{
-	Color: BlendComponent{Op: BlendAdd, Src: BlendSrcAlpha, Dst: BlendOneMinusSrcAlpha},
-	Alpha: BlendComponent{Op: BlendAdd, Src: BlendOne, Dst: BlendOneMinusSrcAlpha},
-}
-
 // ---- textures ----
 
 type Texture struct {
@@ -460,7 +447,19 @@ func (d *Device) CreateBufferInit(label string, usage BufferUsage, data []byte) 
 
 func (b *Buffer) Size() uint64 { return b.size }
 
+// Release drops the reference. The memory is freed once no submitted or
+// still-encoding GPU work uses the buffer, so releasing one mid-frame is
+// safe; Destroy frees it now (and invalidates any unsubmitted use).
 func (b *Buffer) Release() {
+	if b != nil && b.c != nil {
+		C.wgpuBufferRelease(b.c)
+		b.c = nil
+	}
+}
+
+// Destroy frees the GPU memory now, then releases. Any command buffer that
+// still references the buffer fails validation on submit.
+func (b *Buffer) Destroy() {
 	if b != nil && b.c != nil {
 		C.wgpuBufferDestroy(b.c)
 		C.wgpuBufferRelease(b.c)
@@ -896,9 +895,23 @@ type ColorAttachment struct {
 
 type DepthAttachment struct {
 	View  *TextureView
-	Load  LoadOp // zero: clear
-	Store StoreOp
-	Clear float32 // zero is treated as 1 (far) when Load clears
+	Load  LoadOp  // zero: clear
+	Store StoreOp // zero: store
+	// Clear is the depth the pass clears to when Load clears: 1 is the far
+	// plane of the usual Less test, 0 that of reverse-Z (Greater).
+	Clear float32
+
+	// Stencil ops, used only when the view's format has a stencil aspect
+	// (FormatDepth24PlusStencil8): zero Load clears, zero Store stores.
+	StencilLoad  LoadOp
+	StencilStore StoreOp
+	StencilClear uint32
+}
+
+// hasStencil reports whether f has a stencil aspect, which WebGPU requires
+// stencil load/store ops for.
+func hasStencil(f TextureFormat) bool {
+	return f == FormatDepth24PlusStencil8
 }
 
 type RenderPassDescriptor struct {
@@ -946,9 +959,17 @@ func (e *CommandEncoder) BeginRenderPass(desc RenderPassDescriptor) *RenderPass 
 		if d.Store != 0 {
 			da.depthStoreOp = C.WGPUStoreOp(d.Store)
 		}
-		da.depthClearValue = 1
-		if d.Clear != 0 {
-			da.depthClearValue = C.float(d.Clear)
+		da.depthClearValue = C.float(d.Clear)
+		if t := d.View.Texture(); t != nil && hasStencil(t.format) {
+			da.stencilLoadOp = C.WGPULoadOp_Clear
+			if d.StencilLoad != 0 {
+				da.stencilLoadOp = C.WGPULoadOp(d.StencilLoad)
+			}
+			da.stencilStoreOp = C.WGPUStoreOp_Store
+			if d.StencilStore != 0 {
+				da.stencilStoreOp = C.WGPUStoreOp(d.StencilStore)
+			}
+			da.stencilClearValue = C.uint32_t(d.StencilClear)
 		}
 		rp.depthStencilAttachment = da
 	}

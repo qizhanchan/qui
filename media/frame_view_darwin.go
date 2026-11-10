@@ -100,13 +100,57 @@ func (v *FrameView) PushCVPixelBuffer(pb unsafe.Pointer) error {
 type cvFrame struct {
 	pb   unsafe.Pointer // CVPixelBufferRef, retained by us
 	w, h int
+	cpu  *image.RGBA // RGBA copy for the CPU path (made on first use)
 }
 
 func (f *cvFrame) size() (int, int) { return f.w, f.h }
 
-// cpuImage is nil: a CVPixelBuffer has no CPU canvas fallback (the GPU
-// path is the point of pushing one).
-func (f *cvFrame) cpuImage() image.Image { return nil }
+// cpuImage converts the buffer to RGBA for the CPU path (no Dawn, or the
+// window fell back to CPU presentation), once per frame.
+func (f *cvFrame) cpuImage() image.Image {
+	if f.cpu != nil {
+		return f.cpu
+	}
+	if f.pb == nil {
+		return nil
+	}
+	img := pixelBufferRGBA(f.pb, f.w, f.h)
+	if img == nil {
+		return nil
+	}
+	f.cpu = img
+	return img
+}
+
+// lockPixelBuffer locks a 32BGRA CVPixelBuffer's memory for reading; the
+// caller must call unlock when done.
+func lockPixelBuffer(pb unsafe.Pointer) (base unsafe.Pointer, stride int, unlock func()) {
+	var st C.size_t
+	base = C.qfvLock(pb, &st)
+	if base == nil {
+		return nil, 0, nil
+	}
+	return base, int(st), func() { C.qfvUnlock(pb) }
+}
+
+// pixelBufferRGBA copies a w×h 32BGRA CVPixelBuffer into a new RGBA image.
+func pixelBufferRGBA(pb unsafe.Pointer, w, h int) *image.RGBA {
+	base, stride, unlock := lockPixelBuffer(pb)
+	if base == nil {
+		return nil
+	}
+	defer unlock()
+	src := unsafe.Slice((*byte)(base), stride*(h-1)+w*4)
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		s := src[y*stride : y*stride+w*4]
+		d := img.Pix[y*img.Stride : y*img.Stride+w*4]
+		for x := 0; x < len(s); x += 4 {
+			d[x], d[x+1], d[x+2], d[x+3] = s[x+2], s[x+1], s[x], s[x+3]
+		}
+	}
+	return img
+}
 
 // draw shows the buffer zero-copy through its IOSurface, or uploads its
 // pixels when it has none.
@@ -117,16 +161,16 @@ func (f *cvFrame) draw(v *FrameView, c qui.Compositor, src, dst qui.Rect) bool {
 	if c.DrawPixelBuffer(f.pb, src, dst) {
 		return true
 	}
-	var stride C.size_t
-	base := C.qfvLock(f.pb, &stride)
+	base, stride, unlock := lockPixelBuffer(f.pb)
 	if base == nil {
 		return false
 	}
-	defer C.qfvUnlock(f.pb)
-	return c.DrawPixels(v, base, int(stride), f.w, f.h, true, src, dst)
+	defer unlock()
+	return c.DrawPixels(v, v.curSeq, base, stride, f.w, f.h, true, src, dst)
 }
 
 func (f *cvFrame) release() {
+	f.cpu = nil
 	if f.pb != nil {
 		C.qfvRelease(f.pb)
 		f.pb = nil

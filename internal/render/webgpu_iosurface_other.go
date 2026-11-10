@@ -1,4 +1,4 @@
-//go:build cgo && !js && !darwin
+//go:build !darwin || !cgo
 
 package render
 

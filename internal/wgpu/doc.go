@@ -17,6 +17,7 @@
 package wgpu
 
 //go:generate go run gen/genproc.go
+//go:generate go run gen/genstub.go
 
 import "errors"
 

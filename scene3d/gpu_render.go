@@ -1,5 +1,3 @@
-//go:build cgo && !js
-
 package scene3d
 
 import (
@@ -114,9 +112,12 @@ func (m *LineMesh) buffers(dev *gpu.Device) *meshGPU {
 	if m.gpu.vb != nil || len(m.Positions) == 0 {
 		return &m.gpu
 	}
-	data := make([]float32, 0, len(m.Positions)*3)
+	// Same vertex layout as triangle meshes (normal and uv zero), so any
+	// material — Lit, or a custom shader reading normal / uv — can draw
+	// lines, as the missing attributes read as zero under GL.
+	data := make([]float32, 0, len(m.Positions)*8)
 	for _, p := range m.Positions {
-		data = append(data, p.X, p.Y, p.Z)
+		data = append(data, p.X, p.Y, p.Z, 0, 0, 0, 0, 0)
 	}
 	m.gpu.vb = dev.CreateBufferInit("scene3d lines", gpu.BufferVertex, floatBytes(data))
 	m.gpu.count = len(m.Positions)
@@ -144,9 +145,7 @@ var (
 		{Format: gpu.VertexFloat32x3, Offset: 12, Location: 1},
 		{Format: gpu.VertexFloat32x2, Offset: 24, Location: 2},
 	}}}
-	lineVertices = []gpu.VertexBufferLayout{{Stride: 12, Attributes: []gpu.VertexAttribute{
-		{Format: gpu.VertexFloat32x3, Offset: 0, Location: 0},
-	}}}
+	lineVertices = meshVertices
 )
 
 func layout(dev *gpu.Device) *gpu.PipelineLayout {
@@ -178,7 +177,7 @@ func pipelineFor(dev *gpu.Device, mat Material, lines bool) *gpu.RenderPipeline 
 	desc := gpu.RenderPipelineDescriptor{
 		Label: "scene3d", Layout: layout(dev), Module: mod,
 		SampleCount: MSAASamples,
-		Targets:     []gpu.ColorTarget{{Format: ColorFormat, Blend: gpu.BlendPremultiplied}},
+		Targets:     []gpu.ColorTarget{{Format: ColorFormat, Blend: gpu.BlendPremultiplied()}},
 	}
 	if lines {
 		desc.Buffers = lineVertices
@@ -295,7 +294,7 @@ func (v *Viewport) render(f *qui.GPUFrame, w, h int) {
 		Color: []gpu.ColorAttachment{{View: g.msaaView, Resolve: g.resolveView, Load: gpu.LoadOpClear,
 			Store: gpu.StoreOpDiscard,
 			Clear: gpu.Color{R: float64(c.R * c.A), G: float64(c.G * c.A), B: float64(c.B * c.A), A: float64(c.A)}}},
-		Depth: &gpu.DepthAttachment{View: g.depthView, Store: gpu.StoreOpDiscard},
+		Depth: &gpu.DepthAttachment{View: g.depthView, Store: gpu.StoreOpDiscard, Clear: 1},
 	})
 	defer pass.End()
 	if v.Drawable != nil {

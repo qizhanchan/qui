@@ -1,5 +1,3 @@
-//go:build cgo && !js
-
 // Package gpu is qui's WebGPU API: the process-wide device, textures,
 // buffers, WGSL shader modules, render pipelines and passes. It is a thin
 // re-export of the internal binding to Dawn (docs/rfc/0003-webgpu.zh.md);
@@ -8,6 +6,9 @@
 //
 // Every call must be made on the UI thread. Objects are released
 // explicitly (Release / Destroy).
+//
+// The package builds everywhere; without cgo (CGO_ENABLED=0, js/wasm)
+// Shared and Load report ErrUnavailable and nothing else is reachable.
 package gpu
 
 import "github.com/qizhanchan/qui/internal/wgpu"
@@ -18,6 +19,7 @@ type (
 	BindGroupLayoutEntry     = wgpu.BindGroupLayoutEntry
 	PipelineLayout           = wgpu.PipelineLayout
 	Surface                  = wgpu.Surface
+	AcquireStatus            = wgpu.AcquireStatus
 	SharedMemory             = wgpu.SharedMemory
 	Device                   = wgpu.Device
 	TextureFormat            = wgpu.TextureFormat
@@ -145,13 +147,20 @@ const (
 	AddressClampToEdge        = wgpu.AddressClampToEdge
 	AddressRepeat             = wgpu.AddressRepeat
 	AddressMirror             = wgpu.AddressMirror
+	AcquireOK                 = wgpu.AcquireOK
+	AcquireSkipped            = wgpu.AcquireSkipped
+	AcquireLost               = wgpu.AcquireLost
+	AcquireFailed             = wgpu.AcquireFailed
 )
 
-var (
-	ErrUnavailable     = wgpu.ErrUnavailable
-	BlendPremultiplied = wgpu.BlendPremultiplied
-	BlendAlpha         = wgpu.BlendAlpha
-)
+var ErrUnavailable = wgpu.ErrUnavailable
+
+// BlendPremultiplied is source-over for premultiplied colors (a new state
+// per call).
+func BlendPremultiplied() *BlendState { return wgpu.BlendPremultiplied() }
+
+// BlendAlpha is source-over for straight colors (a new state per call).
+func BlendAlpha() *BlendState { return wgpu.BlendAlpha() }
 
 // LibraryName is the Dawn shared library's file name on this OS.
 func LibraryName() string { return wgpu.LibraryName() }

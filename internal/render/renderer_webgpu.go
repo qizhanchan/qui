@@ -1,5 +1,3 @@
-//go:build cgo && !js
-
 package render
 
 import (
@@ -55,6 +53,16 @@ type WebGPURenderer struct {
 
 	painted bool
 	stale   bool // frame texture does not hold img: upload all of it
+
+	// Surface acquisition. dropped: the last frame got no surface texture
+	// (the window asks for a redraw-only frame to show it); drops counts
+	// consecutive drops, lost consecutive Lost surfaces (recreated each
+	// time). broken: the surface cannot present at all; SetSurfaceTarget
+	// then reports false and the window falls back to the CPU path.
+	dropped bool
+	drops   int
+	lost    int
+	broken  bool
 
 	retainedComp RetainedSet[func(Compositor)]
 	queuedComp   []func(Compositor)
@@ -112,7 +120,7 @@ func (r *WebGPURenderer) SetSurfaceTarget(t SurfaceTarget) bool {
 	if r == nil {
 		return false
 	}
-	if wgpu.Lost() {
+	if wgpu.Lost() || r.broken {
 		// The window falls back to CPU presentation (Window.rendererFailed).
 		r.releaseSurface()
 		r.target = SurfaceTarget{}
@@ -181,6 +189,9 @@ func (r *WebGPURenderer) Close() {
 	r.releaseSurface()
 	r.releaseFrameTextures()
 	for k := range r.pixels {
+		r.forgetTextures(k)
+	}
+	for k := range r.yuv {
 		r.forgetTextures(k)
 	}
 	r.pbuf.releaseAll()
@@ -262,6 +273,12 @@ func (r *WebGPURenderer) frameBuffer(w, h int) {
 				r.unlock()
 				r.releaseFrameTextures()
 				r.shared.release()
+				r.shared = nil
+			} else {
+				// An upload frame (an earlier IOSurface failed): its
+				// texture, view and bind group must not outlive it, or
+				// the composite keeps sampling the old upload texture.
+				r.releaseFrameTextures()
 			}
 			r.shared = s
 			r.img = s.image()
@@ -358,7 +375,7 @@ func (r *WebGPURenderer) End() {
 // last painted frame without rasterizing anything.
 func (r *WebGPURenderer) RedrawRetained() bool {
 	if r == nil || r.surface == nil || r.img == nil || !r.painted ||
-		r.retainedComp.Len()+r.retainedGPU.Len() == 0 && r.pre == nil && r.post == nil {
+		r.retainedComp.Len()+r.retainedGPU.Len() == 0 && r.pre == nil && r.post == nil && !r.dropped {
 		return false
 	}
 	r.present(nil, image.Rectangle{}, true)
@@ -379,8 +396,7 @@ func (r *WebGPURenderer) present(up []image.Rectangle, damage image.Rectangle, d
 	r.updateFrameTexture(up)
 	enc := dev.CreateCommandEncoder()
 
-	r.surface.Configure(w, h, wgpu.FormatBGRA8Unorm, r.transparent)
-	target := r.surface.CurrentTexture()
+	target := r.acquire(w, h)
 	if target == nil {
 		dev.Submit(r.finish(enc))
 		r.afterSubmit()
@@ -439,6 +455,59 @@ func (r *WebGPURenderer) present(up []image.Rectangle, damage image.Rectangle, d
 	}
 	targetView.Release()
 	target.Release()
+}
+
+// maxRetriedDrops bounds how many dropped frames in a row ask for a
+// redraw: a surface that keeps timing out (an occluded window) waits for
+// the next real frame instead of spinning the loop.
+const maxRetriedDrops = 8
+
+// maxLostSurfaces is how many times in a row a Lost surface is recreated
+// before the window gives up on WebGPU presentation.
+const maxLostSurfaces = 3
+
+// acquire configures the surface for a w×h frame and returns its texture,
+// or nil when this frame cannot be presented (see dropped / broken).
+func (r *WebGPURenderer) acquire(w, h int) *wgpu.Texture {
+	if err := r.surface.Configure(w, h, wgpu.FormatBGRA8Unorm, r.transparent); err != nil {
+		log.Printf("qui: WebGPU surface: %v", err)
+		r.broken = true
+		return nil
+	}
+	t, st := r.surface.Acquire()
+	switch st {
+	case wgpu.AcquireOK:
+		r.dropped, r.drops, r.lost = false, 0, 0
+		return t
+	case wgpu.AcquireLost:
+		r.lost++
+		if r.lost > maxLostSurfaces {
+			log.Printf("qui: WebGPU surface lost %d times in a row", r.lost)
+			r.broken = true
+			return nil
+		}
+		// Recreated by the next SetSurfaceTarget (the target differs).
+		r.releaseSurface()
+		r.target = SurfaceTarget{}
+	case wgpu.AcquireFailed:
+		log.Printf("qui: WebGPU surface cannot present")
+		r.broken = true
+		return nil
+	}
+	r.drops++
+	r.dropped = true
+	return nil
+}
+
+// TakeDroppedFrame implements DroppedFrameRenderer: whether the last
+// frame was not presented and should be shown again by a redraw-only
+// frame. It reports each drop once, and stops after maxRetriedDrops in a
+// row.
+func (r *WebGPURenderer) TakeDroppedFrame() bool {
+	if r == nil || !r.dropped || r.broken {
+		return false
+	}
+	return r.drops <= maxRetriedDrops
 }
 
 // finish ends GPU access to shared textures around the submit.
@@ -514,7 +583,7 @@ func (r *WebGPURenderer) updateFrameTexture(up []image.Rectangle) {
 	}
 }
 
-func (r *WebGPURenderer) encodeMove(enc *wgpu.CommandEncoder, m image.Rectangle, d image.Point) {
+func (r *WebGPURenderer) encodeMove(enc *wgpu.CommandEncoder, m image.Rectangle, d image.Point) bool {
 	x, y, w, h := m.Min.X, m.Min.Y, m.Dx(), m.Dy()
 	sx, sy := x, y
 	if d.X < 0 {
@@ -526,7 +595,7 @@ func (r *WebGPURenderer) encodeMove(enc *wgpu.CommandEncoder, m image.Rectangle,
 	cw, ch := w-iabs(d.X), h-iabs(d.Y)
 	fw, fh := r.frame.Width(), r.frame.Height()
 	if cw <= 0 || ch <= 0 || x < 0 || y < 0 || x+w > fw || y+h > fh {
-		return
+		return false
 	}
 	if r.scratch == nil || r.scratch.Width() != fw || r.scratch.Height() != fh {
 		if r.scratch != nil {
@@ -539,6 +608,7 @@ func (r *WebGPURenderer) encodeMove(enc *wgpu.CommandEncoder, m image.Rectangle,
 	}
 	enc.CopyTexture(r.frame, sx, sy, r.scratch, sx, sy, cw, ch)
 	enc.CopyTexture(r.scratch, sx, sy, r.frame, sx+d.X, sy+d.Y, cw, ch)
+	return true
 }
 
 func (r *WebGPURenderer) frameBindGroup() *wgpu.BindGroup {
@@ -762,13 +832,20 @@ func (r *WebGPURenderer) ScrollPixels(rect image.Rectangle, dx, dy int) bool {
 	}
 	rr := rect.Sub(r.img.Rect.Min)
 	if r.shared != nil && r.frame != nil {
+		// Same contract as scrollImage: the rect must lie in the frame
+		// and the move must keep some of it, or nothing moved.
+		w, h := rr.Dx(), rr.Dy()
+		if !rr.In(image.Rect(0, 0, r.frame.Width(), r.frame.Height())) ||
+			dx <= -w || dx >= w || dy <= -h || dy >= h {
+			return false
+		}
 		r.unlock()
 		enc := r.dev.CreateCommandEncoder()
-		r.encodeMove(enc, rr, image.Pt(dx, dy))
+		moved := r.encodeMove(enc, rr, image.Pt(dx, dy))
 		r.dev.Submit(r.finish(enc))
 		r.afterSubmit()
 		r.dev.WaitIdle()
-		return true
+		return moved
 	}
 	if !scrollImage(r.img, rect, dx, dy) {
 		return false

@@ -94,7 +94,7 @@ func TestWebGPUCompositesVideoUnderTheHole(t *testing.T) {
 	identity := [9]float32{1, 0, 0, 0, 1, 0, 0, 0, 1}
 	drew := false
 	c.(RetainedCompositorCanvas).QueueRetainedDraw("video", gfx.Rect{X: 16, Y: 16, W: 32, H: 32}, func(mc Compositor) {
-		drew = mc.DrawYUV420("video", planes, identity, [3]float32{}, [3]float32{1, 1, 1},
+		drew = mc.DrawYUV420("video", 0, planes, identity, [3]float32{}, [3]float32{1, 1, 1},
 			gfx.Rect{W: 32, H: 32}, gfx.Rect{X: 16, Y: 16, W: 32, H: 32})
 	})
 	r.End()
@@ -136,7 +136,7 @@ func TestWebGPUDrawPixels(t *testing.T) {
 		bgra[i], bgra[i+1], bgra[i+2], bgra[i+3] = 10, 20, 230, 255 // B G R A
 	}
 	c.(RetainedCompositorCanvas).QueueRetainedDraw("px", gfx.Rect{X: 8, Y: 8, W: 16, H: 16}, func(mc Compositor) {
-		mc.DrawPixels("px", unsafe.Pointer(&bgra[0]), 16, 4, 4, true, gfx.Rect{W: 4, H: 4}, gfx.Rect{X: 8, Y: 8, W: 16, H: 16})
+		mc.DrawPixels("px", 0, unsafe.Pointer(&bgra[0]), 16, 4, 4, true, gfx.Rect{W: 4, H: 4}, gfx.Rect{X: 8, Y: 8, W: 16, H: 16})
 	})
 	r.End()
 	got := r.readShown()
@@ -312,4 +312,106 @@ func TestWebGPUSnapshotOfPaddedSurface(t *testing.T) {
 			}
 		}
 	})
+}
+
+// Close releases YUV textures as well as pixel textures.
+func TestWebGPUCloseReleasesYUV(t *testing.T) {
+	r := newOffscreenWebGPU(t, 32, 32, true)
+	c := r.Begin(gfx.Size{W: 32, H: 32})
+	y, u := make([]byte, 16*16), make([]byte, 8*8)
+	planes := [3]YUVPlane{
+		{Pix: unsafe.Pointer(&y[0]), Stride: 16, W: 16, H: 16},
+		{Pix: unsafe.Pointer(&u[0]), Stride: 8, W: 8, H: 8},
+		{Pix: unsafe.Pointer(&u[0]), Stride: 8, W: 8, H: 8},
+	}
+	c.(RetainedCompositorCanvas).QueueRetainedDraw("v", gfx.Rect{W: 16, H: 16}, func(mc Compositor) {
+		mc.DrawYUV420("v", 1, planes, [9]float32{1, 0, 0, 0, 1, 0, 0, 0, 1}, [3]float32{}, [3]float32{1, 1, 1},
+			gfx.Rect{W: 16, H: 16}, gfx.Rect{W: 16, H: 16})
+	})
+	r.End()
+	if len(r.yuv) != 1 {
+		t.Fatalf("yuv textures = %d, want 1", len(r.yuv))
+	}
+	r.Close()
+	if len(r.yuv) != 0 {
+		t.Fatalf("after Close: %d YUV texture sets left", len(r.yuv))
+	}
+}
+
+// An unchanged version replays the cached texture without uploading; a
+// new version uploads.
+func TestWebGPUDrawPixelsVersionSkipsUpload(t *testing.T) {
+	r := newOffscreenWebGPU(t, 16, 16, true)
+	px := make([]byte, 4*4*4)
+	fill := func(b, g, rr byte) {
+		for i := 0; i < len(px); i += 4 {
+			px[i], px[i+1], px[i+2], px[i+3] = b, g, rr, 255
+		}
+	}
+	fill(255, 0, 0) // BGRA blue
+	version := uint64(7)
+	c := r.Begin(gfx.Size{W: 16, H: 16})
+	c.(RetainedCompositorCanvas).QueueRetainedDraw("px", gfx.Rect{W: 16, H: 16}, func(mc Compositor) {
+		mc.DrawPixels("px", version, unsafe.Pointer(&px[0]), 16, 4, 4, true, gfx.Rect{W: 4, H: 4}, gfx.Rect{W: 16, H: 16})
+	})
+	c.ClearRect(gfx.Rect{W: 16, H: 16})
+	r.End()
+	if p := pixelAt(r.readShown(), 8, 8); p[2] != 255 {
+		t.Fatalf("first frame = %v, want blue", p)
+	}
+	fill(0, 0, 255) // red, same version: still the cached blue
+	if !r.RedrawRetained() {
+		t.Fatal("RedrawRetained declined")
+	}
+	if p := pixelAt(r.readShown(), 8, 8); p[2] != 255 || p[0] != 0 {
+		t.Fatalf("same version = %v, want the cached blue (no upload)", p)
+	}
+	version = 8
+	r.RedrawRetained()
+	if p := pixelAt(r.readShown(), 8, 8); p[0] != 255 {
+		t.Fatalf("new version = %v, want red", p)
+	}
+}
+
+// Shared-frame ScrollPixels follows PixelScroller: false when nothing
+// could move.
+func TestWebGPUSharedScrollPixelsOutOfBounds(t *testing.T) {
+	r := newOffscreenWebGPU(t, 32, 32, true)
+	r.Begin(gfx.Size{W: 32, H: 32})
+	r.End()
+	if r.shared == nil {
+		t.Skip("no IOSurface frames on this device")
+	}
+	if r.ScrollPixels(image.Rect(0, 0, 64, 32), 0, 4) {
+		t.Error("rect outside the frame reported as moved")
+	}
+	if r.ScrollPixels(image.Rect(0, 0, 32, 32), 0, 32) {
+		t.Error("a move by the whole height reported as moved")
+	}
+	if !r.ScrollPixels(image.Rect(0, 0, 32, 32), 0, 4) {
+		t.Error("a valid move was declined")
+	}
+}
+
+// Moving from an upload frame (an IOSurface failed earlier) to an
+// IOSurface frame must drop the upload texture's bind group, or the
+// composite keeps showing the old upload texture.
+func TestWebGPUUploadToSharedFrame(t *testing.T) {
+	r := newOffscreenWebGPU(t, 24, 16, false)
+	c := r.Begin(gfx.Size{W: 24, H: 16})
+	c.FillRect(gfx.Rect{W: 24, H: 16}, gfx.Color{R: 1, A: 1})
+	r.End()
+	if dev, _ := wgpu.Shared(); !dev.CanImportIOSurface() || !sharedFramesAvailable {
+		t.Skip("no IOSurface frames on this device")
+	}
+	webgpuNoShared = false
+	c = r.Begin(gfx.Size{W: 24, H: 16})
+	if r.shared == nil {
+		t.Fatal("no IOSurface frame")
+	}
+	c.FillRect(gfx.Rect{W: 24, H: 16}, gfx.Color{G: 1, A: 1})
+	r.End()
+	if p := pixelAt(r.readShown(), 12, 8); p[1] != 255 || p[0] != 0 {
+		t.Fatalf("presented %v after the switch, want green (the new frame)", p)
+	}
 }

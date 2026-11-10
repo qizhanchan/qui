@@ -94,3 +94,26 @@ func TestWriteTextureRoundTrip(t *testing.T) {
 		t.Fatalf("round trip differs")
 	}
 }
+
+// A depth-stencil attachment needs stencil ops (validation error before),
+// and a depth clear of 0 (reverse-Z) must be honoured, not turned into 1.
+func TestDepthStencilPass(t *testing.T) {
+	d := sharedOrSkip(t)
+	for _, f := range []TextureFormat{FormatDepth24PlusStencil8, FormatDepth32Float} {
+		col := d.CreateTexture(TextureDescriptor{Width: 4, Height: 4, Format: FormatRGBA8Unorm, Usage: UsageRenderAttachment})
+		ds := d.CreateTexture(TextureDescriptor{Width: 4, Height: 4, Format: f, Usage: UsageRenderAttachment})
+		cv, dv := col.CreateView(), ds.CreateView()
+		enc := d.CreateCommandEncoder()
+		pass := enc.BeginRenderPass(RenderPassDescriptor{
+			Color: []ColorAttachment{{View: cv}},
+			Depth: &DepthAttachment{View: dv, Clear: 0},
+		})
+		pass.End()
+		d.Submit(enc.Finish())
+		d.WaitIdle()
+		cv.Release()
+		dv.Release()
+		col.Destroy()
+		ds.Destroy()
+	}
+}
