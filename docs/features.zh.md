@@ -48,12 +48,13 @@
 **渲染**
 
 - `Canvas` 前端：Save/Restore 状态栈（裁剪 + 2×3 仿射矩阵）、`Path` 支持二次 / 三次贝塞尔、抗锯齿 winding/even-odd 填充、描边 cap/join/miter。
-- `SaveLayer` 支持混合模式与 `Paint.Alpha`；`ClipPath`；线性 / 径向渐变着色器；`ColorFilter` / `ImageFilter`（投影、模糊）；`DrawShadow`；`ClearRect`（对应 Web canvas 的 `clearRect`：为 GL 合成控件挖透明洞；透明度为 0 的绘制什么都不画）。
-- `RasterBackend` 接缝：纯 Go 的 CPU 参考实现（`internal/render/backend_cpu.go`）与可选 GPU 后端（`QUI_GPU_RASTER=1`，`internal/render/backend_gpu.go`）。
+- `SaveLayer` 支持混合模式与 `Paint.Alpha`；`ClipPath`；线性 / 径向渐变着色器；`ColorFilter` / `ImageFilter`（投影、模糊）；`DrawShadow`；`ClearRect`（对应 Web canvas 的 `clearRect`：为 GPU 合成控件挖透明洞；透明度为 0 的绘制什么都不画）。
+- `RasterBackend` 接缝：纯 Go 的 CPU 光栅器（`internal/render/backend_cpu.go`）是唯一的光栅后端；任何地方都没有 OpenGL。
+- 渲染器：`CPURenderer`（平台合成器：XPutImage、Web canvas、headless、CALayer contents）、`MetalRenderer`（macOS，CAMetalLayer，零拷贝 IOSurface 帧）、`WebGPURenderer`（Dawn，跑在 Metal / D3D12 / Vulkan 上；macOS 上经 `SharedTextureMemory` 共享 IOSurface，其他情况用 `writeTexture` 上传；`ScrollPixels` 在 GPU 上完成）。`NewAutoRenderer()` 按窗口选择，并在控件请求 WebGPU 时把 Metal 窗口切换为 WebGPU；`QUI_RENDERER=metal|webgpu|cpu`、`QUI_DEBUG_RENDERER=1`、`QUI_WEBGPU=0`、`QUI_DAWN_LIB`、`QUI_WEBGPU_SHARED=0`；`WebGPUAvailable()`、`NewWebGPURenderer()`。Dawn 在运行时加载，用 `cmd/qui-dawn` 安装。
 - 脏区域绘制，`Invalidate` / `InvalidateRect` / `InvalidateLayout` 及包围盒变化提升。
 - 离屏渲染与回读；通过 `pdf.NewDoc`（以画布形式输出 PDF 页面，另有 `pdf.Print`）与 `svg.NewCanvas`（输出 SVG 文档）进行矢量导出。
-- GL 逃生舱：`GPUCanvas.QueueGLDraw`、`GLState`、`ActiveGLRenderer().DrawTexture`、`PhysicalScissor`。
-- 保留式 GL 绘制：`RetainedGLCanvas.QueueRetainedGLDraw` 让 GL 内容在窗口其他部分局部重绘时保持显示（某帧重绘其区域而未重新登记时丢弃）；`Window.RequestGLRedraw`（任意 goroutine）只重放这些绘制，不重新光栅化、不上传 2D 层。
+- GPU API（WebGPU）：`gpu` 包（设备、纹理、缓冲、WGSL 着色器模块、管线、绑定组、编码器、通道；`gpu.Shared()`）；`GPUCanvas.QueueGPUDraw(func(*GPUFrame))`；`GPUFrame` 带 `Device`、`Encoder`、`Format`、`Size`、`LogicalSize`、`DrawTexture`、`RenderPass`、`Compositor()`、`Capture`；整窗钩子 `Window.SetPreRender` / `SetPostRender`（pre-render 钩子即背景）。`examples/customgpu` 用 WGSL 着色器画背景。
+- 保留式 GPU 绘制：`GPUCanvas.QueueRetainedGPUDraw`，以及视频类内容用的 `RetainedCompositorCanvas.QueueRetainedDraw`（`Compositor`：`DrawPixelBuffer`、`DrawPixels`、`DrawYUV420`，Metal 与 WebGPU 都支持）让 GPU 内容在窗口其他部分局部重绘时保持显示（某帧重绘其区域而未重新登记时丢弃）；`Window.RequestGPURedraw`（任意 goroutine）只重放这些绘制，不重新光栅化、不上传 2D 层；`Window.ForgetRetainedDraw` 丢弃其中一个。
 - 光标：内置形状之外还有 `CursorHidden` 与图像光标（`NewImageCursor`、2× 图像用 `NewImageCursorScaled`、`ReleaseCursor`），macOS 两个后端均支持，与其他形状一样经 `SetCursorShape` / `CursorProvider` / `CursorAtProvider` 解析。
 
 **文字**
@@ -143,9 +144,9 @@
 | `anim` | `Tween[T]`、`Spring`、`Timeline`；缓动目录；满足 `qui.Animator` |
 | `graphs` | 稳定的 scale/data 基础能力，以及两个原生方案：`graphs/chart`（ECharts 形状的声明式图表）和 `graphs/diagram`（draw.io 级页面、图层、分组、形状、端口路由、交互编辑、撤销/重做、AX、JSON/draw.io XML 与 PNG/SVG/PDF 导出） |
 | `svg` | SVG 1.1 子集：解析 / 构建 / 光栅化（可染色）/ 序列化；`Document` 满足 `qui.VectorSource` |
-| `scene3d` | 场景图（节点、mesh、材质、灯光、相机）、`Viewport` FBO 控件、轨道控制、拾取、`Vec3Field` |
-| `media` | 不依赖 ffmpeg 的 `AudioPlayer`（服务）与 `VideoView`（控件）；macOS 使用 AVFoundation 后端。`FrameView` 显示从任意 goroutine 推送的帧 —— `PushCVPixelBuffer`（macOS，IOSurface → CVOpenGLTextureCache 零拷贝）或 `PushRGBA` —— 只保留最新帧、空闲零开销，支持适配模式、`MapToFrame` 输入映射、`Stats` / `OnPresent` 延迟统计与原始键盘 |
-| `webview` | 基于 CEF 的内嵌浏览器控件，受 `webview_cef` 门控；CPU 帧路径可用，GL/IOSurface 路径待实现；JS↔Go 桥只传 JSON |
+| `scene3d` | 场景图（节点、mesh、材质、灯光、相机）、WebGPU `Viewport` 控件（自己的 4× MSAA 颜色 + 深度纹理，经 `QueueRetainedGPUDraw` 合成；无 cgo 时画占位图）、WGSL 材质（`Material`：`WGSL()`、`Params`、`Destroy`；`Preamble` 声明 frame/obj uniform 与 `clip_from_world`；`CustomMaterial{Source, OnParams}`）、`Drawable.DrawGPU(*DrawContext)` 逃生舱、轨道控制、拾取、`Vec3Field` |
+| `media` | 不依赖 ffmpeg 的 `AudioPlayer`（服务）与 `VideoView`（控件）；macOS 使用 AVFoundation 后端。`FrameView` 显示从任意 goroutine 推送的帧 —— `PushCVPixelBuffer`（macOS，IOSurface 经渲染器的 `Compositor` 零拷贝）或 `PushRGBA` —— 只保留最新帧、空闲零开销，支持适配模式、`MapToFrame` 输入映射、`Stats` / `OnPresent` 延迟统计与原始键盘。FrameView / VideoView 只走 `Compositor` 路径；`VideoFrame.Composite(c, key, src, physDst)` |
+| `webview` | 基于 CEF 的内嵌浏览器控件，受 `webview_cef` 门控；只有 CPU 帧路径，零拷贝 IOSurface 合成待实现；JS↔Go 桥只传 JSON |
 | `physics` / `p2` / `p3` | 与维度无关的词汇，以及 API 对称的 2D/3D 引擎：扫掠 AABB、空间哈希、接触标志、单向平台、传感器 |
 | `icons` | 约 135 个 Material Symbols 描边字形，为 `*svg.Document` |
 | `fonts/jetbrainsmono` | 内嵌 JetBrains Mono；`Use()` 替换全局默认字族 |

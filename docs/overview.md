@@ -4,7 +4,7 @@
 
 ## What qui is
 
-`qui` is a retained-mode Go GUI framework. It builds desktop applications from a persistent widget tree and renders them with its own rasterizer — a pure-Go CPU reference backend by default, plus an optional GPU backend behind `QUI_GPU_RASTER=1`. The only system dependencies are GLFW and an OpenGL 3.3 context for the window and presentation layer.
+`qui` is a retained-mode Go GUI framework. It builds desktop applications from a persistent widget tree and renders them with its own pure-Go CPU rasterizer. The GPU only presents finished frames — Metal on macOS, WebGPU (Dawn, loaded at run time) for windows with GPU content and on GLFW, the platform compositor elsewhere — and runs GPU content such as 3D and custom WGSL shaders. There is no OpenGL dependency; Dawn is optional at run time and never needed to build.
 
 The whole project is one Go module, `github.com/qizhanchan/qui`. The root `package qui` is the engine; everything else is an optional subpackage.
 
@@ -64,9 +64,9 @@ Optional packages — `scene3d`, `graphs`, `svg`, `media`, `webview`, `physics`,
 
 ## Platform support and status
 
-- **macOS** is the fully supported target. Both the GLFW backend and the native AppKit (`cocoa`) backend are compiled in and selected at runtime; they produce identical geometry.
+- **macOS** is the fully supported target. The native AppKit (`cocoa`) backend is the default; the GLFW backend (`-tags qui_glfw`) can be compiled in alongside it and selected at runtime, and the two produce identical geometry.
 - **Linux / Windows** compile and run the core. Native dialogs, IME, emoji and system-tray integration are macOS-only today; the platform seam returns `ErrNotSupported` rather than failing silently.
-- **Rendering** defaults to the CPU rasterizer. The GPU backend is opt-in and interleaves with the CPU path per primitive.
+- **Rendering** always rasterizes on the CPU. `NewAutoRenderer` picks the presentation: `MetalRenderer` on macOS, `WebGPURenderer` on GLFW or when a window shows GPU content, `CPURenderer` on surfaces without a GPU path (see [rfc/0003-webgpu.zh.md](rfc/0003-webgpu.zh.md)).
 - **Text** is shaped with `go-text/typesetting` (OpenType GSUB/GPOS, Unicode bidi, UAX #14 / #29) and is shared by measurement, drawing, PDF output, wrapping, hit testing, selection and editing.
 - **Internationalization** supports message catalogs, CLDR plurals, locale-sensitive formatting and full bidi text. Layout mirroring (RTL) is not implemented yet.
 

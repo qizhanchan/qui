@@ -1,4 +1,4 @@
-//go:build darwin && cgo && !qui_nogl && qui_glfw
+//go:build darwin && cgo && qui_glfw
 
 package glfw
 

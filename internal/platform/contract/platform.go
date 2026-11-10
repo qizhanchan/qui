@@ -116,12 +116,11 @@ type Caps struct {
 	// and float a window but cannot stop it taking keyboard focus — the
 	// one property that matters most.
 	OverlayPanels bool
-	// GPUContext reports that the window carries an OpenGL context that
-	// makeCurrent binds and present swaps. False for compositor-only
-	// surfaces (browser canvas, X11 without GLX, headless): those present
-	// CPU frames through presentCPU, and a GL renderer handed to such a
-	// window is swapped for a CPURenderer (renderer_caps.go).
-	GPUContext bool
+	// GPUSurface reports that the window's Surface offers a GPU
+	// presentation path (MetalSurface or NativeSurface) a Metal / WebGPU
+	// renderer can draw into. False for compositor-only surfaces (browser
+	// canvas, X11, headless): those present CPU frames through PresentCPU.
+	GPUSurface bool
 }
 
 // Monitor is one connected display. Methods return logical
@@ -210,11 +209,6 @@ type Window interface {
 	ClipboardText() string
 	SetClipboardText(text string)
 
-	// makeCurrent binds this window's GPU context to the calling thread.
-	// Multi-window apps have one context per window, so this runs before
-	// any drawing. A backend with no GPU context makes this a no-op.
-	MakeCurrent()
-
 	// surface is this window's presentation target. Never nil.
 	Surface() Surface
 
@@ -271,17 +265,31 @@ type Surface interface {
 	Present()
 }
 
-// MetalSurface is the optional Metal presentation path of a Surface
-// (cocoa). A Metal renderer draws into the layer's drawables and presents
-// them itself; Present and PresentCPU are then not used.
+// MetalSurface is the optional CAMetalLayer presentation path of a
+// Surface (cocoa). A Metal or WebGPU renderer draws into the layer's
+// drawables and presents them itself; Present and PresentCPU are then not
+// used.
 type MetalSurface interface {
 	// MetalLayer switches the surface to Metal presentation (first call)
 	// and returns its CAMetalLayer, or nil when it cannot (the surface
-	// already committed to another path).
+	// already committed to CPU presentation).
 	MetalLayer() unsafe.Pointer
-	// ExitMetal returns the surface to GL presentation, for a window
-	// that turned out to need raw GL. No-op when not in Metal mode.
-	ExitMetal()
+}
+
+// NativeSurface is the optional path of a Surface over a native window a
+// WebGPU renderer creates its own surface on (glfw). Exactly one of
+// MetalLayer, HWND or XWindow is set.
+type NativeSurface interface {
+	NativeSurfaceTarget() SurfaceTarget
+}
+
+// SurfaceTarget names a native window for a GPU surface.
+type SurfaceTarget struct {
+	MetalLayer unsafe.Pointer // CAMetalLayer* (macOS)
+	HInstance  unsafe.Pointer // Windows
+	HWND       unsafe.Pointer
+	XDisplay   unsafe.Pointer // Display* (X11)
+	XWindow    uint64
 }
 
 // Handler receives everything a platform window produces. The

@@ -3,8 +3,8 @@
 package media
 
 /*
-#cgo CFLAGS: -x objective-c -fobjc-arc -DGL_SILENCE_DEPRECATION -DCOREVIDEO_SILENCE_GL_DEPRECATION
-#cgo LDFLAGS: -framework Foundation -framework AVFoundation -framework AudioToolbox -framework CoreMedia -framework CoreVideo -framework VideoToolbox -framework OpenGL -framework IOSurface
+#cgo CFLAGS: -x objective-c -fobjc-arc
+#cgo LDFLAGS: -framework Foundation -framework AVFoundation -framework AudioToolbox -framework CoreMedia -framework CoreVideo -framework VideoToolbox -framework IOSurface
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -64,15 +64,6 @@ int       quiVideoScrubDecodeAt(uintptr_t scrubHandle, double seconds,
                                 void** outPixBuf, int64_t* outPTSNs);
 void      quiVideoCloseScrub(uintptr_t scrubHandle);
 
-// Main-thread (GL context current) helpers used inside QueueGLDraw.
-// Lazily creates a process-wide CVOpenGLTextureCache on first call —
-// the cache is tied to the GL context, and a qui app has exactly
-// one context. Returns 1 on success: writes a retained
-// CVOpenGLTextureRef into outCVTex and its GL texture name into
-// outTexName.
-int       quiVideoBindTexture(void* pixBuf, void** outCVTex, uint32_t* outTexName);
-void      quiVideoCacheFlush(void);
-void      quiVideoReleaseGLTex(void* cvTex);
 void      quiVideoReleasePixBuf(void* pixBuf);
 
 // --- Video-source audio --------------------------------------------
@@ -148,7 +139,6 @@ func debugf(format string, args ...interface{}) {
 // init registers the darwin backend as "native". Runs before any user code.
 func init() {
 	setBackend("native", darwinBackend{})
-	flushTextureCache = flushFrameCache
 }
 
 // ----- Handle registry --------------------------------------------------
@@ -542,7 +532,7 @@ type pendingFrame struct {
 // quiVideoDecodeOutput is the //export callback the ObjC decode loop
 // invokes once per decoded frame. Runs on a background dispatch
 // queue — must not block on Go-side mutexes the main thread might
-// hold, and must not touch widget / GL state.
+// hold, and must not touch widget / GPU state.
 //
 // The ObjC side gates each push on a slot semaphore counted by
 // quiVideoFrameConsumed, so the channel never overflows under
@@ -723,29 +713,6 @@ closeScrub:
 		_ = scrub.Close()
 	}
 	return nil
-}
-
-// bindFramePixelBuffer creates a GL_TEXTURE_2D view of a pixel
-// buffer via the process-wide CVOpenGLTextureCache. MUST be called
-// from the main thread (inside QueueGLDraw) with the GL context
-// current. Caller owns the returned CVOpenGLTextureRef and must
-// release it via quiVideoReleaseGLTex.
-func bindFramePixelBuffer(pixBuf unsafe.Pointer) (cvTex unsafe.Pointer, name uint32, ok bool) {
-	var outTex unsafe.Pointer
-	var outName C.uint32_t
-	r := C.quiVideoBindTexture(pixBuf, &outTex, &outName)
-	if r == 0 {
-		debugf("bindFramePixelBuffer FAILED pixBuf=%p", pixBuf)
-		return nil, 0, false
-	}
-	if debugSample("bind_tex", 30) {
-		debugf("bind_tex OK pixBuf=%p tex=%d cvTex=%p", pixBuf, uint32(outName), outTex)
-	}
-	return outTex, uint32(outName), true
-}
-
-func flushFrameCache() {
-	C.quiVideoCacheFlush()
 }
 
 // ----- darwinVideoAudioRenderer -----------------------------------------

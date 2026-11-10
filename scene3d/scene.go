@@ -109,8 +109,8 @@ func (c *Camera) ProjectionMatrix(aspect float32) Mat4 {
 }
 
 // Light is a marker interface for scene lights. Concrete types
-// expose their data; Material.Bind reads them to set shader
-// uniforms.
+// expose their data; the viewport writes them into the Frame uniform
+// every material shader reads (see Preamble).
 type Light interface {
 	isLight()
 }

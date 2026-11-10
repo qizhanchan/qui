@@ -21,12 +21,7 @@ type fakePayload struct {
 func (f *fakePayload) size() (int, int)      { return f.w, f.h }
 func (f *fakePayload) cpuImage() image.Image { return image.NewRGBA(image.Rect(0, 0, f.w, f.h)) }
 func (f *fakePayload) release()              { f.released.Add(1) }
-func (f *fakePayload) draw(*FrameView, qui.GLState, qui.Rect, qui.Rect) bool {
-	f.drawn++
-	return true
-}
-
-func (f *fakePayload) drawMetal(*FrameView, qui.MetalCompositor, qui.Rect, qui.Rect) bool {
+func (f *fakePayload) draw(*FrameView, qui.Compositor, qui.Rect, qui.Rect) bool {
 	f.drawn++
 	return true
 }

@@ -1,13 +1,19 @@
+//go:build cgo && !js
+
 package main
 
-// FRAMEVIEW_DUMP_DIR=<dir> makes the demo read back the real composited
-// framebuffer (GL + 2D layer, which agent screenshots cannot see) at a few
-// moments and write PNGs, so the zero-copy path can be checked headlessly:
+// FRAMEVIEW_DUMP_DIR=<dir> makes the demo read back the real presented
+// frame (GPU-composited picture + 2D layer, which agent screenshots cannot
+// see) at a few moments and write PNGs, so the zero-copy path can be
+// checked headlessly:
 //
 //	running.png  — frames streaming
 //	partial.png  — paused, then a partial repaint elsewhere in the window:
-//	               the picture must survive (retained GL draw)
-//	glonly.png   — paused, then a GL-only frame (RequestGLRedraw)
+//	               the picture must survive (retained draw)
+//	redraw.png   — paused, then a redraw-only frame (RequestGPURedraw)
+//
+// The capture uses a WebGPU post-render hook, so the window presents with
+// WebGPU while dumping.
 
 import (
 	"image"
@@ -18,7 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/go-gl/gl/v3.3-core/gl"
 	"github.com/qizhanchan/qui"
 	"github.com/qizhanchan/qui/widgets"
 )
@@ -29,27 +34,21 @@ func setupDump(window *qui.Window, label *widgets.Label, paused *atomic.Bool) {
 		return
 	}
 	var want atomic.Pointer[string]
-	window.SetPostRender(func(s qui.GLState) {
+	window.SetPostRender(func(f *qui.GPUFrame) {
 		name := want.Swap(nil)
 		if name == nil {
 			return
 		}
-		w, h := int(s.FramebufferSize.W), int(s.FramebufferSize.H)
-		img := image.NewRGBA(image.Rect(0, 0, w, h))
-		gl.ReadPixels(0, 0, int32(w), int32(h), gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(img.Pix))
-		// GL rows are bottom-up.
-		flipped := image.NewRGBA(img.Rect)
-		for y := 0; y < h; y++ {
-			copy(flipped.Pix[y*flipped.Stride:(y+1)*flipped.Stride], img.Pix[(h-1-y)*img.Stride:(h-y)*img.Stride])
-		}
-		f, err := os.Create(filepath.Join(dir, *name))
-		if err != nil {
-			log.Print(err)
-			return
-		}
-		_ = png.Encode(f, flipped)
-		_ = f.Close()
-		log.Printf("dumped %s", *name)
+		f.Capture(func(img *image.RGBA) {
+			out, err := os.Create(filepath.Join(dir, *name))
+			if err != nil {
+				log.Print(err)
+				return
+			}
+			_ = png.Encode(out, img)
+			_ = out.Close()
+			log.Printf("dumped %s", *name)
+		})
 	})
 	ask := func(name string) { want.Store(&name) }
 	go func() {
@@ -63,7 +62,7 @@ func setupDump(window *qui.Window, label *widgets.Label, paused *atomic.Bool) {
 			label.SetText("partial repaint")
 		})
 		time.Sleep(time.Second)
-		ask("glonly.png")
-		window.RequestGLRedraw()
+		ask("redraw.png")
+		window.RequestGPURedraw()
 	}()
 }

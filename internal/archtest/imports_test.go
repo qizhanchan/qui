@@ -27,20 +27,23 @@ var allowed = map[string][]string{
 	// The internal layers, bottom up.
 	"internal/gfx":          {},
 	"internal/typeset":      {"internal/gfx", "internal/platform/contract", "internal/platform/macos"},
-	"internal/render":       {"internal/gfx", "internal/typeset"},
+	"internal/render":       {"internal/gfx", "internal/typeset", "internal/wgpu"},
+	"internal/wgpu":         {},
 	"internal/platform/...": {"internal/platform/..."},
 	"internal/archtest":     {},
 
 	// Exporters build on the internal layers directly.
 	"pdf": {"internal/gfx", "internal/typeset", "internal/platform/macos"},
 	"svg": {"", "internal/gfx", "internal/typeset"},
+	// gpu is the public face of the WebGPU binding (docs/rfc/0003-webgpu.zh.md).
+	"gpu": {"internal/wgpu"},
 
 	// Everything else goes through root's public API.
 	"widgets":          {""},
 	"reactive":         {""},
 	"reactive/html":    {"", "reactive", "htmlcss", "widgets"},
 	"htmlcss":          {"", "svg", "widgets"},
-	"scene3d":          {"", "widgets"},
+	"scene3d":          {"", "widgets", "gpu"},
 	"icons":            {"svg"},
 	"i18n":             {""},
 	"anim":             {""},

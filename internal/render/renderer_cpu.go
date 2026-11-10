@@ -6,18 +6,17 @@ import (
 	"github.com/qizhanchan/qui/internal/gfx"
 )
 
-// CPURenderer is the renderer for surfaces without a GPU context: the
-// browser canvas, X11 without GLX, the headless backend. It runs the same
-// ImageCanvas frontend and cpuBackend rasterizer as GLRenderer's default
-// path, but stops at the finished *image.RGBA and lets the platform
-// surface composite it (platformSurface.presentCPU) instead of uploading
-// it to a GL texture.
+// CPURenderer is the renderer for surfaces without a GPU path: the browser
+// canvas, X11, the headless backend, and cocoa windows presenting through
+// CALayer contents. It runs the same ImageCanvas frontend and cpuBackend
+// rasterizer as the GPU-presenting renderers, but stops at the finished
+// *image.RGBA and lets the platform surface composite it
+// (platformSurface.presentCPU).
 //
 // It is pure Go and compiles everywhere, which is what makes it the
-// renderer for builds without cgo (GOOS=js, CGO_ENABLED=0) — there,
-// NewGLRenderer returns one too (renderer_nogl.go).
+// renderer for builds without cgo (GOOS=js, CGO_ENABLED=0).
 //
-// Raw-GL affordances (GPUCanvas, RetainedGLCanvas, SetPreRender) are
+// GPU affordances (GPUCanvas, RetainedCompositorCanvas, GPU hooks) are
 // absent: its canvas does not implement them, so widgets that type-assert
 // for them take their CPU fallback, exactly as under NoopRenderer.
 type CPURenderer struct {

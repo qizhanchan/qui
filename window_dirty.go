@@ -229,7 +229,10 @@ func (w *Window) paintClip(canvas Canvas, clip Rect) {
 	// card and lets the corners composite through to whatever is behind
 	// the window. Clearing to Surface there would paint an opaque
 	// rectangle over exactly the pixels the transparency exists for.
-	if w.kind == WindowOverlayPanel || w.kind == WindowPopup {
+	//
+	// A window with a GPU pre-render hook (SetPreRender) has its background
+	// drawn by the hook, under the 2D layer: clear transparent there too.
+	if w.kind == WindowOverlayPanel || w.kind == WindowPopup || w.gpuPre != nil {
 		canvas.Clear(ColorTransparent)
 	} else {
 		canvas.Clear(CurrentTheme().Surface)

@@ -10,11 +10,9 @@ import (
 // Optional renderer capabilities.
 //
 // Window talks to its renderer through Renderer (Begin/End) plus these
-// narrow interfaces, never through a concrete type. That keeps window.go
-// compiling in builds where GLRenderer is not a GL renderer at all (no cgo,
-// GOOS=js — see renderer_nogl.go), and lets CPURenderer take part in the
-// per-frame bookkeeping it does understand (sizes, damage) while skipping
-// the GL hooks it cannot honor.
+// narrow interfaces, never through a concrete type, so the window code is
+// the same whichever renderers a build contains (CPU everywhere; Metal on
+// darwin+cgo; WebGPU with cgo — see docs/rfc/0003-webgpu.zh.md).
 
 // FrameInfoRenderer receives the per-frame facts Window knows before Begin.
 type FrameInfoRenderer interface {
@@ -27,29 +25,6 @@ type TransparentRenderer interface {
 	SetTransparent(on bool)
 }
 
-// glHookRenderer runs whole-framebuffer raw-GL hooks around the 2D layer.
-type GLHookRenderer interface {
-	SetPreRender(fn func(GLState))
-	SetPostRender(fn func(GLState))
-}
-
-// gpuRasterRenderer can switch to the GPU raster backend.
-type GPURasterRenderer interface {
-	SetGPURaster(on bool)
-}
-
-// RetainedGLRenderer replays retained GL draws (gl_retained.go).
-type RetainedGLRenderer interface {
-	ForgetRetainedGLDraw(key any)
-	RedrawRetained() bool
-}
-
-// gpuContextRenderer is implemented by renderers that cannot produce a
-// frame without a current GPU context (GLRenderer in GL builds).
-type GPUContextRenderer interface {
-	RequiresGPUContext() bool
-}
-
 // FrameDamageSource reports which part of a CPUFrameSource's image the
 // last frame changed, so a surface can composite only that.
 type FrameDamageSource interface {
@@ -58,23 +33,45 @@ type FrameDamageSource interface {
 
 // MetalLayerRenderer draws into a CAMetalLayer the window hands it before
 // each frame (SetMetalLayer, nil to detach). SetMetalLayer reports whether
-// the renderer can use the layer; false means no Metal device, and the
-// window falls back to another renderer.
+// the renderer can use the layer; false means no usable GPU device, and
+// the window falls back to another renderer.
 type MetalLayerRenderer interface {
 	SetMetalLayer(layer unsafe.Pointer) bool
 }
 
-// SelfPresentingRenderer presents its own frames (a Metal renderer
-// presents the drawable it drew), so Window must not present again.
+// NativeWindowRenderer presents into a native window the window hands it
+// (glfw: HWND / X11 window / NSView's layer) — see SurfaceTarget.
+type NativeWindowRenderer interface {
+	SetSurfaceTarget(t SurfaceTarget) bool
+}
+
+// SurfaceTarget names what a GPU surface is created on. Exactly one of
+// MetalLayer, HWND or XWindow is set.
+type SurfaceTarget struct {
+	MetalLayer unsafe.Pointer // CAMetalLayer*
+	HInstance  unsafe.Pointer // Windows
+	HWND       unsafe.Pointer
+	XDisplay   unsafe.Pointer // Display*
+	XWindow    uint64
+}
+
+// IsZero reports an empty target.
+func (t SurfaceTarget) IsZero() bool {
+	return t.MetalLayer == nil && t.HWND == nil && t.XWindow == 0
+}
+
+// SelfPresentingRenderer presents its own frames (Metal and WebGPU
+// renderers present the drawable they drew), so Window must not present
+// again.
 type SelfPresentingRenderer interface {
 	PresentsItself() bool
 }
 
-// GLFallbackRenderer reports that something drawn into it asked for raw
-// GL (GPUCanvas / RetainedGLCanvas), which it cannot honor; the window
-// replaces it with a GLRenderer.
-type GLFallbackRenderer interface {
-	WantsGL() bool
+// WebGPUFallbackRenderer reports that something drawn into it asked for
+// WebGPU (GPUCanvas, a GPU hook), which it cannot honor; the window
+// replaces it with a WebGPURenderer.
+type WebGPUFallbackRenderer interface {
+	WantsWebGPU() bool
 }
 
 // PixelScroller moves pixels of the frame it keeps between frames, so
@@ -82,8 +79,7 @@ type GLFallbackRenderer interface {
 // (Window.ScrollPixels).
 type PixelScroller interface {
 	// CanScrollPixels reports whether the renderer currently keeps its
-	// frame in memory (false under a GPU raster backend, or before the
-	// first frame).
+	// frame in memory (false before the first frame).
 	CanScrollPixels() bool
 	// ScrollPixels moves the pixels inside rect (physical) by (dx, dy);
 	// pixels moved out of rect are dropped, the area they leave keeps its
@@ -97,3 +93,14 @@ type PixelScroller interface {
 type DamageRectsRenderer interface {
 	SetDamageRects(rects []image.Rectangle)
 }
+
+// AutoRenderer asks the window for the best presentation it has: the
+// window replaces it with a MetalRenderer (cocoa), a WebGPURenderer (glfw)
+// or, on surfaces without a GPU path, keeps using it as the CPURenderer it
+// embeds. It is what NewGLRenderer used to request.
+type AutoRenderer struct {
+	CPURenderer
+}
+
+// NewAutoRenderer returns a renderer request the window resolves.
+func NewAutoRenderer() *AutoRenderer { return &AutoRenderer{} }

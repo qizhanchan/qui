@@ -124,9 +124,9 @@ func (a *App) NewWindow(title string, width, height int) (*Window, error) {
 	return w, nil
 }
 
-// NewSharedWindow creates a window that shares its OpenGL context
-// with an existing window so they can reuse GPU resources (textures,
-// VBOs, shaders). Passing share=nil is equivalent to NewWindow.
+// NewSharedWindow creates a window opened alongside share (see the
+// package-level NewSharedWindow). Passing share=nil is equivalent to
+// NewWindow.
 func (a *App) NewSharedWindow(title string, width, height int, share *Window) (*Window, error) {
 	if a == nil {
 		return nil, errors.New("app is nil")

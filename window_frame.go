@@ -206,49 +206,6 @@ func (w *Window) InvalidateLayout() {
 	w.root.InvalidateLayout()
 }
 
-// SetPreRender installs a raw-GL callback invoked each frame between
-// the framebuffer clear and the 2D blit. Useful for shadertoy-style
-// backgrounds that should sit under the widget tree. Pass nil to
-// clear. No-ops when the current renderer doesn't implement raw GL
-// hooks (e.g., NoopRenderer in tests).
-func (w *Window) SetPreRender(fn func(GLState)) {
-	if w == nil {
-		return
-	}
-	w.assertUIThread("Window.SetPreRender")
-	if hr, ok := w.renderer.(render.GLHookRenderer); ok {
-		hr.SetPreRender(fn)
-	}
-}
-
-// SetPostRender installs a raw-GL callback invoked each frame after
-// the 2D blit, before SwapBuffers. Useful for GPU-composited overlays
-// that should sit above the widget tree. Pass nil to clear.
-func (w *Window) SetPostRender(fn func(GLState)) {
-	if w == nil {
-		return
-	}
-	w.assertUIThread("Window.SetPostRender")
-	if hr, ok := w.renderer.(render.GLHookRenderer); ok {
-		hr.SetPostRender(fn)
-	}
-}
-
-// SetGPURaster toggles the GPU raster backend on this window's
-// renderer. No-op unless the current renderer is a *GLRenderer (e.g.
-// NoopRenderer during tests). Also honored via the QUI_GPU_RASTER=1
-// environment variable — set that once at startup and every
-// GLRenderer created by NewGLRenderer picks it up.
-func (w *Window) SetGPURaster(on bool) {
-	if w == nil {
-		return
-	}
-	w.assertUIThread("Window.SetGPURaster")
-	if gr, ok := w.renderer.(render.GPURasterRenderer); ok {
-		gr.SetGPURaster(on)
-	}
-}
-
 // SetRenderer assigns the renderer implementation.
 func (w *Window) SetRenderer(renderer Renderer) {
 	if w == nil {
@@ -259,11 +216,12 @@ func (w *Window) SetRenderer(renderer Renderer) {
 		w.renderer = NoopRenderer{}
 		return
 	}
-	renderer = rendererForPlatform(w.plat, w.preferredRenderer(renderer))
+	renderer = w.preferredRenderer(renderer)
 	if w.renderer != renderer {
 		w.closeRenderer()
 	}
 	w.renderer = renderer
+	w.applyGPUHooks()
 	// An overlay panel's framebuffer must stay transparent where the widget
 	// tree drew nothing. Wire it here rather than making every caller
 	// remember: the window already knows its kind, and forgetting produces
@@ -316,11 +274,6 @@ func (w *Window) Step() {
 	}()
 	w.framePainted = false
 
-	// Multi-window discipline: each Window owns an independent GL
-	// context (optionally shared via NewSharedWindow). The renderer's
-	// ensureInit and every GL call routed through Begin/End assume
-	// "my" context is current — make it so before any GL work.
-	w.plat.makeCurrent()
 	// Drain cross-goroutine jobs (agent actions, deferred callbacks)
 	// before any Tick / layout work so their state mutations show up
 	// in this frame. New jobs posted during drain land in the next
@@ -380,18 +333,18 @@ func (w *Window) Step() {
 	w.layoutPass()
 	w.noteLayoutLifecycle()
 	layoutDur := time.Since(tLayout)
-	// A RequestGLRedraw is satisfied by any frame: a painted one replays
-	// retained GL draws anyway, so only a frame with nothing dirty needs
-	// the GL-only path.
-	glOnly := w.glRedraw.Swap(false)
+	// A RequestGPURedraw is satisfied by any frame: a painted one replays
+	// retained draws anyway, so only a frame with nothing dirty needs the
+	// redraw-only path.
+	redrawOnly := w.gpuRedraw.Swap(false)
 	// An animator, Tick or layout callback may have closed the window.
 	if w.plat == nil {
 		return
 	}
 	if w.dirtyRegion.IsEmpty() {
-		if glOnly {
+		if redrawOnly {
 			t := time.Now()
-			w.redrawGLOnly()
+			w.redrawRetainedOnly()
 			if w.framePainted {
 				d := time.Since(t)
 				w.frameStats.add(FrameTiming{Start: now, Present: d, Total: time.Since(now), RedrawOnly: true})
@@ -413,14 +366,14 @@ func (w *Window) Step() {
 		return
 	}
 
-	// Tell the renderer the true logical (point) size so deferred
-	// GL hooks see a correct GLState.LogicalSize. Without this the
-	// renderer would default to the framebuffer size and DPR math
-	// inside QueueGLDraw closures would always compute to 1×.
+	// Tell the renderer the true logical (point) size so GPU draws see a
+	// correct GPUFrame.LogicalSize. Without this the renderer would
+	// default to the framebuffer size and DPR math inside GPU draws would
+	// always compute to 1×.
 	if fi, ok := w.renderer.(render.FrameInfoRenderer); ok {
 		fi.SetLogicalSize(w.lastSize)
 	}
-	w.bindMetal()
+	w.bindSurface()
 	var clips []Rect
 	tDraw := time.Now()
 	canvas := w.renderer.Begin(Size{W: float32(fbWidth), H: float32(fbHeight)})
@@ -433,7 +386,7 @@ func (w *Window) Step() {
 		dprID := drawCanvas.Save()
 		// Dividing the framebuffer by the VIEWPORT (not the window) makes
 		// this ratio dpr×zoom, so viewport zoom needs no multiply of its
-		// own here — and text, GL scissors and shadows all pick it up.
+		// own here — and text, GPU draws and shadows all pick it up.
 		if viewport.W > 0 && viewport.H > 0 && fbWidth > 0 && fbHeight > 0 {
 			scaleX := float32(fbWidth) / viewport.W
 			scaleY := float32(fbHeight) / viewport.H
@@ -497,7 +450,7 @@ func (w *Window) Step() {
 	w.afterPaintProtocol(clip, fullRepaintClip(clip, viewport))
 	w.resetDirty()
 	w.framePainted = true
-	w.checkGLFallback()
+	w.checkWebGPUSwitch()
 }
 
 // runAfterFrame runs the work queued for the end of this Step. Work queued
@@ -515,26 +468,16 @@ func (w *Window) runAfterFrame() {
 
 // present hands the finished frame to the platform.
 //
-// The CPU path is preferred when both sides support it: the reference
-// rasterizer has already produced an *image.RGBA, so a compositor that can
-// take it directly (CALayer contents, a wl_shm buffer) skips uploading a
-// full-screen texture only to blit it straight back down — which is what
-// the GL path must do every frame. When either side declines, the GPU path
-// presents whatever was drawn into the backbuffer.
+// A Metal or WebGPU renderer has presented its own drawable already.
+// Otherwise the CPU frame goes to the compositor (CALayer contents,
+// XPutImage, a canvas); a surface that declines gets Present, which only
+// a backend with a backbuffer of its own would implement.
 func (w *Window) present() {
 	if w.rendererPresentsItself() {
 		return
 	}
 	surface := w.plat.surface()
 	if surface == nil {
-		return
-	}
-	// A renderer that draws through GL (GLRenderer) has already composited
-	// into the backbuffer — raw-GL content included, which its CPU image
-	// lacks — so its frame is shown by the swap even though it can also
-	// hand out that image.
-	if g, ok := w.renderer.(render.GPUContextRenderer); ok && g.RequiresGPUContext() {
-		surface.present()
 		return
 	}
 	if src, ok := w.renderer.(CPUFrameSource); ok {

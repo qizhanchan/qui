@@ -1,11 +1,10 @@
 // Package webview embeds an HTML/CSS/JS web engine into the qui widget
-// tree. Web content renders into either an OpenGL texture or a Go-owned
-// image, and whichever the backend produces is composited onto qui's
-// framebuffer, so a WebView participates in the qui dirty-region
+// tree. Web content renders into a Go-owned image that is drawn into
+// qui's frame, so a WebView participates in the qui dirty-region
 // pipeline, can be obscured by other widgets, and can live inside
-// ScrollView / Tabs with proper clipping. The CEF backend currently
-// delivers CPU frames via canvas.DrawImage; GL/IOSurface compositing is
-// not implemented yet.
+// ScrollView / Tabs with proper clipping. The CEF backend delivers CPU
+// frames via canvas.DrawImage; zero-copy IOSurface compositing is not
+// implemented yet.
 //
 // # Architecture
 //

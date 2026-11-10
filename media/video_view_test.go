@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/qizhanchan/qui"
 )
 
 // ----- Fake backend -----------------------------------------------------
@@ -41,12 +43,12 @@ type fakeFrame struct {
 	refs atomic.Int32
 }
 
-func (f *fakeFrame) PTS() time.Duration { return f.pts }
-func (f *fakeFrame) Width() int         { return f.w }
-func (f *fakeFrame) Height() int        { return f.h }
-func (f *fakeFrame) GLTexture() uint32  { return 0 }
-func (f *fakeFrame) Retain()            { f.refs.Add(1) }
-func (f *fakeFrame) Release()           { f.refs.Add(-1) }
+func (f *fakeFrame) PTS() time.Duration                                     { return f.pts }
+func (f *fakeFrame) Width() int                                             { return f.w }
+func (f *fakeFrame) Height() int                                            { return f.h }
+func (f *fakeFrame) Composite(qui.Compositor, any, qui.Rect, qui.Rect) bool { return true }
+func (f *fakeFrame) Retain()                                                { f.refs.Add(1) }
+func (f *fakeFrame) Release()                                               { f.refs.Add(-1) }
 
 type fakeSource struct {
 	track  *VideoTrackInfo

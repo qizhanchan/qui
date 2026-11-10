@@ -106,15 +106,15 @@ func TestSetRendererPropagatesTransparency(t *testing.T) {
 	panel := &Window{kind: WindowOverlayPanel, zoom: 1}
 	normal := &Window{kind: WindowNormal, zoom: 1}
 
-	pr, nr := &GLRenderer{}, &GLRenderer{}
+	pr, nr := NewCPURenderer(), NewCPURenderer()
 	panel.SetRenderer(pr)
 	normal.SetRenderer(nr)
 
 	if !pr.IsTransparent() {
-		t.Error("overlay panel's GLRenderer was not put in transparent mode")
+		t.Error("overlay panel's renderer was not put in transparent mode")
 	}
 	if nr.IsTransparent() {
-		t.Error("normal window's GLRenderer was put in transparent mode")
+		t.Error("normal window's renderer was put in transparent mode")
 	}
 }
 

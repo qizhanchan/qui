@@ -98,7 +98,6 @@ func (c contractWindow) setCursor(s CursorShape)           { c.w.SetCursor(s) }
 func (c contractWindow) currentMods() Modifiers            { return c.w.CurrentMods() }
 func (c contractWindow) clipboardText() string             { return c.w.ClipboardText() }
 func (c contractWindow) setClipboardText(t string)         { c.w.SetClipboardText(t) }
-func (c contractWindow) makeCurrent()                      { c.w.MakeCurrent() }
 func (c contractWindow) wake()                             { c.w.Wake() }
 func (c contractWindow) nativeWindow() unsafe.Pointer      { return c.w.NativeWindow() }
 func (c contractWindow) surface() platformSurface          { return contractSurface{c.w.Surface()} }

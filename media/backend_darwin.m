@@ -24,9 +24,6 @@
 #import <AVFoundation/AVFoundation.h>
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
-#import <CoreVideo/CVOpenGLTextureCache.h>
-#import <OpenGL/OpenGL.h>
-#import <OpenGL/gl3.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -299,7 +296,7 @@ void quiAudioClose(uintptr_t handle) {
 //
 // AVAssetReader-backed playback decoder + isolated scrub decoder.
 // The two share an AVURLAsset but otherwise hold independent
-// readers, dispatch queues, and CVOpenGLTextureCaches so frame-by-
+// readers and dispatch queues so frame-by-
 // frame scrub (DecodeFrameAt) never disturbs streaming playback.
 //
 // Decode loop lives on a per-source serial dispatch queue. Each
@@ -358,13 +355,6 @@ void quiAudioClose(uintptr_t handle) {
 @implementation QuiVideoScrubDecoder
 @end
 
-// Single global CVOpenGLTextureCache. CVOpenGLTextureCache is tied
-// to a GL context, not to a source — and qui has exactly one GL
-// context per app. Sharing the cache lets us bind frames from
-// playback sources and scrub decoders without each owning state.
-// Lazily created in quiVideoBindTexture on the main thread.
-static CVOpenGLTextureCacheRef gTextureCache = NULL;
-
 // ----- Video registry (ObjC side) ---------------------------------------
 
 static NSMutableDictionary<NSNumber*, QuiVideoSource*>* gVideoSources;
@@ -410,14 +400,13 @@ static int codecIDFromFormat(CMFormatDescriptionRef desc) {
     }
 }
 
-// outputSettings configures AVAssetReaderTrackOutput to deliver BGRA
-// pixel buffers compatible with both OpenGL texture cache and Metal
-// (in case we migrate). Setting kCVPixelBufferOpenGLCompatibilityKey
-// forces GL_TEXTURE_2D over GL_TEXTURE_RECTANGLE on modern macOS.
+// outputSettings configures AVAssetReaderTrackOutput to deliver
+// IOSurface-backed BGRA pixel buffers the compositor can import as GPU
+// textures without copying.
 static NSDictionary* videoOutputSettings(void) {
     return @{
         (id)kCVPixelBufferPixelFormatTypeKey:    @(kCVPixelFormatType_32BGRA),
-        (id)kCVPixelBufferOpenGLCompatibilityKey: @YES,
+        (id)kCVPixelBufferMetalCompatibilityKey: @YES,
         (id)kCVPixelBufferIOSurfacePropertiesKey: @{},
     };
 }
@@ -818,74 +807,6 @@ static int mediaDebugEnabled(void) {
         gMediaDebug = (env && env[0] != '\0') ? 1 : 0;
     }
     return gMediaDebug;
-}
-
-int quiVideoBindTexture(void* pixBuf, void** outCVTex, uint32_t* outTexName) {
-    if (outCVTex) *outCVTex = NULL;
-    if (outTexName) *outTexName = 0;
-    if (!pixBuf) {
-        if (mediaDebugEnabled()) NSLog(@"[media] quiVideoBindTexture: nil pixBuf");
-        return 0;
-    }
-
-    if (gTextureCache == NULL) {
-        CGLContextObj cgl = CGLGetCurrentContext();
-        if (!cgl) {
-            if (mediaDebugEnabled()) NSLog(@"[media] quiVideoBindTexture: CGLGetCurrentContext returned NULL — not on main GL thread?");
-            return 0;
-        }
-        CGLPixelFormatObj pf = CGLGetPixelFormat(cgl);
-        CVReturn cr = CVOpenGLTextureCacheCreate(kCFAllocatorDefault, NULL,
-                                                  cgl, pf, NULL, &gTextureCache);
-        if (cr != kCVReturnSuccess || gTextureCache == NULL) {
-            if (mediaDebugEnabled()) NSLog(@"[media] CVOpenGLTextureCacheCreate failed cr=%d", cr);
-            return 0;
-        }
-        if (mediaDebugEnabled()) NSLog(@"[media] CVOpenGLTextureCache created on cgl=%p", cgl);
-    }
-
-    CVPixelBufferRef pb = (CVPixelBufferRef)pixBuf;
-    CVOpenGLTextureRef tex = NULL;
-    CVReturn cr = CVOpenGLTextureCacheCreateTextureFromImage(
-        kCFAllocatorDefault, gTextureCache, pb, NULL, &tex);
-    if (cr != kCVReturnSuccess || tex == NULL) {
-        if (mediaDebugEnabled()) {
-            OSType pf = CVPixelBufferGetPixelFormatType(pb);
-            NSLog(@"[media] CVOpenGLTextureCacheCreateTextureFromImage failed cr=%d pixFmt=%c%c%c%c",
-                  cr,
-                  (char)((pf >> 24) & 0xff),
-                  (char)((pf >> 16) & 0xff),
-                  (char)((pf >> 8) & 0xff),
-                  (char)(pf & 0xff));
-        }
-        return 0;
-    }
-
-    GLuint name = CVOpenGLTextureGetName(tex);
-    GLenum target = CVOpenGLTextureGetTarget(tex);
-    // GL_TEXTURE_RECTANGLE is what CVOpenGLTextureCache hands back
-    // on macOS — IOSurface-backed textures use non-normalized texel
-    // coords. We accept it; the Go side has a dedicated sampler2DRect
-    // draw path in gl_rect_darwin.go. Older code paths that expect
-    // GL_TEXTURE_2D would need a separate shader.
-    if (target != GL_TEXTURE_2D && target != GL_TEXTURE_RECTANGLE) {
-        if (mediaDebugEnabled()) NSLog(@"[media] unsupported texture target 0x%x", target);
-        CFRelease(tex);
-        return 0;
-    }
-
-    if (outCVTex) *outCVTex = (void*)tex;   // ownership transferred to caller
-    if (outTexName) *outTexName = (uint32_t)name;
-    return 1;
-}
-
-void quiVideoCacheFlush(void) {
-    if (gTextureCache == NULL) return;
-    CVOpenGLTextureCacheFlush(gTextureCache, 0);
-}
-
-void quiVideoReleaseGLTex(void* cvTex) {
-    if (cvTex) CFRelease((CVOpenGLTextureRef)cvTex);
 }
 
 void quiVideoReleasePixBuf(void* pixBuf) {

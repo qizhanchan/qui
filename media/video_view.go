@@ -39,30 +39,11 @@ func vvSample(tag string, every int) bool {
 	return vvCount[tag]%every == 0
 }
 
-// framebufferDrawer is implemented by platform-specific VideoFrame
-// types that own their full GL draw call. The darwin backend
-// implements this so it can sample GL_TEXTURE_RECTANGLE (what
-// CVOpenGLTextureCache hands back for IOSurface-backed buffers),
-// which GLRenderer.DrawTexture's sampler2D shader cannot read.
-//
-// DrawIntoFramebuffer is called inside a GPUCanvas.QueueGLDraw
-// closure with the GL context current. It returns false if it
-// couldn't bind or draw the frame (e.g. texture cache create
-// failed), letting the caller log the miss.
-type framebufferDrawer interface {
-	DrawIntoFramebuffer(state qui.GLState, src, physDst qui.Rect, flipY bool) bool
-}
-
-// cacheFlusher is invoked after each frame draw on platforms that
-// keep an internal texture cache and need a periodic flush to
-// reclaim IOSurface entries. The hook is platform-injected via
-// flushTextureCache; unused on platforms without a cache.
-var flushTextureCache func()
-
 // VideoView is the video-playback widget. Embeds qui.BaseWidget and
-// composites decoded frames onto the framebuffer via the same
-// GPUCanvas.QueueGLDraw + ActiveGLRenderer().DrawTexture path that
-// scene3d.Viewport uses.
+// composites decoded frames under the 2D layer through a retained
+// compositor draw (qui.RetainedCompositorCanvas): zero-copy IOSurfaces
+// for the AVFoundation backend, GPU colour conversion for the pure-Go
+// backend's I420.
 //
 // Lifecycle:
 //
@@ -142,16 +123,14 @@ type VideoView struct {
 	currentFrame VideoFrame
 	frameSink    func(VideoFrame)
 
-	// retained is set once Draw has registered a retained GL draw (see
-	// qui.RetainedGLCanvas). From then on a new frame costs a GL-only
-	// redraw and the picture survives repaints of the rest of the window
-	// without the view repainting itself. glDst is the logical
-	// destination rect that draw uses. UI thread.
+	// retained is set once Draw has registered a retained draw (see
+	// qui.RetainedCompositorCanvas). From then on a new frame costs a
+	// redraw-only frame and the picture survives repaints of the rest of
+	// the window without the view repainting itself. drawSrc / physDst are
+	// what the draw composites. UI thread.
 	retained bool
-	glSrc    qui.Rect
-	glDst    qui.Rect
-	// mtlDst is the physical destination rect of the retained Metal draw.
-	mtlDst qui.Rect
+	drawSrc  qui.Rect
+	physDst  qui.Rect
 
 	scrub ScrubDecoder // lazy
 
@@ -774,7 +753,7 @@ func (v *VideoView) OnError(fn func(error)) {
 	v.mu.Unlock()
 }
 
-// Destroy releases all decoder + GL resources. Idempotent and safe from any
+// Destroy releases all decoder + GPU resources. Idempotent and safe from any
 // goroutine. After Destroy the view is dead: Open and the transport methods
 // return ErrClosed.
 func (v *VideoView) Destroy() {
@@ -818,12 +797,12 @@ func (v *VideoView) Destroy() {
 	if cur != nil {
 		cur.Release()
 	}
-	// Drop the retained GL draw so the renderer stops replaying a picture
+	// Drop the retained draw so the renderer stops replaying a picture
 	// that no longer exists. Posted rather than called directly because
-	// ForgetRetainedGLDraw is UI-thread-only and Destroy is not.
+	// ForgetRetainedDraw is UI-thread-only and Destroy is not.
 	if w := v.Window(); w != nil {
 		w.PostJob(func() {
-			w.ForgetRetainedGLDraw(v)
+			w.ForgetRetainedDraw(v)
 			v.retained = false
 		})
 	}
@@ -993,12 +972,12 @@ func (v *VideoView) Tick(_ time.Time) qui.Rect {
 
 	if v.retained {
 		// The retained draw keeps the picture on screen; a new frame is a
-		// GL-only redraw. Nothing is re-rasterized and the window idles
+		// redraw-only frame. Nothing is re-rasterized and the window idles
 		// between frames: ask for a Tick when the parked frame comes due
 		// (or soon, while the decoder has none ready yet).
 		w := v.Window()
 		if promoted && w != nil {
-			w.RequestGLRedraw()
+			w.RequestGPURedraw()
 		}
 		if state == StatePlaying && w != nil {
 			wait := 5 * time.Millisecond
@@ -1016,12 +995,9 @@ func (v *VideoView) Tick(_ time.Time) qui.Rect {
 		return qui.Rect{}
 	}
 
-	// Without a retained draw (renderers that lack it) the GL framebuffer
-	// is cleared every frame, so the QueueGLDraw closure must re-run every
-	// frame to preserve the picture: keep the view dirty whenever there is
-	// a frame on screen. (Container.Draw skips children whose bounds don't
-	// intersect the dirty region, which would prevent us from even
-	// queuing the closure.)
+	// Without a retained draw (CPU presentation) nothing shows the
+	// frames; keep the view dirty while playing so its background and any
+	// state changes still paint.
 	v.mu.Lock()
 	hasFrame := v.currentFrame != nil
 	v.mu.Unlock()
@@ -1079,18 +1055,14 @@ func (v *VideoView) HitTest(p qui.Point) qui.Widget {
 	return nil
 }
 
-// Draw composites the current frame onto the framebuffer via
-// GPUCanvas. Mirrors scene3d.Viewport's pattern: type-assert to
-// GPUCanvas, punch a transparent hole, queue a GL closure that
-// binds the texture and blits it via ActiveGLRenderer.DrawTexture.
-//
-// CPU-canvas fallback (noop renderer in tests): paints the style
-// background — no GL, no frame.
+// Draw paints the letterbox background and registers the retained
+// compositor draw showing the current frame. Without a GPU-presenting
+// canvas (tests, CPU presentation) only the background is painted.
 func (v *VideoView) Draw(canvas qui.Canvas) {
-	gpu, ok := canvas.(qui.GPUCanvas)
+	rc, ok := canvas.(qui.RetainedCompositorCanvas)
 	if !ok {
 		if vvSample("draw_nogpu", 60) {
-			vvDebugf("Draw: canvas is NOT GPUCanvas (CPU fallback)")
+			vvDebugf("Draw: canvas has no compositor (CPU presentation)")
 		}
 		bg := v.Style().Background
 		if bg == (qui.Color{}) {
@@ -1116,9 +1088,9 @@ func (v *VideoView) Draw(canvas qui.Canvas) {
 
 	bounds := v.Bounds()
 	// Letterbox fill (or full background under FitStretch) before
-	// punching a hole for the texture. Under FitCover the texture
-	// fills the whole rect, but bg keeps a clean border when the
-	// frame hasn't arrived yet.
+	// punching a hole for the picture. Under FitCover the picture fills
+	// the whole rect, but bg keeps a clean border when the frame hasn't
+	// arrived yet.
 	bg := v.Style().Background
 	if bg == (qui.Color{}) {
 		bg = qui.Color{R: 0, G: 0, B: 0, A: 1}
@@ -1132,67 +1104,25 @@ func (v *VideoView) Draw(canvas qui.Canvas) {
 	dstRect := fitDstRect(fit, bounds, float32(track.Width), float32(track.Height))
 	// FitCover's rect is larger than the widget. Crop by sampling: take
 	// the visible part of dst and the matching source rect, so nothing
-	// spills past the bounds (the GL draw has no scissor of its own).
+	// spills past the bounds.
 	src, dst, ok := cropToVisible(dstRect, bounds, float32(track.Width), float32(track.Height))
 	if !ok {
 		return
 	}
-	// Hole-punch only the area the texture will cover, so the
-	// letterbox background remains opaque around it. Use the full
-	// bounds for the hole (not just dstRect) so any future under-
-	// the-frame UI works the same way.
 	canvas.ClearRect(bounds)
-
-	// A Metal window composites the frame natively (zero-copy for the
-	// AVFoundation backend's IOSurfaces, GPU colour conversion for the
-	// pure-Go backend's I420). Checked before RetainedGLCanvas, which the
-	// Metal canvas answers only to switch GL-only windows over.
-	if mk, ok := canvas.(qui.RetainedMetalCanvas); ok {
-		if _, can := frame.(metalVideoFrame); can {
-			m := canvas.CurrentMatrix()
-			v.glSrc, v.mtlDst = src, m.TransformRect(dst)
-			mk.QueueRetainedMetalDraw(v, m.TransformRect(bounds), v.metalDraw)
-			v.retained = true
-			return
-		}
-	}
-	if rk, ok := canvas.(qui.RetainedGLCanvas); ok {
-		v.glSrc, v.glDst = src, dst
-		rk.QueueRetainedGLDraw(v, canvas.CurrentMatrix().TransformRect(bounds), v.glDraw)
-		v.retained = true
-		return
-	}
-	gpu.QueueGLDraw(func(state qui.GLState) { drawVideoFrame(state, frame, src, dst) })
+	m := canvas.CurrentMatrix()
+	v.drawSrc, v.physDst = src, m.TransformRect(dst)
+	rc.QueueRetainedDraw(v, m.TransformRect(bounds), v.composite)
+	v.retained = true
 }
 
-// glDraw is the retained GL draw: it shows whatever frame is current when
-// the frame is produced, so a RequestGLRedraw picks up a new one.
-func (v *VideoView) glDraw(state qui.GLState) {
+// composite is the retained draw: it shows whatever frame is current when
+// the window's frame is produced, so a RequestGPURedraw picks up a new one.
+func (v *VideoView) composite(c qui.Compositor) {
 	v.mu.Lock()
-	frame, src, dst := v.currentFrame, v.glSrc, v.glDst
+	frame, src, dst := v.currentFrame, v.drawSrc, v.physDst
 	// Hold a reference across the draw: Destroy / SeekTo may release the
-	// current frame from another goroutine while its texture is in use.
-	if frame != nil {
-		frame.Retain()
-	}
-	v.mu.Unlock()
-	if frame != nil {
-		drawVideoFrame(state, frame, src, dst)
-		frame.Release()
-	}
-}
-
-// metalVideoFrame is a VideoFrame that can composite itself in a Metal
-// window. key identifies the owner, for the compositor's texture cache.
-type metalVideoFrame interface {
-	drawMetal(c qui.MetalCompositor, key any, src, physDst qui.Rect) bool
-}
-
-// metalDraw is the retained Metal draw: like glDraw, it shows whatever
-// frame is current when the frame is produced.
-func (v *VideoView) metalDraw(c qui.MetalCompositor) {
-	v.mu.Lock()
-	frame, src, dst := v.currentFrame, v.glSrc, v.mtlDst
+	// current frame from another goroutine while it is being uploaded.
 	if frame != nil {
 		frame.Retain()
 	}
@@ -1200,72 +1130,10 @@ func (v *VideoView) metalDraw(c qui.MetalCompositor) {
 	if frame == nil {
 		return
 	}
-	if mf, ok := frame.(metalVideoFrame); ok {
-		mf.drawMetal(c, v, src, dst)
+	if !frame.Composite(c, v, src, dst) && vvSample("composite_fail", 30) {
+		vvDebugf("Composite failed for frame %v", frame.PTS())
 	}
 	frame.Release()
-}
-
-// drawVideoFrame composites the src rect of frame (frame pixels) into
-// dstRect (logical pixels) of the current framebuffer.
-func drawVideoFrame(state qui.GLState, frame VideoFrame, src, dstRect qui.Rect) {
-	// HiDPI: dstRect is logical pixels; the GL framebuffer is
-	// physical. Scale by the ratio so the texture lands at the
-	// right place on Retina displays.
-	scaleX, scaleY := float32(1), float32(1)
-	if state.LogicalSize.W > 0 {
-		scaleX = state.FramebufferSize.W / state.LogicalSize.W
-	}
-	if state.LogicalSize.H > 0 {
-		scaleY = state.FramebufferSize.H / state.LogicalSize.H
-	}
-	physDst := qui.Rect{
-		X: dstRect.X * scaleX,
-		Y: dstRect.Y * scaleY,
-		W: dstRect.W * scaleX,
-		H: dstRect.H * scaleY,
-	}
-	// Darwin frames know how to draw themselves — they hold a
-	// GL_TEXTURE_RECTANGLE which GLRenderer.DrawTexture's
-	// sampler2D shader can't sample. The rect-aware shader
-	// lives in gl_rect_darwin.go.
-	if fbd, ok := frame.(framebufferDrawer); ok {
-		if vvSample("drawfb", 30) {
-			vvDebugf("DrawIntoFramebuffer physDst=%v fbSize=%v logSize=%v texSize=%dx%d",
-				physDst, state.FramebufferSize, state.LogicalSize,
-				frame.Width(), frame.Height())
-		}
-		if !fbd.DrawIntoFramebuffer(state, src, physDst, true) {
-			vvDebugf("QueueGLDraw: DrawIntoFramebuffer FAILED")
-		}
-		if flushTextureCache != nil {
-			flushTextureCache()
-		}
-		return
-	}
-	// Fallback: 2D-texture path via the renderer's stock shader.
-	// Not hit on darwin; kept for hypothetical future backends
-	// that bind eagerly into GL_TEXTURE_2D.
-	texName := frame.GLTexture()
-	if texName == 0 {
-		vvDebugf("QueueGLDraw: texName=0 and no framebufferDrawer, skipping")
-		return
-	}
-	glr := qui.ActiveGLRenderer()
-	if glr == nil {
-		vvDebugf("QueueGLDraw: ActiveGLRenderer is nil")
-		return
-	}
-	texW := int32(frame.Width())
-	texH := int32(frame.Height())
-	glr.DrawTexture(
-		texName,
-		src,
-		physDst,
-		texW,
-		texH,
-		qui.TextureOpts{FlipY: true, Tint: qui.Color{R: 1, G: 1, B: 1, A: 1}, Opacity: 1},
-	)
 }
 
 // InvalidateRectBounds is a thin wrapper around the parent window's

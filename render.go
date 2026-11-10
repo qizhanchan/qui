@@ -7,42 +7,36 @@ import (
 	"github.com/qizhanchan/qui/internal/render"
 )
 
-// The rasterizers — the CPU and GPU raster backends, CPURenderer and
-// GLRenderer — live in internal/render. The aliases and wrappers below are
-// their public face; GL-only entry points are in render_gl.go.
+// The rasterizers and renderers live in internal/render. The aliases and
+// wrappers below are their public face; the WebGPU entry points (GPU
+// widgets, custom shaders) are in render_gpu.go.
 
 type (
 	// CPUReadback is the optional ability to produce a CPU-side copy of the
 	// finished frame when the backend's pixels do NOT live in system memory.
 	CPUReadback = render.CPUReadback
 
-	// CPURenderer is the renderer for surfaces without a GPU context: the
-	// browser canvas, X11 without GLX, the headless backend. It runs the same
-	// ImageCanvas frontend and cpuBackend rasterizer as GLRenderer's default
-	// path, but stops at the finished *image.RGBA and lets the platform
-	// surface composite it (platformSurface.presentCPU) instead of uploading
-	// it to a GL texture.
+	// CPURenderer is the renderer for surfaces without a GPU path: the
+	// browser canvas, X11, the headless backend. It stops at the finished
+	// *image.RGBA and lets the platform surface composite it
+	// (platformSurface.presentCPU).
 	CPURenderer = render.CPURenderer
 
-	// GLRenderer is CPURenderer in builds without OpenGL.
-	GLRenderer = render.GLRenderer
+	// AutoRenderer asks the window for its best presentation: MetalRenderer
+	// on cocoa, WebGPURenderer on glfw, CPURenderer elsewhere — see
+	// window_renderer.go and docs/rfc/0003-webgpu.zh.md.
+	AutoRenderer = render.AutoRenderer
+
+	// GLRenderer is the old name of AutoRenderer. There is no OpenGL in qui
+	// any more.
+	//
+	// Deprecated: use AutoRenderer (NewAutoRenderer).
+	GLRenderer = render.AutoRenderer
 
 	// MetalRenderer rasterizes on the CPU and presents through a
-	// CAMetalLayer (macOS). On a Metal-capable window a requested
-	// GLRenderer becomes one automatically (QUI_RENDERER=gl opts out); it
-	// is CPURenderer in builds without Metal.
+	// CAMetalLayer (macOS). It is what AutoRenderer resolves to on cocoa;
+	// it is CPURenderer in builds without Metal.
 	MetalRenderer = render.MetalRenderer
-
-	// GLState carries framebuffer/window sizing info to raw GL callbacks.
-	// It deliberately doesn't expose the *Window or *GLRenderer so
-	// callbacks stay decoupled from the Window's internal state — they
-	// just need physical pixel dimensions to set glViewport/glScissor.
-	GLState = render.GLState
-
-	// GPUCanvas is an optional extension to Canvas for canvases backed
-	// by a GPU pipeline. Widgets that need direct OpenGL access do a
-	// type assertion on the canvas passed to Draw:
-	GPUCanvas = render.GPUCanvas
 
 	// RasterBackend is the abstraction below the Canvas frontend. Everything
 	// that reads state (matrix, clip stack, layer bookkeeping) and dispatches
@@ -50,36 +44,33 @@ type (
 	// primitives INTO PIXELS lives on a RasterBackend implementation.
 	RasterBackend = render.RasterBackend
 
-	// RetainedGLCanvas is implemented by GPU canvases that support retained GL
-	// draws (the GLRenderer's canvas does). Type-assert the canvas passed to
-	// Draw, like GPUCanvas.
-	RetainedGLCanvas = render.RetainedGLCanvas
+	// Compositor composites prepared pixels (video frames, pushed RGBA
+	// frames) into the frame being presented — see
+	// RetainedCompositorCanvas.
+	Compositor = render.Compositor
 
-	// TextureOpts tunes a DrawTexture call.
-	TextureOpts = render.TextureOpts
+	// RetainedCompositorCanvas is implemented by the canvases of the GPU-
+	// presenting renderers (Metal and WebGPU): retained draws that composite
+	// video-like content under the 2D layer, shown through the holes
+	// Canvas.ClearRect opened. Type-assert the canvas passed to Draw.
+	RetainedCompositorCanvas = render.RetainedCompositorCanvas
 
-	// RetainedMetalCanvas is implemented by the Metal renderer's canvas:
-	// retained draws that composite video-like content under the 2D layer
-	// (the Metal counterpart of RetainedGLCanvas). Type-assert it before
-	// RetainedGLCanvas.
-	RetainedMetalCanvas = render.RetainedMetalCanvas
-
-	// MetalCompositor is what a retained Metal draw composites with.
-	MetalCompositor = render.MetalCompositor
-
-	// YUVPlane is one 8-bit plane for MetalCompositor.DrawYUV420.
+	// YUVPlane is one 8-bit plane for Compositor.DrawYUV420.
 	YUVPlane = render.YUVPlane
 )
 
-// ActiveGLRenderer is always nil without OpenGL.
-func ActiveGLRenderer() *GLRenderer { return render.ActiveGLRenderer() }
+// NewAutoRenderer returns a renderer request the window resolves to its
+// best presentation (see AutoRenderer).
+func NewAutoRenderer() *AutoRenderer { return render.NewAutoRenderer() }
+
+// NewGLRenderer is the old name of NewAutoRenderer.
+//
+// Deprecated: use NewAutoRenderer.
+func NewGLRenderer() *AutoRenderer { return render.NewAutoRenderer() }
 
 // NewCPURenderer creates a renderer that rasterizes on the CPU and hands
 // finished frames to the platform compositor.
 func NewCPURenderer() *CPURenderer { return render.NewCPURenderer() }
-
-// NewGLRenderer returns a CPURenderer in builds without OpenGL.
-func NewGLRenderer() *GLRenderer { return render.NewGLRenderer() }
 
 // NewMetalRenderer creates a Metal-presenting renderer (a CPURenderer in
 // builds without Metal).
@@ -89,14 +80,6 @@ func NewMetalRenderer() *MetalRenderer { return render.NewMetalRenderer() }
 // renderer.
 const MetalRendererAvailable = render.MetalRendererAvailable
 
-// PhysicalScissor converts a logical-pixel clip rectangle into the
-// physical-pixel, bottom-origin GL scissor box that glScissor expects.
-// Returns (x, y, w, h, true) ready for `gl.Scissor(x, y, w, h)`, or
-// (0,0,0,0,false) when the clip has zero area.
-func PhysicalScissor(state GLState, clip Rect) (int32, int32, int32, int32, bool) {
-	return render.PhysicalScissor(state, clip)
-}
-
 // ColorToRGBA converts a qui.Color into the standard color.RGBA used by
 // Go's image package — handy when callers need to fill an arbitrary
 // *image.RGBA without going through the Canvas surface (e.g. to paint
@@ -105,7 +88,7 @@ func ColorToRGBA(c Color) color.RGBA { return render.ColorToRGBA(c) }
 
 // NewImageCanvas wraps an *image.RGBA into a Canvas suitable for headless
 // rendering — same rasterizer as the production CPU path, but with no
-// Window / GLFW / OpenGL dependency. Use this in tests and golden-image
+// Window or GPU dependency. Use this in tests and golden-image
 // snapshot harnesses. The returned canvas comes pre-initialized with a
 // state stack whose bottom frame's clip equals the image's full bounds,
 // so test code can immediately FillRect / DrawText / Save / ClipRect

@@ -1,4 +1,4 @@
-//go:build cgo && !js && !qui_nogl && (windows || qui_glfw)
+//go:build cgo && !js && (windows || qui_glfw)
 
 package glfw
 
@@ -50,10 +50,9 @@ func newGLFWApp() (contract.App, error) {
 	if err := glfw.Init(); err != nil {
 		return nil, err
 	}
-	glfw.WindowHint(glfw.ContextVersionMajor, 3)
-	glfw.WindowHint(glfw.ContextVersionMinor, 3)
-	glfw.WindowHint(glfw.OpenGLProfile, glfw.OpenGLCoreProfile)
-	glfw.WindowHint(glfw.OpenGLForwardCompatible, glfw.True)
+	// No GL context: a WebGPU renderer creates its surface on the native
+	// window (NativeSurfaceTarget). See docs/rfc/0003-webgpu.zh.md.
+	glfw.WindowHint(glfw.ClientAPI, glfw.NoAPI)
 	return glfwApp{}, nil
 }
 
@@ -69,20 +68,10 @@ func (glfwApp) NewWindow(cfg contract.WindowConfig) (contract.Window, error) {
 	if cfg.Kind == contract.WindowPopup {
 		return nil, contract.ErrPopupWindowUnsupported
 	}
-	var share *glfw.Window
-	if cfg.Share != nil {
-		if gw, ok := cfg.Share.(*glfwWindow); ok {
-			share = gw.handle
-		}
-	}
-	handle, err := glfw.CreateWindow(cfg.Width, cfg.Height, cfg.Title, nil, share)
+	handle, err := glfw.CreateWindow(cfg.Width, cfg.Height, cfg.Title, nil, nil)
 	if err != nil {
 		return nil, err
 	}
-	handle.MakeContextCurrent()
-	// vsync: cap redraw rate to display refresh, dropping idle CPU to
-	// near zero.
-	glfw.SwapInterval(1)
 	w := &glfwWindow{handle: handle}
 	// Report Caps Lock / Num Lock in key callbacks' mods, so KeyEvent
 	// can carry the Caps Lock state.
@@ -204,7 +193,7 @@ func (w *glfwWindow) Caps() contract.Caps {
 		// No non-activating window style in GLFW — newWindow declines
 		// WindowOverlayPanel outright.
 		OverlayPanels: false,
-		GPUContext:    true,
+		GPUSurface:    true,
 	}
 }
 
@@ -376,27 +365,24 @@ func (w *glfwWindow) SetClipboardText(text string) {
 	w.handle.SetClipboardString(text)
 }
 
-func (w *glfwWindow) MakeCurrent() { w.handle.MakeContextCurrent() }
-
 func (w *glfwWindow) Surface() contract.Surface { return glfwSurface{win: w} }
 
 // wake is documented goroutine-safe by GLFW: it posts one event into the
 // platform queue, unblocking the next WaitEvents/WaitEventsTimeout.
 func (w *glfwWindow) Wake() { glfw.PostEmptyEvent() }
 
-// glfwSurface is the GPU-only presentation path: GLFW gives us a GL
-// context and a buffer swap, and nothing else.
+// glfwSurface is the GPU-only presentation path: GLFW gives us a native
+// window (NativeSurfaceTarget) a WebGPU renderer presents into itself.
 //
-// It has no frame-ready signal (GLFW's vsync is inside SwapBuffers, which
-// blocks rather than notifying) and no CPU path — presenting an
+// It has no frame-ready signal and no CPU path — presenting an
 // *image.RGBA through GLFW would mean uploading it as a texture, which is
-// exactly what the GL renderer already does. Both therefore decline, and
-// the engine keeps its timeout-driven pacing.
+// exactly what the WebGPU renderer already does. Both therefore decline,
+// and the engine keeps its timeout-driven pacing.
 type glfwSurface struct{ win *glfwWindow }
 
 func (glfwSurface) Ready() <-chan struct{}                       { return nil }
 func (glfwSurface) PresentCPU(*image.RGBA, image.Rectangle) bool { return false }
-func (s glfwSurface) Present()                                   { s.win.handle.SwapBuffers() }
+func (s glfwSurface) Present()                                   {}
 
 func (w *glfwWindow) NativeWindow() unsafe.Pointer {
 	return glfwNativeWindow(w.handle)

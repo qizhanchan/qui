@@ -639,14 +639,14 @@ const MetalRendererAvailable = true
 // persistent texture, and a drawable of the window's CAMetalLayer is
 // redrawn from that whole texture and presented. Because every drawable is
 // redrawn in full from a texture that always holds the latest frame,
-// nothing the compositor shows can be an older frame — the class of bug a
-// double-buffered GL surface without a preserved back buffer has.
+// nothing the compositor shows can be an older frame.
 //
 // The window hands it its layer (SetMetalLayer) and lets it present
-// (PresentsItself). Retained Metal draws (RetainedMetalCanvas) composite
-// video-like content under the 2D layer. Raw-GL requests from widgets
-// (GPUCanvas, RetainedGLCanvas) cannot be honored; the first one is
-// recorded (WantsGL) and the window switches itself to a GLRenderer.
+// (PresentsItself). Retained compositor draws (RetainedCompositorCanvas)
+// composite video-like content under the 2D layer. WebGPU requests from
+// widgets (GPUCanvas, GPU hooks) cannot be honored; the first one is
+// recorded (WantsWebGPU) and the window switches itself to a
+// WebGPURenderer on the same layer.
 type MetalRenderer struct {
 	img         *image.RGBA
 	backend     *CPUBackend
@@ -656,14 +656,14 @@ type MetalRenderer struct {
 	damage      image.Rectangle
 	transparent bool
 
-	layer   unsafe.Pointer // CAMetalLayer, owned by the window
-	ctx     unsafe.Pointer // retained QuiMetal for layer
-	wantsGL bool
-	painted bool // a frame has been rasterized into img
+	layer       unsafe.Pointer // CAMetalLayer, owned by the window
+	ctx         unsafe.Pointer // retained QuiMetal for layer
+	wantsWebGPU bool
+	painted     bool // a frame has been rasterized into img
 
-	retained RetainedSet[func(MetalCompositor)]
+	retained RetainedSet[func(Compositor)]
 	// queued are this frame's fresh retained draws, run in End.
-	queued []func(MetalCompositor)
+	queued []func(Compositor)
 	// keys maps DrawPixels keys to the integer ids the C side files
 	// their textures under.
 	keys   map[any]uintptr
@@ -851,7 +851,7 @@ func (r *MetalRenderer) End() {
 		if d.Empty() {
 			d = img.Rect
 		} else {
-			// One-pixel guard band, as GLRenderer's upload: the damage is
+			// One-pixel guard band: the damage is
 			// snapped outward already, this only absorbs rounding.
 			d = d.Inset(-1).Intersect(img.Rect)
 		}
@@ -860,7 +860,7 @@ func (r *MetalRenderer) End() {
 	r.present(up, damage, false)
 }
 
-// RedrawRetained implements RetainedGLRenderer for Window.RequestGLRedraw:
+// RedrawRetained implements RetainedRenderer for Window.RequestGPURedraw:
 // a frame that replays the retained draws under the 2D layer the last
 // frame left, without rasterizing or uploading it.
 func (r *MetalRenderer) RedrawRetained() bool {
@@ -963,12 +963,12 @@ func (r *MetalRenderer) SetDamageRects(rects []image.Rectangle) {
 // End has presented (or deliberately skipped) the frame.
 func (r *MetalRenderer) PresentsItself() bool { return r != nil && r.ctx != nil }
 
-// WantsGL implements GLFallbackRenderer.
-func (r *MetalRenderer) WantsGL() bool { return r != nil && r.wantsGL }
+// WantsWebGPU implements WebGPUFallbackRenderer.
+func (r *MetalRenderer) WantsWebGPU() bool { return r != nil && r.wantsWebGPU }
 
-// ForgetRetainedGLDraw implements RetainedGLRenderer: drops key's retained
+// ForgetRetainedDraw implements RetainedRenderer: drops key's retained
 // Metal draw and the texture DrawPixels kept for it.
-func (r *MetalRenderer) ForgetRetainedGLDraw(key any) {
+func (r *MetalRenderer) ForgetRetainedDraw(key any) {
 	if r == nil {
 		return
 	}
@@ -1022,7 +1022,7 @@ func (r *MetalRenderer) Snapshot() *image.RGBA {
 	return dst
 }
 
-// metalCompositor is the MetalCompositor handed to retained draws.
+// metalCompositor is the Compositor handed to retained draws.
 type metalCompositor struct{ r *MetalRenderer }
 
 func (c metalCompositor) FramebufferSize() gfx.Size {
@@ -1093,16 +1093,16 @@ func (c metalCompositor) DrawPixels(key any, pix unsafe.Pointer, stride, w, h in
 }
 
 // metalCanvas is the canvas a MetalRenderer frame draws into: retained
-// Metal draws, plus the raw-GL extension points only to notice that a
-// widget wants them — the call is dropped and the renderer asks the window
-// for GL.
+// compositor draws, plus GPUCanvas only to notice that a widget wants
+// WebGPU — the call is dropped and the renderer asks the window for a
+// WebGPURenderer.
 type metalCanvas struct {
 	imageCanvas
 	r *MetalRenderer
 }
 
-// QueueRetainedMetalDraw implements RetainedMetalCanvas.
-func (c metalCanvas) QueueRetainedMetalDraw(key any, physBounds gfx.Rect, fn func(MetalCompositor)) {
+// QueueRetainedDraw implements RetainedCompositorCanvas.
+func (c metalCanvas) QueueRetainedDraw(key any, physBounds gfx.Rect, fn func(Compositor)) {
 	if key == nil || fn == nil {
 		return
 	}
@@ -1110,23 +1110,34 @@ func (c metalCanvas) QueueRetainedMetalDraw(key any, physBounds gfx.Rect, fn fun
 	c.r.queued = append(c.r.queued, fn)
 }
 
-func (c metalCanvas) needGL() {
-	if !c.r.wantsGL {
-		c.r.wantsGL = true
-		log.Printf("qui: a widget needs raw OpenGL; switching this window from Metal to GL")
+// needWebGPU records that a widget asked for WebGPU, which this renderer
+// does not run; the window switches to a WebGPURenderer after the frame.
+func (c metalCanvas) needWebGPU() {
+	if !c.r.wantsWebGPU {
+		c.r.wantsWebGPU = true
+		log.Printf("qui: a widget needs WebGPU; switching this window from Metal to WebGPU")
 	}
 }
 
-// DrawTexture implements GPUCanvas (see metalCanvas).
-func (c metalCanvas) DrawTexture(uint32, gfx.Rect, gfx.Rect, TextureOpts) { c.needGL() }
+// QueueGPUDraw implements GPUCanvas only to detect WebGPU content.
+func (c metalCanvas) QueueGPUDraw(func(*GPUFrame)) { c.needWebGPU() }
 
-// QueueGLDraw implements GPUCanvas (see metalCanvas).
-func (c metalCanvas) QueueGLDraw(func(GLState)) { c.needGL() }
+// QueueRetainedGPUDraw implements GPUCanvas only to detect WebGPU content.
+func (c metalCanvas) QueueRetainedGPUDraw(any, gfx.Rect, func(*GPUFrame)) { c.needWebGPU() }
 
-// QueueRetainedGLDraw implements RetainedGLCanvas (see metalCanvas).
-func (c metalCanvas) QueueRetainedGLDraw(any, gfx.Rect, func(GLState)) { c.needGL() }
+// SetPreRender / SetPostRender: a GPU hook needs WebGPU too.
+func (r *MetalRenderer) SetPreRender(fn func(*GPUFrame)) {
+	if fn != nil {
+		r.wantsWebGPU = true
+	}
+}
 
-// CanScrollPixels implements PixelScroller.
+func (r *MetalRenderer) SetPostRender(fn func(*GPUFrame)) {
+	if fn != nil {
+		r.wantsWebGPU = true
+	}
+}
+
 func (r *MetalRenderer) CanScrollPixels() bool { return r != nil && r.img != nil }
 
 // ScrollPixels implements PixelScroller: the CPU frame moves now, the

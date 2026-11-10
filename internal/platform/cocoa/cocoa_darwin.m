@@ -27,7 +27,7 @@ void quiCocoaSetRawKeyHook(void* fn) { gQuiRawKeyCaptured = (int (*)(void*))fn; 
 //
 // This is the same contract platform_glfw.go implements, written
 // directly against AppKit. It exists because everything qui actually
-// wants from macOS beyond "a window and a GL context" — IME, menus,
+// wants from macOS beyond "a window to draw into" — IME, menus,
 // tray, dialogs, gestures, native fullscreen — was already implemented
 // by going around GLFW. Owning the window and the event loop removes
 // the layer those bridges have to reach through.
@@ -53,11 +53,10 @@ void quiCocoaSetRawKeyHook(void* fn) { gQuiRawKeyCaptured = (int (*)(void*))fn; 
 //     Same events, no class patching.
 // -------------------------------------------------------------------
 
-// NSOpenGLContext is formally deprecated but remains the only way to
-// attach a GL context to an NSView, and qui's renderer is GL-based on
-// every platform. The Metal/CALayer presentation path is a separate
-// surface (see platform.go's platformSurface); until it lands, silence
-// the noise rather than have every build print it.
+// There is no OpenGL here (docs/rfc/0003-webgpu.zh.md): a window presents
+// either CPU frames as its layer's contents, or through a CAMetalLayer the
+// Metal / WebGPU renderer draws into. Some AppKit API used below is
+// deprecated without a drop-in replacement; keep builds quiet.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
@@ -332,11 +331,10 @@ static NSCursor* quiCocoaCursorFor(int shape) {
 @property (nonatomic, strong) NSWindow* window;
 @property (nonatomic, strong) QuiView* view;
 @property (nonatomic, strong) QuiWindowDelegate* delegate;
-@property (nonatomic, strong) NSOpenGLContext* glContext;
 @property (nonatomic, assign) BOOL shouldClose;
 // CPU presentation (quiCocoaPresentCPU). Once a window's first CPU frame
-// arrives it leaves GL for good: the context is detached, the view becomes
-// layer-hosting, and frames are composited as the layer's contents.
+// arrives it stays in CPU mode: the view hosts a plain CALayer and frames
+// are composited as the layer's contents.
 @property (nonatomic, assign) BOOL cpuMode;
 @property (nonatomic, assign) CGContextRef bitmap;
 // vsync is set by the display link thread and consumed by the UI thread
@@ -345,9 +343,8 @@ static NSCursor* quiCocoaCursorFor(int shape) {
 @property (nonatomic, assign) atomic_int* vsync;
 @property (nonatomic, assign) CVDisplayLinkRef displayLink;
 // Metal presentation (quiCocoaEnterMetalMode). The view hosts a
-// CAMetalLayer the renderer draws into and presents itself; unlike CPU
-// mode it can be left again (quiCocoaExitMetalMode) when a window turns
-// out to need raw GL.
+// CAMetalLayer the renderer (Metal or WebGPU) draws into and presents
+// itself. A window whose GPU renderer fails falls back to CPU mode.
 @property (nonatomic, assign) BOOL metalMode;
 @property (nonatomic, strong) CAMetalLayer* metalLayer;
 @end
@@ -397,7 +394,6 @@ static void quiCocoaNotifyGeometry(QuiWindowBox* box, uintptr_t handle) {
     if (box == nil) return;
     NSRect bounds = [box.view bounds];
     NSRect backing = [box.view convertRectToBacking:bounds];
-    if (box.glContext && !box.cpuMode && !box.metalMode) [box.glContext update];
     if (box.cpuMode || box.metalMode) quiCocoaSyncLayerGeometry(box);
     quiCocoaOnResize(handle, (int)bounds.size.width, (int)bounds.size.height);
     quiCocoaOnFramebufferResize(handle, (int)backing.size.width, (int)backing.size.height);
@@ -409,7 +405,7 @@ static void quiCocoaNotifyGeometry(QuiWindowBox* box, uintptr_t handle) {
 // Refuse the close and record the request instead. qui's main loop polls
 // shouldClose, runs OnClose handlers while the window is still alive, and
 // destroys it deliberately — letting AppKit close the window here would
-// pull the GL context out from under that teardown.
+// pull the layer out from under that teardown.
 - (BOOL)windowShouldClose:(NSWindow*)sender {
     QuiWindowBox* box = quiBox(self.handle);
     if (box) box.shouldClose = YES;
@@ -713,9 +709,6 @@ int quiCocoaCreateWindow(uintptr_t handle, int width, int height,
         QuiView* view = [[QuiView alloc] initWithFrame:rect];
         view.handle = handle;
         view.cursorShape = 0;
-        // Opt into the full pixel grid on Retina; without this the GL
-        // surface is upscaled from logical size and everything is soft.
-        [view setWantsBestResolutionOpenGLSurface:YES];
 
         QuiWindowDelegate* delegate = [[QuiWindowDelegate alloc] init];
         delegate.handle = handle;
@@ -729,65 +722,10 @@ int quiCocoaCreateWindow(uintptr_t handle, int width, int height,
         [window setReleasedWhenClosed:NO];
         [window makeFirstResponder:view];
 
-        // NSOpenGLPFABackingStore keeps the back buffer equal to the frame
-        // just shown after every flushBuffer. Without it the back buffer
-        // holds the frame BEFORE that one, and AppKit sometimes composites
-        // the window from it without asking us to draw — attaching a child
-        // popup window (a hover card) did exactly that, so right after a
-        // scroll the editor flashed back one wheel step while qui's own
-        // state (and every hit test) stayed on the current frame. Kept
-        // first in the list so the fallback below can drop it.
-        NSOpenGLPixelFormatAttribute attrs[] = {
-            NSOpenGLPFABackingStore,
-            NSOpenGLPFAAccelerated,
-            NSOpenGLPFADoubleBuffer,
-            NSOpenGLPFAClosestPolicy,
-            // macOS exposes only 3.2 and 4.1 as core profiles; 4.1 is a
-            // superset of the 3.3 qui's shaders target.
-            NSOpenGLPFAOpenGLProfile, NSOpenGLProfileVersion4_1Core,
-            NSOpenGLPFAColorSize,   24,
-            NSOpenGLPFAAlphaSize,    8,
-            NSOpenGLPFADepthSize,   24,
-            NSOpenGLPFAStencilSize,  8,
-            0
-        };
-        NSOpenGLPixelFormat* format =
-            [[NSOpenGLPixelFormat alloc] initWithAttributes:attrs];
-        if (format == nil) {
-            // A renderer that can't preserve the back buffer: same format
-            // without it (attrs[0] is NSOpenGLPFABackingStore).
-            format = [[NSOpenGLPixelFormat alloc] initWithAttributes:attrs + 1];
-        }
-        if (format == nil) return 0;
-
-        NSOpenGLContext* share = nil;
-        if (shareHandle != 0) {
-            QuiWindowBox* other = quiBox(shareHandle);
-            if (other) share = other.glContext;
-        }
-        NSOpenGLContext* context =
-            [[NSOpenGLContext alloc] initWithFormat:format shareContext:share];
-        if (context == nil) return 0;
-        [context setView:view];
-        [context makeCurrentContext];
-        GLint interval = 1;   // vsync
-        [context setValues:&interval
-             forParameter:NSOpenGLContextParameterSwapInterval];
-        if (overlay || popup) {
-            // Without this the GL surface is composited as opaque no matter
-            // what alpha the framebuffer holds, and the panel shows up as a
-            // black rectangle with the card drawn inside it. The pixel
-            // format already requests NSOpenGLPFAAlphaSize 8.
-            GLint surfaceOpaque = 0;
-            [context setValues:&surfaceOpaque
-                 forParameter:NSOpenGLContextParameterSurfaceOpacity];
-        }
-
         QuiWindowBox* box = [[QuiWindowBox alloc] init];
         box.window = window;
         box.view = view;
         box.delegate = delegate;
-        box.glContext = context;
         box.shouldClose = NO;
         gQuiWindows[@((unsigned long)handle)] = box;
 
@@ -863,7 +801,6 @@ void quiCocoaDestroyWindow(uintptr_t handle) {
             CGContextRelease(box.bitmap);
             box.bitmap = NULL;
         }
-        [box.glContext clearDrawable];
         [box.window setDelegate:nil];
         [box.window orderOut:nil];
         [box.window close];
@@ -1130,16 +1067,6 @@ void quiCocoaSetClipboardText(const char* text) {
 
 // --- presentation ----------------------------------------------------
 
-void quiCocoaMakeCurrent(uintptr_t handle) {
-    QuiWindowBox* box = quiBox(handle);
-    if (box && !box.cpuMode && !box.metalMode) [box.glContext makeCurrentContext];
-}
-
-void quiCocoaPresent(uintptr_t handle) {
-    QuiWindowBox* box = quiBox(handle);
-    if (box && !box.cpuMode && !box.metalMode) [box.glContext flushBuffer];
-}
-
 // The display link callback runs on CoreVideo's own thread. It only flags
 // "the display wants a frame"; the UI thread polls the flag in
 // quiCocoaTakeFrameReady. No wake is posted: an idle app must stay asleep,
@@ -1175,12 +1102,14 @@ static void quiCocoaStartDisplayLink(QuiWindowBox* box) {
 }
 #pragma clang diagnostic pop
 
-// quiCocoaEnterCPUMode moves a window from GL to layer presentation. One
-// way: a window does not flip back and forth between renderers.
+// quiCocoaEnterCPUMode moves a window to layer-contents presentation —
+// from nothing, or from Metal mode when its GPU renderer failed. One way:
+// a window does not flip back and forth between renderers.
 static void quiCocoaEnterCPUMode(QuiWindowBox* box) {
     if (box.cpuMode) return;
     box.cpuMode = YES;
-    [box.glContext clearDrawable];
+    box.metalMode = NO;
+    box.metalLayer = nil;
     QuiView* view = box.view;
     CALayer* layer = [CALayer layer];
     // Top-left gravity with contentsScale = backing scale maps the frame
@@ -1251,7 +1180,7 @@ static void quiCocoaStopDisplayLink(QuiWindowBox* box) {
     box.vsync = NULL;
 }
 
-// quiCocoaEnterMetalMode moves a window from GL to Metal presentation and
+// quiCocoaEnterMetalMode moves a window to Metal presentation and
 // returns its CAMetalLayer (unretained; the box keeps it alive), or NULL
 // when the window is already in CPU mode. The renderer owns the device:
 // it sets layer.device and draws into the layer's drawables.
@@ -1260,11 +1189,10 @@ void* quiCocoaEnterMetalMode(uintptr_t handle) {
         QuiWindowBox* box = quiBox(handle);
         if (box == nil || box.cpuMode) return NULL;
         if (box.metalMode) return (__bridge void*)box.metalLayer;
-        [box.glContext clearDrawable];
         CAMetalLayer* layer = [CAMetalLayer layer];
         // The CPU rasterizer produces sRGB-encoded, premultiplied pixels;
         // tag the layer so the compositor color-matches them exactly as it
-        // did the GL and CGImage paths.
+        // does the CGImage path.
         CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
         layer.colorspace = cs;
         CGColorSpaceRelease(cs);
@@ -1284,26 +1212,10 @@ void* quiCocoaEnterMetalMode(uintptr_t handle) {
         quiCocoaSyncLayerGeometry(box);
         // No display link: CAMetalLayer.nextDrawable already holds the
         // renderer to the display's pace (it blocks while every drawable
-        // is queued), so frames are paced like GL's swap interval rather
-        // than gated on a second, unsynchronized vsync flag — which made
+        // is queued), so frames are paced by presentation rather than
+        // gated on a second, unsynchronized vsync flag — which made
         // a 60 fps producer drop every frame that landed between ticks.
         return (__bridge void*)layer;
-    }
-}
-
-// quiCocoaExitMetalMode returns a Metal-mode window to GL presentation
-// (a widget in it needs raw GL). No-op outside Metal mode.
-void quiCocoaExitMetalMode(uintptr_t handle) {
-    @autoreleasepool {
-        QuiWindowBox* box = quiBox(handle);
-        if (box == nil || !box.metalMode) return;
-        quiCocoaStopDisplayLink(box);
-        box.metalMode = NO;
-        box.metalLayer = nil;
-        [box.view setWantsLayer:NO];
-        [box.view setLayer:nil];
-        [box.glContext setView:box.view];
-        [box.glContext update];
     }
 }
 

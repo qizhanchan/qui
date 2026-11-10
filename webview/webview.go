@@ -9,12 +9,11 @@ import (
 )
 
 // cpuFrameProvider is an optional Page extension for backends that
-// deliver pixels as a Go-owned image.RGBA instead of an OpenGL texture
-// — the CPU path on darwin; the IOSurface zero-copy GL path is not
-// implemented yet. WebView.Draw probes the page via type assertion; when
-// found, it uses canvas.DrawImage and skips the GL composite. This is
-// also the path that makes the widget work with qui.RecordingCanvas
-// during tests, since DrawImage is available on every Canvas.
+// deliver pixels as a Go-owned image.RGBA — the CPU path on darwin. A
+// zero-copy IOSurface path (OnAcceleratedPaint through the compositor's
+// DrawPixelBuffer-style import) is not implemented yet. WebView.Draw probes
+// the page via type assertion and draws with canvas.DrawImage, which also
+// makes the widget work with qui.RecordingCanvas during tests.
 type cpuFrameProvider interface {
 	LatestCPUFrame() *image.RGBA
 }
@@ -564,15 +563,12 @@ func (v *WebView) HitTest(p qui.Point) qui.Widget {
 }
 
 // Tick drives the backend pump and acquires the latest frame. Returns
-// the widget bounds when there's a frame on screen so the GL closure
-// re-runs each frame (the framebuffer is cleared every End() — see
-// media/VideoView for the same pattern).
+// the widget bounds when there's a frame on screen so the page repaints
+// each frame.
 //
-// Two acquisition paths run in parallel: the GL path (AcquireFrame
-// returns a texture) and the CPU path (cpuFrameProvider gives
-// an image.RGBA) — they're mutually exclusive in practice
-// because a backend picks one. Checking both lets the widget compile
-// without per-platform branches.
+// AcquireFrame (a GPU texture handle) is still pumped so backends keep
+// their frame bookkeeping, but only the CPU path (cpuFrameProvider gives
+// an image.RGBA) draws today.
 func (v *WebView) Tick(_ time.Time) qui.Rect {
 	v.mu.RLock()
 	p := v.page
@@ -601,7 +597,7 @@ func (v *WebView) Tick(_ time.Time) qui.Rect {
 	} else {
 		p.ReleaseFrame()
 	}
-	_ = dirty // returns full widget bounds; the GL path may use dirty for tighter scissor
+	_ = dirty // full widget bounds; a GPU path may use it for a tighter repaint
 	// CPU paint probe — once we have any CPU frame, mark hasFrame so
 	// the widget keeps repainting (framebuffer is cleared every End()).
 	if cpu, ok := p.(cpuFrameProvider); ok {
@@ -620,22 +616,10 @@ func (v *WebView) Tick(_ time.Time) qui.Rect {
 	return qui.PaintBoundsInWindow(v)
 }
 
-// Draw composites the latest frame onto the canvas.
-//
-// Three paint paths, picked in order:
-//  1. CPU path: if the page is a cpuFrameProvider with a
-//     ready image, fill background then canvas.DrawImage at widget
-//     bounds. Works on every Canvas (including tests / non-GL).
-//  2. GL path: ClearRect a hole, then queue a GL closure
-//     that scissors to the canvas clip and blits the texture via
-//     drawWebViewTexture (samplerRect shader for IOSurface).
-//  3. Background-only: when no frame is available yet, just fill the
-//     style background so the widget shows a clean rect.
+// Draw composites the latest frame onto the canvas: the style background,
+// then the page's CPU frame when it has one.
 func (v *WebView) Draw(canvas qui.Canvas) {
 	v.mu.RLock()
-	tex := v.texHandle
-	texW, texH := v.texW, v.texH
-	hasFrame := v.hasFrame
 	p := v.page
 	v.mu.RUnlock()
 
@@ -644,62 +628,12 @@ func (v *WebView) Draw(canvas qui.Canvas) {
 	if bg == (qui.Color{}) {
 		bg = qui.Color{R: 1, G: 1, B: 1, A: 1}
 	}
-
-	// CPU paint path — preferred when the backend produces one.
-	// Skips GL entirely so it works on any Canvas type.
+	canvas.FillRect(bounds, bg)
 	if cpu, ok := p.(cpuFrameProvider); ok {
 		if img := cpu.LatestCPUFrame(); img != nil {
-			canvas.FillRect(bounds, bg)
 			canvas.DrawImage(img, bounds)
-			return
 		}
 	}
-
-	gpu, ok := canvas.(qui.GPUCanvas)
-	if !ok || !hasFrame || tex == 0 {
-		canvas.FillRect(bounds, bg)
-		return
-	}
-
-	// Opaque fill first (so a still-loading page shows the background
-	// instead of whatever was on the framebuffer last frame), then
-	// clear a transparent hole for the texture composite.
-	canvas.FillRect(bounds, bg)
-	canvas.ClearRect(bounds)
-
-	clip := bounds
-	if ca, isClip := canvas.(qui.ClipAware); isClip {
-		clip = ca.ClipBounds()
-		// The page-side ClearRect already established the dirty area;
-		// downstream code only uses clip for scissor.
-	}
-
-	// Capture texW/texH for the closure.
-	tw, th := texW, texH
-
-	gpu.QueueGLDraw(func(state qui.GLState) {
-		// Physical destination rect (logical → physical).
-		scaleX, scaleY := float32(1), float32(1)
-		if state.LogicalSize.W > 0 {
-			scaleX = state.FramebufferSize.W / state.LogicalSize.W
-		}
-		if state.LogicalSize.H > 0 {
-			scaleY = state.FramebufferSize.H / state.LogicalSize.H
-		}
-		physDst := qui.Rect{
-			X: bounds.X * scaleX,
-			Y: bounds.Y * scaleY,
-			W: bounds.W * scaleX,
-			H: bounds.H * scaleY,
-		}
-		// drawWebViewTexture is platform-specific: on darwin (with
-		// webview_cef tag) it sets up the samplerRect shader for an
-		// IOSurface-backed GL_TEXTURE_RECTANGLE; the stub for other
-		// builds is a no-op. The clip is passed so the platform impl
-		// can call qui.PhysicalScissor + gl.Scissor before drawing.
-		drawWebViewTexture(state, tex, tw, th, physDst, clip)
-	})
-
 	if p != nil {
 		p.ReleaseFrame()
 	}

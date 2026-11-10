@@ -2,29 +2,79 @@ package scene3d
 
 import "github.com/qizhanchan/qui"
 
-// Materials bind shader programs + uniforms for a draw call. The
-// baseline set — Unlit + Lit — covers most design/creative-tool
-// needs without pulling in full PBR (BRDF + IBL). Custom materials
-// (PBR, subsurface, cel, etc.) plug in via CustomMaterial.
+// Materials are WGSL shaders plus per-object parameters. The baseline
+// set — Unlit + Lit — covers most design / creative-tool needs without
+// pulling in full PBR (BRDF + IBL). Custom materials (PBR, cel, …) plug in
+// through CustomMaterial with their own WGSL.
 //
-// Materials are lazy: their shader compiles on first Bind in the
-// active GL context, so constructing a material outside a GL
-// context is fine.
+// Every material's shader is written against Preamble (prepended
+// automatically), which declares the bindings the viewport fills:
+//
+//	struct Frame  { view, proj: mat4x4f; camera_pos, light_dir, light_color, ambient: vec4f }
+//	struct Object { model: mat4x4f; color, params: vec4f; user: array<vec4f, 4> }
+//	@group(0) @binding(0) var<uniform> frame: Frame;
+//	@group(0) @binding(1) var<uniform> obj: Object;
+//	fn clip_from_world(world: vec4f) -> vec4f
+//
+// and must define vs_main / fs_main. Triangle meshes feed
+// @location(0) position: vec3f, @location(1) normal: vec3f,
+// @location(2) uv: vec2f; line meshes only @location(0). light_dir points
+// from the surface TOWARD the light; light_color is premultiplied by the
+// intensity. Shaders compile on the first frame that draws them.
 
-// Material binds its program + per-object uniforms before a Mesh.Draw.
-// model is the node's world matrix; scene provides camera + lights.
+// Material is a node's surface: its shader and per-object parameters.
 type Material interface {
-	Bind(scene *Scene, aspect float32, model Mat4)
+	// WGSL is the shader source (without Preamble). Materials that share
+	// a source share one pipeline.
+	WGSL() string
+	// Params fills the per-object block (obj.color / params / user).
+	Params(scene *Scene) MaterialParams
+	// Destroy releases what the material owns (built-ins own nothing:
+	// pipelines are cached per shader).
 	Destroy()
 }
+
+// MaterialParams is a material's per-object data.
+type MaterialParams struct {
+	Color  qui.Color
+	Params [4]float32
+	User   [16]float32
+}
+
+// Preamble is the WGSL every material shader is compiled after.
+const Preamble = `
+struct Frame {
+    view: mat4x4f,
+    proj: mat4x4f,
+    camera_pos: vec4f,
+    light_dir: vec4f,
+    light_color: vec4f,
+    ambient: vec4f,
+};
+struct Object {
+    model: mat4x4f,
+    color: vec4f,
+    params: vec4f,
+    user: array<vec4f, 4>,
+};
+@group(0) @binding(0) var<uniform> frame: Frame;
+@group(0) @binding(1) var<uniform> obj: Object;
+
+// clip_from_world projects a world position. The camera matrices follow
+// the OpenGL convention (depth -1..1); WebGPU's clip depth is 0..1.
+fn clip_from_world(world: vec4f) -> vec4f {
+    var p = frame.proj * frame.view * world;
+    p.z = 0.5 * (p.z + p.w);
+    return p;
+}
+`
 
 // ---- UnlitMaterial ----
 
 // UnlitMaterial is a flat-colored material. No lighting, no shading —
-// pure albedo (optionally multiplied by a texture). Cheapest option.
+// pure albedo. Cheapest option; also the default for line meshes.
 type UnlitMaterial struct {
 	BaseColor qui.Color
-	program   *ShaderProgram
 }
 
 // NewUnlitMaterial creates an unlit material with the given color.
@@ -32,179 +82,91 @@ func NewUnlitMaterial(c qui.Color) *UnlitMaterial {
 	return &UnlitMaterial{BaseColor: c}
 }
 
-func (m *UnlitMaterial) Bind(scene *Scene, aspect float32, model Mat4) {
-	if m.program == nil {
-		p, err := NewShaderProgram(unlitVertexShader, unlitFragmentShader)
-		if err != nil {
-			return
-		}
-		m.program = p
-	}
-	m.program.Use()
-	proj := scene.Camera.ProjectionMatrix(aspect)
-	view := scene.Camera.ViewMatrix()
-	m.program.SetMat4("uModel", &model)
-	m.program.SetMat4("uView", &view)
-	m.program.SetMat4("uProjection", &proj)
-	m.program.SetColor("uColor", m.BaseColor)
-}
+func (m *UnlitMaterial) WGSL() string { return unlitWGSL }
 
-func (m *UnlitMaterial) Destroy() {
-	if m == nil {
-		return
-	}
-	m.program.Destroy()
-	m.program = nil
-}
+func (m *UnlitMaterial) Params(*Scene) MaterialParams { return MaterialParams{Color: m.BaseColor} }
 
-const unlitVertexShader = `#version 330 core
-layout(location = 0) in vec3 aPos;
-uniform mat4 uModel;
-uniform mat4 uView;
-uniform mat4 uProjection;
-void main() {
-    gl_Position = uProjection * uView * uModel * vec4(aPos, 1.0);
-}
-` + "\x00"
+func (m *UnlitMaterial) Destroy() {}
 
-const unlitFragmentShader = `#version 330 core
-uniform vec4 uColor;
-out vec4 FragColor;
-void main() {
-    FragColor = uColor;
+const unlitWGSL = `
+@vertex fn vs_main(@location(0) position: vec3f) -> @builtin(position) vec4f {
+    return clip_from_world(obj.model * vec4f(position, 1.0));
 }
-` + "\x00"
+@fragment fn fs_main() -> @location(0) vec4f {
+    return obj.color;
+}
+`
 
 // ---- LitMaterial ----
 
-// LitMaterial is a simple Lambert + half-Lambert material with one
-// directional light + ambient. Sufficient for the common case
-// "object in a scene under one sun". For PBR / image-based lighting,
-// write a CustomMaterial.
+// LitMaterial is Blinn-Phong with one directional light (the scene's
+// first) plus ambient — good enough for previews and editors.
 type LitMaterial struct {
 	BaseColor qui.Color
 	Roughness float32 // used only as a weak specular modulation
-	program   *ShaderProgram
 }
 
-// NewLitMaterial creates a Lambert-shaded material.
+// NewLitMaterial creates a lit material with the given base color.
 func NewLitMaterial(c qui.Color) *LitMaterial {
 	return &LitMaterial{BaseColor: c, Roughness: 0.5}
 }
 
-func (m *LitMaterial) Bind(scene *Scene, aspect float32, model Mat4) {
-	if m.program == nil {
-		p, err := NewShaderProgram(litVertexShader, litFragmentShader)
-		if err != nil {
-			return
-		}
-		m.program = p
-	}
-	m.program.Use()
-	proj := scene.Camera.ProjectionMatrix(aspect)
-	view := scene.Camera.ViewMatrix()
-	dir := scene.firstDirectional()
-	m.program.SetMat4("uModel", &model)
-	m.program.SetMat4("uView", &view)
-	m.program.SetMat4("uProjection", &proj)
-	m.program.SetColor("uBaseColor", m.BaseColor)
-	m.program.SetColor("uAmbient", scene.Ambient)
-	// Shader expects light-to-surface direction NEGATED (i.e. direction
-	// *from* surface *to* light) for the standard N·L convention.
-	lightDir := dir.Direction.Mul(-1).Normalize()
-	m.program.SetVec3("uLightDir", lightDir)
-	m.program.SetColor("uLightColor", dir.Color)
-	m.program.SetFloat("uLightIntensity", dir.Intensity)
-	m.program.SetVec3("uCameraPos", scene.Camera.Position)
-	m.program.SetFloat("uRoughness", m.Roughness)
+func (m *LitMaterial) WGSL() string { return litWGSL }
+
+func (m *LitMaterial) Params(*Scene) MaterialParams {
+	return MaterialParams{Color: m.BaseColor, Params: [4]float32{m.Roughness}}
 }
 
-func (m *LitMaterial) Destroy() {
-	if m == nil {
-		return
-	}
-	m.program.Destroy()
-	m.program = nil
-}
+func (m *LitMaterial) Destroy() {}
 
-const litVertexShader = `#version 330 core
-layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec3 aNormal;
-layout(location = 2) in vec2 aUV;
-out vec3 vNormal;
-out vec3 vWorldPos;
-out vec2 vUV;
-uniform mat4 uModel;
-uniform mat4 uView;
-uniform mat4 uProjection;
-void main() {
-    vec4 world = uModel * vec4(aPos, 1.0);
-    vWorldPos = world.xyz;
-    // Transpose(inverse(upper-left 3x3 of uModel)) — but the scene
-    // graph forbids non-uniform scale for lit meshes in the first
-    // cut, so we can treat uModel's upper-left as the normal matrix
-    // directly. Good enough for uniform scales.
-    vNormal = mat3(uModel) * aNormal;
-    vUV = aUV;
-    gl_Position = uProjection * uView * world;
+const litWGSL = `
+struct VOut {
+    @builtin(position) pos: vec4f,
+    @location(0) normal: vec3f,
+    @location(1) world: vec3f,
+};
+@vertex fn vs_main(@location(0) position: vec3f, @location(1) normal: vec3f,
+                   @location(2) uv: vec2f) -> VOut {
+    let world = obj.model * vec4f(position, 1.0);
+    var o: VOut;
+    o.pos = clip_from_world(world);
+    o.normal = (obj.model * vec4f(normal, 0.0)).xyz;
+    o.world = world.xyz;
+    return o;
 }
-` + "\x00"
-
-const litFragmentShader = `#version 330 core
-in vec3 vNormal;
-in vec3 vWorldPos;
-in vec2 vUV;
-out vec4 FragColor;
-uniform vec4 uBaseColor;
-uniform vec4 uAmbient;
-uniform vec3 uLightDir;       // direction from surface TOWARD light (unit)
-uniform vec4 uLightColor;
-uniform float uLightIntensity;
-uniform vec3 uCameraPos;
-uniform float uRoughness;
-void main() {
-    vec3 N = normalize(vNormal);
-    vec3 L = normalize(uLightDir);
-    vec3 V = normalize(uCameraPos - vWorldPos);
-    vec3 H = normalize(L + V);
-    float NdotL = max(dot(N, L), 0.0);
-    float NdotH = max(dot(N, H), 0.0);
-    // Weak specular — falls off with roughness. Not physically based;
-    // just enough to suggest material.
-    float shininess = mix(64.0, 4.0, uRoughness);
-    float spec = pow(NdotH, shininess) * (1.0 - uRoughness) * 0.5;
-    vec3 diffuse = uBaseColor.rgb * NdotL * uLightColor.rgb * uLightIntensity;
-    vec3 ambient = uBaseColor.rgb * uAmbient.rgb;
-    vec3 specular = uLightColor.rgb * spec * uLightIntensity;
-    FragColor = vec4(ambient + diffuse + specular, uBaseColor.a);
+@fragment fn fs_main(in: VOut) -> @location(0) vec4f {
+    let roughness = obj.params.x;
+    let n = normalize(in.normal);
+    let l = normalize(frame.light_dir.xyz);
+    let v = normalize(frame.camera_pos.xyz - in.world);
+    let h = normalize(l + v);
+    let ndotl = max(dot(n, l), 0.0);
+    let ndoth = max(dot(n, h), 0.0);
+    let shininess = mix(64.0, 4.0, roughness);
+    let spec = pow(ndoth, shininess) * (1.0 - roughness) * 0.5;
+    let base = obj.color.rgb;
+    let rgb = base * frame.ambient.rgb + base * ndotl * frame.light_color.rgb
+            + frame.light_color.rgb * spec;
+    return vec4f(rgb * obj.color.a, obj.color.a);
 }
-` + "\x00"
+`
 
 // ---- CustomMaterial ----
 
-// CustomMaterial wraps a user-provided ShaderProgram. The Bind
-// callback lets callers set arbitrary uniforms before each draw.
-// Useful for PBR, cel shading, or any effect the built-in materials
-// don't cover.
+// CustomMaterial is a user shader: Source is WGSL written against
+// Preamble (vs_main / fs_main), OnParams fills its per-object block.
 type CustomMaterial struct {
-	Program *ShaderProgram
-	OnBind  func(p *ShaderProgram, scene *Scene, aspect float32, model Mat4)
+	Source   string
+	OnParams func(scene *Scene) MaterialParams
 }
 
-func (m *CustomMaterial) Bind(scene *Scene, aspect float32, model Mat4) {
-	if m.Program == nil {
-		return
+func (m *CustomMaterial) WGSL() string { return m.Source }
+
+func (m *CustomMaterial) Params(scene *Scene) MaterialParams {
+	if m.OnParams == nil {
+		return MaterialParams{Color: qui.Color{R: 1, G: 1, B: 1, A: 1}}
 	}
-	m.Program.Use()
-	if m.OnBind != nil {
-		m.OnBind(m.Program, scene, aspect, model)
-	}
+	return m.OnParams(scene)
 }
 
-func (m *CustomMaterial) Destroy() {
-	if m == nil {
-		return
-	}
-	m.Program.Destroy()
-	m.Program = nil
-}
+func (m *CustomMaterial) Destroy() {}

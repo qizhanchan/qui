@@ -52,13 +52,10 @@ int  quiCocoaCapsLock(void);
 char* quiCocoaClipboardText(void);
 void  quiCocoaSetClipboardText(const char* text);
 
-void quiCocoaMakeCurrent(uintptr_t handle);
 int  quiCocoaPresentCPU(uintptr_t handle, const uint8_t* pix, int stride, int width, int height,
                         int dx, int dy, int dw, int dh);
 int  quiCocoaTakeFrameReady(uintptr_t handle);
-void quiCocoaPresent(uintptr_t handle);
 void* quiCocoaEnterMetalMode(uintptr_t handle);
-void  quiCocoaExitMetalMode(uintptr_t handle);
 
 int   quiCocoaScreenCount(void);
 void  quiCocoaScreenInfo(int index, int* x, int* y, int* w, int* h,
@@ -81,19 +78,16 @@ import (
 // Native Cocoa implementation of the platform seam (see platform.go).
 //
 // Selected with QUI_PLATFORM=cocoa (platform_select.go). Behaviorally a
-// drop-in for the GLFW backend: same events, same GL context, same buffer
-// swap. The differences are structural rather than visible —
+// drop-in for the GLFW backend: same events. The differences are
+// structural rather than visible —
 //
 //   - gestures are ordinary responder methods instead of a runtime
 //     swizzle over GLFW's view class, so pinch/rotate/smart-magnify need
 //     no class patching and can't silently fail to install;
 //   - scroll events carry their real modifiers and NSEventPhase directly,
 //     rather than being snapshotted alongside a callback that drops them;
-//   - the event pump, window and view are ours, which is what a
-//     CALayer/Metal presentation path needs in order to exist at all.
-//
-// The presentation surface here is still GL-only; the direct-composite
-// path is the next step (platformSurface.presentCPU / ready).
+//   - the event pump, window and view are ours, which is what the
+//     CALayer / CAMetalLayer presentation paths need in order to exist.
 
 // cocoaWindowRegistry resolves the integer handles C passes back on every
 // callback. Same rationale as the IME and gesture registries.
@@ -274,8 +268,8 @@ func (w *cocoaWindow) Caps() contract.Caps {
 		ClipboardNeedsInputSerial: false,
 		// NSPanel + NSWindowStyleMaskNonactivatingPanel — see the .m.
 		OverlayPanels: true,
-		// NSOpenGLContext per window — see the .m.
-		GPUContext: true,
+		// CAMetalLayer per window (Metal / WebGPU renderers).
+		GPUSurface: true,
 	}
 }
 
@@ -442,8 +436,6 @@ func (w *cocoaWindow) SetClipboardText(text string) {
 	C.quiCocoaSetClipboardText(c)
 }
 
-func (w *cocoaWindow) MakeCurrent() { C.quiCocoaMakeCurrent(w.cid()) }
-
 func (w *cocoaWindow) Surface() contract.Surface { return cocoaSurface{win: w} }
 
 func (w *cocoaWindow) Wake() { C.quiCocoaWake() }
@@ -464,13 +456,13 @@ func (w *cocoaWindow) SetDropEnabled(enabled bool) {
 // cocoaSurface presents through one of two paths, chosen per window by
 // the renderer the engine runs on it:
 //
-//   - GL: GLRenderer draws into the NSOpenGLContext backbuffer and Present
-//     flushes it. Pacing comes from the context's swap interval, so Ready
-//     returns nil and the loop keeps its timeout-driven cadence.
-//   - CPU: the first PresentCPU (CPURenderer, -tags qui_nogl builds)
-//     moves the window to layer presentation for good — the frame becomes
-//     the view layer's contents, with no GL upload — and starts a display
-//     link, so Ready paces painting to the display from then on.
+//   - Metal: MetalLayer moves the window to a CAMetalLayer the renderer
+//     (MetalRenderer or WebGPURenderer) draws into and presents itself.
+//     Pacing comes from the layer's drawable queue, so Ready returns nil.
+//   - CPU: the first PresentCPU (CPURenderer) moves the window to layer
+//     presentation for good — the frame becomes the view layer's
+//     contents — and starts a display link, so Ready paces painting to
+//     the display from then on.
 type cocoaSurface struct{ win *cocoaWindow }
 
 var (
@@ -487,7 +479,7 @@ func (s cocoaSurface) Ready() <-chan struct{} {
 	case 0:
 		return readyLater
 	}
-	return nil // GL path, or no display link: pace on the loop's timeout
+	return nil // Metal path, or no display link: pace on the loop's timeout
 }
 
 func (s cocoaSurface) PresentCPU(img *image.RGBA, damage image.Rectangle) bool {
@@ -506,15 +498,13 @@ func (s cocoaSurface) PresentCPU(img *image.RGBA, damage image.Rectangle) bool {
 		C.int(w), C.int(h), C.int(r.Min.X), C.int(r.Min.Y), C.int(r.Dx()), C.int(r.Dy())) != 0
 }
 
-func (s cocoaSurface) Present() { C.quiCocoaPresent(s.win.cid()) }
+// Present is a no-op: GPU renderers present their own drawables.
+func (s cocoaSurface) Present() {}
 
 // MetalLayer implements contract.MetalSurface: the first call moves the
 // window to Metal presentation (a CAMetalLayer-hosting view, paced by the
 // display link like CPU mode). nil once the window is in CPU mode.
 func (s cocoaSurface) MetalLayer() unsafe.Pointer { return C.quiCocoaEnterMetalMode(s.win.cid()) }
-
-// ExitMetal implements contract.MetalSurface: back to GL presentation.
-func (s cocoaSurface) ExitMetal() { C.quiCocoaExitMetalMode(s.win.cid()) }
 
 // --- keyboard --------------------------------------------------------
 

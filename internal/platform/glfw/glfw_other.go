@@ -1,4 +1,4 @@
-//go:build !darwin && cgo && !js && !qui_nogl && (windows || qui_glfw)
+//go:build !darwin && cgo && !js && (windows || qui_glfw)
 
 package glfw
 

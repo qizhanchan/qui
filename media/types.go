@@ -1,6 +1,10 @@
 package media
 
-import "time"
+import (
+	"time"
+
+	"github.com/qizhanchan/qui"
+)
 
 // State describes a player or view's playback state.
 type State int
@@ -103,10 +107,12 @@ type VideoFrame interface {
 	// pixel-aspect-ratio correction would change this).
 	Width() int
 	Height() int
-	// GLTexture returns a GL_TEXTURE_2D RGBA / BGRA texture ID
-	// already uploaded to the GPU. Valid only while the frame is
-	// retained.
-	GLTexture() uint32
+	// Composite draws the src part (frame pixels) of the frame at
+	// physDst (physical pixels) through the window renderer's compositor;
+	// key identifies the owner, for the compositor's texture cache. UI
+	// thread, inside a retained draw. False when the frame could not be
+	// shown.
+	Composite(c qui.Compositor, key any, src, physDst qui.Rect) bool
 	// Retain increments the frame's reference count. Use when
 	// holding a frame past the next decode call. Must be paired
 	// with Release.

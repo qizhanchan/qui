@@ -20,7 +20,7 @@ reactive/html ──► reactive ──► 根 qui
          internal/typeset ──► internal/gfx
 ```
 
-根包之下有三个内部层，每层只 import 更低的层：`internal/gfx`（几何、颜色、画笔、路径、着色器、滤镜与 `Canvas` 契约）、`internal/typeset`（字体、整形、文字与行内排版）以及 `internal/render`（CPU/GPU 光栅器与渲染器）。根包在 `gfx.go`、`typeset.go`、`render.go` 中以类型别名和包装函数重新导出它们的公开名字，因此公开 API 仍是 `qui.Rect`、`qui.BuildTextLayout`、`qui.GLRenderer`。底层需要只有引擎才知道的东西时，由引擎注入：默认 locale 通过 `typeset.SetLocaleSource` 传给文字引擎，窗口通过 `internal/render/renderer_caps.go` 中的能力接口驱动渲染器。导出器 `pdf` 与 `svg` 直接构建在 `gfx` + `typeset` 之上。`internal/archtest` 在每种构建配置下按 README 中的规则检查整张依赖图。
+根包之下有三个内部层，每层只 import 更低的层：`internal/gfx`（几何、颜色、画笔、路径、着色器、滤镜与 `Canvas` 契约）、`internal/typeset`（字体、整形、文字与行内排版）以及 `internal/render`（CPU 光栅器与渲染器）。根包在 `gfx.go`、`typeset.go`、`render.go` 中以类型别名和包装函数重新导出它们的公开名字，因此公开 API 仍是 `qui.Rect`、`qui.BuildTextLayout`、`qui.AutoRenderer`。底层需要只有引擎才知道的东西时，由引擎注入：默认 locale 通过 `typeset.SetLocaleSource` 传给文字引擎，窗口通过 `internal/render/renderer_caps.go` 中的能力接口驱动渲染器。导出器 `pdf` 与 `svg` 直接构建在 `gfx` + `typeset` 之上。`internal/archtest` 在每种构建配置下按 README 中的规则检查整张依赖图。
 
 子包 import 根引擎；根引擎绝不 import 公开子包。根↔子包的耦合通过根包定义的接口进行（`qui.Animator`、`qui.IMEClient`、`qui.VectorSource`、`qui.Translator`，以及 focusable/tickable 约定）。`widgets` 除根包外什么都不 import；`reactive` 只 import 根包，与后端无关。允许的跨子包边很少且固定（`scene3d`→`widgets`，`htmlcss`→`widgets`+`svg`，`reactive/html`→`reactive`+`htmlcss`+`widgets`，`icons`→`svg`）。如果根包看起来需要某个子包符号，解法是把符号移过去，或在根包定义接口。
 
@@ -33,7 +33,7 @@ reactive/html ──► reactive ──► 根 qui
 3. 若 `root.IsLayoutDirty()` 则重新布局；
 4. **若 `dirtyRegion` 为空，直接返回、不绘制**；
 5. 只清除并重绘脏区域；
-6. 只把重绘过的像素上传到 GPU（`GLRenderer.SetDamage`），然后 swap buffers。
+6. 只把重绘过的像素交给渲染器（`SetDamage`）并呈现 —— Metal / WebGPU 上是零拷贝的 IOSurface 帧，其他情况是上传脏矩形或 `PresentCPU`。
 
 帧是按需调度的（`window_idle.go`），而不是由固定时钟驱动。每轮迭代之间，`App.Run` 询问每个窗口距离下一次 `Step` 还有多久，并在平台的事件等待中恰好阻塞这么长时间：
 
@@ -90,17 +90,19 @@ AppKit 可能在等待期间、没有任何输入事件的情况下投递的平�
 
 渲染是 Skia 形状的，分为两层。
 
-**Canvas 前端**（`internal/gfx/render.go`、`internal/gfx/canvas_state.go`、`internal/gfx/canvas_paint.go`、`internal/render/canvas_layer.go`、`internal/gfx/path.go`）：Save/Restore 状态栈（裁剪 + 2×3 仿射矩阵），`DrawShape(Shape, Paint)` 是唯一入口（便捷方法是包装），`Path` 支持二次 / 三次贝塞尔、抗锯齿的 winding/even-odd 填充、描边 cap/join/miter，`SaveLayer` 支持混合模式与 `Paint.Alpha`，`ClipPath`（在 Restore 时遮罩），`Paint.Shader`（线性 / 径向渐变），`ColorFilter`/`ImageFilter`（投影、模糊），以及用于 elevaton 阴影的 `DrawShadow`。绘制语义与 Web canvas 一致：透明度为 0 的颜色什么都不画（`Color{}` / CSS `transparent` 表示"不画"，绝不是橡皮擦），`Clear` 替换裁剪区内的像素，`ClearRect` 把矩形变成透明——GL 合成的控件（VideoView、scene3d.Viewport、WebView）就从这个洞里露出纹理。
+**Canvas 前端**（`internal/gfx/render.go`、`internal/gfx/canvas_state.go`、`internal/gfx/canvas_paint.go`、`internal/render/canvas_layer.go`、`internal/gfx/path.go`）：Save/Restore 状态栈（裁剪 + 2×3 仿射矩阵），`DrawShape(Shape, Paint)` 是唯一入口（便捷方法是包装），`Path` 支持二次 / 三次贝塞尔、抗锯齿的 winding/even-odd 填充、描边 cap/join/miter，`SaveLayer` 支持混合模式与 `Paint.Alpha`，`ClipPath`（在 Restore 时遮罩），`Paint.Shader`（线性 / 径向渐变），`ColorFilter`/`ImageFilter`（投影、模糊），以及用于 elevaton 阴影的 `DrawShadow`。绘制语义与 Web canvas 一致：透明度为 0 的颜色什么都不画（`Color{}` / CSS `transparent` 表示"不画"，绝不是橡皮擦），`Clear` 替换裁剪区内的像素，`ClearRect` 把矩形变成透明——GPU 合成的控件（VideoView、FrameView、scene3d.Viewport）就从这个洞里露出纹理。
 
-**RasterBackend**（`internal/render/backend.go`）：前端之下产出像素的抽象。所有坐标都已是物理坐标，每个方法都收到一个它必须遵守的裁剪。`internal/render/backend_cpu.go` 是参考实现；`internal/render/backend_gpu.go`（FBO + 着色器，`QUI_GPU_RASTER=1`）接入同一个位置，并按图元与 CPU 路径交替。`internal/render/renderer_gl.go` 负责 GL 窗口 blit。
+**RasterBackend**（`internal/render/backend.go`）：前端之下产出像素的抽象。所有坐标都已是物理坐标，每个方法都收到一个它必须遵守的裁剪。`internal/render/backend_cpu.go` 是唯一的实现 —— 没有 GPU 光栅后端。
+
+**渲染器**（`internal/render/renderer_*.go`）：全部在 CPU 上光栅化，区别只在呈现。`CPURenderer` 把帧交给平台合成器（XPutImage、Web canvas、headless、cocoa 上的 CALayer contents）；`MetalRenderer`（macOS，RFC 0002）经 CAMetalLayer 呈现，CPU 直接画进 GPU 采样的 IOSurface；`WebGPURenderer`（`renderer_webgpu.go`，RFC 0003）经 Dawn 在 Metal / D3D12 / Vulkan 上呈现，macOS 上通过 `SharedTextureMemory` 共享 IOSurface，其他情况用 `writeTexture` 上传脏矩形（`QUI_WEBGPU_SHARED=0` 强制走上传路径）；两个 GPU 渲染器都在 GPU 上做 `ScrollPixels`。`AutoRenderer`（`NewAutoRenderer` 以及 deprecated 的 `NewGLRenderer` 返回的就是它）按窗口解析：cocoa 上为 `MetalRenderer`，glfw 上为 `WebGPURenderer`，没有 GPU 呈现路径的表面上为 `CPURenderer`；`QUI_RENDERER=metal|webgpu|cpu` 覆盖选择，`QUI_DEBUG_RENDERER=1` 记录选择结果。Dawn 由 `internal/wgpu` `dlopen`（`QUI_DAWN_LIB` 指定路径，`QUI_WEBGPU=0` 关闭，`cmd/qui-dawn` 负责安装）；进程内只有一个 WebGPU 设备（`gpu.Shared()`），所有窗口共用。
 
 ### 文字
 
-文字使用 `go-text/typesetting` 的字形串整形（`internal/typeset/text_shaping.go`），支持 OpenType GSUB/GPOS、Unicode bidi、UAX #14 换行和 UAX #29 字素簇边界。测量、CPU/GL 绘制、PDF 输出、换行、命中测试、选区和编辑器 caret 共享同一套整形簇。`RuneAdvance` 仅作为独立 rune 工具的兼容助手保留。带样式的 run 在仅绘制边界的跨越中保持整形上下文。
+文字使用 `go-text/typesetting` 的字形串整形（`internal/typeset/text_shaping.go`），支持 OpenType GSUB/GPOS、Unicode bidi、UAX #14 换行和 UAX #29 字素簇边界。测量、绘制、PDF 输出、换行、命中测试、选区和编辑器 caret 共享同一套整形簇。`RuneAdvance` 仅作为独立 rune 工具的兼容助手保留。带样式的 run 在仅绘制边界的跨越中保持整形上下文。
 
 行内流 —— 文字与原子行内盒在同一行上按基线对齐共享 —— 位于 `internal/typeset/inline.go`，并以 `widgets.InlineBox` 的形式暴露。
 
-GL 控件通过 `GPUCanvas.QueueGLDraw` + `ActiveGLRenderer().DrawTexture` 合成（`scene3d` 与 `media` 使用）；`qui.PhysicalScissor` 把逻辑裁剪转换成 GL scissor 盒。
+GPU 内容经两个画布接口进入。视频类内容使用 `RetainedCompositorCanvas.QueueRetainedDraw(key, physBounds, func(Compositor))` —— `DrawPixelBuffer`（零拷贝 CVPixelBuffer）、`DrawPixels`、`DrawYUV420` —— `MetalRenderer` 与 `WebGPURenderer` 都实现它，因此 `media` 从不触发切换。任意 GPU 内容（`scene3d`、自定义 WGSL 着色器）使用 `GPUCanvas.QueueGPUDraw(func(*GPUFrame))` / `QueueRetainedGPUDraw(key, physBounds, fn)`；`GPUFrame` 带有 `Device`、本帧的 `Encoder`、目标 `Format`、`Size` / `LogicalSize`，以及 `DrawTexture`、`RenderPass`、`Compositor()` 与 `Capture`。`Window.SetPreRender` / `SetPostRender(func(*GPUFrame))` 是整窗钩子（设置 pre-render 钩子后窗口把 2D 层清成透明，钩子即背景）；`Window.RequestGPURedraw`（任意 goroutine）重放保留式绘制而不重新光栅化，`Window.ForgetRetainedDraw` 丢弃其中一个。控件请求 WebGPU 的 Metal 窗口会在同一个 CAMetalLayer 上切换为 `WebGPURenderer` 并整窗重画；没有 Dawn 时这些控件不显示（记录一次日志）。
 
 ## 布局
 
@@ -166,7 +168,7 @@ h.Button("Save").T("qui.save")                   // reactive/html DSL
 
 操作系统窗口层是一个接缝：`internal/platform/contract` 定义后端要实现的东西（App / Window / Monitor / Surface / Handler、Caps、后端注册表，以及 `Host` —— 后端回调引擎的少数服务），并持有输入词汇（`Key`、`Modifiers`、`MouseButton`、`CursorShape`、`GesturePhase`、`WindowKind`），`qui` 以类型别名重新导出。每个后端都是 `internal/platform/` 下的叶子包 —— `cocoa`（AppKit）、`x11`（Xlib）、`web`（canvas，GOOS=js）、`headless`（内存）、`glfw`（Windows / `-tags qui_glfw`）—— 从不 import 根包；根包在 `platform_backends*.go` 中按 GOOS 空白导入它们，`platform_adapter.go` 把 contract 对象包装成引擎对接缝的非导出视图（`platform.go`），因此引擎调用点和测试替身都看不到后端如何组织。已注册后端中优先级最高的（原生 > GLFW > headless）为默认，`QUI_PLATFORM` 可在运行时覆盖。
 
-呈现有两条路径（`contract.Surface`）：`Present` 交换 `GLRenderer` 画好的 GL 后缓冲；`PresentCPU(img, damage)` 把完成的 CPU 帧交给合成器 —— XPutImage、putImageData，headless 则什么都不做 —— 且只处理脏矩形；在 `cocoa` 上，窗口收到第一个 CPU 帧后永久切换到 CALayer 呈现（保留位图的写时复制 CGImage），并启动 CVDisplayLink，其标志由 `Ready()` 消费，使绘制与显示器同步。需要 GPU 上下文的渲染器始终通过缓冲交换呈现。表面通过 `Caps.GPUContext` 声明是否有 GL 上下文；设置在无 GL 上下文窗口上的 `GLRenderer` 会被替换为 `CPURenderer`（`internal/render/renderer_caps.go`），即同一个光栅化器，停在 `*image.RGBA`。无 cgo、wasm 或 `-tags qui_nogl` 的构建不含 OpenGL：此时 `GLRenderer` 是 `CPURenderer` 的别名。
+呈现有两类路径（`contract.Surface`）：GPU 表面 —— `contract.MetalSurface`（cocoa：`MetalLayer()` 返回窗口的 CAMetalLayer）与 `contract.NativeSurface`（glfw：用于建 WebGPU surface 的 CAMetalLayer、HWND 或 X11 窗口）—— 由 Metal / WebGPU 渲染器自行绘制并呈现；以及 `PresentCPU(img, damage)`，它把完成的 CPU 帧交给合成器 —— XPutImage、putImageData，headless 则什么都不做 —— 且只处理脏矩形；在 `cocoa` 上，窗口收到第一个 CPU 帧后永久切换到 CALayer 呈现（保留位图的写时复制 CGImage），并启动 CVDisplayLink，其标志由 `Ready()` 消费，使绘制与显示器同步。表面通过 `Caps.GPUSurface` 声明是否提供 GPU 呈现表面；没有的窗口上，`AutoRenderer` 解析为 `CPURenderer`（`internal/render/renderer_caps.go`），即同一个光栅化器，停在 `*image.RGBA`。没有任何后端创建 GL 上下文：cocoa 不再有 NSOpenGLContext，glfw 窗口是 `GLFW_NO_API`。`App.NewSharedWindow` 仍然存在，但已没有上下文可共享 —— 所有窗口共用同一个 WebGPU 设备。
 
 已加载字体画不出的文本可以交给平台自己的文字引擎：后端安装 `contract.TextFallback`（web 后端就是这样 —— wasm 构建只能看到内嵌的拉丁字体，而浏览器自带中日韩字体），任何已加载字体都不覆盖的字素簇会像彩色 emoji 一样成为原子字形，采用平台给出的 advance，并以文字颜色着色的覆盖遮罩绘制（`internal/typeset/text_fallback.go`）。换行、光标、选区与命中测试不受影响；加载真正覆盖这些字符的字体（`LoadFallbackFontFromBytes`）优先。以文本形式接收输入法组字的后端调用 `Handler.OnPreedit` / `OnCommitText`，并用 `Handler.IMECaretRect` 定位候选窗。
 
@@ -178,7 +180,7 @@ h.Button("Save").T("qui.save")                   // reactive/html DSL
 
 **客户端标题栏**（`window_titlebar*.go`）：`Window.SetTitlebarStyle(TitlebarOverlay)` 把内容区延伸到透明的系统标题栏之下（macOS `FullSizeContentView`，因此缩放边缘 / 红绿灯按钮 / 全屏都保持原生）。`TitlebarInsets()` 报告系统窗口按钮所需的留白，`BeginWindowDrag()` 把进行中的按下交给窗口管理器（绝不要用鼠标位移来移动窗口 —— 那会丢失吸附，在 Wayland 上也不可能）。在不支持处各自返回 false / 零值，因此应用会保留原生标题栏而不是崩掉。htmlcss 把 CSS `app-region: drag|no-drag` 映射到它上面；`examples/chrome-tabs` 就建立在两者之上。
 
-**浮层面板**（`overlay_window.go`）：`App.NewOverlayPanel(w, h)` 创建一个 `WindowOverlayPanel` —— 无边框、透明、始终置顶、且**永不获取键盘焦点**的操作系统窗口。这是一种独立的 `WindowKind`，不是关掉系统装饰的普通窗口，因为三个属性共同承担关键作用：不激活（点击它不得让用户正在输入的应用失去激活）、透明帧缓冲（面板画自己的圆角卡片，其余部分透出合成）、以及在所有 Space（包括全屏应用）之上置顶。面板初始隐藏；`ShowAt(x, y)` 先定位**再**显示（反过来的顺序会在旧位置闪一帧），`Hide()` 只是 ordered out 而不销毁 —— IME 候选条每敲一个键就切换一次，而这个频率下重建 OS 窗口加 GPU 上下文太慢。窗口的 kind 驱动 `Window.Step` 中的透明清除和 `GLRenderer.SetTransparent`（后者还切换到 `BlendFuncSeparate`，避免直通 alpha 在合成时被平方）。只有 `cocoa` 后端实现它（`NSPanel` + `NSWindowStyleMaskNonactivatingPanel`）；GLFW 返回 `ErrOverlayPanelUnsupported`，而不是悄悄交回一个会抢焦点的窗口。`examples/overlay-panel` 是示例。
+**浮层面板**（`overlay_window.go`）：`App.NewOverlayPanel(w, h)` 创建一个 `WindowOverlayPanel` —— 无边框、透明、始终置顶、且**永不获取键盘焦点**的操作系统窗口。这是一种独立的 `WindowKind`，不是关掉系统装饰的普通窗口，因为三个属性共同承担关键作用：不激活（点击它不得让用户正在输入的应用失去激活）、透明帧缓冲（面板画自己的圆角卡片，其余部分透出合成）、以及在所有 Space（包括全屏应用）之上置顶。面板初始隐藏；`ShowAt(x, y)` 先定位**再**显示（反过来的顺序会在旧位置闪一帧），`Hide()` 只是 ordered out 而不销毁 —— IME 候选条每敲一个键就切换一次，而这个频率下重建 OS 窗口加 GPU 上下文太慢。窗口的 kind 驱动 `Window.Step` 中的透明清除和渲染器的 `SetTransparent`（GPU 渲染器随之清成透明，并以预乘 alpha 合成）。只有 `cocoa` 后端实现它（`NSPanel` + `NSWindowStyleMaskNonactivatingPanel`）；GLFW 返回 `ErrOverlayPanelUnsupported`，而不是悄悄交回一个会抢焦点的窗口。`examples/overlay-panel` 是示例。
 
 ## AI 原生内省与可操作性
 

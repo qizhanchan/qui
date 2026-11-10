@@ -3,9 +3,8 @@
 // Package x11 is the native Linux backend: Xlib directly, no GLFW.
 //
 // Frames are rasterized by the engine's CPURenderer and presented with
-// XPutImage, only over the damaged rectangle; there is no GL context
-// (Caps.GPUContext false), so GLRenderer requests fall back to the CPU
-// renderer. Text input goes through XIM (Xutf8LookupString), so input
+// XPutImage, only over the damaged rectangle; there is no GPU surface
+// (Caps.GPUSurface false), so AutoRenderer resolves to the CPU renderer. Text input goes through XIM (Xutf8LookupString), so input
 // methods configured for the session work. The clipboard is the
 // CLIPBOARD selection, served and read directly.
 //
@@ -245,7 +244,7 @@ func (w *window) Caps() contract.Caps {
 	return contract.Caps{
 		AbsolutePosition:  true,
 		ServerDecorations: true,
-		GPUContext:        false,
+		GPUSurface:        false,
 	}
 }
 
@@ -386,7 +385,6 @@ func (w *window) SetClipboardText(text string) {
 	C.quiX11SetClipboard(w.id, t)
 }
 
-func (w *window) MakeCurrent()                 {}
 func (w *window) Surface() contract.Surface    { return surface{w} }
 func (w *window) Wake()                        { C.quiX11Wake() }
 func (w *window) NativeWindow() unsafe.Pointer { return nil }

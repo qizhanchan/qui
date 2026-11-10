@@ -123,7 +123,8 @@ func Mat4Mul(a, b Mat4) Mat4 {
 	return r
 }
 
-// Mat4Perspective builds a standard GL perspective projection.
+// Mat4Perspective builds a standard OpenGL-convention perspective
+// projection (depth -1..1; the shaders remap it for WebGPU).
 // fovY is vertical field of view in radians; aspect = width/height.
 func Mat4Perspective(fovY, aspect, near, far float32) Mat4 {
 	f := 1 / float32(math.Tan(float64(fovY)/2))
@@ -162,8 +163,8 @@ func Mat4LookAt(eye, target, up Vec3) Mat4 {
 	}
 }
 
-// Ptr returns a pointer to the matrix's first element — convenient
-// for glUniformMatrix4fv(loc, 1, GL_FALSE, m.Ptr()).
+// Ptr returns a pointer to the matrix's first element (column-major
+// floats, ready to copy into a uniform buffer).
 func (m *Mat4) Ptr() *float32 {
 	return &m[0]
 }

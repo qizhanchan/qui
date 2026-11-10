@@ -5,7 +5,6 @@ import (
 
 	"github.com/qizhanchan/qui/internal/platform/contract"
 	"github.com/qizhanchan/qui/internal/platform/headless"
-	"github.com/qizhanchan/qui/internal/render"
 )
 
 // The headless backend is what offscreen checks (CI, containers,
@@ -60,11 +59,11 @@ func TestHeadlessWindowRendersOffscreen(t *testing.T) {
 	}
 }
 
-func TestHeadlessGLRendererFallsBackToCPU(t *testing.T) {
+func TestHeadlessAutoRendererResolvesToCPU(t *testing.T) {
 	win, _ := newHeadlessTestWindow(t, 1, 10, 10)
-	win.SetRenderer(NewGLRenderer())
-	if _, ok := win.renderer.(render.GPUContextRenderer); ok {
-		t.Fatalf("a GL renderer on a surface without a GPU context must be replaced, got %T", win.renderer)
+	win.SetRenderer(NewAutoRenderer())
+	if _, ok := win.renderer.(*CPURenderer); !ok {
+		t.Fatalf("an AutoRenderer on a surface without a GPU path must become a CPURenderer, got %T", win.renderer)
 	}
 	win.SetRoot(&fillWidget{c: Color{G: 1, A: 1}})
 	win.Step()

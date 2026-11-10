@@ -42,16 +42,12 @@
 //
 // # Threading and GL context
 //
-// Decode callbacks arrive on background threads. They never touch GL or
+// Decode callbacks arrive on background threads. They never touch GPU or
 // widget state directly — decoded frames reach the UI through the pump
 // (VideoView) or the frame mailbox (FrameView), and the main goroutine is
-// woken with qui.WakeEventLoop. GL calls (texture allocation, upload,
-// compositing) run on the UI thread inside Tick / Draw / retained GL draws.
-//
-// The GPU paths share process-wide GL programs, textures and (on macOS) the
-// CVOpenGLTextureCache. All media widgets in a process must therefore render
-// through the same GL context: windows opened with NewSharedWindow share
-// their context; a second unshared window is not supported for video.
+// woken with qui.WakeEventLoop. Uploads and compositing run on the UI
+// thread inside retained compositor draws (qui.RetainedCompositorCanvas),
+// with whichever GPU renderer the window presents with (Metal or WebGPU).
 package media
 
 import "errors"

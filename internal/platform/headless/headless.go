@@ -147,7 +147,7 @@ func (w *headlessWindow) Caps() contract.Caps {
 		// A window nobody can see takes no keyboard focus, which is all an
 		// overlay panel asks for.
 		OverlayPanels: true,
-		GPUContext:    false,
+		GPUSurface:    false,
 	}
 }
 
@@ -232,7 +232,6 @@ func (w *headlessWindow) SetClipboardText(text string) {
 	w.app.mu.Unlock()
 }
 
-func (w *headlessWindow) MakeCurrent()                 {}
 func (w *headlessWindow) Surface() contract.Surface    { return headlessSurface{win: w} }
 func (w *headlessWindow) Wake()                        { w.app.Wake() }
 func (w *headlessWindow) NativeWindow() unsafe.Pointer { return nil }

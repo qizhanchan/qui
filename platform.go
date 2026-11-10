@@ -154,11 +154,6 @@ type platformWindow interface {
 	clipboardText() string
 	setClipboardText(text string)
 
-	// makeCurrent binds this window's GPU context to the calling thread.
-	// Multi-window apps have one context per window, so this runs before
-	// any drawing. A backend with no GPU context makes this a no-op.
-	makeCurrent()
-
 	// surface is this window's presentation target. Never nil.
 	surface() platformSurface
 

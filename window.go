@@ -56,14 +56,19 @@ type Window struct {
 	platformBacked bool
 	root           Widget
 	renderer       Renderer
-	// forceGL: this window fell back from Metal to GL (a widget needs raw
-	// GL, or Metal is unavailable); requested GLRenderers stay GL.
-	frameStats  frameStats
-	forceGL     bool
-	metalLogged bool // QUI_DEBUG_RENDERER reported Metal once
-	onRender    func(Canvas)
-	lastSize    Size
-	focused     Widget
+	frameStats     frameStats
+	// Renderer selection state (window_renderer.go): wantWebGPU — a widget
+	// asked for WebGPU, so AutoRenderer resolves to WebGPU; noWebGPU /
+	// noMetal — that renderer failed on this window's surface.
+	wantWebGPU, noWebGPU, noMetal bool
+	rendererLogged                bool // QUI_DEBUG_RENDERER reported the renderer
+	// gpuPre / gpuPost are the GPU hooks (SetPreRender / SetPostRender),
+	// func(*GPUFrame) in WebGPU builds; re-applied when the renderer changes.
+	gpuPre, gpuPost any
+	gpuHooksSet     bool
+	onRender        func(Canvas)
+	lastSize        Size
+	focused         Widget
 	// overlayFocusScopes parallels overlays. Each entry remembers where
 	// focus should return if that overlay owns focus when it is removed.
 	overlayFocusScopes []overlayFocusScope
@@ -239,10 +244,10 @@ type Window struct {
 	// painted, which buys the window another frame (see window_idle.go).
 	tickAt       time.Time
 	framePainted bool
-	// glRedraw is a pending RequestGLRedraw: a frame that only replays
-	// retained GL draws (internal/render/gl_retained.go). Atomic because any goroutine may
-	// request one.
-	glRedraw atomic.Bool
+	// gpuRedraw is a pending RequestGPURedraw: a frame that only replays
+	// retained draws (internal/render/retained.go). Atomic because any
+	// goroutine may request one.
+	gpuRedraw atomic.Bool
 	// animQuietSince starts a stretch of Steps that ticked animators but
 	// painted nothing; zero while the window paints or has no animators.
 	animQuietSince time.Time
@@ -335,14 +340,10 @@ func NewWindow(title string, width, height int) (*Window, error) {
 	return NewSharedWindow(title, width, height, nil)
 }
 
-// NewSharedWindow creates a Window whose OpenGL context shares
-// resources (textures, shaders, VBOs) with the given window. Useful
-// when rendering the same Scene in a detached inspector viewport, or
-// when a helper window wants to blit a texture produced by the main
-// window. Passing nil is equivalent to NewWindow.
-//
-// Both windows must still be driven from the main goroutine, and the
-// active context switches per Step (see Window.Step).
+// NewSharedWindow creates a Window opened alongside share. GPU resources
+// need no sharing: every window uses the process's one WebGPU device, so
+// a texture made for one window can be drawn in any other. Passing nil is
+// equivalent to NewWindow.
 func NewSharedWindow(title string, width, height int, share *Window) (*Window, error) {
 	assertProcessUIThread("NewSharedWindow")
 	if share != nil {
@@ -368,8 +369,6 @@ func newWindowFromConfig(plat platformApp, cfg platformWindowConfig) (*Window, e
 	if err != nil {
 		return nil, err
 	}
-	pw.makeCurrent()
-
 	width, height := cfg.Width, cfg.Height
 	w := &Window{
 		title:          cfg.Title,

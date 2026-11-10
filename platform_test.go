@@ -111,7 +111,6 @@ func (f *fakePlatformWindow) currentMods() Modifiers        { return f.mods }
 
 func (f *fakePlatformWindow) clipboardText() string        { return f.clipboard }
 func (f *fakePlatformWindow) setClipboardText(t string)    { f.clipboard = t }
-func (f *fakePlatformWindow) makeCurrent()                 { f.currents++ }
 func (f *fakePlatformWindow) wake()                        { f.wakes++ }
 func (f *fakePlatformWindow) nativeWindow() unsafe.Pointer { return nil }
 
@@ -386,29 +385,6 @@ func (p *eventProbe) Handle(e Event) bool {
 }
 
 func (p *eventProbe) Focusable() bool { return true }
-
-// glFrameRenderer is a CPUFrameSource that, like GLRenderer, draws through
-// a GPU context.
-type glFrameRenderer struct{ cpuFrameRenderer }
-
-func (glFrameRenderer) RequiresGPUContext() bool { return true }
-
-func TestPresentKeepsGLRenderersOnTheSwap(t *testing.T) {
-	f := newFakePlatformWindow()
-	w := newWindowOnFake(f)
-	w.renderer = &glFrameRenderer{cpuFrameRenderer{img: image.NewRGBA(image.Rect(0, 0, 4, 4))}}
-	surf := f.surface().(*fakeSurface)
-	surf.cpuOK = true
-
-	w.present()
-
-	// The CPU image lacks the GL renderer's raw-GL content and the swap
-	// already holds the full frame; taking the CPU path would drop the
-	// former and pay for both.
-	if surf.cpuFrames != 0 || surf.presented != 1 {
-		t.Errorf("GL renderer: cpuFrames=%d presented=%d, want 0/1", surf.cpuFrames, surf.presented)
-	}
-}
 
 func TestPresentPrefersTheCPUPathWhenBothSidesSupportIt(t *testing.T) {
 	f := newFakePlatformWindow()

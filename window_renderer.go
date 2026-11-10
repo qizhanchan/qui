@@ -1,0 +1,259 @@
+package qui
+
+import (
+	"log"
+	"os"
+	"strings"
+	"sync/atomic"
+
+	"github.com/qizhanchan/qui/internal/platform/contract"
+	"github.com/qizhanchan/qui/internal/render"
+)
+
+// Renderer selection — see docs/rfc/0002-metal-renderer.zh.md and
+// docs/rfc/0003-webgpu.zh.md.
+//
+// An app asks for NewAutoRenderer (or the deprecated NewGLRenderer, or sets
+// no renderer at all) and the window resolves it to what its surface does
+// best: on cocoa a MetalRenderer (CPU raster presented through a
+// CAMetalLayer, zero-copy IOSurface frames); on glfw a WebGPURenderer
+// (Dawn on D3D12 / Vulkan / Metal); elsewhere a CPURenderer whose frames
+// the platform compositor shows. A Metal window whose widgets turn out to
+// need WebGPU (GPUCanvas, GPU hooks — 3D, custom shaders) switches itself
+// to a WebGPURenderer on the same layer the first time one asks.
+//
+// QUI_RENDERER overrides the choice: "metal", "webgpu", "cpu".
+
+// rendererPreference is QUI_RENDERER, lower-cased.
+func rendererPreference() string {
+	return strings.ToLower(strings.TrimSpace(os.Getenv("QUI_RENDERER")))
+}
+
+// newWebGPURenderer builds a WebGPURenderer, or is nil in builds without
+// WebGPU (no cgo, js). Set by window_gpu.go.
+var newWebGPURenderer func() Renderer
+
+// webgpuUsable reports whether WebGPU can run in this process (loads Dawn
+// on first use).
+var webgpuUsable func() bool
+
+func webgpuOK() bool { return newWebGPURenderer != nil && webgpuUsable != nil && webgpuUsable() }
+
+// metalSurfaceOf returns the window's CAMetalLayer presentation path, if
+// its surface has one.
+func metalSurfaceOf(pw platformWindow) (contract.MetalSurface, bool) {
+	if pw == nil {
+		return nil, false
+	}
+	s := pw.surface()
+	if cs, ok := s.(contractSurface); ok {
+		ms, ok := cs.s.(contract.MetalSurface)
+		return ms, ok
+	}
+	ms, ok := s.(contract.MetalSurface)
+	return ms, ok
+}
+
+// nativeSurfaceOf returns the window's native-window presentation path
+// (glfw), if its surface has one.
+func nativeSurfaceOf(pw platformWindow) (contract.NativeSurface, bool) {
+	if pw == nil {
+		return nil, false
+	}
+	s := pw.surface()
+	if cs, ok := s.(contractSurface); ok {
+		ns, ok := cs.s.(contract.NativeSurface)
+		return ns, ok
+	}
+	ns, ok := s.(contract.NativeSurface)
+	return ns, ok
+}
+
+// preferredRenderer resolves an AutoRenderer request into the renderer
+// this window should run. Any other renderer is the app's explicit choice
+// and passes through.
+func (w *Window) preferredRenderer(r Renderer) Renderer {
+	if _, auto := r.(*AutoRenderer); !auto {
+		return r
+	}
+	pref := rendererPreference()
+	if pref == "cpu" {
+		return NewCPURenderer()
+	}
+	_, hasMetal := metalSurfaceOf(w.plat)
+	_, hasNative := nativeSurfaceOf(w.plat)
+	if !hasMetal && !hasNative {
+		return NewCPURenderer()
+	}
+	if !w.noWebGPU && (w.wantWebGPU || pref == "webgpu" || !hasMetal) && webgpuOK() {
+		return newWebGPURenderer()
+	}
+	if hasMetal && render.MetalRendererAvailable && !w.noMetal {
+		return NewMetalRenderer()
+	}
+	return NewCPURenderer()
+}
+
+// bindSurface hands a GPU-presenting renderer its window's surface before
+// a frame, and resolves a pending AutoRenderer. When the renderer cannot
+// use the surface the window falls back (WebGPU → Metal → CPU).
+func (w *Window) bindSurface() {
+	if _, auto := w.renderer.(*AutoRenderer); auto {
+		w.SetRenderer(w.renderer)
+	}
+	if mr, ok := w.renderer.(render.MetalLayerRenderer); ok {
+		if ms, ok := metalSurfaceOf(w.plat); ok {
+			if layer := ms.MetalLayer(); layer != nil && mr.SetMetalLayer(layer) {
+				w.logRenderer()
+				return
+			}
+			w.rendererFailed()
+			return
+		}
+	}
+	if nr, ok := w.renderer.(render.NativeWindowRenderer); ok {
+		if ns, ok := nativeSurfaceOf(w.plat); ok {
+			t := ns.NativeSurfaceTarget()
+			st := render.SurfaceTarget{MetalLayer: t.MetalLayer, HInstance: t.HInstance, HWND: t.HWND,
+				XDisplay: t.XDisplay, XWindow: t.XWindow}
+			if !st.IsZero() && nr.SetSurfaceTarget(st) {
+				w.logRenderer()
+				return
+			}
+			w.rendererFailed()
+		}
+	}
+}
+
+func (w *Window) logRenderer() {
+	if w.rendererLogged || os.Getenv("QUI_DEBUG_RENDERER") == "" {
+		return
+	}
+	w.rendererLogged = true
+	log.Printf("qui: window %q presents with %T", w.title, w.renderer)
+}
+
+// rendererFailed drops the GPU renderer that could not use the surface
+// for the next one down and repaints everything.
+func (w *Window) rendererFailed() {
+	switch w.renderer.(type) {
+	case *MetalRenderer:
+		w.noMetal = true
+		log.Printf("qui: Metal presentation unavailable for window %q", w.title)
+	default:
+		w.noWebGPU = true
+		log.Printf("qui: WebGPU presentation unavailable for window %q", w.title)
+	}
+	w.closeRenderer()
+	w.renderer = NoopRenderer{}
+	w.SetRenderer(NewAutoRenderer())
+	w.rendererLogged = false
+	w.Invalidate()
+	w.InvalidateLayout()
+}
+
+var webgpuMissingLogged atomic.Bool
+
+// checkWebGPUSwitch moves the window to a WebGPURenderer after a frame in
+// which a widget asked the Metal renderer for WebGPU.
+func (w *Window) checkWebGPUSwitch() {
+	fr, ok := w.renderer.(render.WebGPUFallbackRenderer)
+	if !ok || !fr.WantsWebGPU() || w.wantWebGPU {
+		return
+	}
+	w.wantWebGPU = true
+	if !webgpuOK() {
+		if !webgpuMissingLogged.Swap(true) {
+			log.Printf("qui: a widget needs WebGPU but Dawn is not available; its GPU content will not show " +
+				"(install it with `go run github.com/qizhanchan/qui/cmd/qui-dawn`)")
+		}
+		return
+	}
+	w.closeRenderer()
+	w.renderer = NoopRenderer{}
+	w.SetRenderer(NewAutoRenderer())
+	w.rendererLogged = false
+	if os.Getenv("QUI_DEBUG_RENDERER") != "" {
+		log.Printf("qui: window %q switched to WebGPU", w.title)
+	}
+	w.Invalidate()
+	w.InvalidateLayout()
+}
+
+// closeRenderer releases a renderer's native resources (a GPU context)
+// when the window stops using it.
+func (w *Window) closeRenderer() {
+	if c, ok := w.renderer.(interface{ Close() }); ok {
+		c.Close()
+	}
+}
+
+// rendererPresentsItself reports whether the renderer already presented
+// the frame (Metal and WebGPU renderers present their own drawables).
+func (w *Window) rendererPresentsItself() bool {
+	sp, ok := w.renderer.(render.SelfPresentingRenderer)
+	return ok && sp.PresentsItself()
+}
+
+// ForgetRetainedDraw drops key's retained draw (compositor or GPU) from
+// this window's renderer, for an owner that stops showing GPU content
+// without its area being repainted. UI thread.
+func (w *Window) ForgetRetainedDraw(key any) {
+	if w == nil {
+		return
+	}
+	w.assertUIThread("Window.ForgetRetainedDraw")
+	if rr, ok := w.renderer.(render.RetainedRenderer); ok {
+		rr.ForgetRetainedDraw(key)
+	}
+}
+
+// ForgetRetainedGLDraw is the old name of ForgetRetainedDraw.
+//
+// Deprecated: use ForgetRetainedDraw.
+func (w *Window) ForgetRetainedGLDraw(key any) { w.ForgetRetainedDraw(key) }
+
+// RequestGPURedraw asks for a frame that re-runs this window's retained
+// draws (RetainedCompositorCanvas, GPUCanvas) without repainting any widget
+// — the cheap way to show new content in a GPU-backed widget. Safe to call
+// from any goroutine; requests made before the frame runs coalesce.
+func (w *Window) RequestGPURedraw() {
+	if w == nil {
+		return
+	}
+	if w.gpuRedraw.Swap(true) {
+		return // already pending; the loop has been woken
+	}
+	w.wakeLoop()
+}
+
+// RequestGLRedraw is the old name of RequestGPURedraw.
+//
+// Deprecated: use RequestGPURedraw.
+func (w *Window) RequestGLRedraw() { w.RequestGPURedraw() }
+
+// gpuRedrawPending reports whether RequestGPURedraw is waiting for a frame.
+func (w *Window) gpuRedrawPending() bool { return w != nil && w.gpuRedraw.Load() }
+
+// redrawRetainedOnly runs a RequestGPURedraw frame. Step calls it when
+// nothing is dirty.
+func (w *Window) redrawRetainedOnly() {
+	rr, ok := w.renderer.(render.RetainedRenderer)
+	if !ok {
+		return
+	}
+	if fi, ok := w.renderer.(render.FrameInfoRenderer); ok {
+		fi.SetLogicalSize(w.lastSize)
+	}
+	w.bindSurface()
+	if !rr.RedrawRetained() {
+		return
+	}
+	w.present()
+	w.framePainted = true
+}
+
+// defaultRenderer is the renderer a platform window starts with, so an app
+// that never calls SetRenderer still shows its UI: resolved on the first
+// frame (bindSurface).
+func defaultRenderer(platformWindow) Renderer { return NewAutoRenderer() }

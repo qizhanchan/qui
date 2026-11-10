@@ -47,7 +47,7 @@ func TestMetalCompositesVideoUnderTheHole(t *testing.T) {
 	}
 	identity := [9]float32{1, 0, 0, 0, 1, 0, 0, 0, 1}
 	drew := false
-	c.(RetainedMetalCanvas).QueueRetainedMetalDraw("video", gfx.Rect{X: 16, Y: 16, W: 32, H: 32}, func(mc MetalCompositor) {
+	c.(RetainedCompositorCanvas).QueueRetainedDraw("video", gfx.Rect{X: 16, Y: 16, W: 32, H: 32}, func(mc Compositor) {
 		drew = mc.DrawYUV420("video", planes, identity, [3]float32{}, [3]float32{1, 1, 1},
 			gfx.Rect{W: 32, H: 32}, gfx.Rect{X: 16, Y: 16, W: 32, H: 32})
 	})

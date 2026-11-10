@@ -7,7 +7,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/go-gl/gl/v3.3-core/gl"
 	"github.com/qizhanchan/qui"
 	"github.com/qizhanchan/qui/media/internal/h264"
 	"github.com/qizhanchan/qui/media/internal/yuv"
@@ -16,9 +15,8 @@ import (
 var frameGen atomic.Uint64
 
 // golangVideoFrame is the pure-Go backend's VideoFrame: a decoded I420
-// picture. VideoView draws it through DrawIntoFramebuffer, which uploads the
-// planes and converts colour on the GPU; GLTexture lazily builds an RGBA
-// texture for other consumers.
+// picture. Composite uploads the planes and converts colour on the GPU;
+// RGBA converts on the CPU for other consumers.
 type golangVideoFrame struct {
 	pts       time.Duration
 	frame     *h264.Frame
@@ -27,8 +25,6 @@ type golangVideoFrame struct {
 	w, h      int
 	gen       uint64
 	refs      atomic.Int32
-
-	rgbaTex uint32 // lazily created by GLTexture
 }
 
 func newGolangVideoFrame(pts time.Duration, f *h264.Frame) *golangVideoFrame {
@@ -40,34 +36,6 @@ func newGolangVideoFrame(pts time.Duration, f *h264.Frame) *golangVideoFrame {
 func (f *golangVideoFrame) PTS() time.Duration { return f.pts }
 func (f *golangVideoFrame) Width() int         { return f.w }
 func (f *golangVideoFrame) Height() int        { return f.h }
-
-// DrawIntoFramebuffer implements framebufferDrawer.
-func (f *golangVideoFrame) DrawIntoFramebuffer(state qui.GLState, src, physDst qui.Rect, flipY bool) bool {
-	return gYUV.draw(f, src, physDst, state.FramebufferSize, flipY)
-}
-
-// GLTexture returns an RGBA GL_TEXTURE_2D of the frame, converting on the
-// CPU on first use. Must be called with the GL context current.
-func (f *golangVideoFrame) GLTexture() uint32 {
-	drainTexDeletes()
-	if f.rgbaTex != 0 {
-		return f.rgbaTex
-	}
-	rgba := f.RGBA()
-	if rgba == nil {
-		return 0
-	}
-	gl.GenTextures(1, &f.rgbaTex)
-	gl.BindTexture(gl.TEXTURE_2D, f.rgbaTex)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-	gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, int32(f.Width()), int32(f.Height()), 0, gl.RGBA, gl.UNSIGNED_BYTE, unsafe.Pointer(&rgba[0]))
-	gl.BindTexture(gl.TEXTURE_2D, 0)
-	return f.rgbaTex
-}
 
 // RGBA converts the frame to packed RGBA on the CPU.
 func (f *golangVideoFrame) RGBA() []byte {
@@ -86,10 +54,9 @@ func (f *golangVideoFrame) RGBA() []byte {
 
 func (f *golangVideoFrame) Retain() { f.refs.Add(1) }
 
-// drawMetal implements metalVideoFrame: the I420 planes are uploaded and
-// converted in the compositor's shader with the same coefficients as the
-// GL path.
-func (f *golangVideoFrame) drawMetal(c qui.MetalCompositor, key any, src, physDst qui.Rect) bool {
+// Composite implements VideoFrame: the I420 planes are uploaded and
+// converted in the compositor's shader.
+func (f *golangVideoFrame) Composite(c qui.Compositor, key any, src, physDst qui.Rect) bool {
 	fr := f.frame
 	if fr == nil || fr.Y == nil || fr.Cb == nil || fr.Cr == nil {
 		return false
@@ -107,10 +74,6 @@ func (f *golangVideoFrame) drawMetal(c qui.MetalCompositor, key any, src, physDs
 func (f *golangVideoFrame) Release() {
 	if f.refs.Add(-1) > 0 {
 		return
-	}
-	if f.rgbaTex != 0 {
-		queueTexDelete(f.rgbaTex)
-		f.rgbaTex = 0
 	}
 	h264.Recycle(f.frame)
 	f.frame = nil

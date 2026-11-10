@@ -7,7 +7,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/go-gl/gl/v3.3-core/gl"
 	"github.com/qizhanchan/qui"
 )
 
@@ -32,12 +31,12 @@ import (
 // composite time, so the frame shown is the newest one available when the
 // GPU work is issued, not when the widget was laid out.
 //
-// A new frame of an unchanged size costs a GL-only redraw
-// (qui.Window.RequestGLRedraw): no widget is re-rasterized and no CPU
+// A new frame of an unchanged size costs a redraw-only frame
+// (qui.Window.RequestGPURedraw): no widget is re-rasterized and no CPU
 // pixels are uploaded. While no frames arrive the window idles — the
 // picture stays on screen through partial repaints of the rest of the
-// window via a retained GL draw (qui.RetainedGLCanvas), not by repainting
-// every frame.
+// window via a retained compositor draw (qui.RetainedCompositorCanvas),
+// not by repainting every frame.
 //
 // # Input
 //
@@ -66,10 +65,6 @@ type FrameView struct {
 	curAt    time.Time
 	shownSeq uint64 // last seq reported as presented
 	physBox  qui.Rect
-	tex      uint32 // GL_TEXTURE_2D for CPU-uploaded frames
-	texW     int
-	texH     int
-	texFmt   uint32
 	onEvent  func(qui.Event) bool
 
 	focusable bool
@@ -79,8 +74,8 @@ type FrameView struct {
 	// win is the window the widget was last drawn / laid out in, readable
 	// from pushing goroutines.
 	win atomic.Pointer[qui.Window]
-	// retained reports that the last Draw registered a retained GL draw,
-	// so a same-size frame can be shown with a GL-only redraw.
+	// retained reports that the last Draw registered a retained draw, so
+	// a same-size frame can be shown with a redraw-only frame.
 	retained atomic.Bool
 	// invalidatePosted dedups the PostJob a push falls back to.
 	invalidatePosted atomic.Bool
@@ -94,13 +89,10 @@ type FrameView struct {
 // and the darwin CVPixelBuffer frame.
 type framePayload interface {
 	size() (w, h int)
-	// draw composites the src texel rect of the frame onto physDst in the
-	// current framebuffer. UI thread, GL context current.
-	draw(v *FrameView, state qui.GLState, src, physDst qui.Rect) bool
-	// drawMetal is draw for a Metal-presented window: composite through
-	// the renderer's MetalCompositor. UI thread.
-	drawMetal(v *FrameView, c qui.MetalCompositor, src, physDst qui.Rect) bool
-	// cpuImage returns the frame as an image for the non-GL fallback, or
+	// draw composites the src texel rect of the frame onto physDst
+	// through the renderer's Compositor. UI thread.
+	draw(v *FrameView, c qui.Compositor, src, physDst qui.Rect) bool
+	// cpuImage returns the frame as an image for CPU presentation, or
 	// nil if it has none.
 	cpuImage() image.Image
 	// release drops the frame's resources. Called exactly once.
@@ -173,7 +165,7 @@ func (v *FrameView) push(f framePayload) {
 	v.schedule(resized)
 }
 
-// schedule asks the window to show the pending frame: a GL-only redraw
+// schedule asks the window to show the pending frame: a redraw-only frame
 // when the retained draw is in place and the geometry is unchanged, a
 // repaint (plus relayout for a new size) otherwise.
 func (v *FrameView) schedule(resized bool) {
@@ -182,7 +174,7 @@ func (v *FrameView) schedule(resized bool) {
 		return // not on screen yet; the first Draw picks the frame up
 	}
 	if !resized && v.retained.Load() {
-		win.RequestGLRedraw()
+		win.RequestGPURedraw()
 		return
 	}
 	if v.invalidatePosted.Swap(true) {
@@ -213,7 +205,7 @@ func (v *FrameView) Clear() {
 	v.schedule(true)
 }
 
-// Destroy releases every frame and the GL texture. Call on the UI thread
+// Destroy releases every frame and the GPU texture. Call on the UI thread
 // once the view is no longer shown.
 func (v *FrameView) Destroy() {
 	v.mu.Lock()
@@ -228,12 +220,8 @@ func (v *FrameView) Destroy() {
 		v.current.release()
 		v.current = nil
 	}
-	if v.tex != 0 && qui.ActiveGLRenderer() != nil {
-		gl.DeleteTextures(1, &v.tex)
-	}
-	v.tex = 0
 	if w := v.Window(); w != nil {
-		w.ForgetRetainedGLDraw(v)
+		w.ForgetRetainedDraw(v)
 	}
 	v.retained.Store(false)
 }
@@ -419,9 +407,10 @@ func (v *FrameView) Layout(r qui.Rect) {
 	v.win.Store(v.Window())
 }
 
-// Draw paints the letterbox background and registers the retained GL draw
-// that shows the frame. Without a GPU canvas (tests, headless) an RGBA
-// frame is drawn through the CPU canvas instead.
+// Draw paints the letterbox background and registers the retained
+// compositor draw that shows the frame. Without a GPU-presenting canvas
+// (tests, headless, CPU presentation) an RGBA frame is drawn through the
+// CPU canvas instead.
 func (v *FrameView) Draw(canvas qui.Canvas) {
 	v.win.Store(v.Window())
 	bounds := v.Bounds()
@@ -432,23 +421,7 @@ func (v *FrameView) Draw(canvas qui.Canvas) {
 	canvas.FillRect(bounds, bg)
 
 	content := v.ContentRect()
-	// A Metal window composites the frame natively. Checked first: the
-	// Metal canvas also answers RetainedGLCanvas, only to switch a window
-	// with GL-only widgets over to GL.
-	if mk, ok := canvas.(qui.RetainedMetalCanvas); ok {
-		if content.IsEmpty() {
-			v.retained.Store(false)
-			return
-		}
-		if hole := content.Intersect(bounds); !hole.IsEmpty() {
-			canvas.ClearRect(hole)
-		}
-		v.physBox = canvas.CurrentMatrix().TransformRect(bounds)
-		mk.QueueRetainedMetalDraw(v, v.physBox, v.metalDraw)
-		v.retained.Store(true)
-		return
-	}
-	rk, ok := canvas.(qui.RetainedGLCanvas)
+	rc, ok := canvas.(qui.RetainedCompositorCanvas)
 	if !ok {
 		v.retained.Store(false)
 		if f := v.promote(); f != nil && !content.IsEmpty() {
@@ -460,24 +433,26 @@ func (v *FrameView) Draw(canvas qui.Canvas) {
 		return
 	}
 	if content.IsEmpty() {
-		// Nothing pushed yet: keep the background, but still let a GL-only
-		// redraw find nothing to replay rather than a stale picture.
+		// Nothing pushed yet: keep the background, but still let a
+		// redraw-only frame find nothing to replay rather than a stale
+		// picture.
 		v.retained.Store(false)
 		return
 	}
-	// Punch the 2D layer so the GL picture underneath shows through.
+	// Punch the 2D layer so the picture underneath shows through.
 	if hole := content.Intersect(bounds); !hole.IsEmpty() {
 		canvas.ClearRect(hole)
 	}
 	v.physBox = canvas.CurrentMatrix().TransformRect(bounds)
-	rk.QueueRetainedGLDraw(v, v.physBox, v.glDraw)
+	rc.QueueRetainedDraw(v, v.physBox, v.composite)
 	v.retained.Store(true)
 }
 
-// glDraw is the retained GL draw: promote the newest frame and composite
-// it. Geometry is recomputed from the frame's own size so a GL-only redraw
-// of a resized frame (before the relayout lands) is still proportioned.
-func (v *FrameView) glDraw(state qui.GLState) {
+// composite is the retained draw: promote the newest frame and composite
+// it. Geometry is recomputed from the frame's own size so a redraw-only
+// frame of a resized frame (before the relayout lands) is still
+// proportioned.
+func (v *FrameView) composite(c qui.Compositor) {
 	f := v.promote()
 	if f == nil {
 		return
@@ -488,24 +463,7 @@ func (v *FrameView) glDraw(state qui.GLState) {
 	if !ok {
 		return
 	}
-	if f.draw(v, state, src, dst) {
-		v.notePresented(f)
-	}
-}
-
-// metalDraw is glDraw for a Metal-presented window.
-func (v *FrameView) metalDraw(c qui.MetalCompositor) {
-	f := v.promote()
-	if f == nil {
-		return
-	}
-	fw, fh := f.size()
-	dst := fitDstRect(v.FitMode(), v.physBox, float32(fw), float32(fh))
-	src, dst, ok := cropToVisible(dst, v.physBox, float32(fw), float32(fh))
-	if !ok {
-		return
-	}
-	if f.drawMetal(v, c, src, dst) {
+	if f.draw(v, c, src, dst) {
 		v.notePresented(f)
 	}
 }
@@ -531,43 +489,6 @@ func cropToVisible(dst, visible qui.Rect, fw, fh float32) (src, out qui.Rect, ok
 	return src, out, true
 }
 
-// uploadAndDraw uploads tightly or loosely packed 32-bit pixels into the
-// view's 2D texture and composites the src rect of it. format is gl.RGBA
-// or gl.BGRA. Used by RGBA pushes and by CVPixelBuffers the texture cache
-// cannot bind.
-func (v *FrameView) uploadAndDraw(pix unsafe.Pointer, stride, w, h int, format uint32, src, dst qui.Rect) bool {
-	glr := qui.ActiveGLRenderer()
-	if glr == nil || pix == nil || w <= 0 || h <= 0 {
-		return false
-	}
-	if v.tex == 0 {
-		gl.GenTextures(1, &v.tex)
-		gl.BindTexture(gl.TEXTURE_2D, v.tex)
-		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-	}
-	gl.ActiveTexture(gl.TEXTURE0)
-	gl.BindTexture(gl.TEXTURE_2D, v.tex)
-	gl.PixelStorei(gl.UNPACK_ROW_LENGTH, int32(stride/4))
-	if v.texW != w || v.texH != h || v.texFmt != format {
-		gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, int32(w), int32(h), 0, format, gl.UNSIGNED_BYTE, pix)
-		v.texW, v.texH, v.texFmt = w, h, format
-	} else {
-		gl.TexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, int32(w), int32(h), format, gl.UNSIGNED_BYTE, pix)
-	}
-	gl.PixelStorei(gl.UNPACK_ROW_LENGTH, 0)
-	gl.BindTexture(gl.TEXTURE_2D, 0)
-	// DrawTexture flips V for top-down data, which mirrors the source
-	// rect vertically as well: hand it the mirrored rect.
-	mirrored := src
-	mirrored.Y = float32(h) - (src.Y + src.H)
-	glr.DrawTexture(v.tex, mirrored, dst, int32(w), int32(h),
-		qui.TextureOpts{FlipY: true, Tint: qui.Color{R: 1, G: 1, B: 1, A: 1}, Opacity: 1})
-	return true
-}
-
 // rgbaFrame is a PushRGBA frame.
 type rgbaFrame struct{ img *image.RGBA }
 
@@ -575,21 +496,11 @@ func (f *rgbaFrame) size() (int, int)      { return f.img.Rect.Dx(), f.img.Rect.
 func (f *rgbaFrame) cpuImage() image.Image { return f.img }
 func (f *rgbaFrame) release()              { f.img = nil }
 
-func (f *rgbaFrame) drawMetal(v *FrameView, c qui.MetalCompositor, src, dst qui.Rect) bool {
+func (f *rgbaFrame) draw(v *FrameView, c qui.Compositor, src, dst qui.Rect) bool {
 	img := f.img
 	if img == nil || len(img.Pix) == 0 {
 		return false
 	}
 	return c.DrawPixels(v, unsafe.Pointer(&img.Pix[img.PixOffset(img.Rect.Min.X, img.Rect.Min.Y)]),
 		img.Stride, img.Rect.Dx(), img.Rect.Dy(), false, src, dst)
-}
-
-func (f *rgbaFrame) draw(v *FrameView, _ qui.GLState, src, dst qui.Rect) bool {
-	img := f.img
-	if img == nil || len(img.Pix) == 0 {
-		return false
-	}
-	w, h := img.Rect.Dx(), img.Rect.Dy()
-	return v.uploadAndDraw(unsafe.Pointer(&img.Pix[img.PixOffset(img.Rect.Min.X, img.Rect.Min.Y)]),
-		img.Stride, w, h, gl.RGBA, src, dst)
 }

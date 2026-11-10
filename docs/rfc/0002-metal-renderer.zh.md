@@ -2,6 +2,8 @@
 
 状态：M1、M3（FrameView）已实现，M2 暂缓（2026-11-09）
 
+> 2026-11-10：OpenGL 已从 qui 移除（RFC 0003）。下文的「GL 回退」改为「切到 WebGPURenderer」：需要 GPU 内容的窗口在同一个 CAMetalLayer 上换成 Dawn；`QUI_RENDERER` 的取值变为 `metal|webgpu|cpu`，`QUI_GPU_RASTER` 已删除。
+
 ## 背景
 
 macOS 从 10.14 起废弃 OpenGL（冻结在 4.1，Apple Silicon 上是跑在 Metal 之上的转换层）。qui 在 cocoa 后端用 `NSOpenGLContext` 呈现：`GLRenderer` 把 CPU 光栅化的整帧上传成 GL 纹理再 `flushBuffer`。这条路有两个问题：

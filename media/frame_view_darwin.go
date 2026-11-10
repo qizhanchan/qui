@@ -8,8 +8,6 @@ package media
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreVideo/CoreVideo.h>
 
-void quiVideoReleaseGLTex(void* cvTex); // backend_darwin.m
-
 static void qfvRetain(void* pb) { CFRetain((CFTypeRef)pb); }
 static void qfvRelease(void* pb) { CFRelease((CFTypeRef)pb); }
 static long qfvRetainCount(void* pb) { return (long)CFGetRetainCount((CFTypeRef)pb); }
@@ -48,7 +46,7 @@ static void* qfvNewBGRA(int w, int h) {
     CFDictionaryRef empty = CFDictionaryCreate(kCFAllocatorDefault, NULL, NULL, 0,
         &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     CFDictionarySetValue(attrs, kCVPixelBufferIOSurfacePropertiesKey, empty);
-    CFDictionarySetValue(attrs, kCVPixelBufferOpenGLCompatibilityKey, kCFBooleanTrue);
+    CFDictionarySetValue(attrs, kCVPixelBufferMetalCompatibilityKey, kCFBooleanTrue);
     CVPixelBufferRef pb = NULL;
     CVReturn r = CVPixelBufferCreate(kCFAllocatorDefault, w, h, kCVPixelFormatType_32BGRA, attrs, &pb);
     CFRelease(empty);
@@ -63,7 +61,6 @@ import (
 	"image"
 	"unsafe"
 
-	"github.com/go-gl/gl/v3.3-core/gl"
 	"github.com/qizhanchan/qui"
 )
 
@@ -77,9 +74,9 @@ var errNotPixelBuffer = errors.New("media: PushCVPixelBuffer: not a CVPixelBuffe
 // newer frame replaces it. Safe from any goroutine; never blocks on the UI.
 //
 // The zero-copy path wants what VideoToolbox produces when asked for
-// kCVPixelFormatType_32BGRA with kCVPixelBufferIOSurfacePropertiesKey and
-// kCVPixelBufferOpenGLCompatibilityKey: such a buffer is bound as a GL
-// texture through CVOpenGLTextureCache at draw time, no pixels copied.
+// kCVPixelFormatType_32BGRA with kCVPixelBufferIOSurfacePropertiesKey:
+// such a buffer's IOSurface is imported as a GPU texture at draw time, no
+// pixels copied.
 // Other 32BGRA buffers fall back to a CPU upload; other pixel formats are
 // rejected.
 func (v *FrameView) PushCVPixelBuffer(pb unsafe.Pointer) error {
@@ -101,13 +98,8 @@ func (v *FrameView) PushCVPixelBuffer(pb unsafe.Pointer) error {
 
 // cvFrame is a pushed CVPixelBuffer.
 type cvFrame struct {
-	pb    unsafe.Pointer // CVPixelBufferRef, retained by us
-	w, h  int
-	cvTex unsafe.Pointer // CVOpenGLTextureRef once bound (UI thread)
-	tex   uint32
-	// cpuOnly is set once the texture cache refused the buffer (not
-	// IOSurface-backed); later draws go straight to the upload path.
-	cpuOnly bool
+	pb   unsafe.Pointer // CVPixelBufferRef, retained by us
+	w, h int
 }
 
 func (f *cvFrame) size() (int, int) { return f.w, f.h }
@@ -116,38 +108,9 @@ func (f *cvFrame) size() (int, int) { return f.w, f.h }
 // path is the point of pushing one).
 func (f *cvFrame) cpuImage() image.Image { return nil }
 
-func (f *cvFrame) draw(v *FrameView, state qui.GLState, src, dst qui.Rect) bool {
-	if f.pb == nil {
-		return false
-	}
-	if f.tex == 0 && !f.cpuOnly {
-		cvTex, name, ok := bindFramePixelBuffer(f.pb)
-		if ok {
-			f.cvTex, f.tex = cvTex, name
-		} else {
-			f.cpuOnly = true
-		}
-	}
-	if f.tex != 0 {
-		drawRectTextureSrc(f.tex, src, dst, state.FramebufferSize,
-			qui.Size{W: float32(f.w), H: float32(f.h)}, true)
-		if flushTextureCache != nil {
-			flushTextureCache()
-		}
-		return true
-	}
-	var stride C.size_t
-	base := C.qfvLock(f.pb, &stride)
-	if base == nil {
-		return false
-	}
-	defer C.qfvUnlock(f.pb)
-	return v.uploadAndDraw(base, int(stride), f.w, f.h, gl.BGRA, src, dst)
-}
-
-// drawMetal shows the buffer zero-copy through its IOSurface, or uploads
-// its pixels when it has none.
-func (f *cvFrame) drawMetal(v *FrameView, c qui.MetalCompositor, src, dst qui.Rect) bool {
+// draw shows the buffer zero-copy through its IOSurface, or uploads its
+// pixels when it has none.
+func (f *cvFrame) draw(v *FrameView, c qui.Compositor, src, dst qui.Rect) bool {
 	if f.pb == nil {
 		return false
 	}
@@ -163,13 +126,7 @@ func (f *cvFrame) drawMetal(v *FrameView, c qui.MetalCompositor, src, dst qui.Re
 	return c.DrawPixels(v, base, int(stride), f.w, f.h, true, src, dst)
 }
 
-// release drops the GL texture view first (it aliases the IOSurface), then
-// the buffer.
 func (f *cvFrame) release() {
-	if f.cvTex != nil {
-		C.quiVideoReleaseGLTex(f.cvTex)
-		f.cvTex, f.tex = nil, 0
-	}
 	if f.pb != nil {
 		C.qfvRelease(f.pb)
 		f.pb = nil

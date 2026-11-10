@@ -9,9 +9,9 @@
 // canvases layered over it.
 //
 // Frames are rasterized by CPURenderer and composited with putImageData,
-// only over the damaged rectangle. There is no GL context
-// (platformCaps.GPUContext false), so GLRenderer requests fall back to the
-// CPU renderer; a WebGL2 path is a later, separate surface.
+// only over the damaged rectangle. There is no GPU surface
+// (Caps.GPUSurface false), so AutoRenderer resolves to the CPU renderer;
+// browser WebGPU is a later, separate surface.
 //
 // Threading: Go's wasm port runs JS callbacks on the event-loop goroutine
 // while the main goroutine is parked in pumpEvents. Callbacks therefore do
@@ -791,7 +791,7 @@ func (w *webWindow) Caps() contract.Caps {
 		ServerDecorations: false,
 		NativeGestures:    false,
 		OverlayPanels:     false,
-		GPUContext:        false,
+		GPUSurface:        false,
 	}
 }
 
@@ -945,7 +945,6 @@ func (w *webWindow) SetClipboardText(text string) {
 	}
 }
 
-func (w *webWindow) MakeCurrent()                 {}
 func (w *webWindow) Surface() contract.Surface    { return webSurface{win: w} }
 func (w *webWindow) Wake()                        { w.app.Wake() }
 func (w *webWindow) NativeWindow() unsafe.Pointer { return nil }

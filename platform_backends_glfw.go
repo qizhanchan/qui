@@ -1,4 +1,4 @@
-//go:build cgo && !js && !qui_nogl && (windows || qui_glfw)
+//go:build cgo && !js && (windows || qui_glfw)
 
 package qui
 
