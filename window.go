@@ -57,11 +57,10 @@ type Window struct {
 	root           Widget
 	renderer       Renderer
 	frameStats     frameStats
-	// Renderer selection state (window_renderer.go): wantWebGPU — a widget
-	// asked for WebGPU, so AutoRenderer resolves to WebGPU; noWebGPU /
-	// noMetal — that renderer failed on this window's surface.
-	wantWebGPU, noWebGPU, noMetal bool
-	rendererLogged                bool // QUI_DEBUG_RENDERER reported the renderer
+	// noWebGPU: the WebGPU renderer failed on this window's surface (or
+	// lost its device); the window presents CPU frames from then on.
+	noWebGPU       bool
+	rendererLogged bool // QUI_DEBUG_RENDERER reported the renderer
 	// gpuPre / gpuPost are the GPU hooks (SetPreRender / SetPostRender),
 	// func(*GPUFrame) in WebGPU builds; re-applied when the renderer changes.
 	gpuPre, gpuPost any

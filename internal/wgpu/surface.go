@@ -71,7 +71,7 @@ func (s *Surface) Configure(w, h int, format TextureFormat, premultiplied bool) 
 	cfg := C.WGPUSurfaceConfiguration{
 		device:      s.dev.c,
 		format:      C.WGPUTextureFormat(format),
-		usage:       C.WGPUTextureUsage_RenderAttachment | C.WGPUTextureUsage_CopySrc,
+		usage:       C.WGPUTextureUsage(UsageRenderAttachment | UsageCopySrc),
 		width:       C.uint32_t(w),
 		height:      C.uint32_t(h),
 		alphaMode:   C.WGPUCompositeAlphaMode_Opaque,

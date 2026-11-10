@@ -10,7 +10,7 @@
 
 - `App` 拥有平台后端；`App.NewWindow` / `App.NewOverlayPanel`；`App.Run` 处理 SIGINT/SIGTERM 关闭；`App.SetKeepAlive`（窗口全关后仍运行的托盘应用）与 `App.Quit`。
 - 关闭否决：`Window.OnCloseRequest`（返回 false 保留窗口 —— “保存更改？”流程）、`RequestClose`，以及不可否决的 `Close`。
-- 生命周期回调：`OnActivate`、`OnMove`、`OnMinimize`、`OnFullscreenChange`、`OnClose`（都返回注销函数）；附属子窗口（`SetOwner`）与 sheet（`ShowAsSheet`，macOS）。
+- 生命周期回调：`OnActivate`、`OnMove`、`OnMinimize`、`OnFullscreenChange`、`OnClose`（都返回注销函数）；附属子窗口（`SetOwner`）与 sheet（`ShowAsSheet`，macOS）；`Window.IsActive()` 返回 key window 状态（类似 `document.hasFocus()`）。
 - 每个应用多个窗口；游离窗口可以在其他线程构造。
 - 每个窗口的渲染器选择、设备像素比处理和内容视口缩放。
 - 窗口模式：普通、全屏、浮层面板（不激活、透明、始终置顶 —— cocoa 后端）。
@@ -50,11 +50,11 @@
 - `Canvas` 前端：Save/Restore 状态栈（裁剪 + 2×3 仿射矩阵）、`Path` 支持二次 / 三次贝塞尔、抗锯齿 winding/even-odd 填充、描边 cap/join/miter。
 - `SaveLayer` 支持混合模式与 `Paint.Alpha`；`ClipPath`；线性 / 径向渐变着色器；`ColorFilter` / `ImageFilter`（投影、模糊）；`DrawShadow`；`ClearRect`（对应 Web canvas 的 `clearRect`：为 GPU 合成控件挖透明洞；透明度为 0 的绘制什么都不画）。
 - `RasterBackend` 接缝：纯 Go 的 CPU 光栅器（`internal/render/backend_cpu.go`）是唯一的光栅后端；任何地方都没有 OpenGL。
-- 渲染器：`CPURenderer`（平台合成器：XPutImage、Web canvas、headless、CALayer contents）、`MetalRenderer`（macOS，CAMetalLayer，零拷贝 IOSurface 帧）、`WebGPURenderer`（Dawn，跑在 Metal / D3D12 / Vulkan 上；macOS 上经 `SharedTextureMemory` 共享 IOSurface，其他情况用 `writeTexture` 上传；`ScrollPixels` 在 GPU 上完成）。`NewAutoRenderer()` 按窗口选择，并在控件请求 WebGPU 时把 Metal 窗口切换为 WebGPU；`QUI_RENDERER=metal|webgpu|cpu`、`QUI_DEBUG_RENDERER=1`、`QUI_WEBGPU=0`、`QUI_DAWN_LIB`、`QUI_WEBGPU_SHARED=0`；`WebGPUAvailable()`、`NewWebGPURenderer()`。Dawn 在运行时加载，用 `cmd/qui-dawn` 安装。
+- 渲染器：`WebGPURenderer`（Dawn，跑在 Metal / Vulkan / D3D12 上；macOS 上零拷贝 IOSurface（`SharedTextureMemory`）、GPU `ScrollPixels`、脏矩形与保留式合成器绘制，其他平台用 `writeTexture` 上传脏矩形）与 `CPURenderer`（平台合成器：CALayer contents、XPutImage、Web canvas、headless）。`NewAutoRenderer()` 按窗口选择：cocoa / x11 / glfw 上 Dawn 可加载时为 `WebGPURenderer`，否则为 `CPURenderer`（设备丢失会让窗口永久退到 CPU 路径）；`QUI_RENDERER=webgpu|cpu`、`QUI_DEBUG_RENDERER=1`、`QUI_WEBGPU=0`、`QUI_DAWN_LIB`、`QUI_WEBGPU_SHARED=0`；`WebGPUAvailable()`、`NewWebGPURenderer()`。Dawn 在运行时加载，用 `cmd/qui-dawn` 安装。
 - 脏区域绘制，`Invalidate` / `InvalidateRect` / `InvalidateLayout` 及包围盒变化提升。
 - 离屏渲染与回读；通过 `pdf.NewDoc`（以画布形式输出 PDF 页面，另有 `pdf.Print`）与 `svg.NewCanvas`（输出 SVG 文档）进行矢量导出。
 - GPU API（WebGPU）：`gpu` 包（设备、纹理、缓冲、WGSL 着色器模块、管线、绑定组、编码器、通道；`gpu.Shared()`）；`GPUCanvas.QueueGPUDraw(func(*GPUFrame))`；`GPUFrame` 带 `Device`、`Encoder`、`Format`、`Size`、`LogicalSize`、`DrawTexture`、`RenderPass`、`Compositor()`、`Capture`；整窗钩子 `Window.SetPreRender` / `SetPostRender`（pre-render 钩子即背景）。`examples/customgpu` 用 WGSL 着色器画背景。
-- 保留式 GPU 绘制：`GPUCanvas.QueueRetainedGPUDraw`，以及视频类内容用的 `RetainedCompositorCanvas.QueueRetainedDraw`（`Compositor`：`DrawPixelBuffer`、`DrawPixels`、`DrawYUV420`，Metal 与 WebGPU 都支持）让 GPU 内容在窗口其他部分局部重绘时保持显示（某帧重绘其区域而未重新登记时丢弃）；`Window.RequestGPURedraw`（任意 goroutine）只重放这些绘制，不重新光栅化、不上传 2D 层；`Window.ForgetRetainedDraw` 丢弃其中一个。
+- 保留式 GPU 绘制：`GPUCanvas.QueueRetainedGPUDraw`，以及视频类内容用的 `RetainedCompositorCanvas.QueueRetainedDraw`（`Compositor`：`DrawPixelBuffer`、`DrawPixels`、`DrawYUV420`）让 GPU 内容在窗口其他部分局部重绘时保持显示（某帧重绘其区域而未重新登记时丢弃）；`Window.RequestGPURedraw`（任意 goroutine）只重放这些绘制，不重新光栅化、不上传 2D 层；`Window.ForgetRetainedDraw` 丢弃其中一个。
 - 光标：内置形状之外还有 `CursorHidden` 与图像光标（`NewImageCursor`、2× 图像用 `NewImageCursorScaled`、`ReleaseCursor`），macOS 两个后端均支持，与其他形状一样经 `SetCursorShape` / `CursorProvider` / `CursorAtProvider` 解析。
 
 **文字**

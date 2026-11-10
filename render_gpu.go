@@ -10,7 +10,8 @@ import "github.com/qizhanchan/qui/internal/render"
 
 type (
 	// WebGPURenderer rasterizes on the CPU and presents through WebGPU
-	// (Dawn: Metal, D3D12, Vulkan). Windows showing GPU content run it.
+	// (Dawn: Metal, Vulkan, D3D12). It is what AutoRenderer resolves to
+	// wherever Dawn loads and the surface offers a GPU target.
 	WebGPURenderer = render.WebGPURenderer
 
 	// GPUCanvas is implemented by canvases of GPU-presenting renderers.
@@ -21,9 +22,9 @@ type (
 	//	    g.QueueRetainedGPUDraw(v, physBox, v.drawGPU)
 	//	}
 	//
-	// On a Metal window the first such request switches the window to a
-	// WebGPURenderer; canvases without GPU presentation do not implement
-	// it, and the widget should draw a CPU placeholder.
+	// Canvases without GPU presentation (the CPU path: no Dawn, a lost
+	// device, x11 / web / headless) do not implement it, and the widget
+	// should draw a CPU placeholder.
 	GPUCanvas = render.GPUCanvas
 
 	// GPUFrame is the frame being built, handed to GPU draws and hooks:

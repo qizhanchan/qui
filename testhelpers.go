@@ -195,6 +195,17 @@ func (w *Window) IngestScrollForTest(x, y, dx, dy float32, mods Modifiers, phase
 	w.ingestScroll(x, y, dx, dy, mods, phase, phase != GesturePhaseNone)
 }
 
+// SetActiveForTest drives the platform's key-window change (the same path
+// as an NSWindow becoming / resigning key): OnActivate hooks, IsActive and
+// a FocusEvent.
+func (w *Window) SetActiveForTest(active bool) {
+	if w == nil {
+		return
+	}
+	w.assertUIThread("Window.SetActiveForTest")
+	w.onFocus(active)
+}
+
 // NewDragEvent builds a synthetic DragEvent (EventDragStart/Move/End/Drop)
 // for drag-and-drop widget tests.
 func NewDragEvent(kind EventType, x, y float32, source Widget) DragEvent {

@@ -22,9 +22,10 @@ type (
 	// (platformSurface.presentCPU).
 	CPURenderer = render.CPURenderer
 
-	// AutoRenderer asks the window for its best presentation: MetalRenderer
-	// on cocoa, WebGPURenderer on glfw, CPURenderer elsewhere — see
-	// window_renderer.go and docs/rfc/0003-webgpu.zh.md.
+	// AutoRenderer asks the window for its best presentation: a
+	// WebGPURenderer where the surface offers a GPU target and Dawn loads,
+	// a CPURenderer otherwise — see window_renderer.go and
+	// docs/rfc/0003-webgpu.zh.md.
 	AutoRenderer = render.AutoRenderer
 
 	// GLRenderer is the old name of AutoRenderer. There is no OpenGL in qui
@@ -32,11 +33,6 @@ type (
 	//
 	// Deprecated: use AutoRenderer (NewAutoRenderer).
 	GLRenderer = render.AutoRenderer
-
-	// MetalRenderer rasterizes on the CPU and presents through a
-	// CAMetalLayer (macOS). It is what AutoRenderer resolves to on cocoa;
-	// it is CPURenderer in builds without Metal.
-	MetalRenderer = render.MetalRenderer
 
 	// RasterBackend is the abstraction below the Canvas frontend. Everything
 	// that reads state (matrix, clip stack, layer bookkeeping) and dispatches
@@ -50,7 +46,7 @@ type (
 	Compositor = render.Compositor
 
 	// RetainedCompositorCanvas is implemented by the canvases of the GPU-
-	// presenting renderers (Metal and WebGPU): retained draws that composite
+	// presenting renderer (WebGPU): retained draws that composite
 	// video-like content under the 2D layer, shown through the holes
 	// Canvas.ClearRect opened. Type-assert the canvas passed to Draw.
 	RetainedCompositorCanvas = render.RetainedCompositorCanvas
@@ -71,14 +67,6 @@ func NewGLRenderer() *AutoRenderer { return render.NewAutoRenderer() }
 // NewCPURenderer creates a renderer that rasterizes on the CPU and hands
 // finished frames to the platform compositor.
 func NewCPURenderer() *CPURenderer { return render.NewCPURenderer() }
-
-// NewMetalRenderer creates a Metal-presenting renderer (a CPURenderer in
-// builds without Metal).
-func NewMetalRenderer() *MetalRenderer { return render.NewMetalRenderer() }
-
-// MetalRendererAvailable reports whether this build contains the Metal
-// renderer.
-const MetalRendererAvailable = render.MetalRendererAvailable
 
 // ColorToRGBA converts a qui.Color into the standard color.RGBA used by
 // Go's image package — handy when callers need to fill an arbitrary

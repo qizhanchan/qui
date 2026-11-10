@@ -25,6 +25,10 @@ type windowLifecycle struct {
 	lastPos    Point
 	posKnown   bool
 	minimized  bool
+	// inactive is set while the window is not the key window. It starts
+	// false: a window opens active, and test windows never get a focus
+	// event.
+	inactive bool
 
 	owner    *Window
 	owned    []*Window
@@ -159,7 +163,15 @@ func (w *Window) IsMinimized() bool {
 	return nativeWindowMinimized(w.plat.nativeWindow())
 }
 
+// IsActive reports whether the window is the key window (OS-level focus,
+// like document.hasFocus() in a browser). Hover affordances that should
+// not react to a pointer merely passing over a background window check it.
+func (w *Window) IsActive() bool {
+	return w != nil && !w.life.inactive
+}
+
 func (w *Window) noteActivation(active bool) {
+	w.life.inactive = !active
 	for _, fn := range w.life.onActivate.snapshot() {
 		fn(active)
 	}

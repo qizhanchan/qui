@@ -26,11 +26,8 @@ import (
 // Canvas.ClearRect opened. Hooks installed with Window.SetPostRender land
 // over the 2D layer instead.
 //
-// Only WebGPURenderer runs these draws. A MetalRenderer canvas accepts
-// them only to notice that the window needs WebGPU: it drops the draw and
-// the window switches renderers at the end of the frame (the next frame
-// has the content). Other canvases do not implement GPUCanvas, and the
-// widget should draw a CPU placeholder.
+// Only WebGPURenderer runs these draws. Other canvases (the CPU path) do
+// not implement GPUCanvas, and the widget should draw a CPU placeholder.
 
 // GPUCanvas is implemented by canvases of GPU-presenting renderers.
 type GPUCanvas interface {

@@ -1,8 +1,8 @@
 // Package render holds qui's rasterizers: the pure-Go CPU raster backend and
 // its ImageCanvas, SaveLayer compositing, shadows, glyph-mask caching and
 // shaped-text drawing, plus the renderers windows drive: CPURenderer
-// (frames handed to the platform compositor), MetalRenderer (macOS,
-// CAMetalLayer) and WebGPURenderer (Dawn — any GPU API), with the retained
+// (frames handed to the platform compositor) and WebGPURenderer (Dawn —
+// Metal, Vulkan, D3D12), with the retained
 // compositor draws and the WebGPU hooks GPU widgets use.
 //
 // It builds on internal/gfx, internal/typeset and internal/wgpu and imports

@@ -11,8 +11,8 @@ import (
 //
 // Window talks to its renderer through Renderer (Begin/End) plus these
 // narrow interfaces, never through a concrete type, so the window code is
-// the same whichever renderers a build contains (CPU everywhere; Metal on
-// darwin+cgo; WebGPU with cgo — see docs/rfc/0003-webgpu.zh.md).
+// the same whichever renderers a build contains (CPU everywhere; WebGPU
+// with cgo — see docs/rfc/0003-webgpu.zh.md).
 
 // FrameInfoRenderer receives the per-frame facts Window knows before Begin.
 type FrameInfoRenderer interface {
@@ -60,18 +60,11 @@ func (t SurfaceTarget) IsZero() bool {
 	return t.MetalLayer == nil && t.HWND == nil && t.XWindow == 0
 }
 
-// SelfPresentingRenderer presents its own frames (Metal and WebGPU
-// renderers present the drawable they drew), so Window must not present
+// SelfPresentingRenderer presents its own frames (the WebGPU renderer
+// presents the drawable it drew), so Window must not present
 // again.
 type SelfPresentingRenderer interface {
 	PresentsItself() bool
-}
-
-// WebGPUFallbackRenderer reports that something drawn into it asked for
-// WebGPU (GPUCanvas, a GPU hook), which it cannot honor; the window
-// replaces it with a WebGPURenderer.
-type WebGPUFallbackRenderer interface {
-	WantsWebGPU() bool
 }
 
 // PixelScroller moves pixels of the frame it keeps between frames, so
@@ -95,9 +88,8 @@ type DamageRectsRenderer interface {
 }
 
 // AutoRenderer asks the window for the best presentation it has: the
-// window replaces it with a MetalRenderer (cocoa), a WebGPURenderer (glfw)
-// or, on surfaces without a GPU path, keeps using it as the CPURenderer it
-// embeds. It is what NewGLRenderer used to request.
+// window replaces it with a WebGPURenderer where the surface offers a GPU
+// target and Dawn loads, or keeps using it as the CPURenderer it embeds. It is what NewGLRenderer used to request.
 type AutoRenderer struct {
 	CPURenderer
 }

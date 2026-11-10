@@ -47,7 +47,7 @@
 // (VideoView) or the frame mailbox (FrameView), and the main goroutine is
 // woken with qui.WakeEventLoop. Uploads and compositing run on the UI
 // thread inside retained compositor draws (qui.RetainedCompositorCanvas),
-// with whichever GPU renderer the window presents with (Metal or WebGPU).
+// with whichever GPU renderer the window presents with (WebGPU).
 package media
 
 import "errors"

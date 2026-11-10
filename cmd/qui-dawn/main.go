@@ -38,6 +38,10 @@ type asset struct {
 	sha256 string
 }
 
+// defaultMinMacOS is the oldest macOS the installed library loads on
+// (Dawn itself supports macOS 11+).
+const defaultMinMacOS = "11.0"
+
 // assets maps GOOS/GOARCH to the release archive built for it.
 var assets = map[string]asset{
 	"darwin/arm64": {"macos-latest-Release.tar.gz", "29d072e6559d36cf1419cae60c9cddafdae0e4119e9028cf2495eeeb73898e0f"},
@@ -94,7 +98,8 @@ func install(dst string) error {
 		return err
 	}
 	lib := filepath.Join(tmp, "libwebgpu_dawn.a")
-	if err := extract(archive, "/lib/libwebgpu_dawn.a", lib); err != nil {
+	// lib/ in the macOS archives, lib64/ in the Linux one.
+	if err := extract(archive, "/libwebgpu_dawn.a", lib); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
@@ -182,7 +187,13 @@ func link(static, out string) error {
 		if err := os.WriteFile(syms, []byte("_wgpu*\n"), 0o644); err != nil {
 			return err
 		}
-		cmd = exec.Command("clang", "-dynamiclib", "-o", out,
+		// Without a deployment target the library would require the macOS it
+		// was linked on; MACOSX_DEPLOYMENT_TARGET (an app's minimum) wins.
+		minOS := os.Getenv("MACOSX_DEPLOYMENT_TARGET")
+		if minOS == "" {
+			minOS = defaultMinMacOS
+		}
+		cmd = exec.Command("clang", "-dynamiclib", "-o", out, "-mmacosx-version-min="+minOS,
 			"-Wl,-all_load", static, "-lc++",
 			"-framework", "Foundation", "-framework", "CoreFoundation", "-framework", "IOSurface",
 			"-framework", "QuartzCore", "-framework", "Cocoa", "-framework", "IOKit", "-framework", "Metal",
@@ -195,8 +206,33 @@ func link(static, out string) error {
 	default:
 		return errors.New("no link recipe for " + runtime.GOOS)
 	}
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	return cmd.Run()
+	var logBuf strings.Builder
+	cmd.Stdout, cmd.Stderr = &logBuf, &logBuf
+	err := cmd.Run()
+	// Dawn's release archives are compiled for the macOS of the CI runner;
+	// the linker says so once per object. Report it once.
+	newer := 0
+	for _, l := range strings.Split(logBuf.String(), "\n") {
+		if strings.Contains(l, "was built for newer") {
+			newer++
+			continue
+		}
+		if l != "" {
+			fmt.Fprintln(os.Stderr, l)
+		}
+	}
+	if newer > 0 {
+		log.Printf("qui-dawn: note: %d Dawn objects were compiled for a newer macOS than %s; "+
+			"older systems are not guaranteed to work with the prebuilt release", newer, os.Getenv("MACOSX_DEPLOYMENT_TARGET")+orDefault())
+	}
+	return err
+}
+
+func orDefault() string {
+	if os.Getenv("MACOSX_DEPLOYMENT_TARGET") != "" || runtime.GOOS != "darwin" {
+		return ""
+	}
+	return defaultMinMacOS
 }
 
 func copyFile(src, dst string) error {

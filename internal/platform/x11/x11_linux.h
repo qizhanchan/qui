@@ -32,6 +32,7 @@ typedef struct {
 } quiX11Event;
 
 int quiX11Open(void);
+void* quiX11Display(void);
 double quiX11DPI(void);
 void quiX11ScreenSize(int* w, int* h);
 unsigned long quiX11CreateWindow(int w, int h, const char* title);

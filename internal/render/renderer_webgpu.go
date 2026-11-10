@@ -21,7 +21,7 @@ import (
 // custom shaders — GPUCanvas) and of platforms without a native GPU path
 // of their own. See docs/rfc/0003-webgpu.zh.md.
 //
-// Structure mirrors MetalRenderer:
+// Structure:
 //
 //   - The CPU frame is, where the GPU shares memory with the CPU (Apple
 //     silicon), an IOSurface imported as a texture: the raster writes the
@@ -110,6 +110,12 @@ func (r *WebGPURenderer) SetMetalLayer(layer unsafe.Pointer) bool {
 // SetSurfaceTarget implements NativeWindowRenderer.
 func (r *WebGPURenderer) SetSurfaceTarget(t SurfaceTarget) bool {
 	if r == nil {
+		return false
+	}
+	if wgpu.Lost() {
+		// The window falls back to CPU presentation (Window.rendererFailed).
+		r.releaseSurface()
+		r.target = SurfaceTarget{}
 		return false
 	}
 	if t == r.target {

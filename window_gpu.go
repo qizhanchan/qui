@@ -12,7 +12,7 @@ func init() {
 // SetPreRender installs a whole-window GPU hook run every frame under the
 // widget tree, after the frame target is cleared (a shader background
 // that shows through transparent widgets or ClearRect holes). Pass nil to
-// clear. A window not yet on WebGPU switches to it.
+// clear. The hooks run only while the window presents with WebGPU.
 func (w *Window) SetPreRender(fn func(*GPUFrame)) {
 	if w == nil {
 		return

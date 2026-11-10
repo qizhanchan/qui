@@ -7,6 +7,28 @@ package wgpu
 #include <string.h>
 #include "helpers.h"
 
+// quiFlag returns the i-th flag constant flagConstMismatch checks: the
+// header's flags are static consts, which gcc's cgo cannot reference.
+static uint64_t quiFlag(int i) {
+    switch (i) {
+    case 0: return WGPUTextureUsage_CopySrc;
+    case 1: return WGPUTextureUsage_CopyDst;
+    case 2: return WGPUTextureUsage_TextureBinding;
+    case 3: return WGPUTextureUsage_StorageBinding;
+    case 4: return WGPUTextureUsage_RenderAttachment;
+    case 5: return WGPUBufferUsage_MapRead;
+    case 6: return WGPUBufferUsage_MapWrite;
+    case 7: return WGPUBufferUsage_CopySrc;
+    case 8: return WGPUBufferUsage_CopyDst;
+    case 9: return WGPUBufferUsage_Index;
+    case 10: return WGPUBufferUsage_Vertex;
+    case 11: return WGPUBufferUsage_Uniform;
+    case 12: return WGPUBufferUsage_Storage;
+    case 13: return WGPUColorWriteMask_All;
+    }
+    return 0;
+}
+
 static WGPUStringView quiStr(const char* s, size_t n) { WGPUStringView v = {s, n}; return v; }
 */
 import "C"
@@ -15,6 +37,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 )
 
@@ -74,6 +97,14 @@ type Device struct {
 	ioSurface bool
 }
 
+// deviceLost is set when the shared device is lost (GPU reset, eGPU
+// unplugged, driver update). The device is not recreated: windows drop to
+// CPU presentation (see Lost).
+var deviceLost atomic.Bool
+
+// Lost reports whether the shared device was lost; Shared then fails.
+func Lost() bool { return deviceLost.Load() }
+
 var (
 	sharedOnce sync.Once
 	shared     *Device
@@ -90,6 +121,9 @@ func Shared() (*Device, error) {
 		}
 		shared, sharedErr = newDevice()
 	})
+	if sharedErr == nil && deviceLost.Load() {
+		return nil, errors.New("wgpu: device lost")
+	}
 	return shared, sharedErr
 }
 
@@ -163,27 +197,32 @@ const (
 	FormatDepth24PlusStencil8 TextureFormat = C.WGPUTextureFormat_Depth24PlusStencil8
 )
 
+// The flag types are `static const` variables in webgpu.h, not enums: clang's
+// cgo folds them into constants but gcc's (Linux) does not, so their values
+// are spelled out here; flagConstMismatch (tested) checks them against the
+// header.
+
 type TextureUsage uint64
 
 const (
-	UsageCopySrc          TextureUsage = C.WGPUTextureUsage_CopySrc
-	UsageCopyDst          TextureUsage = C.WGPUTextureUsage_CopyDst
-	UsageTextureBinding   TextureUsage = C.WGPUTextureUsage_TextureBinding
-	UsageStorageBinding   TextureUsage = C.WGPUTextureUsage_StorageBinding
-	UsageRenderAttachment TextureUsage = C.WGPUTextureUsage_RenderAttachment
+	UsageCopySrc          TextureUsage = 0x1  // WGPUTextureUsage_CopySrc
+	UsageCopyDst          TextureUsage = 0x2  // WGPUTextureUsage_CopyDst
+	UsageTextureBinding   TextureUsage = 0x4  // WGPUTextureUsage_TextureBinding
+	UsageStorageBinding   TextureUsage = 0x8  // WGPUTextureUsage_StorageBinding
+	UsageRenderAttachment TextureUsage = 0x10 // WGPUTextureUsage_RenderAttachment
 )
 
 type BufferUsage uint64
 
 const (
-	BufferMapRead  BufferUsage = C.WGPUBufferUsage_MapRead
-	BufferMapWrite BufferUsage = C.WGPUBufferUsage_MapWrite
-	BufferCopySrc  BufferUsage = C.WGPUBufferUsage_CopySrc
-	BufferCopyDst  BufferUsage = C.WGPUBufferUsage_CopyDst
-	BufferIndex    BufferUsage = C.WGPUBufferUsage_Index
-	BufferVertex   BufferUsage = C.WGPUBufferUsage_Vertex
-	BufferUniform  BufferUsage = C.WGPUBufferUsage_Uniform
-	BufferStorage  BufferUsage = C.WGPUBufferUsage_Storage
+	BufferMapRead  BufferUsage = 0x1  // WGPUBufferUsage_MapRead
+	BufferMapWrite BufferUsage = 0x2  // WGPUBufferUsage_MapWrite
+	BufferCopySrc  BufferUsage = 0x4  // WGPUBufferUsage_CopySrc
+	BufferCopyDst  BufferUsage = 0x8  // WGPUBufferUsage_CopyDst
+	BufferIndex    BufferUsage = 0x10 // WGPUBufferUsage_Index
+	BufferVertex   BufferUsage = 0x20 // WGPUBufferUsage_Vertex
+	BufferUniform  BufferUsage = 0x40 // WGPUBufferUsage_Uniform
+	BufferStorage  BufferUsage = 0x80 // WGPUBufferUsage_Storage
 )
 
 type VertexFormat uint32
@@ -730,7 +769,7 @@ func (d *Device) CreateRenderPipeline(desc RenderPipelineDescriptor) (*RenderPip
 		ts := allocN[C.WGPUColorTargetState](&a, len(desc.Targets))
 		for i, t := range desc.Targets {
 			ts[i].format = C.WGPUTextureFormat(t.Format)
-			ts[i].writeMask = C.WGPUColorWriteMask_All
+			ts[i].writeMask = 0xF // WGPUColorWriteMask_All
 			if t.Blend != nil {
 				bs := (*C.WGPUBlendState)(a.alloc(C.sizeof_WGPUBlendState))
 				bs.color = C.WGPUBlendComponent{C.WGPUBlendOperation(t.Blend.Color.Op), C.WGPUBlendFactor(t.Blend.Color.Src), C.WGPUBlendFactor(t.Blend.Color.Dst)}
@@ -957,4 +996,34 @@ func (p *RenderPass) End() {
 	C.wgpuRenderPassEncoderEnd(p.c)
 	C.wgpuRenderPassEncoderRelease(p.c)
 	p.c = nil
+}
+
+// flagConstMismatch names the first flag constant whose value differs
+// from webgpu.h ("" when all match).
+func flagConstMismatch() string {
+	checks := []struct {
+		name      string
+		got, want uint64
+	}{
+		{"UsageCopySrc", uint64(UsageCopySrc), uint64(C.quiFlag(0))},
+		{"UsageCopyDst", uint64(UsageCopyDst), uint64(C.quiFlag(1))},
+		{"UsageTextureBinding", uint64(UsageTextureBinding), uint64(C.quiFlag(2))},
+		{"UsageStorageBinding", uint64(UsageStorageBinding), uint64(C.quiFlag(3))},
+		{"UsageRenderAttachment", uint64(UsageRenderAttachment), uint64(C.quiFlag(4))},
+		{"BufferMapRead", uint64(BufferMapRead), uint64(C.quiFlag(5))},
+		{"BufferMapWrite", uint64(BufferMapWrite), uint64(C.quiFlag(6))},
+		{"BufferCopySrc", uint64(BufferCopySrc), uint64(C.quiFlag(7))},
+		{"BufferCopyDst", uint64(BufferCopyDst), uint64(C.quiFlag(8))},
+		{"BufferIndex", uint64(BufferIndex), uint64(C.quiFlag(9))},
+		{"BufferVertex", uint64(BufferVertex), uint64(C.quiFlag(10))},
+		{"BufferUniform", uint64(BufferUniform), uint64(C.quiFlag(11))},
+		{"BufferStorage", uint64(BufferStorage), uint64(C.quiFlag(12))},
+		{"colorWriteAll", 0xF, uint64(C.quiFlag(13))},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			return c.name
+		}
+	}
+	return ""
 }

@@ -55,7 +55,7 @@ void quiCocoaSetRawKeyHook(void* fn) { gQuiRawKeyCaptured = (int (*)(void*))fn; 
 
 // There is no OpenGL here (docs/rfc/0003-webgpu.zh.md): a window presents
 // either CPU frames as its layer's contents, or through a CAMetalLayer the
-// Metal / WebGPU renderer draws into. Some AppKit API used below is
+// WebGPU renderer draws into. Some AppKit API used below is
 // deprecated without a drop-in replacement; keep builds quiet.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -343,7 +343,7 @@ static NSCursor* quiCocoaCursorFor(int shape) {
 @property (nonatomic, assign) atomic_int* vsync;
 @property (nonatomic, assign) CVDisplayLinkRef displayLink;
 // Metal presentation (quiCocoaEnterMetalMode). The view hosts a
-// CAMetalLayer the renderer (Metal or WebGPU) draws into and presents
+// CAMetalLayer the WebGPU renderer draws into and presents
 // itself. A window whose GPU renderer fails falls back to CPU mode.
 @property (nonatomic, assign) BOOL metalMode;
 @property (nonatomic, strong) CAMetalLayer* metalLayer;
@@ -420,7 +420,7 @@ static void quiCocoaNotifyGeometry(QuiWindowBox* box, uintptr_t handle) {
     quiCocoaNotifyGeometry(quiBox(self.handle), self.handle);
 }
 
-// A Metal window presents inside the resize transaction while the user
+// A GPU-presenting window presents inside the resize transaction while the user
 // drags its edge, so each new-size frame lands together with the new
 // window frame instead of a frame later (content wobbling against the
 // border). Outside a live resize the cheaper asynchronous present is used.

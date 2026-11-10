@@ -8,9 +8,9 @@ import (
 
 // Retained compositor draws — video-like content (decoded frames, pushed
 // RGBA frames) composited UNDER the 2D layer, which shows it through the
-// holes Canvas.ClearRect opened. Both GPU-presenting renderers support
-// them (MetalRenderer and WebGPURenderer), so a widget that only needs this
-// never forces a renderer switch.
+// holes Canvas.ClearRect opened. WebGPURenderer supports them; on the CPU
+// path (no Dawn) media.FrameView draws its frames into the 2D layer and
+// media.VideoView shows only its background.
 //
 // A retained draw re-runs on every later frame whose damage does not touch
 // its bounds, and on every RequestGPURedraw frame, until a frame repaints

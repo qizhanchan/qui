@@ -2,6 +2,8 @@
 
 状态：M1、M3（FrameView）已实现，M2 暂缓（2026-11-09）
 
+> **2026-11-10：`MetalRenderer` 已移除，由 WebGPU（Dawn）取代**——原因与测量见 [RFC 0003](0003-webgpu.zh.md)「移除 MetalRenderer」。下文仅作历史记录，其中的 `MetalRenderer`、`NewMetalRenderer`、`qui_nometal`、`QUI_DEBUG_METAL_VERIFY` 均已不存在。
+
 > 2026-11-10：OpenGL 已从 qui 移除（RFC 0003）。下文的「GL 回退」改为「切到 WebGPURenderer」：需要 GPU 内容的窗口在同一个 CAMetalLayer 上换成 Dawn；`QUI_RENDERER` 的取值变为 `metal|webgpu|cpu`，`QUI_GPU_RASTER` 已删除。
 
 ## 背景

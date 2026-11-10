@@ -33,7 +33,7 @@ reactive/html ──► reactive ──► 根 qui
 3. 若 `root.IsLayoutDirty()` 则重新布局；
 4. **若 `dirtyRegion` 为空，直接返回、不绘制**；
 5. 只清除并重绘脏区域；
-6. 只把重绘过的像素交给渲染器（`SetDamage`）并呈现 —— Metal / WebGPU 上是零拷贝的 IOSurface 帧，其他情况是上传脏矩形或 `PresentCPU`。
+6. 只把重绘过的像素交给渲染器（`SetDamage`）并呈现 —— macOS 的 WebGPU 上是零拷贝的 IOSurface 帧，其他 WebGPU 目标是 `writeTexture` 上传脏矩形，CPU 路径是 `PresentCPU`。
 
 帧是按需调度的（`window_idle.go`），而不是由固定时钟驱动。每轮迭代之间，`App.Run` 询问每个窗口距离下一次 `Step` 还有多久，并在平台的事件等待中恰好阻塞这么长时间：
 
@@ -94,7 +94,7 @@ AppKit 可能在等待期间、没有任何输入事件的情况下投递的平�
 
 **RasterBackend**（`internal/render/backend.go`）：前端之下产出像素的抽象。所有坐标都已是物理坐标，每个方法都收到一个它必须遵守的裁剪。`internal/render/backend_cpu.go` 是唯一的实现 —— 没有 GPU 光栅后端。
 
-**渲染器**（`internal/render/renderer_*.go`）：全部在 CPU 上光栅化，区别只在呈现。`CPURenderer` 把帧交给平台合成器（XPutImage、Web canvas、headless、cocoa 上的 CALayer contents）；`MetalRenderer`（macOS，RFC 0002）经 CAMetalLayer 呈现，CPU 直接画进 GPU 采样的 IOSurface；`WebGPURenderer`（`renderer_webgpu.go`，RFC 0003）经 Dawn 在 Metal / D3D12 / Vulkan 上呈现，macOS 上通过 `SharedTextureMemory` 共享 IOSurface，其他情况用 `writeTexture` 上传脏矩形（`QUI_WEBGPU_SHARED=0` 强制走上传路径）；两个 GPU 渲染器都在 GPU 上做 `ScrollPixels`。`AutoRenderer`（`NewAutoRenderer` 以及 deprecated 的 `NewGLRenderer` 返回的就是它）按窗口解析：cocoa 上为 `MetalRenderer`，glfw 上为 `WebGPURenderer`，没有 GPU 呈现路径的表面上为 `CPURenderer`；`QUI_RENDERER=metal|webgpu|cpu` 覆盖选择，`QUI_DEBUG_RENDERER=1` 记录选择结果。Dawn 由 `internal/wgpu` `dlopen`（`QUI_DAWN_LIB` 指定路径，`QUI_WEBGPU=0` 关闭，`cmd/qui-dawn` 负责安装）；进程内只有一个 WebGPU 设备（`gpu.Shared()`），所有窗口共用。
+**渲染器**（`internal/render/renderer_*.go`）：全部在 CPU 上光栅化，区别只在呈现。`CPURenderer` 把帧交给平台合成器（XPutImage、Web canvas、headless、cocoa 上的 CALayer contents）；`WebGPURenderer`（`renderer_webgpu.go`，RFC 0003）经 Dawn 呈现 —— macOS 上是 Metal，Linux 上是 Vulkan，Windows 上是 D3D12 —— macOS 上通过 `SharedTextureMemory` 共享 IOSurface（CPU 直接画进 GPU 采样的内存），其他情况用 `writeTexture` 上传脏矩形（`QUI_WEBGPU_SHARED=0` 强制走上传路径）；它在 GPU 上做 `ScrollPixels`，并保留合成器绘制。现在恰好有两个渲染器：原 `MetalRenderer`（RFC 0002）已被 WebGPU（RFC 0003）取代并移除。`AutoRenderer`（`NewAutoRenderer` 以及 deprecated 的 `NewGLRenderer` 返回的就是它）按窗口解析：在任何提供 GPU 目标的表面（cocoa 的 CAMetalLayer、x11 窗口、glfw 原生窗口）上，Dawn 可加载时为 `WebGPURenderer`，否则为 `CPURenderer`；WebGPU 设备丢失（`wgpu.Lost()`）或 surface 无法绑定时，窗口永久退到 CPU 路径（`Window.rendererFailed`、`noWebGPU`）。`QUI_RENDERER=webgpu|cpu` 覆盖选择（其他取值记录一次日志后忽略），`QUI_DEBUG_RENDERER=1` 记录选择结果。Dawn 由 `internal/wgpu` `dlopen`（`QUI_DAWN_LIB` 指定路径，`QUI_WEBGPU=0` 关闭，`cmd/qui-dawn` 负责安装）；进程内只有一个 WebGPU 设备（`gpu.Shared()`），所有窗口共用。
 
 ### 文字
 
@@ -102,7 +102,7 @@ AppKit 可能在等待期间、没有任何输入事件的情况下投递的平�
 
 行内流 —— 文字与原子行内盒在同一行上按基线对齐共享 —— 位于 `internal/typeset/inline.go`，并以 `widgets.InlineBox` 的形式暴露。
 
-GPU 内容经两个画布接口进入。视频类内容使用 `RetainedCompositorCanvas.QueueRetainedDraw(key, physBounds, func(Compositor))` —— `DrawPixelBuffer`（零拷贝 CVPixelBuffer）、`DrawPixels`、`DrawYUV420` —— `MetalRenderer` 与 `WebGPURenderer` 都实现它，因此 `media` 从不触发切换。任意 GPU 内容（`scene3d`、自定义 WGSL 着色器）使用 `GPUCanvas.QueueGPUDraw(func(*GPUFrame))` / `QueueRetainedGPUDraw(key, physBounds, fn)`；`GPUFrame` 带有 `Device`、本帧的 `Encoder`、目标 `Format`、`Size` / `LogicalSize`，以及 `DrawTexture`、`RenderPass`、`Compositor()` 与 `Capture`。`Window.SetPreRender` / `SetPostRender(func(*GPUFrame))` 是整窗钩子（设置 pre-render 钩子后窗口把 2D 层清成透明，钩子即背景）；`Window.RequestGPURedraw`（任意 goroutine）重放保留式绘制而不重新光栅化，`Window.ForgetRetainedDraw` 丢弃其中一个。控件请求 WebGPU 的 Metal 窗口会在同一个 CAMetalLayer 上切换为 `WebGPURenderer` 并整窗重画；没有 Dawn 时这些控件不显示（记录一次日志）。
+GPU 内容经两个画布接口进入。视频类内容使用 `RetainedCompositorCanvas.QueueRetainedDraw(key, physBounds, func(Compositor))` —— `DrawPixelBuffer`（零拷贝 CVPixelBuffer）、`DrawPixels`、`DrawYUV420` —— 由 `WebGPURenderer` 实现（没有 Dawn 时 `media.FrameView` 把帧画进 2D 层，`media.VideoView` 只显示背景）。任意 GPU 内容（`scene3d`、自定义 WGSL 着色器）使用 `GPUCanvas.QueueGPUDraw(func(*GPUFrame))` / `QueueRetainedGPUDraw(key, physBounds, fn)`；`GPUFrame` 带有 `Device`、本帧的 `Encoder`、目标 `Format`、`Size` / `LogicalSize`，以及 `DrawTexture`、`RenderPass`、`Compositor()` 与 `Capture`。`Window.SetPreRender` / `SetPostRender(func(*GPUFrame))` 是整窗钩子（设置 pre-render 钩子后窗口把 2D 层清成透明，钩子即背景）；`Window.RequestGPURedraw`（任意 goroutine）重放保留式绘制而不重新光栅化，`Window.ForgetRetainedDraw` 丢弃其中一个。没有 Dawn 时这些控件不显示，并记录一次 Dawn 缺失的日志。
 
 ## 布局
 
@@ -168,7 +168,7 @@ h.Button("Save").T("qui.save")                   // reactive/html DSL
 
 操作系统窗口层是一个接缝：`internal/platform/contract` 定义后端要实现的东西（App / Window / Monitor / Surface / Handler、Caps、后端注册表，以及 `Host` —— 后端回调引擎的少数服务），并持有输入词汇（`Key`、`Modifiers`、`MouseButton`、`CursorShape`、`GesturePhase`、`WindowKind`），`qui` 以类型别名重新导出。每个后端都是 `internal/platform/` 下的叶子包 —— `cocoa`（AppKit）、`x11`（Xlib）、`web`（canvas，GOOS=js）、`headless`（内存）、`glfw`（Windows / `-tags qui_glfw`）—— 从不 import 根包；根包在 `platform_backends*.go` 中按 GOOS 空白导入它们，`platform_adapter.go` 把 contract 对象包装成引擎对接缝的非导出视图（`platform.go`），因此引擎调用点和测试替身都看不到后端如何组织。已注册后端中优先级最高的（原生 > GLFW > headless）为默认，`QUI_PLATFORM` 可在运行时覆盖。
 
-呈现有两类路径（`contract.Surface`）：GPU 表面 —— `contract.MetalSurface`（cocoa：`MetalLayer()` 返回窗口的 CAMetalLayer）与 `contract.NativeSurface`（glfw：用于建 WebGPU surface 的 CAMetalLayer、HWND 或 X11 窗口）—— 由 Metal / WebGPU 渲染器自行绘制并呈现；以及 `PresentCPU(img, damage)`，它把完成的 CPU 帧交给合成器 —— XPutImage、putImageData，headless 则什么都不做 —— 且只处理脏矩形；在 `cocoa` 上，窗口收到第一个 CPU 帧后永久切换到 CALayer 呈现（保留位图的写时复制 CGImage），并启动 CVDisplayLink，其标志由 `Ready()` 消费，使绘制与显示器同步。表面通过 `Caps.GPUSurface` 声明是否提供 GPU 呈现表面；没有的窗口上，`AutoRenderer` 解析为 `CPURenderer`（`internal/render/renderer_caps.go`），即同一个光栅化器，停在 `*image.RGBA`。没有任何后端创建 GL 上下文：cocoa 不再有 NSOpenGLContext，glfw 窗口是 `GLFW_NO_API`。`App.NewSharedWindow` 仍然存在，但已没有上下文可共享 —— 所有窗口共用同一个 WebGPU 设备。
+呈现有两类路径（`contract.Surface`）：GPU 表面 —— `contract.MetalSurface`（cocoa：`MetalLayer()` 返回窗口的 CAMetalLayer）与 `contract.NativeSurface`（x11 与 glfw：用于建 WebGPU surface 的 CAMetalLayer、HWND 或 X11 窗口）—— 由 `WebGPURenderer` 自行绘制并呈现；以及 `PresentCPU(img, damage)`，它把完成的 CPU 帧交给合成器 —— XPutImage、putImageData，headless 则什么都不做 —— 且只处理脏矩形；在 `cocoa` 上，窗口收到第一个 CPU 帧后永久切换到 CALayer 呈现（保留位图的写时复制 CGImage），并启动 CVDisplayLink，其标志由 `Ready()` 消费，使绘制与显示器同步。表面通过 `Caps.GPUSurface` 声明是否提供 GPU 呈现表面；没有的窗口上，`AutoRenderer` 解析为 `CPURenderer`（`internal/render/renderer_caps.go`），即同一个光栅化器，停在 `*image.RGBA`。没有任何后端创建 GL 上下文：cocoa 不再有 NSOpenGLContext，glfw 窗口是 `GLFW_NO_API`。`App.NewSharedWindow` 仍然存在，但已没有上下文可共享 —— 所有窗口共用同一个 WebGPU 设备。
 
 已加载字体画不出的文本可以交给平台自己的文字引擎：后端安装 `contract.TextFallback`（web 后端就是这样 —— wasm 构建只能看到内嵌的拉丁字体，而浏览器自带中日韩字体），任何已加载字体都不覆盖的字素簇会像彩色 emoji 一样成为原子字形，采用平台给出的 advance，并以文字颜色着色的覆盖遮罩绘制（`internal/typeset/text_fallback.go`）。换行、光标、选区与命中测试不受影响；加载真正覆盖这些字符的字体（`LoadFallbackFontFromBytes`）优先。以文本形式接收输入法组字的后端调用 `Handler.OnPreedit` / `OnCommitText`，并用 `Handler.IMECaretRect` 定位候选窗。
 

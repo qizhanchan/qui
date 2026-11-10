@@ -6,8 +6,8 @@
 // (dawn_webgpu.h, kept beside the Go files so `go mod vendor` copies it)
 // is compiled in, every wgpu* entry point is a forwarder (procs_gen.c), and
 // Load opens the Dawn shared library at run time. A machine without it
-// still builds and runs qui; Load then fails and qui keeps its CPU / Metal
-// presentation.
+// still builds and runs qui; Load then fails and windows present CPU
+// frames.
 //
 // The Go surface covers what qui and its GPU widgets use (textures,
 // buffers, WGSL shaders, render pipelines, render passes, surfaces, and on

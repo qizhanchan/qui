@@ -24,6 +24,8 @@
 #include <unistd.h>
 
 static Display* dpy;
+
+void* quiX11Display(void) { return dpy; }
 static int screen;
 static Window root;
 static Visual* visual;

@@ -450,7 +450,6 @@ func (w *Window) Step() {
 	w.afterPaintProtocol(clip, fullRepaintClip(clip, viewport))
 	w.resetDirty()
 	w.framePainted = true
-	w.checkWebGPUSwitch()
 }
 
 // runAfterFrame runs the work queued for the end of this Step. Work queued
@@ -468,7 +467,7 @@ func (w *Window) runAfterFrame() {
 
 // present hands the finished frame to the platform.
 //
-// A Metal or WebGPU renderer has presented its own drawable already.
+// A WebGPU renderer has presented its own drawable already.
 // Otherwise the CPU frame goes to the compositor (CALayer contents,
 // XPutImage, a canvas); a surface that declines gets Present, which only
 // a backend with a backbuffer of its own would implement.

@@ -10,8 +10,8 @@ import (
 // Each frame (or on demand when Continuous=false) the viewport
 // renders its Scene with WebGPU into private textures (4× MSAA color +
 // depth, resolved), then composites the result under the 2D layer
-// (GPUCanvas.QueueRetainedGPUDraw + GPUFrame.DrawTexture). A Metal window
-// switches itself to WebGPU the first time a Viewport draws.
+// (GPUCanvas.QueueRetainedGPUDraw + GPUFrame.DrawTexture). On the CPU
+// path (no Dawn) it draws a placeholder.
 //
 // Typical use — an orbit-camera 3D preview in a design tool panel:
 //

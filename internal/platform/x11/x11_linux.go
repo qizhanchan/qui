@@ -2,9 +2,11 @@
 
 // Package x11 is the native Linux backend: Xlib directly, no GLFW.
 //
-// Frames are rasterized by the engine's CPURenderer and presented with
-// XPutImage, only over the damaged rectangle; there is no GPU surface
-// (Caps.GPUSurface false), so AutoRenderer resolves to the CPU renderer. Text input goes through XIM (Xutf8LookupString), so input
+// Frames are rasterized on the CPU. The window offers its X11 window as a
+// GPU surface (contract.NativeSurface), so where Dawn loads and a Vulkan
+// device exists AutoRenderer resolves to the WebGPU renderer; otherwise
+// frames are presented with XPutImage, only over the damaged rectangle
+// (PresentCPU). Text input goes through XIM (Xutf8LookupString), so input
 // methods configured for the session work. The clipboard is the
 // CLIPBOARD selection, served and read directly.
 //
@@ -244,7 +246,7 @@ func (w *window) Caps() contract.Caps {
 	return contract.Caps{
 		AbsolutePosition:  true,
 		ServerDecorations: true,
-		GPUSurface:        false,
+		GPUSurface:        true,
 	}
 }
 
@@ -390,6 +392,15 @@ func (w *window) Wake()                        { C.quiX11Wake() }
 func (w *window) NativeWindow() unsafe.Pointer { return nil }
 
 type surface struct{ w *window }
+
+// NativeSurfaceTarget implements contract.NativeSurface: the X11 window,
+// for a WebGPU (Vulkan) surface.
+func (s surface) NativeSurfaceTarget() contract.SurfaceTarget {
+	if s.w.id == 0 {
+		return contract.SurfaceTarget{}
+	}
+	return contract.SurfaceTarget{XDisplay: C.quiX11Display(), XWindow: uint64(s.w.id)}
+}
 
 func (surface) Ready() <-chan struct{} { return nil }
 func (surface) Present()               {}

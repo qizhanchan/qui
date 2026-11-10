@@ -4,7 +4,7 @@
 
 ## qui 是什么
 
-`qui` 是一个保留模式（retained-mode）的 Go GUI 框架。它用一棵持久存在的控件树来构建桌面应用，并用自带的纯 Go CPU 光栅化器渲染。GPU 只负责呈现完成的帧 —— macOS 上用 Metal，有 GPU 内容的窗口以及 GLFW 上用 WebGPU（运行时加载的 Dawn），其他情况交给平台合成器 —— 并运行 3D、自定义 WGSL 着色器等 GPU 内容。不依赖 OpenGL；Dawn 在运行时可选，构建从不需要它。
+`qui` 是一个保留模式（retained-mode）的 Go GUI 框架。它用一棵持久存在的控件树来构建桌面应用，并用自带的纯 Go CPU 光栅化器渲染。GPU 只负责呈现完成的帧 —— 可用时经 WebGPU（运行时加载的 Dawn；macOS 上是 Metal，Linux 上是 Vulkan，Windows 上是 D3D12）呈现，否则交给平台合成器 —— 并运行 3D、自定义 WGSL 着色器等 GPU 内容。不依赖 OpenGL；Dawn 在运行时可选，构建从不需要它。
 
 整个项目是一个 Go module：`github.com/qizhanchan/qui`。根目录的 `package qui` 是引擎；其他一切都是可选的子包。
 
@@ -66,7 +66,7 @@ qui 选择保留模式的立场 —— 声明一棵稳定的树，让框架负�
 
 - **macOS** 是完整支持的平台。原生 AppKit（`cocoa`）后端是默认；GLFW 后端（`-tags qui_glfw`）可以一并编译进来，在运行时选择，两者几何结果一致。
 - **Linux / Windows** 可以编译并运行核心。原生对话框、IME、emoji 与系统托盘目前仅支持 macOS；平台接缝会返回 `ErrNotSupported`，而不是静默失败。
-- **渲染**始终在 CPU 上光栅化。`NewAutoRenderer` 选择呈现方式：macOS 上是 `MetalRenderer`，GLFW 或窗口显示 GPU 内容时是 `WebGPURenderer`，没有 GPU 呈现路径的表面上是 `CPURenderer`（见 [rfc/0003-webgpu.zh.md](rfc/0003-webgpu.zh.md)）。
+- **渲染**始终在 CPU 上光栅化。`NewAutoRenderer` 选择呈现方式：任何有 GPU 目标的表面（cocoa、x11、glfw）上 Dawn 可加载时是 `WebGPURenderer`，否则是 `CPURenderer`（见 [rfc/0003-webgpu.zh.md](rfc/0003-webgpu.zh.md)）。
 - **文字**由 `go-text/typesetting` 整形（OpenType GSUB/GPOS、Unicode bidi、UAX #14 / #29），测量、绘制、PDF 输出、换行、命中测试、选择和编辑共享同一套结果。
 - **国际化**支持消息目录、CLDR 复数、区域敏感格式化与完整 bidi 文字。布局镜像（RTL）尚未实现。
 

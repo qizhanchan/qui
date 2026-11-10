@@ -2,7 +2,7 @@
 
 [English](README.md) · **中文**
 
-`qui` 是一个保留模式（retained-mode，而非即时模式）的 Go GUI 框架，自带纯 Go 的 CPU 光栅化器 —— 帧在 macOS 上经 Metal 呈现，在显示 GPU 内容的窗口上经 WebGPU（Dawn）呈现，其余经平台合成器呈现 —— 运行在原生窗口后端之上：macOS 用 AppKit，Linux 用 Xlib，浏览器（wasm）里是一个 `<canvas>`，另有用于离屏渲染的 headless 后端。它是单一的 Go module：`github.com/qizhanchan/qui`，根目录的 `package qui` 就是引擎。
+`qui` 是一个保留模式（retained-mode，而非即时模式）的 Go GUI 框架，自带纯 Go 的 CPU 光栅化器 —— 帧在 Dawn 可用时经 WebGPU（底层为 Metal / Vulkan / D3D12）呈现，否则经平台合成器呈现 —— 运行在原生窗口后端之上：macOS 用 AppKit，Linux 用 Xlib，浏览器（wasm）里是一个 `<canvas>`，另有用于离屏渲染的 headless 后端。它是单一的 Go module：`github.com/qizhanchan/qui`，根目录的 `package qui` 就是引擎。
 
 **战略方向：用（轻量 HTML + CSS）+ Go 来开发应用。** 支撑它的技术栈是：
 
@@ -31,7 +31,7 @@
 
 - **Module：** `github.com/qizhanchan/qui`（Go 1.25）。
 - **平台：** macOS、Linux（X11）与 Web（GOOS=js/wasm）是优先平台，各有原生窗口后端；Windows 仍运行在 GLFW 上。原生对话框、emoji、拼写检查与系统托盘目前仅支持 macOS。
-- **渲染：** 光栅化始终由纯 Go 的 CPU 光栅器完成，位于 `Canvas` / `RasterBackend` 接缝之后；GPU 只负责呈现帧（`MetalRenderer`、`WebGPURenderer`），并通过 `gpu` 包运行 GPU 内容（3D、自定义 WGSL 着色器）。qui 中不再有任何 OpenGL。WebGPU 由运行时加载的 Dawn 提供 —— 没有 Dawn 时 qui 照常构建运行，只有 GPU 内容控件显示为空。
+- **渲染：** 光栅化始终由纯 Go 的 CPU 光栅器完成，位于 `Canvas` / `RasterBackend` 接缝之后；GPU 只负责呈现帧（`WebGPURenderer`；`CPURenderer` 是无 GPU 路径），并通过 `gpu` 包运行 GPU 内容（3D、自定义 WGSL 着色器）。qui 中不再有任何 OpenGL。WebGPU 由运行时加载的 Dawn 提供 —— 没有 Dawn 时 qui 照常构建，并走 CPU 路径运行：GPU 内容控件显示为空，`media.FrameView` 把帧画进 2D 层，`media.VideoView` 只显示背景。
 - **窗口：** 默认使用原生后端（`cocoa` / `x11` / `web`），`headless` 处处可用；GLFW 改为可选（`-tags qui_glfw`），只在 Windows 上作为默认。见下方后端表。
 - **它不是一个完整的浏览器，也不是一套完整的设计系统。** `htmlcss` 是有意为之的子集，qui 也只提供一套浅色的设计 token 主题 —— 真正「有设计感」的样式属于样式表。
 
@@ -88,7 +88,7 @@ rt := h.Mount(window, css, func() h.Node {
 | 根 `qui` | 引擎与公开门面：窗口 / 帧循环、三阶段事件分发、布局引擎（Flex/Grid/Flow/Absolute）、控件树、样式与主题 token、浮层、跨控件文字选择、原生 OS 服务（剪贴板、光标、对话框、菜单、托盘、拼写检查、全局热键），以及始终开启的 AI 内省界面（AX 树、选择器、截图、动作、等待、事件录制、主线程任务队列）。`gfx.go`、`typeset.go`、`render.go` 以别名和包装函数重新导出内部层的公开名字，因此 `qui.Rect`、`qui.BuildTextLayout`、`qui.AutoRenderer` 照常可用 |
 | `internal/gfx` | 图形词汇，最底层：Point/Size/Rect/Insets、Color、Font（作为样式值）、Matrix 与画布状态栈、Paint、Path/Shape、着色器、颜色 / 图像滤镜，以及 `Canvas` / `Renderer` / `VectorSource` 契约；另含 `RecordingCanvas` |
 | `internal/typeset` | 文字引擎：字体注册表与回退链、go-text 整形、bidi、换行、字素切分、段落 / 富文本 / 行内（IFC）排版、caret 与选区几何、emoji、SFNT 解析与子集化。只通过 `gfx.Canvas` 绘制；引擎经 `SetLocaleSource` 注入 locale |
-| `internal/render` | 光栅化与渲染器：纯 Go 的 CPU 光栅后端及其图像画布、SaveLayer 合成、阴影、字形遮罩缓存、整形文字绘制，`CPURenderer` / `MetalRenderer` / `WebGPURenderer`，以及保留式合成器绘制与 GPU 钩子 |
+| `internal/render` | 光栅化与渲染器：纯 Go 的 CPU 光栅后端及其图像画布、SaveLayer 合成、阴影、字形遮罩缓存、整形文字绘制，`CPURenderer` / `WebGPURenderer`，以及保留式合成器绘制与 GPU 钩子 |
 | `internal/wgpu` | WebGPU C API 的 Go 绑定（编入 `webgpu.h`）；Dawn 在运行时 `dlopen`，从不在构建期链接 |
 | `internal/archtest` | 仅测试：对每个包、每种构建配置强制执行下文的导入分层 |
 | `internal/platform/*` | 窗口后端（`cocoa`、`x11`、`web`、`headless`、`glfw`），实现 `contract` 定义的接缝；`darwinkeys` 存放与根包 AppKit 桥共享的 macOS 键码表；`macos` 存放其余所有 AppKit/Carbon 桥（剪贴板、光标、文件面板、Core Text emoji、IME 与 raw 键盘钩子、事件 tap、菜单、状态栏项、打印、拼写检查、NSWindow 外观），对外是纯 Go 函数加一个回调 `Host`，因此根包本身不含 cgo |
@@ -153,19 +153,19 @@ go run ./cmd/qui-agent mcp                  # 以 MCP 工具形式（stdio）提
 # 或者直接发 JSON-RPC：curl --unix-socket $TMPDIR/qui-agent-<pid>.sock http://localhost/rpc -d '{"method":"Agent.snapshot"}'
 ```
 
-常用环境变量：`QUI_PLATFORM=cocoa|x11|web|headless|glfw`（窗口后端 —— 见下）、`QUI_SNAPSHOT=out.png`（渲染、等待界面稳定、写出帧后退出；`QUI_SNAPSHOT_SETTLE` / `QUI_SNAPSHOT_TIMEOUT` 可调）、`QUI_HEADLESS_SCALE=2`（headless 显示缩放）、`QUI_X11_SCALE`（覆盖由 Xft.dpi 推出的缩放）、`QUI_RENDERER=metal|webgpu|cpu`（覆盖自动选择的渲染器）、`QUI_DEBUG_RENDERER=1`（记录每个窗口的呈现方式、Dawn 适配器与渲染器切换）、`QUI_WEBGPU=0`（不加载 Dawn）、`QUI_DAWN_LIB=/path`（指定要加载的 Dawn 库）、`QUI_WEBGPU_SHARED=0`（WebGPU 上传帧，而不共享 IOSurface）、`QUI_AGENT=1` / `QUI_AGENT_TCP=:port` / `QUI_AGENT_TOKEN` / `QUI_AGENT_SOCK` / `QUI_AGENT_DEVTOOLS=1`（agent 服务）、`QUI_DEBUG_LAYOUT=1`（flex 溢出日志）、`QUI_DEBUG_PAINT=1`（记录全量重绘提升 + 第一个移动的控件）、`QUI_DEBUG_DRAW=1`（Draw 期间修改控件树或触发重新布局时快速失败）、`QUI_DEBUG_LAYOUT_CACHE=1`（每次命中测量缓存都重新测量，并记录未对自身调用 `InvalidateLayout` 就改变了尺寸的控件）、`QUI_DEBUG_THREAD=1`（UI 线程归属快速失败检查）、`QUI_DEBUG_GESTURE=1`（记录 macOS 桥装了哪些手势选择器，含是否保留 GLFW 的 scrollWheel:）、`QUI_I18N_STRICT=1`（未解析的 key 渲染为 ⟦key⟧ 并各记录一次）、`QUI_GOLDEN=1`（写入 golden 截图）、`QUI_HTMLCSS_SNAPSHOT=1`（htmlcss 快照 PNG）。
+常用环境变量：`QUI_PLATFORM=cocoa|x11|web|headless|glfw`（窗口后端 —— 见下）、`QUI_SNAPSHOT=out.png`（渲染、等待界面稳定、写出帧后退出；`QUI_SNAPSHOT_SETTLE` / `QUI_SNAPSHOT_TIMEOUT` 可调）、`QUI_HEADLESS_SCALE=2`（headless 显示缩放）、`QUI_X11_SCALE`（覆盖由 Xft.dpi 推出的缩放）、`QUI_RENDERER=webgpu|cpu`（覆盖自动选择的渲染器；其他取值，如已移除的 `metal`，记录一次日志后被忽略）、`QUI_DEBUG_RENDERER=1`（记录每个窗口的呈现方式、Dawn 适配器与回退到 CPU 路径）、`QUI_WEBGPU=0`（不加载 Dawn）、`QUI_DAWN_LIB=/path`（指定要加载的 Dawn 库）、`QUI_WEBGPU_SHARED=0`（WebGPU 上传帧，而不共享 IOSurface）、`QUI_AGENT=1` / `QUI_AGENT_TCP=:port` / `QUI_AGENT_TOKEN` / `QUI_AGENT_SOCK` / `QUI_AGENT_DEVTOOLS=1`（agent 服务）、`QUI_DEBUG_LAYOUT=1`（flex 溢出日志）、`QUI_DEBUG_PAINT=1`（记录全量重绘提升 + 第一个移动的控件）、`QUI_DEBUG_DRAW=1`（Draw 期间修改控件树或触发重新布局时快速失败）、`QUI_DEBUG_LAYOUT_CACHE=1`（每次命中测量缓存都重新测量，并记录未对自身调用 `InvalidateLayout` 就改变了尺寸的控件）、`QUI_DEBUG_THREAD=1`（UI 线程归属快速失败检查）、`QUI_DEBUG_GESTURE=1`（记录 macOS 桥装了哪些手势选择器，含是否保留 GLFW 的 scrollWheel:）、`QUI_I18N_STRICT=1`（未解析的 key 渲染为 ⟦key⟧ 并各记录一次）、`QUI_GOLDEN=1`（写入 golden 截图）、`QUI_HTMLCSS_SNAPSHOT=1`（htmlcss 快照 PNG）。
 
 **窗口后端（`QUI_PLATFORM`）。** 操作系统窗口层位于平台接缝之后。每个后端都是 `internal/platform/` 下的一个叶子包，实现 `internal/platform/contract`（接缝的设计说明也在那里）；`platform_adapter.go` 把它包装给引擎使用。可以同时编译进多个后端，优先级最高的为默认，`QUI_PLATFORM` 在*运行时*选择其他后端：
 
 | 取值 | 包 | 默认于 | 后端 |
 |---|---|---|---|
-| `cocoa` | `internal/platform/cocoa` | macOS | 原生 AppKit —— 自己的 NSApplication 事件泵、NSWindow/NSView，手势是真正的 responder 方法。`NewAutoRenderer()` 解析为 `MetalRenderer`（CPU 光栅结果以零拷贝 IOSurface 经 CAMetalLayer 呈现；FrameView / VideoView 走保留式合成器绘制）；控件请求 WebGPU（`GPUCanvas` 绘制、`SetPreRender` / `SetPostRender`）的窗口会在同一个 CAMetalLayer 上切换为 `WebGPURenderer`。不再有 NSOpenGLContext。`CPURenderer` 窗口以 CALayer contents 呈现，并由 CVDisplayLink 控制节奏。见 docs/rfc/0002-metal-renderer.zh.md 与 docs/rfc/0003-webgpu.zh.md |
-| `x11` | `internal/platform/x11` | Linux（cgo） | Xlib —— 用 XPutImage 呈现 CPU 帧、XIM 文本输入、CLIPBOARD 选区、Xft.dpi 缩放 |
+| `cocoa` | `internal/platform/cocoa` | macOS | 原生 AppKit —— 自己的 NSApplication 事件泵、NSWindow/NSView，手势是真正的 responder 方法。`NewAutoRenderer()` 在 Dawn 可用时解析为窗口 CAMetalLayer（`contract.MetalSurface`）上的 `WebGPURenderer`（Dawn 的 Metal 后端；零拷贝 IOSurface 帧、GPU `ScrollPixels`、脏矩形、FrameView / VideoView 走保留式合成器绘制），否则为 `CPURenderer`，以 CALayer contents 呈现并由 CVDisplayLink 控制节奏。不再有 NSOpenGLContext。见 docs/rfc/0003-webgpu.zh.md（docs/rfc/0002-metal-renderer.zh.md 仅作历史 —— Metal 渲染器已移除） |
+| `x11` | `internal/platform/x11` | Linux（cgo） | Xlib —— Dawn 可用时 `NewAutoRenderer()` 解析为 X11 窗口（`contract.NativeSurface`，Vulkan）上的 `WebGPURenderer`（脏矩形经 `writeTexture` 上传），否则为 `CPURenderer`（XPutImage 脏矩形）、XIM 文本输入、CLIPBOARD 选区、Xft.dpi 缩放 |
 | `web` | `internal/platform/web` | GOOS=js | `<canvas>` + 只 putImageData 脏矩形，由 requestAnimationFrame 控制节奏；按键来自 keydown，文本与 IME 预编辑来自锚定在光标处的隐藏 textarea；内嵌字体缺失的字形（中日韩等）与彩色 emoji 用浏览器自身字体绘制；文件拖放经 `Window.OpenDroppedFile` 读取；Mac 浏览器上使用 Cmd 快捷键 |
 | `headless` | `internal/platform/headless` | CGO_ENABLED=0 | 内存中的窗口；通过 `Window.Snapshot` / agent `shot` / `QUI_SNAPSHOT` 读回帧 |
-| `glfw` | `internal/platform/glfw` | Windows | GLFW 3.3，只作窗口层 —— 不建 GL 上下文（`GLFW_NO_API`）；`WebGPURenderer` 直接画在原生窗口上（CAMetalLayer / HWND / X11 窗口）。其他平台仅在 `-tags qui_glfw` 时编译 |
+| `glfw` | `internal/platform/glfw` | Windows | GLFW 3.3，只作窗口层 —— 不建 GL 上下文（`GLFW_NO_API`）；`WebGPURenderer` 直接画在原生窗口上（CAMetalLayer / HWND / X11 窗口）；没有 Dawn 时为 `CPURenderer`。其他平台仅在 `-tags qui_glfw` 时编译 |
 
-应用调用 `window.SetRenderer(qui.NewAutoRenderer())` 或不设置：`AutoRenderer` 在 `cocoa` 上解析为 `MetalRenderer`，在 `glfw` 上为 `WebGPURenderer`，在没有 GPU 呈现路径的表面（`x11`、`web`、`headless`）上为 `CPURenderer`，后者直接呈现 CPU 帧（`platformSurface.presentCPU`）—— 因此桌面应用代码在各处无需修改。`GLRenderer` / `NewGLRenderer` 只作为 `AutoRenderer` / `NewAutoRenderer` 的 deprecated 别名保留；任何构建都不含 OpenGL。缺少 Dawn 时，GPU 内容控件不显示（记录一次日志），其余界面不受影响。无法识别的名字会报错并列出可用项 —— 拼错不应该看起来像“什么都没变”。
+应用调用 `window.SetRenderer(qui.NewAutoRenderer())` 或不设置：`AutoRenderer` 在任何提供 GPU 目标的表面（`cocoa`、`x11`、`glfw`）上、Dawn 可加载时解析为 `WebGPURenderer`，否则（`web`、`headless` 上始终）为 `CPURenderer`，后者直接呈现 CPU 帧（`platformSurface.presentCPU`）—— 因此桌面应用代码在各处无需修改。`GLRenderer` / `NewGLRenderer` 只作为 `AutoRenderer` / `NewAutoRenderer` 的 deprecated 别名保留；任何构建都不含 OpenGL。缺少 Dawn 时（记录一次日志）窗口呈现 CPU 帧，GPU 内容控件（scene3d、自定义着色器、GPU 钩子）不显示，`media.FrameView` 把帧画进 2D 层，`media.VideoView` 只显示背景。WebGPU 设备丢失或 surface 无法绑定时，窗口永久退到 CPU 路径。预编译 Dawn 覆盖 darwin/arm64、darwin/amd64、linux/amd64（没有 linux/arm64）；`cmd/qui-dawn` 以 `-mmacosx-version-min` = `$MACOSX_DEPLOYMENT_TARGET`（默认 11.0）链接 macOS dylib，但预编译的 Dawn 目标文件面向 macOS 26，更早的 macOS 不保证可用。无法识别的名字会报错并列出可用项 —— 拼错不应该看起来像“什么都没变”。
 
 **shell 驱动的测试中的进程生命周期：** `go run` 不会把信号转发给子进程 —— 需要 `kill` 真正的宿主进程时，请始终用 `go build -o /tmp/app ./... && /tmp/app &`。`App.Run` 通过正常的关闭路径处理 SIGINT/SIGTERM（卸载 agent socket、运行 `OnClose` 回调）。
 

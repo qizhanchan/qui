@@ -75,6 +75,7 @@ func quiWGPUGoError(kind C.int, msg *C.char, n C.int) {
 	}
 	if kind < 0 {
 		log.Printf("qui: WebGPU device lost: %s", text)
+		deviceLost.Store(true)
 		return
 	}
 	reportError(int(kind), text)

@@ -117,9 +117,10 @@ type Caps struct {
 	// one property that matters most.
 	OverlayPanels bool
 	// GPUSurface reports that the window's Surface offers a GPU
-	// presentation path (MetalSurface or NativeSurface) a Metal / WebGPU
-	// renderer can draw into. False for compositor-only surfaces (browser
-	// canvas, X11, headless): those present CPU frames through PresentCPU.
+	// presentation path (MetalSurface or NativeSurface) a WebGPU
+	// renderer can draw into (cocoa, x11, glfw). False for compositor-only
+	// surfaces (browser canvas, headless): those present CPU frames through
+	// PresentCPU — as a GPU surface does when WebGPU is unavailable.
 	GPUSurface bool
 }
 
@@ -227,7 +228,7 @@ type Window interface {
 // Surface is where a finished frame goes.
 //
 // Two presentation paths exist because they have genuinely different
-// costs. The GPU path is what a GL/Metal renderer wants: it has already
+// costs. The GPU path is what a GPU renderer wants: it has already
 // drawn into a backbuffer and only needs a swap. The CPU path exists
 // because qui's reference rasterizer produces an *image.RGBA, and handing
 // that straight to the compositor (CALayer contents, wl_shm buffer, DXGI)
@@ -266,7 +267,7 @@ type Surface interface {
 }
 
 // MetalSurface is the optional CAMetalLayer presentation path of a
-// Surface (cocoa). A Metal or WebGPU renderer draws into the layer's
+// Surface (cocoa). The WebGPU renderer draws into the layer's
 // drawables and presents them itself; Present and PresentCPU are then not
 // used.
 type MetalSurface interface {

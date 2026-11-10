@@ -1,4 +1,4 @@
-//go:build darwin && cgo && !qui_nometal
+//go:build darwin && cgo
 
 package render
 
@@ -277,4 +277,39 @@ func TestWebGPUTransparentFrame(t *testing.T) {
 	if p := pixelAt(got, 4, 8); !near(p[0], 128) || !near(p[3], 128) {
 		t.Errorf("half-transparent pixel = %v, want ~(128,0,0,128)", p)
 	}
+}
+
+func near(a, b uint8) bool { return a-b < 3 || b-a < 3 }
+
+// stripeFrame paints rows whose colour encodes their content row, so a
+// pixel moved to the wrong place shows.
+func stripeFrame(c gfx.Canvas, off, y0, y1 int) {
+	for y := y0; y < y1; y++ {
+		n := y + off
+		c.FillRect(gfx.Rect{Y: float32(y), W: 64, H: 1},
+			gfx.Color{R: float32(n%17) / 16, G: float32(n%7) / 6, B: float32(n%5) / 4, A: 1})
+	}
+}
+
+// An IOSurface pads its rows; Snapshot must still return the frame, not
+// a sheared copy of the surface memory.
+func TestWebGPUSnapshotOfPaddedSurface(t *testing.T) {
+	forBothFrames(t, func(t *testing.T, shared bool) {
+		const w, h = 37, 23
+		r := newOffscreenWebGPU(t, w, h, shared)
+		stripeFrame(r.Begin(gfx.Size{W: w, H: h}), 0, 0, h)
+		r.End()
+		got, shown := r.Snapshot(), r.PresentedFrame()
+		if got == nil || shown == nil {
+			t.Fatal("no frame")
+		}
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				i, j := got.PixOffset(x, y), shown.PixOffset(x, y)
+				if string(got.Pix[i:i+3]) != string(shown.Pix[j:j+3]) {
+					t.Fatalf("Snapshot (%d,%d) = %v, presented %v", x, y, got.Pix[i:i+4], shown.Pix[j:j+4])
+				}
+			}
+		}
+	})
 }

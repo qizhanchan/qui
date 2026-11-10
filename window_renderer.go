@@ -10,24 +10,40 @@ import (
 	"github.com/qizhanchan/qui/internal/render"
 )
 
-// Renderer selection — see docs/rfc/0002-metal-renderer.zh.md and
-// docs/rfc/0003-webgpu.zh.md.
+// Renderer selection — see docs/rfc/0003-webgpu.zh.md.
 //
 // An app asks for NewAutoRenderer (or the deprecated NewGLRenderer, or sets
-// no renderer at all) and the window resolves it to what its surface does
-// best: on cocoa a MetalRenderer (CPU raster presented through a
-// CAMetalLayer, zero-copy IOSurface frames); on glfw a WebGPURenderer
-// (Dawn on D3D12 / Vulkan / Metal); elsewhere a CPURenderer whose frames
-// the platform compositor shows. A Metal window whose widgets turn out to
-// need WebGPU (GPUCanvas, GPU hooks — 3D, custom shaders) switches itself
-// to a WebGPURenderer on the same layer the first time one asks.
+// no renderer at all) and the window resolves it. There are two answers:
+// a WebGPURenderer (Dawn: Metal on macOS, Vulkan on Linux, D3D12 on
+// Windows) on surfaces that offer a GPU target — cocoa's CAMetalLayer, a
+// native window — when Dawn loads; otherwise a CPURenderer whose frames
+// the platform compositor shows (CALayer contents, XPutImage, <canvas>).
+// A WebGPU window whose device is lost drops to the CPU path for good.
 //
-// QUI_RENDERER overrides the choice: "metal", "webgpu", "cpu".
+// QUI_RENDERER overrides the choice: "webgpu" or "cpu" ("auto" or unset:
+// the default).
 
-// rendererPreference is QUI_RENDERER, lower-cased.
+// rendererPreference is QUI_RENDERER, lower-cased: "", "webgpu" or "cpu".
+// Anything else is reported once and ignored.
 func rendererPreference() string {
-	return strings.ToLower(strings.TrimSpace(os.Getenv("QUI_RENDERER")))
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("QUI_RENDERER")))
+	switch v {
+	case "", "auto":
+		return ""
+	case "webgpu", "cpu":
+		return v
+	}
+	if !badRendererLogged.Swap(true) {
+		hint := ""
+		if v == "metal" || v == "gl" || v == "opengl" {
+			hint = " (that renderer was removed; WebGPU presents through Metal on macOS)"
+		}
+		log.Printf("qui: QUI_RENDERER=%q is not a renderer%s; use webgpu or cpu", v, hint)
+	}
+	return ""
 }
+
+var badRendererLogged atomic.Bool
 
 // newWebGPURenderer builds a WebGPURenderer, or is nil in builds without
 // WebGPU (no cgo, js). Set by window_gpu.go.
@@ -82,21 +98,18 @@ func (w *Window) preferredRenderer(r Renderer) Renderer {
 	}
 	_, hasMetal := metalSurfaceOf(w.plat)
 	_, hasNative := nativeSurfaceOf(w.plat)
-	if !hasMetal && !hasNative {
-		return NewCPURenderer()
-	}
-	if !w.noWebGPU && (w.wantWebGPU || pref == "webgpu" || !hasMetal) && webgpuOK() {
+	if (hasMetal || hasNative) && !w.noWebGPU && webgpuOK() {
 		return newWebGPURenderer()
 	}
-	if hasMetal && render.MetalRendererAvailable && !w.noMetal {
-		return NewMetalRenderer()
+	if (hasMetal || hasNative) && !w.noWebGPU {
+		logWebGPUMissing()
 	}
 	return NewCPURenderer()
 }
 
 // bindSurface hands a GPU-presenting renderer its window's surface before
 // a frame, and resolves a pending AutoRenderer. When the renderer cannot
-// use the surface the window falls back (WebGPU → Metal → CPU).
+// use the surface the window falls back to the CPU path.
 func (w *Window) bindSurface() {
 	if _, auto := w.renderer.(*AutoRenderer); auto {
 		w.SetRenderer(w.renderer)
@@ -134,16 +147,10 @@ func (w *Window) logRenderer() {
 }
 
 // rendererFailed drops the GPU renderer that could not use the surface
-// for the next one down and repaints everything.
+// (or whose device was lost) for the CPU path and repaints everything.
 func (w *Window) rendererFailed() {
-	switch w.renderer.(type) {
-	case *MetalRenderer:
-		w.noMetal = true
-		log.Printf("qui: Metal presentation unavailable for window %q", w.title)
-	default:
-		w.noWebGPU = true
-		log.Printf("qui: WebGPU presentation unavailable for window %q", w.title)
-	}
+	w.noWebGPU = true
+	log.Printf("qui: WebGPU presentation unavailable for window %q; presenting CPU frames", w.title)
 	w.closeRenderer()
 	w.renderer = NoopRenderer{}
 	w.SetRenderer(NewAutoRenderer())
@@ -154,30 +161,14 @@ func (w *Window) rendererFailed() {
 
 var webgpuMissingLogged atomic.Bool
 
-// checkWebGPUSwitch moves the window to a WebGPURenderer after a frame in
-// which a widget asked the Metal renderer for WebGPU.
-func (w *Window) checkWebGPUSwitch() {
-	fr, ok := w.renderer.(render.WebGPUFallbackRenderer)
-	if !ok || !fr.WantsWebGPU() || w.wantWebGPU {
+// logWebGPUMissing says once why a window with a GPU surface presents CPU
+// frames: Dawn is not installed (GPU-content widgets stay blank too).
+func logWebGPUMissing() {
+	if webgpuMissingLogged.Swap(true) {
 		return
 	}
-	w.wantWebGPU = true
-	if !webgpuOK() {
-		if !webgpuMissingLogged.Swap(true) {
-			log.Printf("qui: a widget needs WebGPU but Dawn is not available; its GPU content will not show " +
-				"(install it with `go run github.com/qizhanchan/qui/cmd/qui-dawn`)")
-		}
-		return
-	}
-	w.closeRenderer()
-	w.renderer = NoopRenderer{}
-	w.SetRenderer(NewAutoRenderer())
-	w.rendererLogged = false
-	if os.Getenv("QUI_DEBUG_RENDERER") != "" {
-		log.Printf("qui: window %q switched to WebGPU", w.title)
-	}
-	w.Invalidate()
-	w.InvalidateLayout()
+	log.Printf("qui: Dawn (WebGPU) is not available; presenting CPU frames, GPU content will not show " +
+		"(install it with `go run github.com/qizhanchan/qui/cmd/qui-dawn`)")
 }
 
 // closeRenderer releases a renderer's native resources (a GPU context)
@@ -189,7 +180,7 @@ func (w *Window) closeRenderer() {
 }
 
 // rendererPresentsItself reports whether the renderer already presented
-// the frame (Metal and WebGPU renderers present their own drawables).
+// the frame (the WebGPU renderer presents its own drawables).
 func (w *Window) rendererPresentsItself() bool {
 	sp, ok := w.renderer.(render.SelfPresentingRenderer)
 	return ok && sp.PresentsItself()

@@ -27,7 +27,7 @@ import (
 // overwritten are skipped.
 //
 // Only renderers that call End switch it on (CPURenderer, GLRenderer's
-// CPU path, MetalRenderer): a bare backend draws immediately.
+// CPU path, WebGPURenderer): a bare backend draws immediately.
 // QUI_DEFER_FILLS=0 turns it off (to bisect a rendering difference).
 
 // deferFillsDefault is what renderers pass to SetDeferFills.

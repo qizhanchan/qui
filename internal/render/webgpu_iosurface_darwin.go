@@ -38,6 +38,22 @@ static IOSurfaceRef quiNewFrameSurface(int w, int h) {
 }
 
 static void* quiSurfPtr(IOSurfaceRef s) { return (void*)s; }
+
+// quiNewTestLayer is an offscreen CAMetalLayer (in no window) whose
+// drawables can be read back: what tests render into. Retained (+1).
+static void* quiNewTestLayer(int width, int height) {
+    @autoreleasepool {
+        CAMetalLayer* layer = [CAMetalLayer layer];
+        layer.framebufferOnly = NO;
+        layer.opaque = YES;
+        layer.drawableSize = CGSizeMake(width, height);
+        return (__bridge_retained void*)layer;
+    }
+}
+
+static void quiReleaseTestLayer(void* layer) {
+    if (layer) CFRelease(layer);
+}
 static void quiRetain(void* p) { if (p) CFRetain(p); }
 static void quiRelease(void* p) { if (p) CFRelease(p); }
 
@@ -217,6 +233,10 @@ func NewOffscreenWebGPURenderer(w, h int) (r *WebGPURenderer, release func(), er
 	}
 	return r, func() { r.Close(); releaseTestMetalLayer(layer) }, nil
 }
+
+func newTestMetalLayer(w, h int) unsafe.Pointer { return C.quiNewTestLayer(C.int(w), C.int(h)) }
+
+func releaseTestMetalLayer(l unsafe.Pointer) { C.quiReleaseTestLayer(l) }
 
 // PresentedFrame reads back the last presented frame (offscreen
 // renderers only), as RGBA.

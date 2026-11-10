@@ -268,7 +268,7 @@ func (w *cocoaWindow) Caps() contract.Caps {
 		ClipboardNeedsInputSerial: false,
 		// NSPanel + NSWindowStyleMaskNonactivatingPanel — see the .m.
 		OverlayPanels: true,
-		// CAMetalLayer per window (Metal / WebGPU renderers).
+		// CAMetalLayer per window (the WebGPU renderer).
 		GPUSurface: true,
 	}
 }
@@ -457,7 +457,7 @@ func (w *cocoaWindow) SetDropEnabled(enabled bool) {
 // the renderer the engine runs on it:
 //
 //   - Metal: MetalLayer moves the window to a CAMetalLayer the renderer
-//     (MetalRenderer or WebGPURenderer) draws into and presents itself.
+//     (WebGPURenderer) draws into and presents itself.
 //     Pacing comes from the layer's drawable queue, so Ready returns nil.
 //   - CPU: the first PresentCPU (CPURenderer) moves the window to layer
 //     presentation for good — the frame becomes the view layer's

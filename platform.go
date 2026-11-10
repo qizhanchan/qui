@@ -172,7 +172,7 @@ type platformWindow interface {
 // platformSurface is where a finished frame goes.
 //
 // Two presentation paths exist because they have genuinely different
-// costs. The GPU path is what a GL/Metal renderer wants: it has already
+// costs. The GPU path is what a GPU renderer wants: it has already
 // drawn into a backbuffer and only needs a swap. The CPU path exists
 // because qui's reference rasterizer produces an *image.RGBA, and handing
 // that straight to the compositor (CALayer contents, wl_shm buffer, DXGI)
