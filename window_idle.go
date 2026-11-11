@@ -107,7 +107,14 @@ func (a *App) idleTimeout(now time.Time) time.Duration {
 			// instead of after the next input event.
 			return 0
 		}
-		if d := w.nextFrameWait(now); d < wait {
+		d := w.nextFrameWait(now)
+		// With a vsync wake the display drives animation: the loop sleeps
+		// until the refresh wakes it (the longer timeout is only a
+		// fallback for an occluded window whose display link paused).
+		if s, ok := w.plat.surface().(contractSurface); ok && s.wantFrames(d == frameInterval) && d == frameInterval {
+			d = 2 * frameInterval
+		}
+		if d < wait {
 			wait = d
 		}
 	}

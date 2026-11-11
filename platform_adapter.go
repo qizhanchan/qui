@@ -126,6 +126,16 @@ func platformOptional[T any](pw platformWindow) (T, bool) {
 type contractSurface struct{ s contract.Surface }
 
 func (c contractSurface) ready() <-chan struct{} { return c.s.Ready() }
+
+// wantFrames forwards to backends with a vsync-driven wake; it reports
+// whether the backend has one.
+func (c contractSurface) wantFrames(on bool) bool {
+	if w, ok := c.s.(interface{ WantFrames(bool) }); ok {
+		w.WantFrames(on)
+		return true
+	}
+	return false
+}
 func (c contractSurface) present()               { c.s.Present() }
 func (c contractSurface) presentCPU(img *image.RGBA, damage image.Rectangle) bool {
 	return c.s.PresentCPU(img, damage)

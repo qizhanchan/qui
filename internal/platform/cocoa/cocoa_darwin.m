@@ -1067,15 +1067,26 @@ void quiCocoaSetClipboardText(const char* text) {
 
 // --- presentation ----------------------------------------------------
 
-// The display link callback runs on CoreVideo's own thread. It only flags
-// "the display wants a frame"; the UI thread polls the flag in
-// quiCocoaTakeFrameReady. No wake is posted: an idle app must stay asleep,
-// and a window with pending paint already wakes on its frame timeout.
+// The display link callback runs on CoreVideo's own thread. It flags "the
+// display wants a frame" (vsync[0], polled by quiCocoaTakeFrameReady) and,
+// only while the window asked for continuous frames (vsync[1], set by
+// quiCocoaSetVsyncWake), wakes the main loop so the frame starts right
+// after the refresh instead of on a free-running timer that drifts
+// against it. An idle app posts no wakes and stays asleep.
 static CVReturn quiCocoaVsync(CVDisplayLinkRef link, const CVTimeStamp* now,
                               const CVTimeStamp* out, CVOptionFlags in,
                               CVOptionFlags* flags, void* ctx) {
-    atomic_store((atomic_int*)ctx, 1);
+    atomic_int* v = (atomic_int*)ctx;
+    atomic_store(&v[0], 1);
+    if (atomic_load(&v[1])) quiCocoaWake();
     return kCVReturnSuccess;
+}
+
+// quiCocoaSetVsyncWake turns the per-refresh wake on or off.
+void quiCocoaSetVsyncWake(uintptr_t handle, int on) {
+    QuiWindowBox* box = quiBox(handle);
+    if (box == nil || box.vsync == NULL) return;
+    atomic_store(&box.vsync[1], on ? 1 : 0);
 }
 
 #pragma clang diagnostic push
@@ -1086,9 +1097,10 @@ static CVReturn quiCocoaVsync(CVDisplayLinkRef link, const CVTimeStamp* now,
 // link keeps ticking and works on every supported macOS.
 static void quiCocoaStartDisplayLink(QuiWindowBox* box) {
     if (box.displayLink) return;
-    atomic_int* flag = malloc(sizeof(atomic_int));
+    atomic_int* flag = malloc(2 * sizeof(atomic_int));
     if (flag == NULL) return;
-    atomic_init(flag, 0);
+    atomic_init(&flag[0], 0);
+    atomic_init(&flag[1], 0);
     CVDisplayLinkRef link = NULL;
     if (CVDisplayLinkCreateWithActiveCGDisplays(&link) != kCVReturnSuccess || link == NULL) {
         free(flag);
@@ -1210,11 +1222,12 @@ void* quiCocoaEnterMetalMode(uintptr_t handle) {
         box.metalLayer = layer;
         box.metalMode = YES;
         quiCocoaSyncLayerGeometry(box);
-        // No display link: CAMetalLayer.nextDrawable already holds the
-        // renderer to the display's pace (it blocks while every drawable
-        // is queued), so frames are paced by presentation rather than
-        // gated on a second, unsynchronized vsync flag — which made
-        // a 60 fps producer drop every frame that landed between ticks.
+        // The display link paces animation: while a window wants
+        // continuous frames its vsync wakes the loop (quiCocoaSetVsyncWake),
+        // so each frame starts just after a refresh. Polling the flag on a
+        // free-running timer instead dropped every frame that landed
+        // between ticks; waking on the refresh keeps the two in phase.
+        quiCocoaStartDisplayLink(box);
         return (__bridge void*)layer;
     }
 }

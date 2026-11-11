@@ -55,6 +55,7 @@ void  quiCocoaSetClipboardText(const char* text);
 int  quiCocoaPresentCPU(uintptr_t handle, const uint8_t* pix, int stride, int width, int height,
                         int dx, int dy, int dw, int dh);
 int  quiCocoaTakeFrameReady(uintptr_t handle);
+void quiCocoaSetVsyncWake(uintptr_t handle, int on);
 void* quiCocoaEnterMetalMode(uintptr_t handle);
 
 int   quiCocoaScreenCount(void);
@@ -480,6 +481,16 @@ func (s cocoaSurface) Ready() <-chan struct{} {
 		return readyLater
 	}
 	return nil // Metal path, or no display link: pace on the loop's timeout
+}
+
+// WantFrames asks for a main-loop wake on every display refresh while a
+// window animates (and stops them when it is idle).
+func (s cocoaSurface) WantFrames(on bool) {
+	v := C.int(0)
+	if on {
+		v = 1
+	}
+	C.quiCocoaSetVsyncWake(s.win.cid(), v)
 }
 
 func (s cocoaSurface) PresentCPU(img *image.RGBA, damage image.Rectangle) bool {
