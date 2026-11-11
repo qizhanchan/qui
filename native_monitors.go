@@ -25,6 +25,10 @@ type Monitor struct {
 	// ContentScale is the DPI scale factor of the display (1.0 standard,
 	// 2.0 on a Retina panel). X and Y can differ on unusual setups.
 	ContentScale Point
+	// RefreshRate is the display's maximum refresh rate in Hz (120 on a
+	// ProMotion panel), or 0 when the platform does not report one. Games
+	// use it to pick a render budget.
+	RefreshRate int
 }
 
 // monitorFrom builds a Monitor snapshot from a platform monitor. Must run
@@ -37,8 +41,9 @@ func monitorFrom(m platformMonitor) Monitor {
 	out := Monitor{plat: m, Name: m.name()}
 	px, py := m.position()
 	out.Position = Point{X: float32(px), Y: float32(py)}
-	if mw, mh, _ := m.videoMode(); mw > 0 && mh > 0 {
+	if mw, mh, hz := m.videoMode(); mw > 0 && mh > 0 {
 		out.Size = Size{W: float32(mw), H: float32(mh)}
+		out.RefreshRate = max(0, hz)
 	}
 	wx, wy, ww, wh := m.workArea()
 	out.WorkArea = Rect{X: float32(wx), Y: float32(wy), W: float32(ww), H: float32(wh)}
