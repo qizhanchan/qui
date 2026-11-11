@@ -22,6 +22,7 @@ type (
 	AcquireStatus            = wgpu.AcquireStatus
 	SharedMemory             = wgpu.SharedMemory
 	Device                   = wgpu.Device
+	DeviceLimits             = wgpu.DeviceLimits
 	TextureFormat            = wgpu.TextureFormat
 	TextureUsage             = wgpu.TextureUsage
 	BufferUsage              = wgpu.BufferUsage
@@ -41,8 +42,11 @@ type (
 	Texture                  = wgpu.Texture
 	TextureDescriptor        = wgpu.TextureDescriptor
 	TextureView              = wgpu.TextureView
+	TextureViewDescriptor    = wgpu.TextureViewDescriptor
+	TextureViewDimension     = wgpu.TextureViewDimension
 	Buffer                   = wgpu.Buffer
 	Sampler                  = wgpu.Sampler
+	SamplerDescriptor        = wgpu.SamplerDescriptor
 	ShaderModule             = wgpu.ShaderModule
 	VertexAttribute          = wgpu.VertexAttribute
 	VertexBufferLayout       = wgpu.VertexBufferLayout
@@ -62,6 +66,8 @@ type (
 	DepthAttachment          = wgpu.DepthAttachment
 	RenderPassDescriptor     = wgpu.RenderPassDescriptor
 	RenderPass               = wgpu.RenderPass
+	TimestampQuery           = wgpu.TimestampQuery
+	PassTimestampWrites      = wgpu.PassTimestampWrites
 )
 
 const (
@@ -75,7 +81,14 @@ const (
 	BindReadOnlyStorageBuffer = wgpu.BindReadOnlyStorageBuffer
 	BindTexture               = wgpu.BindTexture
 	BindSampler               = wgpu.BindSampler
+	BindDepthTexture          = wgpu.BindDepthTexture
+	BindComparisonSampler     = wgpu.BindComparisonSampler
 	BindUnfilterableTexture   = wgpu.BindUnfilterableTexture
+	BindCubeTexture           = wgpu.BindCubeTexture
+	BindTextureArray          = wgpu.BindTextureArray
+	TextureView2D             = wgpu.TextureView2D
+	TextureView2DArray        = wgpu.TextureView2DArray
+	TextureViewCube           = wgpu.TextureViewCube
 	FormatUndefined           = wgpu.FormatUndefined
 	FormatR8Unorm             = wgpu.FormatR8Unorm
 	FormatRG8Unorm            = wgpu.FormatRG8Unorm

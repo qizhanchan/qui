@@ -36,6 +36,9 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"math"
+	"math/bits"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -94,7 +97,8 @@ type Device struct {
 	queue   C.WGPUQueue
 	name    string
 	// ioSurface reports that IOSurfaces can be imported (macOS).
-	ioSurface bool
+	ioSurface  bool
+	timestamps bool
 }
 
 // deviceLost is set when the shared device is lost (GPU reset, eGPU
@@ -145,6 +149,12 @@ func newDevice() (*Device, error) {
 		want = append(want, C.WGPUFeatureName_SharedTextureMemoryIOSurface, C.WGPUFeatureName_SharedFenceMTLSharedEvent)
 		io = true
 	}
+	// Keep the existing device request as a fallback if the driver cannot
+	// enable timestamp queries despite advertising them on the adapter.
+	baseFeatures := len(want)
+	if C.wgpuAdapterHasFeature(adapter, C.WGPUFeatureName_TimestampQuery) != 0 {
+		want = append(want, C.WGPUFeatureName_TimestampQuery)
+	}
 	var a arena
 	defer a.free()
 	feats := allocN[C.WGPUFeatureName](&a, len(want))
@@ -154,6 +164,13 @@ func newDevice() (*Device, error) {
 		fp = &feats[0]
 	}
 	dev := C.quiWGPURequestDevice(inst, adapter, fp, C.size_t(len(want)), &buf[0], C.size_t(len(buf)))
+	if dev == nil && len(want) > baseFeatures {
+		buf[0] = 0
+		if baseFeatures == 0 {
+			fp = nil
+		}
+		dev = C.quiWGPURequestDevice(inst, adapter, fp, C.size_t(baseFeatures), &buf[0], C.size_t(len(buf)))
+	}
 	if dev == nil {
 		C.wgpuAdapterRelease(adapter)
 		C.wgpuInstanceRelease(inst)
@@ -163,11 +180,48 @@ func newDevice() (*Device, error) {
 	return &Device{
 		inst: inst, adapter: adapter, c: dev, queue: C.wgpuDeviceGetQueue(dev),
 		name: C.GoString(&buf[0]), ioSurface: io,
+		timestamps: C.wgpuDeviceHasFeature(dev, C.WGPUFeatureName_TimestampQuery) != 0,
 	}, nil
 }
 
 // AdapterName describes the GPU and backend, e.g. "Apple M3 (Metal)".
 func (d *Device) AdapterName() string { return d.name }
+
+// DeviceLimits contains the enabled limits used for sizing textures,
+// mesh buffers, and bind groups. These can be lower than adapter maxima.
+type DeviceLimits struct {
+	MaxTextureDimension2D            uint32
+	MaxBindGroups                    uint32
+	MaxSampledTexturesPerShaderStage uint32
+	MaxStorageBuffersPerShaderStage  uint32
+	MaxUniformBufferBindingSize      uint64
+	MaxStorageBufferBindingSize      uint64
+	MaxBufferSize                    uint64
+	MinUniformBufferOffsetAlignment  uint32
+	MinStorageBufferOffsetAlignment  uint32
+}
+
+// Limits queries the device's enabled limits.
+func (d *Device) Limits() (DeviceLimits, error) {
+	if d == nil || d.c == nil || Lost() {
+		return DeviceLimits{}, ErrUnavailable
+	}
+	var limits C.WGPULimits
+	if C.wgpuDeviceGetLimits(d.c, &limits) != C.WGPUStatus_Success {
+		return DeviceLimits{}, errors.New("wgpu: cannot query device limits")
+	}
+	return DeviceLimits{
+		MaxTextureDimension2D:            uint32(limits.maxTextureDimension2D),
+		MaxBindGroups:                    uint32(limits.maxBindGroups),
+		MaxSampledTexturesPerShaderStage: uint32(limits.maxSampledTexturesPerShaderStage),
+		MaxStorageBuffersPerShaderStage:  uint32(limits.maxStorageBuffersPerShaderStage),
+		MaxUniformBufferBindingSize:      uint64(limits.maxUniformBufferBindingSize),
+		MaxStorageBufferBindingSize:      uint64(limits.maxStorageBufferBindingSize),
+		MaxBufferSize:                    uint64(limits.maxBufferSize),
+		MinUniformBufferOffsetAlignment:  uint32(limits.minUniformBufferOffsetAlignment),
+		MinStorageBufferOffsetAlignment:  uint32(limits.minStorageBufferOffsetAlignment),
+	}, nil
+}
 
 // CanImportIOSurface reports whether ImportIOSurface works (macOS).
 func (d *Device) CanImportIOSurface() bool { return d.ioSurface }
@@ -339,9 +393,13 @@ const (
 // ---- textures ----
 
 type Texture struct {
-	c      C.WGPUTexture
-	w, h   int
-	format TextureFormat
+	c          C.WGPUTexture
+	w, h       int
+	format     TextureFormat
+	usage      TextureUsage
+	mipLevels  int
+	layers     int
+	uploadable bool
 }
 
 type TextureDescriptor struct {
@@ -350,18 +408,32 @@ type TextureDescriptor struct {
 	Format        TextureFormat
 	Usage         TextureUsage
 	SampleCount   int // 0 = 1
+	MipLevels     int // 0 = 1; multisampled textures require one level.
+	// Layers makes a 2D array texture (0 = 1); six layers can be viewed as
+	// a cube map (TextureViewCube).
+	Layers int
 }
 
 func (d *Device) CreateTexture(desc TextureDescriptor) *Texture {
+	levels := desc.MipLevels
+	if levels == 0 {
+		levels = 1
+	}
+	if desc.Width <= 0 || desc.Height <= 0 || uint64(max(desc.Width, desc.Height)) > math.MaxUint32 ||
+		levels < 1 || levels > bits.Len(uint(max(desc.Width, desc.Height))) || desc.SampleCount > 1 && levels != 1 ||
+		desc.Layers < 0 || desc.Layers > 2048 || desc.Layers > 1 && desc.SampleCount > 1 {
+		return nil
+	}
+	layers := max(1, desc.Layers)
 	var a arena
 	defer a.free()
 	td := (*C.WGPUTextureDescriptor)(a.alloc(C.sizeof_WGPUTextureDescriptor))
 	td.label = a.str(desc.Label)
 	td.usage = C.WGPUTextureUsage(desc.Usage)
 	td.dimension = C.WGPUTextureDimension_2D
-	td.size = C.WGPUExtent3D{C.uint32_t(desc.Width), C.uint32_t(desc.Height), 1}
+	td.size = C.WGPUExtent3D{C.uint32_t(desc.Width), C.uint32_t(desc.Height), C.uint32_t(layers)}
 	td.format = C.WGPUTextureFormat(desc.Format)
-	td.mipLevelCount = 1
+	td.mipLevelCount = C.uint32_t(levels)
 	td.sampleCount = 1
 	if desc.SampleCount > 1 {
 		td.sampleCount = C.uint32_t(desc.SampleCount)
@@ -370,16 +442,102 @@ func (d *Device) CreateTexture(desc TextureDescriptor) *Texture {
 	if t == nil {
 		return nil
 	}
-	return &Texture{c: t, w: desc.Width, h: desc.Height, format: desc.Format}
+	return &Texture{c: t, w: desc.Width, h: desc.Height, format: desc.Format, usage: desc.Usage, mipLevels: levels,
+		layers: layers, uploadable: desc.Usage&UsageCopyDst != 0 && desc.SampleCount <= 1 && layers == 1}
 }
 
 func (t *Texture) Width() int            { return t.w }
 func (t *Texture) Height() int           { return t.h }
 func (t *Texture) Format() TextureFormat { return t.format }
 
+// Usage returns the usage flags configured when the texture was created.
+func (t *Texture) Usage() TextureUsage { return t.usage }
+
 // CreateView makes the default view of the texture.
 func (t *Texture) CreateView() *TextureView {
 	return &TextureView{c: C.wgpuTextureCreateView(t.c, nil), tex: t}
+}
+
+// MipLevels returns the number of levels in the texture.
+func (t *Texture) MipLevels() int { return max(1, t.mipLevels) }
+
+// Layers returns the number of array layers (1 for a plain 2D texture).
+func (t *Texture) Layers() int { return max(1, t.layers) }
+
+// TextureViewDimension is how a view sees its texture's layers.
+type TextureViewDimension int
+
+const (
+	TextureView2D      TextureViewDimension = iota // one layer
+	TextureView2DArray                             // texture_2d_array
+	TextureViewCube                                // six layers: +X −X +Y −Y +Z −Z
+)
+
+// TextureViewDescriptor selects mips and layers for CreateViewWith.
+// Zero counts take everything from the base.
+type TextureViewDescriptor struct {
+	Dimension             TextureViewDimension
+	BaseMip, MipCount     int
+	BaseLayer, LayerCount int
+}
+
+// CreateViewWith makes a view of some mips and layers: a single layer (to
+// render into one cube face), an array, or a cube.
+func (t *Texture) CreateViewWith(d TextureViewDescriptor) (*TextureView, error) {
+	if t == nil || t.c == nil {
+		return nil, errors.New("wgpu: no texture")
+	}
+	mips, layers := d.MipCount, d.LayerCount
+	if mips == 0 {
+		mips = t.MipLevels() - d.BaseMip
+	}
+	if layers == 0 {
+		layers = t.Layers() - d.BaseLayer
+		if d.Dimension == TextureView2D {
+			layers = 1
+		}
+	}
+	if d.BaseMip < 0 || mips < 1 || d.BaseMip+mips > t.MipLevels() || d.BaseLayer < 0 || layers < 1 ||
+		d.BaseLayer+layers > t.Layers() || d.Dimension == TextureView2D && layers != 1 ||
+		d.Dimension == TextureViewCube && layers != 6 {
+		return nil, errors.New("wgpu: invalid texture view range")
+	}
+	dim := C.WGPUTextureViewDimension_2D
+	switch d.Dimension {
+	case TextureView2DArray:
+		dim = C.WGPUTextureViewDimension_2DArray
+	case TextureViewCube:
+		dim = C.WGPUTextureViewDimension_Cube
+	}
+	desc := C.WGPUTextureViewDescriptor{
+		dimension: C.WGPUTextureViewDimension(dim), baseMipLevel: C.uint32_t(d.BaseMip), mipLevelCount: C.uint32_t(mips),
+		baseArrayLayer: C.uint32_t(d.BaseLayer), arrayLayerCount: C.uint32_t(layers), aspect: C.WGPUTextureAspect_All,
+	}
+	view := C.wgpuTextureCreateView(t.c, &desc)
+	if view == nil {
+		return nil, errors.New("wgpu: cannot create texture view")
+	}
+	return &TextureView{c: view, tex: t}, nil
+}
+
+// CreateMipView restricts a 2D view to a range of mip levels. Count zero
+// uses all levels starting at base. The texture format is preserved.
+func (t *Texture) CreateMipView(base, count int) (*TextureView, error) {
+	if t == nil || t.c == nil || base < 0 || base >= t.MipLevels() || count < 0 || count > t.MipLevels()-base {
+		return nil, errors.New("wgpu: invalid mip view range")
+	}
+	if count == 0 {
+		count = t.MipLevels() - base
+	}
+	desc := C.WGPUTextureViewDescriptor{
+		dimension: C.WGPUTextureViewDimension_2D, baseMipLevel: C.uint32_t(base), mipLevelCount: C.uint32_t(count),
+		arrayLayerCount: 1, aspect: C.WGPUTextureAspect_All,
+	}
+	view := C.wgpuTextureCreateView(t.c, &desc)
+	if view == nil {
+		return nil, errors.New("wgpu: cannot create mip view")
+	}
+	return &TextureView{c: view, tex: t}, nil
 }
 
 // Release drops the reference; Destroy also frees the GPU memory now.
@@ -489,7 +647,40 @@ func (d *Device) WriteTexture(t *Texture, x, y, w, h int, pix unsafe.Pointer, st
 	if w <= 0 || h <= 0 || pix == nil {
 		return
 	}
-	dst := C.WGPUTexelCopyTextureInfo{texture: t.c, origin: C.WGPUOrigin3D{C.uint32_t(x), C.uint32_t(y), 0}, aspect: C.WGPUTextureAspect_All}
+	d.writeTexture(t, 0, x, y, w, h, pix, stride)
+}
+
+// WriteTextureLevel uploads a rectangle to one mip of a copy-destination
+// color texture. Data rows are stride bytes apart; zero means tightly packed.
+func (d *Device) WriteTextureLevel(t *Texture, level, x, y, w, h int, data []byte, stride int) error {
+	if t == nil || t.c == nil || !t.uploadable || level < 0 || level >= t.MipLevels() {
+		return errors.New("wgpu: invalid upload texture or mip level")
+	}
+	switch t.format {
+	case FormatR8Unorm, FormatRG8Unorm, FormatRGBA8Unorm, FormatRGBA8UnormSrgb,
+		FormatBGRA8Unorm, FormatBGRA8UnormSrgb, FormatRGBA16Float, FormatR32Float:
+	default:
+		return errors.New("wgpu: mip upload requires an uncompressed color format")
+	}
+	width, height := max(1, t.w>>level), max(1, t.h>>level)
+	if x < 0 || y < 0 || w <= 0 || h <= 0 || x >= width || y >= height ||
+		w > width-x || h > height-y {
+		return errors.New("wgpu: upload rectangle exceeds mip dimensions")
+	}
+	row := uint64(w) * uint64(bytesPerTexel(t.format))
+	if stride == 0 && row <= math.MaxInt {
+		stride = int(row)
+	}
+	if stride < 0 || uint64(stride) < row || uint64(stride) > math.MaxUint32 || uint64(len(data)) < row ||
+		uint64(h-1) > (uint64(len(data))-row)/uint64(stride) {
+		return errors.New("wgpu: invalid upload stride or data length")
+	}
+	d.writeTexture(t, level, x, y, w, h, unsafe.Pointer(&data[0]), stride)
+	return nil
+}
+
+func (d *Device) writeTexture(t *Texture, level, x, y, w, h int, pix unsafe.Pointer, stride int) {
+	dst := C.WGPUTexelCopyTextureInfo{texture: t.c, mipLevel: C.uint32_t(level), origin: C.WGPUOrigin3D{C.uint32_t(x), C.uint32_t(y), 0}, aspect: C.WGPUTextureAspect_All}
 	layout := C.WGPUTexelCopyBufferLayout{bytesPerRow: C.uint32_t(stride), rowsPerImage: C.uint32_t(h)}
 	size := C.WGPUExtent3D{C.uint32_t(w), C.uint32_t(h), 1}
 	n := stride*(h-1) + w*bytesPerTexel(t.format)
@@ -523,13 +714,14 @@ func (d *Device) Submit(cbs ...*CommandBuffer) {
 	for _, cb := range cbs {
 		C.wgpuCommandBufferRelease(cb.c)
 		cb.c = nil
+		cb.submitted = true
 	}
 }
 
 // WaitIdle blocks until all submitted work has completed.
 func (d *Device) WaitIdle() bool { return C.quiWGPUWaitQueue(d.inst, d.queue) != 0 }
 
-// ReadTexture copies an RGBA8/BGRA8 texture's (x, y, w, h) part back to
+// ReadTexture copies a color texture's (x, y, w, h) part back to
 // memory, tightly packed rows, waiting for the GPU.
 func (d *Device) ReadTexture(t *Texture, x, y, w, h int) ([]byte, error) {
 	if w <= 0 || h <= 0 {
@@ -582,6 +774,60 @@ func (d *Device) CreateSampler(filter FilterMode, address AddressMode) *Sampler 
 	return &Sampler{c: C.wgpuDeviceCreateSampler(d.c, &sd)}
 }
 
+// SamplerDescriptor configures independent address and filter modes.
+// Unspecified modes default to clamp-to-edge and nearest filtering.
+type SamplerDescriptor struct {
+	AddressU, AddressV, AddressW    AddressMode
+	MinFilter, MagFilter, MipFilter FilterMode
+	ClampLOD                        bool // false selects the default [0,32] interval.
+	MinLOD, MaxLOD                  float32
+	Compare                         CompareFunction // zero selects a non-comparison sampler.
+	// MaxAnisotropy (1–16, 0 = 1) sharpens textures seen at grazing
+	// angles; values above 1 require linear min, mag and mip filters.
+	MaxAnisotropy uint16
+}
+
+// CreateSamplerWithDescriptor creates a texture sampler, optionally with depth comparison.
+func (d *Device) CreateSamplerWithDescriptor(desc SamplerDescriptor) (*Sampler, error) {
+	address := func(mode AddressMode) bool {
+		return mode == 0 || mode == AddressClampToEdge || mode == AddressRepeat || mode == AddressMirror
+	}
+	filter := func(mode FilterMode) bool {
+		return mode == 0 || mode == FilterNearest || mode == FilterLinear
+	}
+	if !address(desc.AddressU) || !address(desc.AddressV) || !address(desc.AddressW) ||
+		!filter(desc.MinFilter) || !filter(desc.MagFilter) || !filter(desc.MipFilter) || desc.Compare > CompareAlways {
+		return nil, errors.New("wgpu: invalid sampler address or filter mode")
+	}
+	aniso := max(desc.MaxAnisotropy, 1)
+	if aniso > 16 || aniso > 1 && (desc.MinFilter != FilterLinear || desc.MagFilter != FilterLinear || desc.MipFilter != FilterLinear) {
+		return nil, errors.New("wgpu: anisotropy needs 1–16 and linear filtering")
+	}
+	low, high := float32(0), float32(32)
+	if desc.ClampLOD {
+		low, high = desc.MinLOD, desc.MaxLOD
+	}
+	if !(low >= 0 && high >= low && high <= math.MaxFloat32) {
+		return nil, errors.New("wgpu: invalid sampler LOD interval")
+	}
+	mip := C.WGPUMipmapFilterMode_Nearest
+	if desc.MipFilter == FilterLinear {
+		mip = C.WGPUMipmapFilterMode_Linear
+	}
+	sd := C.WGPUSamplerDescriptor{
+		addressModeU: C.WGPUAddressMode(desc.AddressU), addressModeV: C.WGPUAddressMode(desc.AddressV),
+		addressModeW: C.WGPUAddressMode(desc.AddressW),
+		minFilter:    C.WGPUFilterMode(desc.MinFilter), magFilter: C.WGPUFilterMode(desc.MagFilter),
+		mipmapFilter: C.WGPUMipmapFilterMode(mip), lodMinClamp: C.float(low), lodMaxClamp: C.float(high),
+		maxAnisotropy: C.uint16_t(aniso), compare: C.WGPUCompareFunction(desc.Compare),
+	}
+	handle := C.wgpuDeviceCreateSampler(d.c, &sd)
+	if handle == nil {
+		return nil, errors.New("wgpu: cannot create sampler")
+	}
+	return &Sampler{c: handle}, nil
+}
+
 func (s *Sampler) Release() {
 	if s != nil && s.c != nil {
 		C.wgpuSamplerRelease(s.c)
@@ -602,6 +848,9 @@ func (d *Device) CreateShaderModule(label, wgsl string) (*ShaderModule, error) {
 	md := (*C.WGPUShaderModuleDescriptor)(a.alloc(C.sizeof_WGPUShaderModuleDescriptor))
 	md.nextInChain = &src.chain
 	md.label = a.str(label)
+	// Dawn keeps error scopes on the calling OS thread.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	C.wgpuDevicePushErrorScope(d.c, C.WGPUErrorFilter_Validation)
 	m := C.wgpuDeviceCreateShaderModule(d.c, md)
 	if err := d.popScope(label); err != nil {
@@ -668,7 +917,7 @@ type RenderPipelineDescriptor struct {
 	Layout        *PipelineLayout
 	Module        *ShaderModule
 	VertexEntry   string // default "vs_main"
-	FragmentEntry string // default "fs_main"
+	FragmentEntry string // default "fs_main" with color targets; explicit for depth-only fragments.
 	Buffers       []VertexBufferLayout
 	Topology      PrimitiveTopology // zero: triangle list
 	StripIndex    IndexFormat       // for strip topologies with an index buffer
@@ -761,7 +1010,7 @@ func (d *Device) CreateRenderPipeline(desc RenderPipelineDescriptor) (*RenderPip
 		pd.multisample.count = C.uint32_t(desc.SampleCount)
 	}
 	pd.multisample.mask = 0xFFFFFFFF
-	if len(desc.Targets) > 0 {
+	if len(desc.Targets) > 0 || desc.FragmentEntry != "" {
 		fs := (*C.WGPUFragmentState)(a.alloc(C.sizeof_WGPUFragmentState))
 		fs.module = desc.Module.c
 		fs.entryPoint = a.str(fe)
@@ -777,9 +1026,14 @@ func (d *Device) CreateRenderPipeline(desc RenderPipelineDescriptor) (*RenderPip
 			}
 		}
 		fs.targetCount = C.size_t(len(ts))
-		fs.targets = &ts[0]
+		if len(ts) > 0 {
+			fs.targets = &ts[0]
+		}
 		pd.fragment = fs
 	}
+	// Keep the push, pipeline creation and pop on the same Dawn error stack.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	C.wgpuDevicePushErrorScope(d.c, C.WGPUErrorFilter_Validation)
 	p := C.wgpuDeviceCreateRenderPipeline(d.c, pd)
 	if err := d.popScope("pipeline " + desc.Label); err != nil {
@@ -860,18 +1114,34 @@ func (g *BindGroup) Release() {
 
 // ---- commands ----
 
-type CommandEncoder struct{ c C.WGPUCommandEncoder }
-type CommandBuffer struct{ c C.WGPUCommandBuffer }
+type CommandEncoder struct {
+	c        C.WGPUCommandEncoder
+	device   *Device
+	finished *CommandBuffer
+}
+
+type CommandBuffer struct {
+	c         C.WGPUCommandBuffer
+	submitted bool
+}
 
 func (d *Device) CreateCommandEncoder() *CommandEncoder {
-	return &CommandEncoder{c: C.wgpuDeviceCreateCommandEncoder(d.c, nil)}
+	return &CommandEncoder{c: C.wgpuDeviceCreateCommandEncoder(d.c, nil), device: d}
 }
 
 func (e *CommandEncoder) Finish() *CommandBuffer {
 	cb := C.wgpuCommandEncoderFinish(e.c, nil)
-	C.wgpuCommandEncoderRelease(e.c)
-	e.c = nil
-	return &CommandBuffer{c: cb}
+	e.Release()
+	e.finished = &CommandBuffer{c: cb}
+	return e.finished
+}
+
+// Release discards the encoder without submitting its commands.
+func (e *CommandEncoder) Release() {
+	if e != nil && e.c != nil {
+		C.wgpuCommandEncoderRelease(e.c)
+		e.c = nil
+	}
 }
 
 // CopyTexture copies a w×h block from (sx, sy) of src to (dx, dy) of dst.
@@ -900,12 +1170,15 @@ type DepthAttachment struct {
 	// Clear is the depth the pass clears to when Load clears: 1 is the far
 	// plane of the usual Less test, 0 that of reverse-Z (Greater).
 	Clear float32
+	// ReadOnly preserves depth and allows the same view to be sampled.
+	ReadOnly bool
 
 	// Stencil ops, used only when the view's format has a stencil aspect
 	// (FormatDepth24PlusStencil8): zero Load clears, zero Store stores.
-	StencilLoad  LoadOp
-	StencilStore StoreOp
-	StencilClear uint32
+	StencilLoad     LoadOp
+	StencilStore    StoreOp
+	StencilClear    uint32
+	StencilReadOnly bool
 }
 
 // hasStencil reports whether f has a stencil aspect, which WebGPU requires
@@ -918,15 +1191,28 @@ type RenderPassDescriptor struct {
 	Label string
 	Color []ColorAttachment
 	Depth *DepthAttachment
+	// TimestampWrites is optional. Invalid timestamp writes make
+	// BeginRenderPass return nil without beginning a pass.
+	TimestampWrites *PassTimestampWrites
 }
 
 type RenderPass struct{ c C.WGPURenderPassEncoder }
 
 func (e *CommandEncoder) BeginRenderPass(desc RenderPassDescriptor) *RenderPass {
+	if writes := desc.TimestampWrites; writes != nil && !writes.validFor(e) {
+		return nil
+	}
 	var a arena
 	defer a.free()
 	rp := (*C.WGPURenderPassDescriptor)(a.alloc(C.sizeof_WGPURenderPassDescriptor))
 	rp.label = a.str(desc.Label)
+	if writes := desc.TimestampWrites; writes != nil {
+		w := (*C.WGPUPassTimestampWrites)(a.alloc(C.sizeof_WGPUPassTimestampWrites))
+		w.querySet = writes.Query.set
+		w.beginningOfPassWriteIndex = C.uint32_t(writes.Begin)
+		w.endOfPassWriteIndex = C.uint32_t(writes.End)
+		rp.timestampWrites = w
+	}
 	cs := allocN[C.WGPURenderPassColorAttachment](&a, len(desc.Color))
 	for i, c := range desc.Color {
 		cs[i].view = c.View.c
@@ -951,25 +1237,33 @@ func (e *CommandEncoder) BeginRenderPass(desc RenderPassDescriptor) *RenderPass 
 	if d := desc.Depth; d != nil {
 		da := (*C.WGPURenderPassDepthStencilAttachment)(a.alloc(C.sizeof_WGPURenderPassDepthStencilAttachment))
 		da.view = d.View.c
-		da.depthLoadOp = C.WGPULoadOp_Clear
-		if d.Load != 0 {
-			da.depthLoadOp = C.WGPULoadOp(d.Load)
+		if d.ReadOnly {
+			da.depthReadOnly = 1
+		} else {
+			da.depthLoadOp = C.WGPULoadOp_Clear
+			if d.Load != 0 {
+				da.depthLoadOp = C.WGPULoadOp(d.Load)
+			}
+			da.depthStoreOp = C.WGPUStoreOp_Store
+			if d.Store != 0 {
+				da.depthStoreOp = C.WGPUStoreOp(d.Store)
+			}
+			da.depthClearValue = C.float(d.Clear)
 		}
-		da.depthStoreOp = C.WGPUStoreOp_Store
-		if d.Store != 0 {
-			da.depthStoreOp = C.WGPUStoreOp(d.Store)
-		}
-		da.depthClearValue = C.float(d.Clear)
 		if t := d.View.Texture(); t != nil && hasStencil(t.format) {
-			da.stencilLoadOp = C.WGPULoadOp_Clear
-			if d.StencilLoad != 0 {
-				da.stencilLoadOp = C.WGPULoadOp(d.StencilLoad)
+			if d.StencilReadOnly {
+				da.stencilReadOnly = 1
+			} else {
+				da.stencilLoadOp = C.WGPULoadOp_Clear
+				if d.StencilLoad != 0 {
+					da.stencilLoadOp = C.WGPULoadOp(d.StencilLoad)
+				}
+				da.stencilStoreOp = C.WGPUStoreOp_Store
+				if d.StencilStore != 0 {
+					da.stencilStoreOp = C.WGPUStoreOp(d.StencilStore)
+				}
+				da.stencilClearValue = C.uint32_t(d.StencilClear)
 			}
-			da.stencilStoreOp = C.WGPUStoreOp_Store
-			if d.StencilStore != 0 {
-				da.stencilStoreOp = C.WGPUStoreOp(d.StencilStore)
-			}
-			da.stencilClearValue = C.uint32_t(d.StencilClear)
 		}
 		rp.depthStencilAttachment = da
 	}

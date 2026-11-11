@@ -17,6 +17,20 @@ func Shared() (*Device, error) { return nil, ErrUnavailable }
 
 func (_ *Device) AdapterName() string { return "" }
 
+type DeviceLimits struct {
+	MaxTextureDimension2D            uint32
+	MaxBindGroups                    uint32
+	MaxSampledTexturesPerShaderStage uint32
+	MaxStorageBuffersPerShaderStage  uint32
+	MaxUniformBufferBindingSize      uint64
+	MaxStorageBufferBindingSize      uint64
+	MaxBufferSize                    uint64
+	MinUniformBufferOffsetAlignment  uint32
+	MinStorageBufferOffsetAlignment  uint32
+}
+
+func (_ *Device) Limits() (DeviceLimits, error) { return *new(DeviceLimits), ErrUnavailable }
+
 func (_ *Device) CanImportIOSurface() bool { return false }
 
 func (_ *Device) Handle() unsafe.Pointer { return nil }
@@ -183,6 +197,8 @@ type TextureDescriptor struct {
 	Format        TextureFormat
 	Usage         TextureUsage
 	SampleCount   int
+	MipLevels     int
+	Layers        int
 }
 
 func (_ *Device) CreateTexture(_ TextureDescriptor) *Texture { return nil }
@@ -193,7 +209,33 @@ func (_ *Texture) Height() int { return 0 }
 
 func (_ *Texture) Format() TextureFormat { return *new(TextureFormat) }
 
+func (_ *Texture) Usage() TextureUsage { return *new(TextureUsage) }
+
 func (_ *Texture) CreateView() *TextureView { return nil }
+
+func (_ *Texture) MipLevels() int { return 0 }
+
+func (_ *Texture) Layers() int { return 0 }
+
+type TextureViewDimension int
+
+const (
+	TextureView2D TextureViewDimension = iota
+	TextureView2DArray
+	TextureViewCube
+)
+
+type TextureViewDescriptor struct {
+	Dimension             TextureViewDimension
+	BaseMip, MipCount     int
+	BaseLayer, LayerCount int
+}
+
+func (_ *Texture) CreateViewWith(_ TextureViewDescriptor) (*TextureView, error) {
+	return nil, ErrUnavailable
+}
+
+func (_ *Texture) CreateMipView(_ int, _ int) (*TextureView, error) { return nil, ErrUnavailable }
 
 func (_ *Texture) Release() {}
 
@@ -223,6 +265,10 @@ func (_ *Device) WriteBuffer(_ *Buffer, _ uint64, _ []byte) {}
 
 func (_ *Device) WriteTexture(_ *Texture, _ int, _ int, _ int, _ int, _ unsafe.Pointer, _ int) {}
 
+func (_ *Device) WriteTextureLevel(_ *Texture, _ int, _ int, _ int, _ int, _ int, _ []byte, _ int) error {
+	return ErrUnavailable
+}
+
 func (_ *Device) Submit(_ ...*CommandBuffer) {}
 
 func (_ *Device) WaitIdle() bool { return false }
@@ -235,6 +281,19 @@ type Sampler struct {
 }
 
 func (_ *Device) CreateSampler(_ FilterMode, _ AddressMode) *Sampler { return nil }
+
+type SamplerDescriptor struct {
+	AddressU, AddressV, AddressW    AddressMode
+	MinFilter, MagFilter, MipFilter FilterMode
+	ClampLOD                        bool
+	MinLOD, MaxLOD                  float32
+	Compare                         CompareFunction
+	MaxAnisotropy                   uint16
+}
+
+func (_ *Device) CreateSamplerWithDescriptor(_ SamplerDescriptor) (*Sampler, error) {
+	return nil, ErrUnavailable
+}
 
 func (_ *Sampler) Release() {}
 
@@ -339,6 +398,8 @@ func (_ *Device) CreateCommandEncoder() *CommandEncoder { return nil }
 
 func (_ *CommandEncoder) Finish() *CommandBuffer { return nil }
 
+func (_ *CommandEncoder) Release() {}
+
 func (_ *CommandEncoder) CopyTexture(_ *Texture, _ int, _ int, _ *Texture, _ int, _ int, _ int, _ int) {
 }
 
@@ -355,19 +416,22 @@ type ColorAttachment struct {
 }
 
 type DepthAttachment struct {
-	View         *TextureView
-	Load         LoadOp
-	Store        StoreOp
-	Clear        float32
-	StencilLoad  LoadOp
-	StencilStore StoreOp
-	StencilClear uint32
+	View            *TextureView
+	Load            LoadOp
+	Store           StoreOp
+	Clear           float32
+	ReadOnly        bool
+	StencilLoad     LoadOp
+	StencilStore    StoreOp
+	StencilClear    uint32
+	StencilReadOnly bool
 }
 
 type RenderPassDescriptor struct {
-	Label string
-	Color []ColorAttachment
-	Depth *DepthAttachment
+	Label           string
+	Color           []ColorAttachment
+	Depth           *DepthAttachment
+	TimestampWrites *PassTimestampWrites
 }
 
 type RenderPass struct {
@@ -410,6 +474,10 @@ const (
 	BindTexture
 	BindSampler
 	BindUnfilterableTexture
+	BindDepthTexture
+	BindComparisonSampler
+	BindCubeTexture
+	BindTextureArray
 )
 
 type BindGroupLayoutEntry struct {
@@ -485,3 +553,21 @@ func Load() error { return ErrUnavailable }
 func LibraryPath() string { return "" }
 
 func SetErrorHandler(_ func(kind int, msg string)) {}
+
+func (_ *Device) SupportsTimestampQueries() bool { return false }
+
+type TimestampQuery struct {
+}
+
+type PassTimestampWrites struct {
+	Query      *TimestampQuery
+	Begin, End int
+}
+
+func (_ *Device) NewTimestampQuery(_ int) (*TimestampQuery, error) { return nil, ErrUnavailable }
+
+func (_ *TimestampQuery) Resolve(_ *CommandEncoder, _ int) error { return ErrUnavailable }
+
+func (_ *TimestampQuery) Read(_ int) ([]uint64, error) { return nil, ErrUnavailable }
+
+func (_ *TimestampQuery) Release() {}

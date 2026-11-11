@@ -3,6 +3,8 @@
 package wgpu
 
 import (
+	"strings"
+	"sync"
 	"testing"
 	"unsafe"
 )
@@ -74,6 +76,40 @@ func TestShaderError(t *testing.T) {
 	} else {
 		t.Logf("error (expected): %.120s", err)
 	}
+}
+
+func TestConcurrentPipelineValidationScopes(t *testing.T) {
+	d := sharedOrSkip(t)
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			for range 8 {
+				module, err := d.CreateShaderModule("concurrent", triangleWGSL)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				desc := RenderPipelineDescriptor{Label: "concurrent", Module: module,
+					Targets: []ColorTarget{{Format: FormatRGBA8Unorm}}}
+				pipeline, err := d.CreateRenderPipeline(desc)
+				pipeline.Release()
+				if err != nil {
+					module.Release()
+					t.Error(err)
+					return
+				}
+				desc.FragmentEntry = "missing_fragment"
+				pipeline, err = d.CreateRenderPipeline(desc)
+				pipeline.Release()
+				module.Release()
+				if err == nil || !strings.Contains(err.Error(), desc.FragmentEntry) {
+					t.Errorf("expected entry point validation error, got %v", err)
+					return
+				}
+			}
+		})
+	}
+	wg.Wait()
 }
 
 func TestWriteTextureRoundTrip(t *testing.T) {

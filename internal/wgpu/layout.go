@@ -27,6 +27,10 @@ const (
 	BindTexture // texture_2d<f32>, filterable
 	BindSampler // filtering sampler
 	BindUnfilterableTexture
+	BindDepthTexture // texture_depth_2d
+	BindComparisonSampler
+	BindCubeTexture  // texture_cube<f32>, filterable
+	BindTextureArray // texture_2d_array<f32>, filterable
 )
 
 type BindGroupLayoutEntry struct {
@@ -57,8 +61,19 @@ func (d *Device) CreateBindGroupLayout(label string, entries ...BindGroupLayoutE
 				es[i].texture.sampleType = C.WGPUTextureSampleType_UnfilterableFloat
 			}
 			es[i].texture.viewDimension = C.WGPUTextureViewDimension_2D
+		case BindDepthTexture:
+			es[i].texture.sampleType = C.WGPUTextureSampleType_Depth
+			es[i].texture.viewDimension = C.WGPUTextureViewDimension_2D
+		case BindCubeTexture:
+			es[i].texture.sampleType = C.WGPUTextureSampleType_Float
+			es[i].texture.viewDimension = C.WGPUTextureViewDimension_Cube
+		case BindTextureArray:
+			es[i].texture.sampleType = C.WGPUTextureSampleType_Float
+			es[i].texture.viewDimension = C.WGPUTextureViewDimension_2DArray
 		case BindSampler:
 			es[i].sampler._type = C.WGPUSamplerBindingType_Filtering
+		case BindComparisonSampler:
+			es[i].sampler._type = C.WGPUSamplerBindingType_Comparison
 		}
 	}
 	ld := C.WGPUBindGroupLayoutDescriptor{label: a.str(label), entryCount: C.size_t(len(es))}

@@ -20,6 +20,7 @@ type Surface struct {
 	c      C.WGPUSurface
 	dev    *Device
 	format TextureFormat
+	usage  TextureUsage
 	w, h   int
 	alpha  bool
 
@@ -101,6 +102,7 @@ func (s *Surface) Configure(w, h int, format TextureFormat, premultiplied bool) 
 	}
 	C.wgpuSurfaceConfigure(s.c, &cfg)
 	s.w, s.h, s.format, s.alpha = w, h, format, premultiplied
+	s.usage = usage
 	return nil
 }
 
@@ -181,7 +183,7 @@ func (s *Surface) Acquire() (*Texture, AcquireStatus) {
 	if st.texture != nil &&
 		(st.status == C.WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal ||
 			st.status == C.WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
-		return &Texture{c: st.texture, w: s.w, h: s.h, format: s.format}, AcquireOK
+		return &Texture{c: st.texture, w: s.w, h: s.h, format: s.format, usage: s.usage}, AcquireOK
 	}
 	if st.texture != nil {
 		C.wgpuTextureRelease(st.texture)
@@ -249,7 +251,7 @@ func (m *SharedMemory) CreateTexture(w, h int, format TextureFormat, usage Textu
 	if t == nil {
 		return nil
 	}
-	return &Texture{c: t, w: w, h: h, format: format}
+	return &Texture{c: t, w: w, h: h, format: format, usage: usage}
 }
 
 // BeginAccess lets the GPU use t until EndAccess. initialized says the

@@ -149,7 +149,8 @@ static void quiOnError(WGPUDevice const* device, WGPUErrorType type, WGPUStringV
 static void quiOnLost(WGPUDevice const* device, WGPUDeviceLostReason reason, WGPUStringView msg,
                       void* u1, void* u2) {
     (void)device; (void)u1; (void)u2;
-    if (reason == WGPUDeviceLostReason_Destroyed || reason == WGPUDeviceLostReason_CallbackCancelled) return;
+    if (reason == WGPUDeviceLostReason_Destroyed || reason == WGPUDeviceLostReason_CallbackCancelled ||
+        reason == WGPUDeviceLostReason_FailedCreation) return;
     size_t len = msg.data == NULL ? 0 : (msg.length == WGPU_STRLEN ? strlen(msg.data) : msg.length);
     quiWGPUGoError(-1, (char*)msg.data, (int)len);
 }

@@ -29,7 +29,7 @@ import (
 	"strings"
 )
 
-var sources = []string{"wgpu.go", "layout.go", "surface.go", "load.go"}
+var sources = []string{"wgpu.go", "layout.go", "surface.go", "load.go", "timestamp.go"}
 
 var outPath = flag.String("o", "stub_gen.go", "output file")
 
