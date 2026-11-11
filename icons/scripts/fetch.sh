@@ -95,6 +95,12 @@ icons=(
   thumb_up thumb_down
   mood
   zoom_in zoom_out
+
+  # 3D / scene editors
+  deployed_code category view_in_ar center_focus_strong select_all
+  account_tree arrow_drop_down person_pin_circle flight foggy speed upload_file
+  open_with rotate_right open_in_full grid_on
+  vertical_align_bottom route directions_car landscape wb_sunny music_note flag
 )
 
 count=0
