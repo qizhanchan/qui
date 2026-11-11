@@ -115,3 +115,87 @@ func TestViewportTranslucentUnlitAndLitLines(t *testing.T) {
 		t.Errorf("center = %v, want ~50%% red over blue", c)
 	}
 }
+
+// Instancing must read a different model matrix per copy and keep the
+// composite at full size even when the offscreen targets are smaller.
+func TestViewportScaledInstanceBatch(t *testing.T) {
+	if _, err := gpu.Shared(); err != nil {
+		t.Skipf("WebGPU unavailable: %v", err)
+	}
+	gpu.SetErrorHandler(func(kind int, msg string) { t.Errorf("WebGPU error %d: %s", kind, msg) })
+	defer gpu.SetErrorHandler(nil)
+
+	scene := NewScene()
+	scene.Camera = &Camera{
+		Position: Vec3{Z: 4}, Up: Vec3{Y: 1},
+		Near: 0.1, Far: 20, Ortho: true, OrthoHeight: 4,
+	}
+	b := &InstanceBatch{Mesh: NewCubeMesh(), Material: NewUnlitMaterial(qui.Color{R: 1, A: 1})}
+	defer b.Mesh.Destroy()
+	b.SetTransforms([]Transform{{Position: Vec3{X: -1.5}}, {Position: Vec3{X: 1.5}}})
+	scene.Batches = []*InstanceBatch{b}
+	vp := NewViewport(scene)
+	defer vp.Destroy()
+	vp.ClearColor = qui.Color{B: 1, A: 1}
+	vp.SetRenderScale(0.5)
+	img, err := qui.RenderWithWebGPUForTest(vp, qui.Size{W: 96, H: 64}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vp.gpu.w != 48 || vp.gpu.h != 32 {
+		t.Fatalf("target = %dx%d, want 48x32", vp.gpu.w, vp.gpu.h)
+	}
+	for _, x := range []int{24, 72} {
+		if c := img.RGBAAt(x, 32); c.R < 245 || c.B > 10 {
+			t.Errorf("instance pixel at %d = %v, want red", x, c)
+		}
+	}
+	if c := img.RGBAAt(48, 32); c.B < 245 || c.R > 10 {
+		t.Errorf("between instances = %v, want blue", c)
+	}
+}
+
+// An Overlay node draws over nearer geometry: a small green cube behind a
+// big red one still shows, and its nested children follow it.
+func TestViewportOverlayIgnoresDepth(t *testing.T) {
+	if _, err := gpu.Shared(); err != nil {
+		t.Skipf("WebGPU unavailable: %v", err)
+	}
+	scene := NewScene()
+	scene.Camera.Position = Vec3{Z: 4}
+	scene.Camera.Target = Vec3{}
+	front := NewNode("front")
+	front.Mesh = NewCubeMesh()
+	front.Material = NewUnlitMaterial(qui.Color{R: 1, A: 1})
+	front.Transform.Scale = Vec3{X: 3, Y: 3, Z: 0.2}
+	front.Transform.Position = Vec3{Z: 1}
+	scene.Root.AddChild(front)
+	gizmo := NewNode("gizmo")
+	gizmo.Overlay = true
+	marker := NewNode("marker")
+	marker.Mesh = NewCubeMesh()
+	marker.Material = NewUnlitMaterial(qui.Color{G: 1, A: 1})
+	marker.Transform.Scale = Vec3{X: 0.4, Y: 0.4, Z: 0.4}
+	gizmo.AddChild(marker)
+	scene.Root.AddChild(gizmo)
+	vp := NewViewport(scene)
+	img, err := qui.RenderWithWebGPUForTest(vp, qui.Size{W: 64, H: 64}, 1)
+	if err != nil {
+		t.Skip(err)
+	}
+	if c := img.RGBAAt(32, 32); c.G < 250 || c.R > 5 {
+		t.Errorf("center = %v, want the overlay's green over the red occluder", c)
+	}
+	if c := img.RGBAAt(12, 32); c.R < 250 || c.G > 5 {
+		t.Errorf("side = %v, want the red occluder", c)
+	}
+	gizmo.Overlay = false
+	vp.InvalidateScene()
+	img, err = qui.RenderWithWebGPUForTest(vp, qui.Size{W: 64, H: 64}, 1)
+	if err != nil {
+		t.Skip(err)
+	}
+	if c := img.RGBAAt(32, 32); c.R < 250 {
+		t.Errorf("without Overlay center = %v, want the occluder", c)
+	}
+}

@@ -42,11 +42,13 @@ type Viewport struct {
 	// opaque near-black if zero-valued.
 	ClearColor qui.Color
 
-	gpu viewportGPU // targets and per-node state (gpu_render.go)
+	gpu      viewportGPU   // targets and per-node state (gpu_render.go)
+	overlays []overlayDraw // Overlay subtrees deferred within one render
 
-	physBox    qui.Rect
-	dirtyScene bool
-	lastTick   time.Time
+	physBox     qui.Rect
+	dirtyScene  bool
+	renderScale float32
+	lastTick    time.Time
 }
 
 // MSAASamples is the multisample count of the viewport's render target.
@@ -63,6 +65,29 @@ func NewViewport(scene *Scene) *Viewport {
 	}
 	v.Style().Background = qui.Color{} // fully transparent — 3D shows through
 	return v
+}
+
+// SetRenderScale controls the resolution of the offscreen 3D targets relative
+// to the viewport's physical size. The 2D layer stays at native resolution.
+// Values from 0.25 to 1 are accepted. Other values reset the scale to 1.
+func (v *Viewport) SetRenderScale(scale float32) {
+	if !(scale >= 0.25 && scale <= 1) {
+		scale = 1
+	}
+	if v.RenderScale() == scale {
+		return
+	}
+	v.renderScale = scale
+	v.InvalidateScene()
+	v.Invalidate()
+}
+
+// RenderScale returns the effective resolution multiplier (1 by default).
+func (v *Viewport) RenderScale() float32 {
+	if v.renderScale == 0 {
+		return 1
+	}
+	return v.renderScale
 }
 
 // InvalidateScene marks the rendered content as stale; next Draw will

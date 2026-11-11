@@ -45,3 +45,28 @@ func TestIntersectPlaneY(t *testing.T) {
 		t.Errorf("plane hit Y = %v, want 0", p.Y)
 	}
 }
+
+// ProjectPoint inverts ScreenRay: a point along a screen ray projects back
+// to the same NDC, and points behind the eye are rejected.
+func TestProjectPointInvertsScreenRay(t *testing.T) {
+	cam := NewPerspectiveCamera(50, 0.1, 100)
+	cam.Position, cam.Target = Vec3{X: 3, Y: 4, Z: 8}, Vec3{X: 0.5}
+	for _, ndc := range [][2]float32{{0, 0}, {0.6, -0.3}, {-0.9, 0.8}} {
+		p := ScreenRay(cam, 1.5, ndc[0], ndc[1]).PointAt(7)
+		got, ok := ProjectPoint(cam, 1.5, p)
+		if !ok || abs32(got.X-ndc[0]) > 1e-3 || abs32(got.Y-ndc[1]) > 1e-3 {
+			t.Fatalf("ndc %v → %v, %v", ndc, got, ok)
+		}
+	}
+	behind := cam.Position.Add(cam.Position.Sub(cam.Target))
+	if _, ok := ProjectPoint(cam, 1.5, behind); ok {
+		t.Fatal("a point behind the camera projected")
+	}
+}
+
+func abs32(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}

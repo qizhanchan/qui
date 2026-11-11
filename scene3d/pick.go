@@ -25,6 +25,17 @@ func ScreenRay(cam *Camera, aspect, ndcX, ndcY float32) Ray {
 	return Ray{Origin: near, Dir: far.Sub(near).Normalize()}
 }
 
+// ProjectPoint is the inverse of ScreenRay: it maps a world point to
+// normalized device coords (x, y in [-1,1] inside the view, +Y up; z is
+// depth in [-1,1]). ok is false for points behind the eye.
+func ProjectPoint(cam *Camera, aspect float32, p Vec3) (ndc Vec3, ok bool) {
+	clip := Mat4Mul(cam.ProjectionMatrix(aspect), cam.ViewMatrix()).MulVec4(Vec4{X: p.X, Y: p.Y, Z: p.Z, W: 1})
+	if clip.W <= 1e-6 {
+		return Vec3{}, false
+	}
+	return Vec3{X: clip.X / clip.W, Y: clip.Y / clip.W, Z: clip.Z / clip.W}, true
+}
+
 func unproject(inv Mat4, x, y, z float32) Vec3 {
 	p := inv.MulVec4(Vec4{X: x, Y: y, Z: z, W: 1})
 	if p.W != 0 {

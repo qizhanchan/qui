@@ -44,6 +44,11 @@ type Node struct {
 	LineMaterial Material
 	Children     []*Node
 	Visible      bool
+	// Overlay draws the node and its subtree after the rest of the scene,
+	// ignoring depth and back-face culling, so it is never hidden by
+	// geometry: transform gizmos, selection handles, debug markers. Overlay
+	// subtrees draw in scene-graph order.
+	Overlay bool
 }
 
 // NewNode creates a visible node with identity transform.
@@ -140,7 +145,9 @@ func (PointLight) isLight() {}
 // Scene is a self-contained renderable: a root node tree, camera,
 // ambient color, and zero or more lights.
 type Scene struct {
-	Root    *Node
+	Root *Node
+	// Batches draw world-space instances before the ordinary node tree.
+	Batches []*InstanceBatch
 	Camera  *Camera
 	Lights  []Light
 	Ambient qui.Color

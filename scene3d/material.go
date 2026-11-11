@@ -93,6 +93,16 @@ const unlitWGSL = `
 @vertex fn vs_main(@location(0) position: vec3f) -> @builtin(position) vec4f {
     return clip_from_world(obj.model * vec4f(position, 1.0));
 }
+` + unlitFragment
+
+const unlitInstanceWGSL = `
+@vertex fn vs_main(@location(0) position: vec3f,
+                   @builtin(instance_index) instance: u32) -> @builtin(position) vec4f {
+    return clip_from_world(mesh_model(instance) * vec4f(position, 1.0));
+}
+` + unlitFragment
+
+const unlitFragment = `
 @fragment fn fs_main() -> @location(0) vec4f {
     return vec4f(obj.color.rgb * obj.color.a, obj.color.a);
 }
@@ -120,18 +130,34 @@ func (m *LitMaterial) Params(*Scene) MaterialParams {
 
 func (m *LitMaterial) Destroy() {}
 
-const litWGSL = `
+const litVaryings = `
 struct VOut {
     @builtin(position) pos: vec4f,
     @location(0) normal: vec3f,
     @location(1) world: vec3f,
 };
+`
+
+const litWGSL = litVaryings + `
 @vertex fn vs_main(@location(0) position: vec3f, @location(1) normal: vec3f,
                    @location(2) uv: vec2f) -> VOut {
-    let world = obj.model * vec4f(position, 1.0);
+    return lit_vertex(position, normal, obj.model);
+}
+` + litBody
+
+const litInstanceWGSL = litVaryings + `
+@vertex fn vs_main(@location(0) position: vec3f, @location(1) normal: vec3f,
+                   @location(2) uv: vec2f, @builtin(instance_index) instance: u32) -> VOut {
+    return lit_vertex(position, normal, mesh_model(instance));
+}
+` + litBody
+
+const litBody = `
+fn lit_vertex(position: vec3f, normal: vec3f, model: mat4x4f) -> VOut {
+    let world = model * vec4f(position, 1.0);
     var o: VOut;
     o.pos = clip_from_world(world);
-    o.normal = (obj.model * vec4f(normal, 0.0)).xyz;
+    o.normal = (model * vec4f(normal, 0.0)).xyz;
     o.world = world.xyz;
     return o;
 }

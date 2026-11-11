@@ -127,8 +127,10 @@ func (m *LineMesh) buffers(dev *gpu.Device) *meshGPU {
 // ---- pipelines (one per shader source and primitive kind, process-wide) ----
 
 type pipeKey struct {
-	src   string
-	lines bool
+	src       string
+	lines     bool
+	instanced bool
+	overlay   bool
 }
 
 type pipeEntry struct {
@@ -137,10 +139,12 @@ type pipeEntry struct {
 }
 
 var (
-	pipes        = map[pipeKey]*pipeEntry{}
-	sceneGroup   *gpu.BindGroupLayout
-	sceneLayout  *gpu.PipelineLayout
-	meshVertices = []gpu.VertexBufferLayout{{Stride: 32, Attributes: []gpu.VertexAttribute{
+	pipes          = map[pipeKey]*pipeEntry{}
+	sceneGroup     *gpu.BindGroupLayout
+	sceneLayout    *gpu.PipelineLayout
+	instanceGroup  *gpu.BindGroupLayout
+	instanceLayout *gpu.PipelineLayout
+	meshVertices   = []gpu.VertexBufferLayout{{Stride: 32, Attributes: []gpu.VertexAttribute{
 		{Format: gpu.VertexFloat32x3, Offset: 0, Location: 0},
 		{Format: gpu.VertexFloat32x3, Offset: 12, Location: 1},
 		{Format: gpu.VertexFloat32x2, Offset: 24, Location: 2},
@@ -148,26 +152,38 @@ var (
 	lineVertices = meshVertices
 )
 
-func layout(dev *gpu.Device) *gpu.PipelineLayout {
+func layout(dev *gpu.Device, instanced bool) *gpu.PipelineLayout {
+	vis := gpu.StageVertex | gpu.StageFragment
+	frame := gpu.BindGroupLayoutEntry{Binding: 0, Visibility: vis, Type: gpu.BindUniformBuffer}
+	object := gpu.BindGroupLayoutEntry{Binding: 1, Visibility: vis, Type: gpu.BindUniformBuffer}
+	if instanced {
+		if instanceLayout == nil {
+			instanceGroup = dev.CreateBindGroupLayout("scene3d instances", frame, object,
+				gpu.BindGroupLayoutEntry{Binding: 2, Visibility: gpu.StageVertex, Type: gpu.BindReadOnlyStorageBuffer})
+			instanceLayout = dev.CreatePipelineLayout("scene3d instances", instanceGroup)
+		}
+		return instanceLayout
+	}
 	if sceneLayout == nil {
-		vis := gpu.StageVertex | gpu.StageFragment
-		sceneGroup = dev.CreateBindGroupLayout("scene3d",
-			gpu.BindGroupLayoutEntry{Binding: 0, Visibility: vis, Type: gpu.BindUniformBuffer},
-			gpu.BindGroupLayoutEntry{Binding: 1, Visibility: vis, Type: gpu.BindUniformBuffer})
+		sceneGroup = dev.CreateBindGroupLayout("scene3d", frame, object)
 		sceneLayout = dev.CreatePipelineLayout("scene3d", sceneGroup)
 	}
 	return sceneLayout
 }
 
 // pipelineFor compiles (once) the pipeline drawing mat's shader.
-func pipelineFor(dev *gpu.Device, mat Material, lines bool) *gpu.RenderPipeline {
-	key := pipeKey{src: mat.WGSL(), lines: lines}
+func pipelineFor(dev *gpu.Device, src string, lines, instanced, overlay bool) *gpu.RenderPipeline {
+	key := pipeKey{src: src, lines: lines, instanced: instanced, overlay: overlay}
 	if e := pipes[key]; e != nil {
 		return e.p
 	}
 	e := &pipeEntry{}
 	pipes[key] = e
-	mod, err := dev.CreateShaderModule("scene3d material", Preamble+key.src)
+	preamble := Preamble
+	if instanced {
+		preamble += instancePreamble
+	}
+	mod, err := dev.CreateShaderModule("scene3d material", preamble+src)
 	if err != nil {
 		e.err = err
 		log.Printf("scene3d: %v", err)
@@ -175,7 +191,7 @@ func pipelineFor(dev *gpu.Device, mat Material, lines bool) *gpu.RenderPipeline 
 	}
 	defer mod.Release()
 	desc := gpu.RenderPipelineDescriptor{
-		Label: "scene3d", Layout: layout(dev), Module: mod,
+		Label: "scene3d", Layout: layout(dev, instanced), Module: mod,
 		SampleCount: MSAASamples,
 		Targets:     []gpu.ColorTarget{{Format: ColorFormat, Blend: gpu.BlendPremultiplied()}},
 	}
@@ -191,6 +207,10 @@ func pipelineFor(dev *gpu.Device, mat Material, lines bool) *gpu.RenderPipeline 
 		desc.DepthStencil = &gpu.DepthStencil{Format: DepthFormat, DepthWrite: true, Compare: gpu.CompareLess,
 			DepthBias: 1, DepthBiasSlope: 1}
 	}
+	if overlay {
+		desc.Cull = gpu.CullNone
+		desc.DepthStencil = &gpu.DepthStencil{Format: DepthFormat, Compare: gpu.CompareAlways}
+	}
 	e.p, e.err = dev.CreateRenderPipeline(desc)
 	if e.err != nil {
 		log.Printf("scene3d: %v", e.err)
@@ -203,6 +223,12 @@ func pipelineFor(dev *gpu.Device, mat Material, lines bool) *gpu.RenderPipeline 
 type itemKey struct {
 	node  *Node
 	lines bool
+}
+
+// overlayDraw is an Overlay subtree deferred to the end of the pass.
+type overlayDraw struct {
+	node   *Node
+	parent Mat4
 }
 
 // item is one draw's object block.
@@ -221,6 +247,7 @@ type viewportGPU struct {
 	resolveView *gpu.TextureView
 	frameBuf    *gpu.Buffer
 	items       map[itemKey]*item
+	batches     map[*InstanceBatch]*batchGPU
 	frame       uint64
 	rendered    bool
 }
@@ -243,6 +270,10 @@ func (g *viewportGPU) release() {
 		it.bg.Release()
 		it.buf.Release()
 		delete(g.items, k)
+	}
+	for batch, state := range g.batches {
+		state.release()
+		delete(g.batches, batch)
 	}
 	g.frameBuf.Release()
 	g.frameBuf = nil
@@ -270,19 +301,22 @@ func (v *Viewport) drawGPU(f *qui.GPUFrame) {
 	if w <= 0 || h <= 0 {
 		return
 	}
+	scale := float64(v.RenderScale())
+	w = max(1, int(math.Round(float64(w)*scale)))
+	h = max(1, int(math.Round(float64(h)*scale)))
 	g := &v.gpu
 	if g.ensureTargets(f.Device, w, h) {
 		v.dirtyScene = true
 	}
 	if v.dirtyScene || v.Continuous || !g.rendered {
-		v.render(f, w, h)
+		v.render(f, w, h, box.W/box.H)
 		v.dirtyScene = false
 		g.rendered = true
 	}
 	f.DrawTexture(g.resolveView, qui.Rect{W: float32(w), H: float32(h)}, box, qui.TextureOpts{})
 }
 
-func (v *Viewport) render(f *qui.GPUFrame, w, h int) {
+func (v *Viewport) render(f *qui.GPUFrame, w, h int, aspect float32) {
 	g := &v.gpu
 	dev := f.Device
 	c := v.ClearColor
@@ -308,8 +342,22 @@ func (v *Viewport) render(f *qui.GPUFrame, w, h int) {
 	if g.frameBuf == nil {
 		g.frameBuf = dev.CreateBuffer("scene3d frame", gpu.BufferUniform|gpu.BufferCopyDst, 192)
 	}
-	dev.WriteBuffer(g.frameBuf, 0, floatBytes(frameBlock(v.Scene, float32(w)/float32(h))))
-	v.drawNode(dev, pass, v.Scene.Root, Mat4Identity())
+	dev.WriteBuffer(g.frameBuf, 0, floatBytes(frameBlock(v.Scene, aspect)))
+	for _, batch := range v.Scene.Batches {
+		v.drawBatch(dev, pass, batch)
+	}
+	v.overlays = v.overlays[:0]
+	v.drawNode(dev, pass, v.Scene.Root, Mat4Identity(), false)
+	for i := 0; i < len(v.overlays); i++ { // drawing may defer nested overlays
+		o := v.overlays[i]
+		v.drawNode(dev, pass, o.node, o.parent, true)
+	}
+	for batch, state := range g.batches {
+		if state.used != g.frame {
+			state.release()
+			delete(g.batches, batch)
+		}
+	}
 	for k, it := range g.items {
 		if it.used != g.frame {
 			it.bg.Release()
@@ -335,14 +383,18 @@ func frameBlock(s *Scene, aspect float32) []float32 {
 	return out
 }
 
-func (v *Viewport) drawNode(dev *gpu.Device, pass *gpu.RenderPass, n *Node, parent Mat4) {
+func (v *Viewport) drawNode(dev *gpu.Device, pass *gpu.RenderPass, n *Node, parent Mat4, overlay bool) {
 	if n == nil || !n.Visible {
+		return
+	}
+	if n.Overlay && !overlay {
+		v.overlays = append(v.overlays, overlayDraw{node: n, parent: parent})
 		return
 	}
 	world := Mat4Mul(parent, n.Transform.LocalMatrix())
 	if n.Mesh != nil && n.Material != nil {
 		if b := n.Mesh.buffers(dev); b.vb != nil {
-			v.draw(dev, pass, itemKey{node: n}, n.Material, world, b, false)
+			v.draw(dev, pass, itemKey{node: n}, n.Material, world, b, false, overlay)
 		}
 	}
 	if n.Lines != nil {
@@ -351,16 +403,16 @@ func (v *Viewport) drawNode(dev *gpu.Device, pass *gpu.RenderPass, n *Node, pare
 			lm = defaultLineMaterial()
 		}
 		if b := n.Lines.buffers(dev); b.vb != nil {
-			v.draw(dev, pass, itemKey{node: n, lines: true}, lm, world, b, true)
+			v.draw(dev, pass, itemKey{node: n, lines: true}, lm, world, b, true, overlay)
 		}
 	}
 	for _, c := range n.Children {
-		v.drawNode(dev, pass, c, world)
+		v.drawNode(dev, pass, c, world, overlay)
 	}
 }
 
-func (v *Viewport) draw(dev *gpu.Device, pass *gpu.RenderPass, key itemKey, mat Material, world Mat4, b *meshGPU, lines bool) {
-	p := pipelineFor(dev, mat, lines)
+func (v *Viewport) draw(dev *gpu.Device, pass *gpu.RenderPass, key itemKey, mat Material, world Mat4, b *meshGPU, lines, overlay bool) {
+	p := pipelineFor(dev, mat.WGSL(), lines, false, overlay)
 	if p == nil {
 		return
 	}
@@ -377,20 +429,27 @@ func (v *Viewport) draw(dev *gpu.Device, pass *gpu.RenderPass, key itemKey, mat 
 		g.items[key] = it
 	}
 	it.used = g.frame
-	mp := mat.Params(v.Scene)
-	obj := make([]float32, 0, 40)
-	obj = append(obj, world[:]...)
-	obj = append(obj, mp.Color.R, mp.Color.G, mp.Color.B, mp.Color.A)
-	obj = append(obj, mp.Params[:]...)
-	obj = append(obj, mp.User[:]...)
-	dev.WriteBuffer(it.buf, 0, floatBytes(obj))
+	dev.WriteBuffer(it.buf, 0, objectBytes(world, mat.Params(v.Scene)))
 	pass.SetPipeline(p)
 	pass.SetBindGroup(0, it.bg)
+	drawMesh(pass, b, 1)
+}
+
+func objectBytes(world Mat4, mp MaterialParams) []byte {
+	var obj [40]float32
+	copy(obj[:16], world[:])
+	obj[16], obj[17], obj[18], obj[19] = mp.Color.R, mp.Color.G, mp.Color.B, mp.Color.A
+	copy(obj[20:24], mp.Params[:])
+	copy(obj[24:], mp.User[:])
+	return floatBytes(obj[:])
+}
+
+func drawMesh(pass *gpu.RenderPass, b *meshGPU, instances int) {
 	pass.SetVertexBuffer(0, b.vb, 0, 0)
 	if b.ib != nil {
 		pass.SetIndexBuffer(b.ib, gpu.IndexUint32, 0, 0)
-		pass.DrawIndexed(b.count, 1, 0, 0, 0)
+		pass.DrawIndexed(b.count, instances, 0, 0, 0)
 	} else {
-		pass.Draw(b.count, 1, 0, 0)
+		pass.Draw(b.count, instances, 0, 0)
 	}
 }
