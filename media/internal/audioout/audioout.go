@@ -20,6 +20,11 @@ var ErrNotSupported = errors.New("audioout: not supported on this build/platform
 type Format struct {
 	SampleRate int // e.g. 44100, 48000
 	Channels   int // 1 = mono, 2 = stereo
+	// BufferFrames is the device buffer size in frames; 0 keeps the
+	// backend default. Low values (256–512) suit interactive audio such
+	// as games, at the cost of more frequent callbacks. Backends that
+	// cannot honor it ignore it.
+	BufferFrames int
 }
 
 // Sink is a running audio output. It owns its own playback thread; the methods

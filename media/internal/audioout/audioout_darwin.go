@@ -115,9 +115,13 @@ func open(format Format) (Sink, error) {
 	regMu.Unlock()
 
 	fb := 2 * format.Channels
+	frames := aqBufferFrames
+	if format.BufferFrames >= 64 && format.BufferFrames <= 8192 {
+		frames = format.BufferFrames
+	}
 	for i := 0; i < aqBuffers; i++ {
 		var buf C.AudioQueueBufferRef
-		if st := C.aqAlloc(q, C.int(aqBufferFrames*fb), &buf); st != 0 {
+		if st := C.aqAlloc(q, C.int(frames*fb), &buf); st != 0 {
 			s.Close()
 			return nil, ErrNotSupported
 		}
@@ -125,7 +129,7 @@ func open(format Format) (Sink, error) {
 		C.aqSilence(buf)
 		C.aqEnqueue(q, buf)
 		s.ring.mu.Lock()
-		s.ring.enqueued += aqBufferFrames
+		s.ring.enqueued += int64(frames)
 		s.ring.mu.Unlock()
 	}
 	return s, nil
