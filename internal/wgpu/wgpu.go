@@ -578,6 +578,10 @@ type Buffer struct {
 	c    C.WGPUBuffer
 	size uint64
 	dev  *Device
+	// MapReadAsync state: a C cell the map callback writes (0 pending,
+	// 1 mapped, −1 failed) and the mapped range.
+	mapStatus       *C.int
+	mapOff, mapSize uint64
 }
 
 func (d *Device) CreateBuffer(label string, usage BufferUsage, size uint64) *Buffer {

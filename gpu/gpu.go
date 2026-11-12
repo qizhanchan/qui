@@ -68,6 +68,7 @@ type (
 	RenderPass               = wgpu.RenderPass
 	TimestampQuery           = wgpu.TimestampQuery
 	PassTimestampWrites      = wgpu.PassTimestampWrites
+	MapState                 = wgpu.MapState
 )
 
 const (
@@ -107,6 +108,9 @@ const (
 	UsageStorageBinding       = wgpu.UsageStorageBinding
 	UsageRenderAttachment     = wgpu.UsageRenderAttachment
 	BufferMapRead             = wgpu.BufferMapRead
+	MapUnmapped               = wgpu.MapUnmapped
+	MapPending                = wgpu.MapPending
+	MapMapped                 = wgpu.MapMapped
 	BufferMapWrite            = wgpu.BufferMapWrite
 	BufferCopySrc             = wgpu.BufferCopySrc
 	BufferCopyDst             = wgpu.BufferCopyDst

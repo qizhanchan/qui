@@ -13,6 +13,7 @@ WGPUDevice quiWGPURequestDevice(WGPUInstance inst, WGPUAdapter adapter, const WG
                                 size_t nfeats, char* err, size_t errlen);
 int quiWGPUWaitQueue(WGPUInstance inst, WGPUQueue queue);
 int quiWGPUMapRead(WGPUInstance inst, WGPUBuffer buf, size_t off, size_t size);
+void quiWGPUMapReadAsync(WGPUBuffer buf, size_t off, size_t size, int* status);
 void quiWGPUAdapterName(WGPUAdapter adapter, char* out, size_t n);
 int quiWGPUPopErrorScope(WGPUInstance inst, WGPUDevice dev, char* err, size_t errlen);
 

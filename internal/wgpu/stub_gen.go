@@ -571,3 +571,21 @@ func (_ *TimestampQuery) Resolve(_ *CommandEncoder, _ int) error { return ErrUna
 func (_ *TimestampQuery) Read(_ int) ([]uint64, error) { return nil, ErrUnavailable }
 
 func (_ *TimestampQuery) Release() {}
+
+type MapState int
+
+const (
+	MapUnmapped MapState = iota
+	MapPending
+	MapMapped
+)
+
+func (_ *CommandEncoder) CopyBuffer(_ *Buffer, _ uint64, _ *Buffer, _ uint64, _ uint64) error {
+	return ErrUnavailable
+}
+
+func (_ *Buffer) MapReadAsync(_ uint64, _ uint64) error { return ErrUnavailable }
+
+func (_ *Buffer) MapState() MapState { return *new(MapState) }
+
+func (_ *Buffer) ReadMapped() ([]byte, error) { return nil, ErrUnavailable }

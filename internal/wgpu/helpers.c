@@ -203,6 +203,16 @@ int quiWGPUMapRead(WGPUInstance inst, WGPUBuffer buf, size_t off, size_t size) {
     return quiWait(inst, wgpuBufferMapAsync(buf, WGPUMapMode_Read, off, size, cb)) && st == 1;
 }
 
+// quiWGPUMapReadAsync starts a read map whose callback runs from
+// wgpuInstanceProcessEvents and stores 1 (mapped) or −1 in *status.
+void quiWGPUMapReadAsync(WGPUBuffer buf, size_t off, size_t size, int* status) {
+    WGPUBufferMapCallbackInfo cb = {0};
+    cb.mode = WGPUCallbackMode_AllowProcessEvents;
+    cb.callback = quiOnMap;
+    cb.userdata1 = status;
+    wgpuBufferMapAsync(buf, WGPUMapMode_Read, off, size, cb);
+}
+
 // quiWGPUAdapterName writes "description (backend)" into out.
 void quiWGPUAdapterName(WGPUAdapter adapter, char* out, size_t n) {
     WGPUAdapterInfo info = {0};
