@@ -97,8 +97,9 @@ type Device struct {
 	queue   C.WGPUQueue
 	name    string
 	// ioSurface reports that IOSurfaces can be imported (macOS).
-	ioSurface  bool
-	timestamps bool
+	ioSurface     bool
+	timestamps    bool
+	clipDistances bool
 }
 
 // deviceLost is set when the shared device is lost (GPU reset, eGPU
@@ -155,6 +156,9 @@ func newDevice() (*Device, error) {
 	if C.wgpuAdapterHasFeature(adapter, C.WGPUFeatureName_TimestampQuery) != 0 {
 		want = append(want, C.WGPUFeatureName_TimestampQuery)
 	}
+	if C.wgpuAdapterHasFeature(adapter, C.WGPUFeatureName_ClipDistances) != 0 {
+		want = append(want, C.WGPUFeatureName_ClipDistances)
+	}
 	var a arena
 	defer a.free()
 	feats := allocN[C.WGPUFeatureName](&a, len(want))
@@ -180,8 +184,17 @@ func newDevice() (*Device, error) {
 	return &Device{
 		inst: inst, adapter: adapter, c: dev, queue: C.wgpuDeviceGetQueue(dev),
 		name: C.GoString(&buf[0]), ioSurface: io,
-		timestamps: C.wgpuDeviceHasFeature(dev, C.WGPUFeatureName_TimestampQuery) != 0,
+		timestamps:    C.wgpuDeviceHasFeature(dev, C.WGPUFeatureName_TimestampQuery) != 0,
+		clipDistances: C.wgpuDeviceHasFeature(dev, C.WGPUFeatureName_ClipDistances) != 0,
 	}, nil
+}
+
+// SupportsClipDistances reports whether shaders may declare
+// "enable clip_distances;" and write @builtin(clip_distances): user clip
+// planes, which the rasteriser applies like the view frustum (no
+// fragments are generated beyond them, unlike discard).
+func (d *Device) SupportsClipDistances() bool {
+	return d != nil && d.c != nil && d.clipDistances && !Lost()
 }
 
 // AdapterName describes the GPU and backend, e.g. "Apple M3 (Metal)".

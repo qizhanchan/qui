@@ -15,6 +15,8 @@ func Lost() bool { return false }
 
 func Shared() (*Device, error) { return nil, ErrUnavailable }
 
+func (_ *Device) SupportsClipDistances() bool { return false }
+
 func (_ *Device) AdapterName() string { return "" }
 
 type DeviceLimits struct {
