@@ -64,3 +64,58 @@ func TestComputeDoublesBuffer(t *testing.T) {
 		t.Fatal("a missing entry point was accepted")
 	}
 }
+
+// A timed compute pass writes ordered timestamps; invalid writes are refused.
+func TestComputePassTimestamps(t *testing.T) {
+	d := sharedOrSkip(t)
+	if !d.SupportsTimestampQueries() {
+		t.Skipf("timestamp queries unavailable on %s", d.AdapterName())
+	}
+	q, err := d.NewTimestampQuery(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Release()
+	buf := d.CreateBufferInit("values", BufferStorage, make([]byte, 4*4096))
+	defer buf.Release()
+	mod, err := d.CreateShaderModule("increment", `
+@group(0) @binding(0) var<storage, read_write> values: array<u32>;
+@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) id: vec3u) {
+    if id.x < arrayLength(&values) { values[id.x] = values[id.x] + 1u; }
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mod.Release()
+	pipe, err := d.CreateComputePipeline(ComputePipelineDescriptor{Module: mod, Entry: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pipe.Release()
+	group := d.CreateBindGroup(pipe.BindGroupLayout(0), BindGroupEntry{Binding: 0, Buffer: buf})
+	defer group.Release()
+	enc := d.CreateCommandEncoder()
+	defer enc.Release()
+	if enc.BeginTimedComputePass("bad", &PassTimestampWrites{Query: q, Begin: 0, End: 2}) != nil {
+		t.Fatal("out-of-bounds timestamp write accepted")
+	}
+	pass := enc.BeginTimedComputePass("increment", &PassTimestampWrites{Query: q, Begin: 0, End: 1})
+	if pass == nil {
+		t.Fatal("valid timestamp write rejected")
+	}
+	pass.SetPipeline(pipe)
+	pass.SetBindGroup(0, group)
+	pass.Dispatch(64, 1, 1)
+	pass.End()
+	if err := q.Resolve(enc, 2); err != nil {
+		t.Fatal(err)
+	}
+	d.Submit(enc.Finish())
+	got, err := q.Read(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] == 0 || got[1] < got[0] {
+		t.Fatalf("invalid compute timestamps: %v", got)
+	}
+}

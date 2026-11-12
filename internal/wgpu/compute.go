@@ -84,10 +84,27 @@ type ComputePass struct{ c C.WGPUComputePassEncoder }
 
 // BeginComputePass starts a compute pass.
 func (e *CommandEncoder) BeginComputePass(label string) *ComputePass {
+	return e.BeginTimedComputePass(label, nil)
+}
+
+// BeginTimedComputePass starts a compute pass that writes GPU timestamps
+// at its start and end (writes may be nil). Invalid timestamp writes make
+// it return nil without beginning a pass, as BeginRenderPass does.
+func (e *CommandEncoder) BeginTimedComputePass(label string, writes *PassTimestampWrites) *ComputePass {
+	if writes != nil && !writes.validFor(e) {
+		return nil
+	}
 	var a arena
 	defer a.free()
 	pd := (*C.WGPUComputePassDescriptor)(a.alloc(C.sizeof_WGPUComputePassDescriptor))
 	pd.label = a.str(label)
+	if writes != nil {
+		w := (*C.WGPUPassTimestampWrites)(a.alloc(C.sizeof_WGPUPassTimestampWrites))
+		w.querySet = writes.Query.set
+		w.beginningOfPassWriteIndex = C.uint32_t(writes.Begin)
+		w.endOfPassWriteIndex = C.uint32_t(writes.End)
+		pd.timestampWrites = w
+	}
 	return &ComputePass{c: C.wgpuCommandEncoderBeginComputePass(e.c, pd)}
 }
 

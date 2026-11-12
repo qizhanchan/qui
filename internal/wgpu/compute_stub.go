@@ -22,9 +22,12 @@ func (_ *ComputePipeline) Release()                                  {}
 type ComputePass struct{}
 
 func (_ *CommandEncoder) BeginComputePass(_ string) *ComputePass { return &ComputePass{} }
-func (_ *ComputePass) SetPipeline(_ *ComputePipeline)            {}
-func (_ *ComputePass) SetBindGroup(_ uint32, _ *BindGroup)       {}
-func (_ *ComputePass) Dispatch(_, _, _ uint32)                   {}
-func (_ *ComputePass) End()                                      {}
+func (_ *CommandEncoder) BeginTimedComputePass(_ string, _ *PassTimestampWrites) *ComputePass {
+	return &ComputePass{}
+}
+func (_ *ComputePass) SetPipeline(_ *ComputePipeline)      {}
+func (_ *ComputePass) SetBindGroup(_ uint32, _ *BindGroup) {}
+func (_ *ComputePass) Dispatch(_, _, _ uint32)             {}
+func (_ *ComputePass) End()                                {}
 
 func (_ *Device) ReadBuffer(_ *Buffer, _, _ uint64) ([]byte, error) { return nil, ErrUnavailable }
