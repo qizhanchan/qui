@@ -798,10 +798,17 @@ func (r *WebGPURenderer) IsTransparent() bool { return r != nil && r.transparent
 func (r *WebGPURenderer) SetPreRender(fn func(*GPUFrame))  { r.pre = fn }
 func (r *WebGPURenderer) SetPostRender(fn func(*GPUFrame)) { r.post = fn }
 
-// Snapshot copies the last rasterized frame.
+// Snapshot copies the last frame. When the window shows GPU content
+// (retained 3D / video draws, pre/post hooks) the CPU image alone would
+// leave those areas blank, so Snapshot replays the retained draws into a
+// fresh frame and reads the composited result back — what the user sees.
+// It falls back to the CPU image when that frame cannot be produced.
 func (r *WebGPURenderer) Snapshot() *image.RGBA {
 	if r == nil || r.img == nil {
 		return nil
+	}
+	if img := r.snapshotComposited(); img != nil {
+		return img
 	}
 	dst := image.NewRGBA(r.img.Rect)
 	n := r.img.Rect.Dx() * 4
@@ -809,6 +816,26 @@ func (r *WebGPURenderer) Snapshot() *image.RGBA {
 		copy(dst.Pix[y*dst.Stride:y*dst.Stride+n], r.img.Pix[y*r.img.Stride:])
 	}
 	return dst
+}
+
+// snapshotComposited reads back a re-presented frame that includes GPU
+// content, or nil when there is none or the frame was dropped.
+func (r *WebGPURenderer) snapshotComposited() *image.RGBA {
+	if r.surface == nil || !r.painted ||
+		r.retainedComp.Len()+r.retainedGPU.Len() == 0 && r.pre == nil && r.post == nil {
+		return nil
+	}
+	var got *image.RGBA
+	r.capture = append(r.capture, func(img *image.RGBA) { got = img })
+	if !r.RedrawRetained() {
+		r.capture = nil
+		return nil
+	}
+	r.capture = nil
+	if got == nil || got.Rect != r.img.Rect {
+		return nil
+	}
+	return got
 }
 
 // ForgetRetainedDraw drops key's retained draw and its cached textures.

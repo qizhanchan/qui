@@ -689,6 +689,17 @@ func ShowMenuBarDropdown(window *Window, anchorFn func() Rect, items []*MenuItem
 	return showMenuBarDropdown(window, anchorFn, items, topLevelMenuStyle())
 }
 
+// ShowMenuBarDropdownStyled is ShowMenuBarDropdown with a caller palette
+// + elevation (a dark editor's menu bar); submenus inherit the style.
+func ShowMenuBarDropdownStyled(window *Window, anchorFn func() Rect, items []*MenuItem, colors MenuColors, elevation int) *Popup {
+	st := topLevelMenuStyle()
+	st.ApplyColors(colors)
+	if elevation > 0 {
+		st.elevation = elevation
+	}
+	return showMenuBarDropdown(window, anchorFn, items, st)
+}
+
 func showMenuBarDropdown(window *Window, anchorFn func() Rect, items []*MenuItem, st menuStyle) *Popup {
 	if window == nil || anchorFn == nil {
 		return nil

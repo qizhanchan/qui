@@ -168,6 +168,21 @@ func (w *Window) ScrollPixels(r Rect, dx, dy float32) bool {
 			w.unionDirty(Rect{X: m.X + dx, Y: m.Y + dy, W: m.W, H: m.H}.Intersect(inner))
 		}
 	}
+	// The partly covered pixels at r's edges did not move but hold part
+	// of r's old content: repaint them (the dirty clip snaps outward to
+	// whole pixels, so the neighbor's share is repainted too).
+	if inner.X > r.X {
+		w.unionDirty(Rect{X: r.X, Y: r.Y, W: inner.X - r.X, H: r.H})
+	}
+	if e, ie := r.X+r.W, inner.X+inner.W; e > ie {
+		w.unionDirty(Rect{X: ie, Y: r.Y, W: e - ie, H: r.H})
+	}
+	if inner.Y > r.Y {
+		w.unionDirty(Rect{X: r.X, Y: r.Y, W: r.W, H: inner.Y - r.Y})
+	}
+	if e, ie := r.Y+r.H, inner.Y+inner.H; e > ie {
+		w.unionDirty(Rect{X: r.X, Y: ie, W: r.W, H: e - ie})
+	}
 	// What the move exposes: the strips of inner the shifted pixels leave.
 	ldx, ldy := float32(pdx)/sx, float32(pdy)/sy
 	if ldy > 0 {

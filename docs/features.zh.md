@@ -148,7 +148,7 @@
 | `media` | 不依赖 ffmpeg 的 `AudioPlayer`（服务）与 `VideoView`（控件）；macOS 使用 AVFoundation 后端。`FrameView` 显示从任意 goroutine 推送的帧 —— `PushCVPixelBuffer`（macOS，IOSurface 经渲染器的 `Compositor` 零拷贝）或 `PushRGBA` —— 只保留最新帧、空闲零开销，支持适配模式、`MapToFrame` 输入映射、`Stats` / `OnPresent` 延迟统计与原始键盘。FrameView / VideoView 只走 `Compositor` 路径；`VideoFrame.Composite(c, key, src, physDst)` |
 | `webview` | 基于 CEF 的内嵌浏览器控件，受 `webview_cef` 门控；只有 CPU 帧路径，零拷贝 IOSurface 合成待实现；JS↔Go 桥只传 JSON |
 | `physics` / `p2` / `p3` | 与维度无关的词汇，以及 API 对称的 2D/3D 引擎：扫掠 AABB、空间哈希、接触标志、单向平台、传感器 |
-| `icons` | 约 135 个 Material Symbols 描边字形，为 `*svg.Document` |
+| `icons` | 约 145 个 Material Symbols 描边字形，为 `*svg.Document` |
 | `fonts/jetbrainsmono` | 内嵌 JetBrains Mono；`Use()` 替换全局默认字族 |
 
 ## 工具

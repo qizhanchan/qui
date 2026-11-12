@@ -475,7 +475,31 @@ func (e *El) setAttr(k, v string) {
 	if k == "disabled" {
 		e.applyDisabledState(true)
 	}
+	if k == "placeholder" {
+		e.applyPlaceholder(v)
+	}
 	e.markDirty()
+}
+
+// applyPlaceholder pushes a changed placeholder attribute to an existing
+// text control: the backing is built with the placeholder it had then,
+// so a later change (a re-render showing "Multiple") must reach it.
+func (e *El) applyPlaceholder(v string) {
+	switch w := e.backing.(type) {
+	case *widgets.Input:
+		if v == "" && e.tag == "input" {
+			v = typeFormatHint(e.attrs["type"])
+		}
+		if w.Placeholder != v {
+			w.Placeholder = v
+			w.Invalidate()
+		}
+	case *widgets.TextArea:
+		if w.Placeholder != v {
+			w.Placeholder = v
+			w.Invalidate()
+		}
+	}
 }
 
 // Attr returns an attribute's current value and whether it is present.
@@ -531,6 +555,9 @@ func (e *El) RemoveAttr(k string) {
 	}
 	if k == "disabled" {
 		e.applyDisabledState(true)
+	}
+	if k == "placeholder" {
+		e.applyPlaceholder("")
 	}
 	e.markDirty()
 }

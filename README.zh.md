@@ -95,7 +95,7 @@ rt := h.Mount(window, css, func() h.Node {
 | `widgets` | 原生控件：Box、Label、InlineBox、RichText、Anchor、Button、Input、TextArea、CheckBox、RadioButton/Group、Switch、Slider、Progress、Select、ScrollView、ListView、TableView、TabView、Popup、Dialog、MenuBar/ContextMenu、Image、Rule、FieldSet。另有 `undo.go`（文本控件撤销历史） |
 | `htmlcss` | HTML + CSS 引擎（详见下文） |
 | `reactive`、`reactive/html` | 声明式运行时 + 类 Web DSL（详见下文） |
-| `icons` | 可选图标集：约 135 个精选 24px 描边字形（Material Symbols，Apache 2.0），解析为 `*svg.Document`，可传给任何接受 `qui.VectorSource` 的位置。纯资源 —— 根包与 `widgets` 都不依赖它 |
+| `icons` | 可选图标集：约 145 个精选 24px 描边字形（Material Symbols，Apache 2.0），解析为 `*svg.Document`，可传给任何接受 `qui.VectorSource` 的位置。纯资源 —— 根包与 `widgets` 都不依赖它 |
 | `agent` + `cmd/qui-agent` | 调试协议的传输层：CDP 形态的 JSON-RPC，走 WebSocket 和 `POST /rpc`（默认 UDS，可选 TCP + bearer），含发现、会话、事件与 Chrome DevTools 兼容；`agent/client` 是只依赖标准库的客户端，`cmd/qui-agent` 是基于它的 CLI 和 MCP server。保持 `agent` 精简——各个域在根包的协议注册表里（`protocol*.go`），子包注册自己的域 |
 | `gpu` | 公开的 WebGPU API：重新导出 `internal/wgpu` 绑定（`Device`、`Texture`、`Buffer`、WGSL `ShaderModule`、`RenderPipeline`、`BindGroup`、`CommandEncoder`、`RenderPass` 等）；`gpu.Shared()` 是进程内唯一的设备 |
 | `cmd/qui-dawn` | 一次性安装 Dawn：下载固定版本的 github.com/google/dawn 发布包，核对 SHA-256，把 `libwebgpu_dawn.dylib`（约 8 MB）构建进用户缓存目录；`-o DIR` 另复制一份（例如放进 .app 的 `Contents/Frameworks`） |

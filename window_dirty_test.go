@@ -116,3 +116,25 @@ func TestDirtyRectsPaintSeparately(t *testing.T) {
 		t.Fatalf("repainted %d px, want only the two strips", fr[0].Dirty)
 	}
 }
+
+// A moved rect whose edges fall inside a physical pixel only moves the
+// whole pixels inside it; the partly covered edge pixels must be
+// repainted, or they keep the old content (go-code: a sliver of a git
+// change stripe left behind at the editor's left edge while scrolling).
+func TestScrollPixelsRepaintsFractionalEdges(t *testing.T) {
+	w, s, r := stripesWindow(t)
+	rect := Rect{X: 0.25, Y: 0.25, W: 799.5, H: 599.5} // 0.5 px in from each side at 2x
+	if !w.ScrollPixels(rect, 0, -30) {
+		t.Fatal("declined")
+	}
+	s.off = 30
+	w.Step()
+	got := r.Snapshot()
+	w2, s2, r2 := stripesWindow(t)
+	s2.off = 30
+	w2.Invalidate()
+	w2.Step()
+	if !bytes.Equal(got.Pix, r2.Snapshot().Pix) {
+		t.Fatal("edge pixels the move snapped away kept their old content")
+	}
+}

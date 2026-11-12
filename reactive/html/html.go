@@ -1159,8 +1159,23 @@ func AnchorMenu(el *htmlcss.El, items []MenuItem) {
 // clicking it, so a bar of h.Button triggers whose OnClick calls
 // AnchorMenu slides between menus like a native menu bar.
 func MenuBarMenu(el *htmlcss.El, items []MenuItem) {
+	menuBarMenu(el, items, nil, 0)
+}
+
+// MenuBarMenuStyled is MenuBarMenu with a caller palette + elevation.
+func MenuBarMenuStyled(el *htmlcss.El, items []MenuItem, colors qw.MenuColors, elevation int) {
+	menuBarMenu(el, items, &colors, elevation)
+}
+
+func menuBarMenu(el *htmlcss.El, items []MenuItem, colors *qw.MenuColors, elevation int) {
 	if win, ok := menuWindow(el, items); ok {
-		popup := qw.ShowMenuBarDropdown(win, func() qui.Rect { return el.Bounds() }, toWidgetMenuItems(items))
+		anchor := func() qui.Rect { return el.Bounds() }
+		var popup *qw.Popup
+		if colors != nil {
+			popup = qw.ShowMenuBarDropdownStyled(win, anchor, toWidgetMenuItems(items), *colors, elevation)
+		} else {
+			popup = qw.ShowMenuBarDropdown(win, anchor, toWidgetMenuItems(items))
+		}
 		markExpanded(el, popup)
 		qw.MenuBarHoverSwitch(popup, func(p qui.Point) func() {
 			if s := menuBarSiblingAt(el, p); s != nil {

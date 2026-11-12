@@ -262,6 +262,14 @@ func TestWebGPUDrawsAndHooks(t *testing.T) {
 			t.Errorf("(%d,%d) = %v, want %v", ck.x, ck.y, p, ck.want)
 		}
 	}
+	// Snapshot (agent shots, QUI_SNAPSHOT) must show the GPU content too,
+	// not the blank hole of the CPU layer.
+	snap := r.Snapshot()
+	for _, ck := range checks {
+		if p := pixelAt(snap, ck.x, ck.y); p != ck.want {
+			t.Errorf("Snapshot (%d,%d) = %v, want %v", ck.x, ck.y, p, ck.want)
+		}
+	}
 }
 
 func TestWebGPUTransparentFrame(t *testing.T) {

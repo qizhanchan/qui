@@ -7,6 +7,7 @@ import (
 	"github.com/qizhanchan/qui/htmlcss"
 	"github.com/qizhanchan/qui/reactive"
 	h "github.com/qizhanchan/qui/reactive/html"
+	qw "github.com/qizhanchan/qui/widgets"
 )
 
 // A bar of h.Button triggers that open their menus with AnchorMenu slides
@@ -60,5 +61,24 @@ func TestMenuBarTriggersSwitchOnHover(t *testing.T) {
 	}
 	if _, ok := kids[0].(*htmlcss.El).Attr("aria-expanded"); ok {
 		t.Errorf("File trigger still marked expanded")
+	}
+}
+
+// MenuBarMenuStyled opens a dropdown with the caller's palette and marks
+// the trigger expanded, like MenuBarMenu.
+func TestMenuBarMenuStyled(t *testing.T) {
+	win := qui.NewTestWindow(qui.Size{W: 400, H: 300})
+	ref := new(*htmlcss.El)
+	rt := h.Mount(win, `.bar{display:flex} button{width:60px;height:24px}`, func() h.Node {
+		return h.Div(h.Button("File").RefTo(ref)).Class("menubar bar")
+	})
+	rt.Root().(*htmlcss.El).Layout(qui.Rect{W: 400, H: 300})
+	dark := qw.MenuColors{Background: qui.Color{R: 0.14, G: 0.14, B: 0.14, A: 1}, Foreground: qui.Color{R: 0.75, G: 0.75, B: 0.75, A: 1}}
+	h.MenuBarMenuStyled(*ref, []h.MenuItem{{Label: "Save", ID: "m-save"}}, dark, 2)
+	if len(win.Overlays()) != 1 {
+		t.Fatalf("overlays = %d", len(win.Overlays()))
+	}
+	if v, _ := (*ref).Attr("aria-expanded"); v != "true" {
+		t.Error("trigger not marked expanded")
 	}
 }

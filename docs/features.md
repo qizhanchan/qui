@@ -148,7 +148,7 @@ A catalog of what ships today. For how it is built, see [architecture.md](archit
 | `media` | `AudioPlayer` (service) and `VideoView` (widget) without ffmpeg; AVFoundation backend on macOS. `FrameView` shows frames pushed from any goroutine — `PushCVPixelBuffer` (zero-copy IOSurface through the renderer's `Compositor`, macOS) or `PushRGBA` — latest-wins with no idle cost, fit modes, `MapToFrame` for input, `Stats` / `OnPresent` for latency, raw keyboard. FrameView / VideoView draw only through the `Compositor` path; `VideoFrame.Composite(c, key, src, physDst)` |
 | `webview` | CEF-based embedded browser widget, gated behind `webview_cef`; CPU frame path only, zero-copy IOSurface compositing future; JSON-only JS↔Go bridge |
 | `physics` / `p2` / `p3` | Dimension-independent vocabulary plus mirrored 2D/3D engines: swept AABB, spatial hash, contact flags, one-way platforms, sensors |
-| `icons` | ~135 Material Symbols outlined glyphs as `*svg.Document` |
+| `icons` | ~145 Material Symbols outlined glyphs as `*svg.Document` |
 | `fonts/jetbrainsmono` | Embedded JetBrains Mono; `Use()` swaps the global default family |
 
 ## Tooling
