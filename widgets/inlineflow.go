@@ -48,6 +48,17 @@ type InlineBox struct {
 	haveLay bool
 	// layoutKey fingerprints the inputs the cached layout was built from.
 	layoutKey inlineLayoutKey
+	// fit memoizes the run's max-content size (fitKey: the inputs it was
+	// built from). At any width at least that wide the run lays out
+	// unbroken, so Measure answers without shaping it again: layout
+	// engines probe a child at many widths per pass (nested flex items),
+	// more than the measure memo keeps, and each miss re-shaped the text.
+	// fitOK records that a bounded layout was checked to match it (an
+	// aligned or right-to-left run spans its slot instead; fitBad).
+	fit           Size
+	fitKey        inlineLayoutKey
+	haveFit       bool
+	fitOK, fitBad bool
 
 	// Cross-widget text selection state (qui.TextSelectable). Offsets are
 	// rune indices into the LAID-OUT text: fragment texts in visual order,
@@ -115,6 +126,7 @@ func (b *InlineBox) AddLinkText(text string, font Font, color Color, deco TextDe
 	}
 	b.parts = append(b.parts, inlinePart{text: text, font: font, color: color, deco: deco, decoPaint: decoPaint, href: href, linkSrc: source})
 	b.haveLay = false
+	b.haveFit = false
 	b.InvalidateLayout()
 }
 
@@ -134,6 +146,7 @@ func (b *InlineBox) AddBox(w Widget, valign InlineVAlign) {
 	}
 	b.parts = append(b.parts, inlinePart{isBox: true, child: w, valign: valign})
 	b.haveLay = false
+	b.haveFit = false
 	b.InvalidateLayout()
 }
 
@@ -141,6 +154,7 @@ func (b *InlineBox) AddBox(w Widget, valign InlineVAlign) {
 func (b *InlineBox) AddBreak() {
 	b.parts = append(b.parts, inlinePart{text: "\n"})
 	b.haveLay = false
+	b.haveFit = false
 	b.InvalidateLayout()
 }
 
@@ -152,6 +166,7 @@ func (b *InlineBox) Clear() {
 	b.parts = b.parts[:0]
 	b.ClearChildren()
 	b.haveLay = false
+	b.haveFit = false
 	b.selStart, b.selEnd = -1, 0
 	b.InvalidateLayout()
 }
@@ -309,9 +324,69 @@ func (b *InlineBox) MinContentWidth() float32 {
 	return BuildInlineLayout(b.buildItems(0.01), opts).Width
 }
 
+// MeasuresByWidthOnly implements qui.WidthOnlyMeasurer: the run's size
+// follows from the width its lines break at (buildLayout).
+func (b *InlineBox) MeasuresByWidthOnly() bool { return true }
+
 func (b *InlineBox) Measure(available Size) Size {
+	if sz, ok := b.measureFit(available.W); ok {
+		return sz
+	}
 	b.buildLayout(available.W)
 	return Size{W: b.layout.Width, H: b.layout.Height}
+}
+
+// measureFit answers Measure from the max-content size when the run fits
+// unbroken at width w (see fit), or does not wrap and is wider than w. An
+// atomic box may size itself from the width: a run holding boxes keys the
+// memo on their sizes at w.
+func (b *InlineBox) measureFit(w float32) (Size, bool) {
+	if w <= 0 {
+		return Size{}, false
+	}
+	hasBox := false
+	for _, p := range b.parts {
+		if p.isBox {
+			hasBox = true
+			break
+		}
+	}
+	key := b.layoutKeyFor(0)
+	itemsW := float32(0)
+	if hasBox {
+		// The boxes as they measure at this width: the memo holds while
+		// they keep those sizes.
+		key.childSig, itemsW = b.childLayoutSig(w), w
+	}
+	if !b.haveFit || b.fitKey != key {
+		l := BuildInlineLayout(b.buildItems(itemsW), b.options(0))
+		b.fit = Size{W: l.Width, H: l.Height}
+		b.fitKey, b.haveFit = key, true
+		b.fitOK, b.fitBad = false, false
+	}
+	// Half a pixel of slack: at exactly its own width a run can break on
+	// rounding.
+	if w < b.fit.W+0.5 {
+		// An unwrapped run narrower than its slot lays out unbounded: it
+		// breaks nowhere, and alignment only shifts lines into room left
+		// over — there is none.
+		if !b.Wrap {
+			return b.fit, true
+		}
+		return Size{}, false
+	}
+	if b.fitBad {
+		return Size{}, false
+	}
+	if !b.fitOK {
+		b.buildLayout(w)
+		if (Size{W: b.layout.Width, H: b.layout.Height}) != b.fit {
+			b.fitBad = true
+			return Size{}, false
+		}
+		b.fitOK = true
+	}
+	return b.fit, true
 }
 
 func (b *InlineBox) Layout(rect Rect) {

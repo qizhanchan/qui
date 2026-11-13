@@ -122,3 +122,64 @@ func BenchmarkInlineRemeasure(b *testing.B) {
 		box.Measure(Size{W: 400})
 	}
 }
+
+// Measured at widths it fits in, a run answers its max-content size
+// without shaping again — and the answer is the one a full layout gives,
+// whatever the alignment (a centred run checks, then lays out per width).
+func TestInlineMeasureFitMatchesLayout(t *testing.T) {
+	for _, align := range []TextAlign{TextAlignStart, TextAlignCenter, TextAlignEnd} {
+		b := inlineWithText("short run")
+		b.Wrap = true
+		b.Align = align
+		ref := inlineWithText("short run")
+		ref.Wrap = true
+		ref.Align = align
+		for _, w := range []float32{1000, 400, 999, 30, 250, 1000, 61} {
+			got := b.Measure(Size{W: w, H: 17})
+			ref.buildLayout(w)
+			want := Size{W: ref.layout.Width, H: ref.layout.Height}
+			if got != want {
+				t.Fatalf("align %v width %v: measured %+v, want %+v", align, w, got, want)
+			}
+		}
+	}
+	// An unwrapped run measured narrower than itself: the unbounded size.
+	for _, align := range []TextAlign{TextAlignStart, TextAlignCenter, TextAlignEnd} {
+		b := inlineWithText("a long unwrapped line of code")
+		b.Align = align
+		ref := inlineWithText("a long unwrapped line of code")
+		ref.Align = align
+		for _, w := range []float32{40, 90, 2000, 60} {
+			got := b.Measure(Size{W: w})
+			ref.buildLayout(w)
+			if want := (Size{W: ref.layout.Width, H: ref.layout.Height}); got != want {
+				t.Fatalf("nowrap align %v width %v: measured %+v, want %+v", align, w, got, want)
+			}
+		}
+	}
+	// A run holding an atomic box of a fixed size qualifies too.
+	{
+		mk := func() *InlineBox {
+			b := inlineWithText("before ")
+			lbl := NewLabel("boxed")
+			b.AddBox(lbl, 0)
+			b.AddText(" after", Font{Size: 14}, Color{A: 1}, TextDecoration(0), "")
+			return b
+		}
+		b, ref := mk(), mk()
+		for _, w := range []float32{30, 500, 70, 900} {
+			got := b.Measure(Size{W: w})
+			ref.buildLayout(w)
+			if want := (Size{W: ref.layout.Width, H: ref.layout.Height}); got != want {
+				t.Fatalf("boxed run width %v: measured %+v, want %+v", w, got, want)
+			}
+		}
+	}
+	// New content drops the memo.
+	b := inlineWithText("short run")
+	before := b.Measure(Size{W: 1000})
+	b.AddText(" and a good deal more text", Font{Size: 14}, Color{A: 1}, TextDecoration(0), "")
+	if after := b.Measure(Size{W: 1000}); after.W <= before.W {
+		t.Fatalf("width after AddText %v, want more than %v", after.W, before.W)
+	}
+}

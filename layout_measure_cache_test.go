@@ -137,3 +137,52 @@ func TestMeasureInvalidatedMidCallIsNotCached(t *testing.T) {
 		t.Fatalf("second measure = %v, want the post-invalidation size (stale entry cached)", got)
 	}
 }
+
+// widthOnlyLeaf is a countingLeaf whose size depends on the width only.
+type widthOnlyLeaf struct{ countingLeaf }
+
+func (*widthOnlyLeaf) MeasuresByWidthOnly() bool { return true }
+
+// A widget measured by width only (inline text) is memoized per width:
+// layout engines probe it at many heights in one pass, and keyed on both
+// those entries crowded the memo so every frame re-measured it.
+func TestMeasureChildWidthOnlyIgnoresHeight(t *testing.T) {
+	skipUnderCacheVerify(t)
+	l := &widthOnlyLeaf{countingLeaf{BaseWidget: NewBaseWidget(), size: Size{W: 20, H: 10}}}
+	l.SetSelf(l)
+	for frame := 0; frame < 3; frame++ {
+		for _, w := range []float32{100, 200, 300, 400} {
+			for _, h := range []float32{0, 17, 35, 71, 500} {
+				MeasureChild(l, Size{W: w, H: h})
+			}
+		}
+	}
+	if l.calls != 4 {
+		t.Fatalf("measured %d times, want 4 (once per width)", l.calls)
+	}
+	// Other widgets still key on both.
+	c := newCountingLeaf(Size{W: 20, H: 10})
+	MeasureChild(c, Size{W: 100, H: 0})
+	MeasureChild(c, Size{W: 100, H: 50})
+	if c.calls != 2 {
+		t.Fatalf("plain widget measured %d times, want 2", c.calls)
+	}
+}
+
+// Nested flex probes a child under more constraints per pass than the old
+// memo of 6 kept; a second pass over the same constraints must hit.
+func TestMeasureChildKeepsAPassOfConstraints(t *testing.T) {
+	skipUnderCacheVerify(t)
+	l := newCountingLeaf(Size{W: 20, H: 10})
+	pass := func() {
+		for i := 0; i < 12; i++ {
+			MeasureChild(l, Size{W: float32(100 + i), H: float32(i % 3)})
+		}
+	}
+	pass()
+	first := l.calls
+	pass()
+	if l.calls != first {
+		t.Fatalf("second pass measured %d more times, want 0", l.calls-first)
+	}
+}

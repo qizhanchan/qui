@@ -125,3 +125,73 @@ func TestScopedRestylePortalRootScope(t *testing.T) {
 		t.Fatalf("portal background = %+v, want blue", got)
 	}
 }
+
+// Resizing an element through its style attribute (a dragged panel
+// border) re-applies that element only: its descendants compute the very
+// style they had, so they keep their widgets, inline runs and cached
+// measurements. Re-applying them rebuilt every text run below and
+// re-shaped all of it on each frame of the drag.
+func TestScopedRestyleKeepsUnchangedDescendants(t *testing.T) {
+	eng, body, s1, _, p1, p2, _, _ := scopedFixture(t, `p { color: #ff0000 }`)
+	qui.MeasureChild(body, qui.Size{W: 400})
+	if p1.IsLayoutDirty() {
+		t.Fatal("fixture left p1 dirty")
+	}
+	kids := p1.ChildList()
+
+	before := eng.applied
+	s1.SetAttr("style", "height: 120px")
+	if got := eng.applied - before; got != 1 {
+		t.Fatalf("style change re-applied %d elements, want 1 (section1 only)", got)
+	}
+	if s1.lastCS.Height != 120 {
+		t.Fatalf("section1 height = %v, want 120", s1.lastCS.Height)
+	}
+	// p1 kept its widgets (its inline run was not rebuilt).
+	if k := p1.ChildList(); len(k) != len(kids) || (len(k) > 0 && k[0] != kids[0]) {
+		t.Fatal("p1's children were rebuilt")
+	}
+	// A change that does reach the descendants still applies to them.
+	s1.SetAttr("style", "height: 120px; color: #0000ff")
+	if c := p1.lastCS.Color; c.B > 0.9 {
+		t.Fatalf("p overrides color, got %+v", c)
+	}
+	s1.SetAttr("style", "height: 120px; font-size: 20px")
+	if p2.lastCS.FontSize != 20 {
+		t.Fatalf("p2 font size = %v, want inherited 20", p2.lastCS.FontSize)
+	}
+}
+
+// A style attribute change restyles the element alone unless it changes
+// something its subtree inherits — or the sheet selects on [style].
+func TestStyleAttrRestyleScope(t *testing.T) {
+	eng, _, s1, _, p1, _, _, _ := scopedFixture(t, `p { margin: 2px }`)
+	before := eng.styled
+	s1.SetAttr("style", "height: 90px")
+	if walked := eng.styled - before; walked != 1 {
+		t.Fatalf("height change walked %d elements, want 1", walked)
+	}
+	before = eng.styled
+	s1.SetAttr("style", "height: 90px; color: #00ff00")
+	if walked := eng.styled - before; walked != 3 {
+		t.Fatalf("inherited color change walked %d elements, want 3 (section + 2 p)", walked)
+	}
+	if c := p1.lastCS.Color; c.G < 0.9 {
+		t.Fatalf("p1 color %+v, want inherited green", c)
+	}
+
+	// State variants (an :active rule) carry the size too.
+	eng3, _, s3, _, _, _, _, _ := scopedFixture(t, `section:active { background: #111111 } section:hover { color: #222222 }`)
+	before = eng3.styled
+	s3.SetAttr("style", "height: 70px")
+	if walked := eng3.styled - before; walked != 1 {
+		t.Fatalf("height change with state variants walked %d elements, want 1", walked)
+	}
+
+	eng2, _, s, _, q1, _, _, _ := scopedFixture(t, `section[style] p { color: #0000ff }`)
+	s.SetAttr("style", "height: 50px")
+	if c := q1.lastCS.Color; c.B < 0.9 {
+		t.Fatalf("[style] selector not re-matched: p color %+v", c)
+	}
+	_ = eng2
+}

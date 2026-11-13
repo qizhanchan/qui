@@ -54,10 +54,16 @@ type StyleEngine struct {
 	// changed, or an inline child folded into their runs did.
 	reflow  map[*El]bool
 	pending bool
+	// mustApply, during a scoped flush, holds the elements that were
+	// dirtied or need a reflow: they re-apply their style even when it
+	// computes the same (restyleWalk).
+	mustApply map[*El]bool
 
-	// styled counts applyComputed calls across the engine's lifetime.
-	// Test-only observability for asserting restyle scope; no runtime use.
-	styled int
+	// styled counts the elements restyle walks reached, applied those
+	// that re-applied their style (applyComputed), across the engine's
+	// lifetime. Test-only observability for asserting restyle scope; no
+	// runtime use.
+	styled, applied int
 	// pass counts restyle walks; El.styledPass records the last one that
 	// reached an element.
 	pass int
@@ -290,9 +296,14 @@ func (eng *StyleEngine) Root() *El { return eng.root }
 type dirtyKind uint8
 
 const (
+	// dirtyStyleAttr: only the element's style attribute changed. No
+	// selector reads it (unless the sheet has a [style] clause — then the
+	// change is dirtySelf), so the element alone is restyled, and its
+	// descendants only when it changed something they inherit.
+	dirtyStyleAttr dirtyKind = iota
 	// dirtySelf: the element's own subtree (its attributes or text changed
 	// and nothing in the sheet lets that affect a sibling or an ancestor).
-	dirtySelf dirtyKind = iota
+	dirtySelf
 	// dirtyParent: the parent's subtree — the element and every sibling.
 	dirtyParent
 )
@@ -348,6 +359,58 @@ func (eng *StyleEngine) markDirty(e *El) {
 		eng.addReflow(p)
 	}
 	eng.markDirtyKind(e, dirtySelf)
+}
+
+// markStyleAttr records an element whose style attribute changed (see
+// dirtyStyleAttr): a resize through it (a dragged panel border) restyles
+// that element, not everything inside it.
+func (eng *StyleEngine) markStyleAttr(e *El) {
+	if eng.mentionsAttr("style") {
+		eng.markDirty(e)
+		return
+	}
+	if p := e.elParent; p != nil && p.flowKids != nil {
+		eng.addReflow(p)
+	}
+	eng.markDirtyKind(e, dirtyStyleAttr)
+}
+
+// mentionsAttr reports whether any author or framework selector has an
+// attribute clause on name.
+func (eng *StyleEngine) mentionsAttr(name string) bool {
+	if eng.sheet != nil && rulesMentionAttr(eng.sheet.Rules, name) {
+		return true
+	}
+	frameworkCSS.mu.RLock()
+	defer frameworkCSS.mu.RUnlock()
+	return rulesMentionAttr(frameworkCSS.rules, name)
+}
+
+func rulesMentionAttr(rules []Rule, name string) bool {
+	for _, r := range rules {
+		if selectorsMentionAttr(r.Selectors, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func selectorsMentionAttr(sels []Selector, name string) bool {
+	for _, sel := range sels {
+		for _, c := range sel.parts {
+			for _, a := range c.sel.attrs {
+				if a.name == name {
+					return true
+				}
+			}
+			for _, p := range c.sel.pseudos {
+				if selectorsMentionAttr(p.args, name) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // markReflow records e for an arrangement rebuild (see reflow) and
@@ -488,22 +551,38 @@ func (eng *StyleEngine) flush() {
 		return
 	}
 	scopes := map[*El]bool{}
+	// attrOnly are scopes reached only by a style-attribute change: the
+	// element is restyled, its subtree only as far as it changed what the
+	// subtree inherits (restyleAttrScope).
+	attrOnly := map[*El]bool{}
 	for e, k := range dirty {
 		s := e.restyleScope()
-		if k == dirtySelf {
+		switch k {
+		case dirtySelf:
 			s = e.selfScope()
+		case dirtyStyleAttr:
+			s = e.selfScope()
+			if s == e {
+				attrOnly[e] = true
+			}
 		}
 		if s != nil {
 			scopes[s] = true
 		}
 		// nil scope: detached element — styled when (re)adopted.
 	}
-	// Prune scopes nested inside another scope, so a burst that builds a
-	// whole new subtree (every new element dirty) collapses to the one
-	// scope around the adoption point.
+	for s := range attrOnly {
+		if k, ok := dirty[s]; ok && k != dirtyStyleAttr {
+			delete(attrOnly, s)
+		}
+	}
+	// Prune scopes nested inside another full scope, so a burst that
+	// builds a whole new subtree (every new element dirty) collapses to the
+	// one scope around the adoption point. An attribute-only scope may not
+	// reach its subtree, so it prunes nothing.
 	for s := range scopes {
 		for p := s.inheritParent(); p != nil; p = p.inheritParent() {
-			if scopes[p] {
+			if scopes[p] && !attrOnly[p] {
 				delete(scopes, s)
 				break
 			}
@@ -519,14 +598,85 @@ func (eng *StyleEngine) flush() {
 	}
 	eng.pass++
 	eng.scoped = true
-	defer func() { eng.scoped = false }()
+	eng.mustApply = make(map[*El]bool, len(dirty)+len(reflow))
+	for e := range dirty {
+		eng.mustApply[e] = true
+	}
+	for e := range reflow {
+		eng.mustApply[e] = true
+	}
+	defer func() { eng.scoped, eng.mustApply = false, nil }()
 	for s := range scopes {
 		var parentCS *ComputedStyle
 		if p := s.inheritParent(); p != nil {
 			parentCS = p.lastCS
 		}
+		if attrOnly[s] {
+			eng.restyleAttrScope(s, parentCS)
+			continue
+		}
 		eng.restyleWalk(s, parentCS)
 	}
+}
+
+// restyleAttrScope restyles e after a change to its style attribute alone,
+// and walks its subtree only when the change reaches what the subtree
+// inherits: resizing an element leaves everything inside it as it was.
+func (eng *StyleEngine) restyleAttrScope(e *El, parent *ComputedStyle) {
+	prev := e.lastCS
+	cs := computeNode(e.node, eng.sheet, parent)
+	eng.styled++
+	e.styledPass = eng.pass
+	e.styledIn = e.elParent
+	e.structRel = eng.structRelevant(e.node)
+	eng.applied++
+	e.applyComputed(cs)
+	if prev != nil && prev != cs && !reflect.DeepEqual(layoutView(prev), layoutView(cs)) {
+		e.invalidateStyledLayout()
+	}
+	if prev != nil && reflect.DeepEqual(inheritView(prev), inheritView(cs)) {
+		return
+	}
+	for _, kid := range e.elementKids {
+		if ke, ok := kid.(*El); ok {
+			eng.restyleWalk(ke, cs)
+		}
+	}
+	for k := range e.styleKids {
+		eng.restyleWalk(k, cs)
+	}
+}
+
+// inheritView returns cs with the element's own box sizes cleared — the
+// properties a style attribute most often changes and no descendant
+// inherits or resolves against at style time (percentages resolve at
+// layout). Two styles equal under it style the subtree alike.
+func inheritView(cs *ComputedStyle) *ComputedStyle {
+	if cs == nil {
+		return nil
+	}
+	v := *cs
+	// The state variants carry the element's sizes as well.
+	v.Hover, v.Focus, v.Active, v.FocusVisible = inheritView(cs.Hover), inheritView(cs.Focus), inheritView(cs.Active), inheritView(cs.FocusVisible)
+	v.AncestorHover, v.AncestorFocus, v.AncestorActive = inheritView(cs.AncestorHover), inheritView(cs.AncestorFocus), inheritView(cs.AncestorActive)
+	v.Width, v.HasWidth, v.Height, v.HasHeight = 0, false, 0, false
+	v.WidthPct, v.HeightPct = 0, 0
+	v.MinWidth, v.MinHeight, v.MaxWidth, v.MaxHeight = 0, 0, 0, 0
+	v.MinWidthPct, v.MinHeightPct, v.MaxWidthPct, v.MaxHeightPct = 0, 0, 0, 0
+	// The merged declarations carry them too (children read the parent's
+	// only for inherited extension properties, never these).
+	v.raw = make(map[string]string, len(cs.raw))
+	for k, val := range cs.raw {
+		if !boxSizeProp[k] {
+			v.raw[k] = val
+		}
+	}
+	return &v
+}
+
+var boxSizeProp = map[string]bool{
+	"width": true, "height": true, "min-width": true, "min-height": true,
+	"max-width": true, "max-height": true,
 }
 
 // restyleWalk recomputes and re-applies CSS for e's subtree, top-down so
@@ -545,6 +695,24 @@ func (eng *StyleEngine) restyleWalk(e *El, parent *ComputedStyle) {
 	e.styledIn = e.elParent
 	e.structRel = !e.isTextSeg() && eng.structRelevant(e.node)
 	prev := e.lastCS
+	// A scoped walk reaches the whole subtree of what changed, but an
+	// element that is not itself dirty and computes the very style it has
+	// keeps its widgets as they are (Chrome restyles only what the change
+	// invalidates): re-applying rebuilds its inline flow and drops every
+	// cached measurement below it, so resizing a panel through its style
+	// re-shaped all the text inside, every frame of the drag.
+	if eng.scoped && prev != nil && !eng.mustApply[e] && reflect.DeepEqual(prev, cs) {
+		for _, kid := range e.elementKids {
+			if ke, ok := kid.(*El); ok {
+				eng.restyleWalk(ke, prev)
+			}
+		}
+		for k := range e.styleKids {
+			eng.restyleWalk(k, prev)
+		}
+		return
+	}
+	eng.applied++
 	e.applyComputed(cs)
 	// applyComputed rebuilds widget state straight from cs, partly through
 	// plain fields (layout engines, paragraph flags) that don't invalidate

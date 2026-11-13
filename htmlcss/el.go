@@ -478,6 +478,10 @@ func (e *El) setAttr(k, v string) {
 	if k == "placeholder" {
 		e.applyPlaceholder(v)
 	}
+	if k == "style" && e.engine != nil {
+		e.engine.markStyleAttr(e)
+		return
+	}
 	e.markDirty()
 }
 

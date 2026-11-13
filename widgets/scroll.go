@@ -239,7 +239,7 @@ func (s *ScrollView) Measure(available Size) Size {
 	// inside only needs 76 px. The vertical case is symmetric.
 	out := available
 	if s.Content != nil && s.FitContent {
-		natural := s.Content.Measure(available)
+		natural := s.fitNatural(available)
 		// A non-positive extent is unconstrained: report the content's.
 		if s.Orientation == ScrollHorizontal && (out.W <= 0 || natural.W < out.W) {
 			out.W = natural.W
@@ -257,6 +257,27 @@ func (s *ScrollView) Measure(available Size) Size {
 		}
 	}
 	return out
+}
+
+// fitNatural is the content's size for FitContent. Content that overflows
+// the box unbounded (measured with the scroll axis open, which only the
+// cross axis keys, so it stays memoized while the box resizes) fills the
+// box at any bounded size too; the box then takes available whole and the
+// bounded measurement is skipped. Re-measuring large content at every
+// height of a dragged panel border made each frame of the drag re-measure
+// all of it. Smaller content is measured bounded, as before.
+func (s *ScrollView) fitNatural(available Size) Size {
+	open := Size{W: available.W}
+	main := func(sz Size) float32 { return sz.H }
+	if s.Orientation == ScrollHorizontal {
+		open = Size{H: available.H}
+		main = func(sz Size) float32 { return sz.W }
+	}
+	natural := MeasureChild(s.Content, open)
+	if avail := main(available); avail > 0 && main(natural) >= avail {
+		return natural
+	}
+	return s.Content.Measure(available)
 }
 
 func (s *ScrollView) Layout(rect Rect) {

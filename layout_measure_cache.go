@@ -34,9 +34,12 @@ import (
 var layoutCacheVerify = envFlag("QUI_DEBUG_LAYOUT_CACHE")
 
 // measureCacheSize bounds the per-widget entries. A widget is measured
-// under a handful of distinct constraints per pass (natural, cross-axis
-// stretch, the final slot); more than this and the oldest is replaced.
-const measureCacheSize = 6
+// under several distinct constraints per pass (natural, cross-axis
+// stretch, the final slot — and every level of nested flex probes again);
+// more than this and the oldest is replaced. At 6 a flex row nested a few
+// levels deep (a diff line) cycled through more keys than that every pass
+// and never hit: each frame of a panel resize re-measured the whole diff.
+const measureCacheSize = 16
 
 // layoutEpoch is bumped for changes that can alter any widget's measured
 // size without passing through its own InvalidateLayout.
@@ -93,6 +96,17 @@ func (c *measureCache) store(avail, size Size) {
 	c.next = (c.next + 1) % measureCacheSize
 }
 
+// WidthOnlyMeasurer is implemented by a widget whose Measure depends on
+// the available width alone (a run of inline text: its lines break at the
+// width, its height follows from them). MeasureChild then keys its memo on
+// the width only. Layout engines probe such a child at many heights in one
+// pass (flex cross sizes, flow block sizes); keyed on both, the entries
+// for one width crowded each other out of the small memo and every frame
+// re-shaped the text.
+type WidthOnlyMeasurer interface {
+	MeasuresByWidthOnly() bool
+}
+
 // measureCacher is satisfied by every widget embedding BaseWidget.
 type measureCacher interface {
 	measureCacheRef() *measureCache
@@ -111,7 +125,11 @@ func MeasureChild(w Widget, avail Size) Size {
 	}
 	c := mc.measureCacheRef()
 	epoch := currentMeasureEpoch()
-	if size, hit := c.lookup(avail, epoch); hit {
+	key := avail
+	if wo, ok := w.(WidthOnlyMeasurer); ok && wo.MeasuresByWidthOnly() {
+		key.H = 0
+	}
+	if size, hit := c.lookup(key, epoch); hit {
 		if layoutCacheVerify.Load() {
 			verifyMeasure(w, avail, size)
 		}
@@ -122,7 +140,7 @@ func MeasureChild(w Widget, avail Size) Size {
 	// Only keep a result nothing invalidated while it was being computed
 	// (a descendant's Measure may adjust state and InvalidateLayout).
 	if c.version == version && c.epoch == currentMeasureEpoch() {
-		c.store(avail, size)
+		c.store(key, size)
 	}
 	return size
 }
