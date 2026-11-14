@@ -1,9 +1,11 @@
 package qui
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 )
 
 // DiagnosticSeverity classifies a layout diagnostic.
@@ -296,7 +298,48 @@ func (w *Window) handleAgentOverlayShortcut(ke KeyEvent) bool {
 	return true
 }
 
+var agentOverlayShortcut struct {
+	sync.Mutex
+	set      bool
+	key      Key
+	mods     Modifiers
+	disabled bool
+}
+
+// SetAgentOverlayShortcut moves the built-in agent overlay toggle
+// (default Cmd+Shift+A / Ctrl+Shift+A) to spec, in ParseShortcut's
+// spelling, for every window of the process. An empty spec disables the
+// shortcut (ToggleAgentOverlay still works). Apps whose own keymap wants
+// Cmd+Shift+A — an IDE's Find Action — call this at startup.
+func SetAgentOverlayShortcut(spec string) error {
+	agentOverlayShortcut.Lock()
+	defer agentOverlayShortcut.Unlock()
+	if strings.TrimSpace(spec) == "" {
+		agentOverlayShortcut.set, agentOverlayShortcut.disabled = true, true
+		return nil
+	}
+	k, m, err := ParseShortcut(spec)
+	if err != nil {
+		return err
+	}
+	if k == KeyUnknown {
+		return fmt.Errorf("qui: no key in shortcut %q", spec)
+	}
+	agentOverlayShortcut.set, agentOverlayShortcut.disabled = true, false
+	agentOverlayShortcut.key, agentOverlayShortcut.mods = k, m
+	return nil
+}
+
 func defaultAgentOverlayShortcut() (Key, Modifiers, error) {
+	agentOverlayShortcut.Lock()
+	set, dis, k, m := agentOverlayShortcut.set, agentOverlayShortcut.disabled, agentOverlayShortcut.key, agentOverlayShortcut.mods
+	agentOverlayShortcut.Unlock()
+	if set {
+		if dis {
+			return KeyUnknown, 0, errors.New("qui: agent overlay shortcut disabled")
+		}
+		return k, m, nil
+	}
 	if MacKeyboard() {
 		return KeyA, ModSuper | ModShift, nil
 	}
