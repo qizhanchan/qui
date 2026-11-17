@@ -345,18 +345,19 @@ func (eng *StyleEngine) structRelevant(n *Node) bool {
 // concerns it (now or at its last style: a sibling combinator lets its
 // attributes reach the following siblings) or its parent (:empty).
 func (eng *StyleEngine) markDirty(e *El) {
+	// A child folded into its parent's inline runs shows in the parent:
+	// rebuild those after restyling the child. Record the reflow before
+	// marking the child dirty, since without a window the mark flushes at
+	// once. The structural case needs it too: a scoped walk from the parent
+	// skips re-applying a parent whose own style is unchanged unless it is
+	// marked for reflow, so its run would keep the child's old text.
+	if p := e.elParent; p != nil && p.flowKids != nil {
+		eng.addReflow(p)
+	}
 	if _, _, structural := eng.sheetFlags(); structural &&
 		(e.structRel || eng.structRelevant(e.node) || e.elParent != nil && eng.structRelevant(e.elParent.node)) {
 		eng.markDirtyKind(e, dirtyParent)
 		return
-	}
-	// A child folded into its parent's inline runs shows in the parent:
-	// rebuild those after restyling the child (record the child first —
-	// without a window either call flushes at once).
-	p := e.elParent
-	folded := p != nil && p.flowKids != nil
-	if folded {
-		eng.addReflow(p)
 	}
 	eng.markDirtyKind(e, dirtySelf)
 }
