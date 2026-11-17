@@ -8,9 +8,9 @@ import . "github.com/qizhanchan/qui"
 // the bottom and Left/Right keys + DeltaY/DeltaX wheel input scroll
 // along X.
 //
-// 2D scrolling (both axes simultaneously) is out of scope for v1; if a
-// caller needs it they can nest a horizontal ScrollView inside a
-// vertical one. The two scroll states are independent that way.
+// Both axes at once (CSS `overflow: auto` on x and y): a vertical view with
+// CrossScroll also scrolls X over whatever its content lays out past the
+// viewport's right edge.
 type ScrollOrientation uint8
 
 const (
@@ -125,6 +125,19 @@ type ScrollView struct {
 	// to a single row. Off, the viewport fills whatever it is given.
 	FitContent bool
 
+	// CrossScroll makes a vertical view scroll on X too, like a CSS box with
+	// `overflow: auto` on both axes: the content is still laid out at the
+	// viewport's width, and whatever of it overflows to the right (the
+	// widest descendant's right edge — CSS scrollable overflow) can be
+	// scrolled into view with a horizontal bar, DeltaX wheel input and
+	// the Left / Right keys.
+	CrossScroll bool
+	// scrollX is the CrossScroll offset; overflowW the content's
+	// scrollable width at the last layout.
+	scrollX   float32
+	overflowW float32
+	barDragX  ScrollBarDrag
+
 	// OnScroll, when set, is invoked whenever the scroll offset changes
 	// value (wheel, drag, track click, keys, or ScrollTo). Hosts use it
 	// to mirror scroll position across panes.
@@ -220,7 +233,8 @@ func (s *ScrollView) ChildList() []Widget {
 
 func (s *ScrollView) Focusable() bool { return s.Enabled() && !s.FocusDelegated }
 func (s *ScrollView) CancelInteraction() {
-	if s.barDrag.End() {
+	ended := s.barDrag.End()
+	if s.barDragX.End() || ended {
 		s.Invalidate()
 	}
 }
@@ -300,6 +314,47 @@ func (s *ScrollView) Layout(rect Rect) {
 	r := s.contentRect()
 	MeasureChild(s.Content, Size{W: r.W, H: r.H})
 	s.Content.Layout(r)
+	if s.crossScrolls() {
+		s.overflowW = scrollableWidth(s.Content, r.X)
+	} else {
+		s.overflowW = 0
+	}
+	s.clampX(s.scrollX)
+}
+
+// crossScrolls reports whether the view scrolls on X as well.
+func (s *ScrollView) crossScrolls() bool {
+	return s.CrossScroll && s.Orientation == ScrollVertical
+}
+
+// scrollableWidth is how far right of originX w's subtree reaches: the
+// right edge of every visible descendant, not looking inside one that
+// clips its children (overflow: hidden, a nested scroller) — what CSS
+// counts as a scroll container's scrollable overflow.
+func scrollableWidth(w Widget, originX float32) float32 {
+	var right float32
+	var walk func(Widget)
+	walk = func(w Widget) {
+		if w == nil || boxChildHidden(w) {
+			return
+		}
+		if b := w.Bounds(); b.W > 0 && b.X+b.W > right {
+			right = b.X + b.W
+		}
+		if _, ok := w.(PaintClipper); ok {
+			return
+		}
+		if c, ok := w.(interface{ ClipsChildren() bool }); ok && c.ClipsChildren() {
+			return
+		}
+		if cl, ok := w.(ChildLister); ok {
+			for _, k := range cl.ChildList() {
+				walk(k)
+			}
+		}
+	}
+	walk(w)
+	return max(0, right-originX)
 }
 
 // contentRect is the rect the content is laid out at: the viewport
@@ -356,7 +411,7 @@ func (s *ScrollView) contentTranslation() (dx, dy float32) {
 	if s.Orientation == ScrollHorizontal {
 		return -s.scrollOff, 0
 	}
-	return 0, -s.scrollOff
+	return -s.scrollX, -s.scrollOff
 }
 
 // ChildInteractionTransform maps the content subtree's retained (content-
@@ -455,6 +510,9 @@ func (s *ScrollView) Draw(canvas Canvas) {
 	if s.hasBar() {
 		s.drawBar(canvas)
 	}
+	if s.hasXBar() {
+		s.barX().Draw(canvas, s.barDragX.Active, s.BarColors)
+	}
 }
 
 func (s *ScrollView) Handle(event Event) bool {
@@ -486,13 +544,25 @@ func (s *ScrollView) Handle(event Event) bool {
 					return true
 				}
 			}
+			if s.hasXBar() {
+				if off, hit := s.barX().Press(Point{X: e.X, Y: e.Y}, &s.barDragX); hit {
+					s.ScrollToX(off)
+					s.Invalidate()
+					return true
+				}
+			}
 		case EventMouseMove:
 			if s.barDrag.Active {
 				s.ScrollTo(s.barDrag.Offset(s.bar(), Point{X: e.X, Y: e.Y}))
 				return true
 			}
+			if s.barDragX.Active {
+				s.ScrollToX(s.barDragX.Offset(s.barX(), Point{X: e.X, Y: e.Y}))
+				return true
+			}
 		case EventMouseUp:
-			if s.barDrag.End() {
+			ended := s.barDrag.End()
+			if s.barDragX.End() || ended {
 				s.Invalidate()
 				return true
 			}
@@ -512,6 +582,9 @@ func (s *ScrollView) Handle(event Event) bool {
 // list inside a scrolling page used to eat every wheel over it. A trackpad
 // gesture latches to the view its first event scrolled (see wheelLatched).
 func (s *ScrollView) wheel(e MouseEvent) bool {
+	if s.crossScrolls() {
+		return s.wheel2D(e)
+	}
 	delta := s.scrollDeltaFor(e.DeltaX, e.DeltaY)
 	switch e.ScrollPhase {
 	case GesturePhaseBegan:
@@ -549,6 +622,50 @@ func (s *ScrollView) wheel(e MouseEvent) bool {
 	return true
 }
 
+// wheel2D is wheel for a view scrolling both axes: DeltaY moves Y and
+// DeltaX moves X, with the same chaining and gesture latching.
+func (s *ScrollView) wheel2D(e MouseEvent) bool {
+	dy, dx := -e.DeltaY, -e.DeltaX
+	apply := func() {
+		if dy != 0 {
+			s.scrollBy(s.wheelPixels(dy, e.ScrollPhase))
+		}
+		if dx != 0 {
+			s.ScrollToX(s.scrollX + s.wheelPixels(dx, e.ScrollPhase))
+		}
+	}
+	switch e.ScrollPhase {
+	case GesturePhaseBegan:
+		s.wheelLatched = false
+	case GesturePhaseChanged, GesturePhaseMomentum:
+		if s.wheelLatched {
+			apply()
+			return true
+		}
+	case GesturePhaseEnded, GesturePhaseCancelled:
+		latched := s.wheelLatched
+		if e.ScrollPhase == GesturePhaseCancelled || (dx == 0 && dy == 0) {
+			s.wheelLatched = false
+		}
+		if latched {
+			apply()
+			return true
+		}
+	}
+	if dx == 0 && dy == 0 {
+		return false
+	}
+	oldY, oldX := s.scrollOff, s.scrollX
+	apply()
+	if s.scrollOff == oldY && s.scrollX == oldX {
+		return false
+	}
+	if e.ScrollPhase != GesturePhaseNone {
+		s.wheelLatched = true
+	}
+	return true
+}
+
 // ScrollKey applies the view's keyboard scrolling (the arrow keys along its
 // axis) to a key-down and reports whether it scrolled. Handle calls it
 // while the view is focused; a host with FocusDelegated calls it for the
@@ -568,6 +685,16 @@ func (s *ScrollView) ScrollKey(e KeyEvent) bool {
 	case fwd:
 		s.scrollBy(defaultKeyStep)
 		return true
+	}
+	if s.crossScrolls() && s.maxScrollX() > 0 {
+		switch e.Key {
+		case KeyLeft:
+			s.ScrollToX(s.scrollX - defaultKeyStep)
+			return true
+		case KeyRight:
+			s.ScrollToX(s.scrollX + defaultKeyStep)
+			return true
+		}
 	}
 	return false
 }
@@ -591,14 +718,59 @@ func (s *ScrollView) HitTest(p Point) Widget {
 			return s
 		}
 	}
+	if s.hasXBar() {
+		if s.barX().Thumb().Contains(p) {
+			return s
+		}
+		if !s.OverlayBar && s.barX().Track.Contains(p) {
+			return s
+		}
+	}
 	if s.Content != nil {
 		dx, dy := s.contentTranslation()
 		local := Point{X: p.X - dx, Y: p.Y - dy}
 		if hit := s.Content.HitTest(local); hit != nil {
 			return hit
 		}
+		if s.crossScrolls() {
+			// Scrolled sideways, the point can sit right of the content's
+			// own box, over a descendant that overflows it (a nowrap row):
+			// containers stop at their own bounds, so look for it directly.
+			if hit := hitOverflow(s.Content, local); hit != nil {
+				return hit
+			}
+		}
 	}
 	return s
+}
+
+// hitOverflow finds the topmost descendant of w under p when p lies outside
+// w's own box: CSS hit-tests a child that overflows a non-clipping parent.
+// Inside a widget that contains p its own HitTest takes over.
+func hitOverflow(w Widget, p Point) Widget {
+	if w == nil || boxChildHidden(w) {
+		return nil
+	}
+	if w.Bounds().Contains(p) {
+		return w.HitTest(p)
+	}
+	if _, ok := w.(PaintClipper); ok {
+		return nil
+	}
+	if c, ok := w.(interface{ ClipsChildren() bool }); ok && c.ClipsChildren() {
+		return nil
+	}
+	cl, ok := w.(ChildLister)
+	if !ok {
+		return nil
+	}
+	kids := ChildrenInPaintOrder(cl.ChildList())
+	for i := len(kids) - 1; i >= 0; i-- {
+		if hit := hitOverflow(kids[i], p); hit != nil {
+			return hit
+		}
+	}
+	return nil
 }
 
 // ScrollY returns the current scroll offset on the active main axis.
@@ -620,6 +792,60 @@ func (s *ScrollView) ScrollTo(off float32) {
 	old := s.scrollOff
 	s.scrollOff = off
 	s.clampFrom(old)
+}
+
+// ScrollX is the CrossScroll offset (0 without CrossScroll).
+func (s *ScrollView) ScrollX() float32 { return s.scrollX }
+
+// ScrollToX sets the CrossScroll offset, clamped to the content's
+// overflow — O(1) like ScrollTo.
+func (s *ScrollView) ScrollToX(x float32) {
+	old := s.scrollX
+	s.scrollX = x
+	s.clampX(old)
+}
+
+// MaxScrollX is the largest valid CrossScroll offset (0 when the content
+// does not overflow to the right, or without CrossScroll).
+func (s *ScrollView) MaxScrollX() float32 { return s.maxScrollX() }
+
+func (s *ScrollView) maxScrollX() float32 {
+	if !s.crossScrolls() {
+		return 0
+	}
+	return max(0, s.overflowW-s.viewportRect().W)
+}
+
+func (s *ScrollView) clampX(old float32) {
+	s.scrollX = min(max(s.scrollX, 0), s.maxScrollX())
+	if s.scrollX == old {
+		return
+	}
+	s.Invalidate()
+	if s.OnScroll != nil {
+		s.OnScroll()
+	}
+}
+
+// hasXBar reports whether the CrossScroll bar should render.
+func (s *ScrollView) hasXBar() bool {
+	return !s.HideBar && s.maxScrollX() > 0
+}
+
+// barX is the CrossScroll bar along the bottom edge, stopping short of the
+// vertical bar's corner when both show.
+func (s *ScrollView) barX() ScrollBar {
+	track := HBarTrackRect(s.innerBounds())
+	if s.hasBar() {
+		track.W -= scrollBarThickness
+	}
+	return ScrollBar{
+		Track:      track,
+		Horizontal: true,
+		Content:    s.overflowW,
+		Viewport:   s.viewportRect().W,
+		Offset:     s.scrollX,
+	}
 }
 
 // MaxScroll is the largest valid scroll offset on the main axis (0 when
@@ -839,7 +1065,11 @@ func (s *ScrollView) barTrack() Rect {
 	if s.Orientation == ScrollHorizontal {
 		return HBarTrackRect(s.innerBounds())
 	}
-	return VBarTrackRect(s.innerBounds())
+	t := VBarTrackRect(s.innerBounds())
+	if s.hasXBar() {
+		t.H -= scrollBarThickness
+	}
+	return t
 }
 
 // bar is the scrollbar geometry for the current scroll state.

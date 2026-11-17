@@ -259,6 +259,20 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 				}
 			}
 		}
+		// A row item that cannot shrink keeps its content size (CSS
+		// flex-basis: auto = max-content), which is never below its
+		// min-content: measuring at the container's width clamps it there,
+		// so a `white-space: nowrap` name in a narrow row would be cut to
+		// the row instead of overflowing it the way Chrome lays it out.
+		if l.Direction == Horizontal && fx.NoShrink {
+			if p := widgetPreferredSize(ch); p.W == 0 {
+				if s := ch.Style(); s == nil || s.WidthPct == 0 {
+					if mc := MinContentWidth(ch); mc > nat.W {
+						nat.W = mc
+					}
+				}
+			}
+		}
 		if basis <= 0 {
 			if fx.Grow > 0 && !fx.BasisAuto {
 				basis = 0

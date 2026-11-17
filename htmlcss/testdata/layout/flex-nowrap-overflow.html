@@ -1,0 +1,24 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+body { margin: 0; padding: 0; font: 13px/20px GoRegular; }
+/* A narrow scroller holding nowrap flex rows (go-code's file tree): the
+   rows' box shrink-wraps to the widest row's min-content, and a
+   flex-shrink: 0 name keeps its whole max-content width. */
+.side { display: flex; flex-direction: column; width: 160px; height: 120px; }
+.tree { display: flex; flex-direction: column; flex-grow: 1; min-height: 0; overflow: auto; }
+.rows { display: flex; flex-direction: column; align-self: flex-start; min-width: 100%; flex-shrink: 0; }
+.row { display: flex; flex-direction: row; align-items: center; height: 24px; padding-left: 6px; padding-right: 8px; white-space: nowrap; }
+.icon { width: 16px; height: 16px; min-width: 16px; margin-right: 6px; }
+.name { flex-shrink: 0; }
+.path { margin-left: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Same rows straight in a narrow box: the name still overflows whole. */
+.plain { display: flex; flex-direction: row; width: 120px; white-space: nowrap; }
+</style></head><body>
+<div class="side" id="side"><div class="tree" id="tree"><div class="rows" id="rows">
+<div class="row" id="r0"><div class="icon"></div><span class="name" id="n0">root</span><span class="path" id="p0">/a/fairly/long/path/to/the/project/root</span></div>
+<div class="row" id="r1"><div class="icon"></div><span class="name" id="n1">a.go</span></div>
+<div class="row" id="r2"><div class="icon"></div><span class="name" id="n2">very_long_file_name_very_long_file_name_very_long_file_name.go</span></div>
+</div></div></div>
+<div class="plain" id="plain"><span class="name" id="pn">another_long_name_that_overflows_its_row.go</span></div>
+</body></html>

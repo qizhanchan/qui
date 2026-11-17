@@ -202,6 +202,7 @@ type ComputedStyle struct {
 	OverflowClipX, OverflowClipY bool // per-axis hidden / clip
 	OverflowScroll               bool // overflow: auto / scroll
 	OverflowScrollX              bool // horizontal scroll axis
+	OverflowScrollXY             bool // both axes scroll (overflow: auto / scroll on x and y)
 
 	// AppRegion is CSS `app-region` (Electron's `-webkit-app-region`, also
 	// accepted): "drag" makes pressing the element move the OS window,
@@ -1323,12 +1324,19 @@ func parseOverflow(m map[string]string, cs *ComputedStyle) {
 	if v, ok := m["overflow-y"]; ok {
 		clipY, scrollY = classify(v)
 	}
+	// CSS Overflow 3: `visible` beside a scrolling axis computes to `auto`,
+	// so `overflow-y: auto` alone also scrolls content that overflows to
+	// the right (Chrome does). Only an explicit hidden / clip keeps it out.
+	if scrollY && !clipX {
+		scrollX = true
+	}
 	cs.OverflowClip = clipX || clipY
 	cs.OverflowClipX, cs.OverflowClipY = clipX, clipY
 	cs.OverflowScroll = scrollX || scrollY
 	// Pick the horizontal ScrollView orientation only when the x-axis
 	// scrolls and the y-axis does not (a block's default scroll is vertical).
 	cs.OverflowScrollX = scrollX && !scrollY
+	cs.OverflowScrollXY = scrollX && scrollY
 }
 
 // firstField returns the first whitespace-separated token of v (or "").

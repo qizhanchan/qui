@@ -2786,6 +2786,9 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		} else {
 			e.scrollView.Orientation = widgets.ScrollVertical
 		}
+		// Both axes: the vertical view also scrolls X over the content's
+		// overflow to the right.
+		e.scrollView.CrossScroll = cs.OverflowScrollXY
 		// Move padding from the outer element to the inner content box so the
 		// ScrollView (and its scrollbar) reaches the element's edge — web
 		// behaviour: the page scrollbar hugs the window, padding insets the

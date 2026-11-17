@@ -465,6 +465,23 @@ static void quiCocoaNotifyGeometry(QuiWindowBox* box, uintptr_t handle) {
 - (void)windowDidEnterFullScreen:(NSNotification*)note { quiCocoaOnWindowState(); }
 - (void)windowDidExitFullScreen:(NSNotification*)note { quiCocoaOnWindowState(); }
 
+// The tall overlay title bar is an empty NSToolbar (macos/window_darwin.go).
+// In fullscreen AppKit moves a window's toolbar into its own always-shown,
+// opaque strip — over the app's content, where the app draws its own
+// toolbar. Let it hide with the menu bar instead, as Safari's and Xcode's
+// do: the strip (with the window buttons) slides in only while the pointer
+// is at the top of the screen.
+- (NSApplicationPresentationOptions)window:(NSWindow*)window
+      willUseFullScreenPresentationOptions:(NSApplicationPresentationOptions)proposed {
+    NSToolbar* tb = [window toolbar];
+    if (tb != nil && [[tb identifier] isEqualToString:@"qui.titlebar.tall"]) {
+        return proposed | NSApplicationPresentationFullScreen |
+               NSApplicationPresentationAutoHideMenuBar |
+               NSApplicationPresentationAutoHideToolbar;
+    }
+    return proposed;
+}
+
 @end
 
 // --- application -----------------------------------------------------

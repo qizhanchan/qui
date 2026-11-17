@@ -621,3 +621,8 @@ func paintBorderEdge(canvas Canvas, r Rect, horizontal bool, thickness float32, 
 		}
 	}
 }
+
+// ClipsChildren reports whether the box clips its descendants to its bounds
+// (CSS overflow: hidden): what lies beyond is not part of an enclosing
+// scroller's scrollable overflow.
+func (b *Box) ClipsChildren() bool { return b.ClipChildren }
