@@ -93,6 +93,11 @@ type ScrollView struct {
 
 	// Scrollbar drag state.
 	barDrag ScrollBarDrag
+	// wheelLatched: the trackpad gesture in progress began on this view and
+	// scrolled it, so the rest of it (momentum included) stays here even at
+	// the edge — Chrome's scroll latching. A gesture that began elsewhere
+	// passes through.
+	wheelLatched bool
 
 	// sizeAuto: ContentSize is re-measured from Content on every layout.
 	// lastAuto is the last derived size; a ContentSize that differs was
@@ -466,11 +471,7 @@ func (s *ScrollView) Handle(event Event) bool {
 				return false
 			}
 			if s.Bounds().Contains(Point{X: e.X, Y: e.Y}) {
-				delta := s.scrollDeltaFor(e.DeltaX, e.DeltaY)
-				if delta != 0 {
-					s.scrollBy(s.wheelPixels(delta, e.ScrollPhase))
-					return true
-				}
+				return s.wheel(e)
 			}
 		case EventMouseDown:
 			if !s.Bounds().Contains(Point{X: e.X, Y: e.Y}) {
@@ -502,6 +503,50 @@ func (s *ScrollView) Handle(event Event) bool {
 		}
 	}
 	return false
+}
+
+// wheel scrolls by a wheel / trackpad event and reports whether the view
+// took it. Like Chrome's scroll chaining, a view that cannot move in the
+// event's direction (content that fits, or already at that edge) lets it
+// bubble to an enclosing scroller instead of swallowing it — a FitContent
+// list inside a scrolling page used to eat every wheel over it. A trackpad
+// gesture latches to the view its first event scrolled (see wheelLatched).
+func (s *ScrollView) wheel(e MouseEvent) bool {
+	delta := s.scrollDeltaFor(e.DeltaX, e.DeltaY)
+	switch e.ScrollPhase {
+	case GesturePhaseBegan:
+		s.wheelLatched = false
+	case GesturePhaseChanged, GesturePhaseMomentum:
+		if s.wheelLatched {
+			if delta != 0 {
+				s.scrollBy(s.wheelPixels(delta, e.ScrollPhase))
+			}
+			return true
+		}
+	case GesturePhaseEnded, GesturePhaseCancelled:
+		latched := s.wheelLatched
+		if e.ScrollPhase == GesturePhaseCancelled || delta == 0 {
+			s.wheelLatched = false
+		}
+		if latched {
+			if delta != 0 {
+				s.scrollBy(s.wheelPixels(delta, e.ScrollPhase))
+			}
+			return true
+		}
+	}
+	if delta == 0 {
+		return false
+	}
+	old := s.scrollOff
+	s.scrollBy(s.wheelPixels(delta, e.ScrollPhase))
+	if s.scrollOff == old {
+		return false
+	}
+	if e.ScrollPhase != GesturePhaseNone {
+		s.wheelLatched = true
+	}
+	return true
 }
 
 // ScrollKey applies the view's keyboard scrolling (the arrow keys along its

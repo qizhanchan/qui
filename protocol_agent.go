@@ -632,7 +632,8 @@ func agentDomain() ProtocolDomain {
 		NewProtocolCommand("scroll", "Scroll at a node by wheel notches.",
 			func(ctx *ProtocolContext, p agentScrollParams) (AgentActionResult, error) {
 				return agentAct(ctx, p.Target, p.TimeoutMs, func(ref string) error {
-					return ctx.Window.Scroll(ref, p.DX, p.DY)
+					dx, dy := protocolWheel(p.DX, p.DY)
+					return ctx.Window.Scroll(ref, dx, dy)
 				})
 			}).WithStrict(),
 		NewProtocolCommand("drag", "Drag from one node to another, or between raw points (x,y → x2,y2).",

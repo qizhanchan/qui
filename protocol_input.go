@@ -51,6 +51,11 @@ func (w *Window) DispatchMouse(action MouseAction, x, y float32, button MouseBut
 }
 
 // DispatchScroll synthesizes a scroll of (dx, dy) at window point (x, y).
+//
+// dx / dy are in the event's own units (MouseEvent.DeltaX / DeltaY: one
+// wheel notch = 1, positive scrolls the content left / up — the platform's
+// wheel deltas). The protocol commands convert from their documented
+// directions with protocolWheel.
 func (w *Window) DispatchScroll(x, y, dx, dy float32) error {
 	return w.synchronously(func() error {
 		w.dispatchScrollAt(Point{X: x, Y: y}, dx, dy)
@@ -197,7 +202,8 @@ func inputDomain() ProtocolDomain {
 					case "mouseMoved":
 						return empty{}, ctx.Window.DispatchMouse(MouseMoved, p.X, p.Y, cdpButton(p.Button), mods)
 					case "mouseWheel":
-						return empty{}, ctx.Window.DispatchScroll(p.X, p.Y, p.DeltaX, p.DeltaY)
+						dx, dy := protocolWheel(p.DeltaX, p.DeltaY)
+						return empty{}, ctx.Window.DispatchScroll(p.X, p.Y, dx, dy)
 					}
 					return empty{}, &ProtocolError{Code: ProtocolInvalidParams, Reason: "invalid_params", Message: "unknown mouse event type " + p.Type}
 				}),
@@ -233,8 +239,17 @@ func inputDomain() ProtocolDomain {
 				}),
 			NewProtocolCommand("synthesizeScrollGesture", "Scroll at a point. As in CDP, positive distances scroll up/left; units are qui wheel notches.",
 				func(ctx *ProtocolContext, p inputScrollGestureParams) (empty, error) {
-					return empty{}, ctx.Window.DispatchScroll(p.X, p.Y, -p.XDistance, -p.YDistance)
+					// CDP: positive distances scroll up / left — the event's own sign.
+					return empty{}, ctx.Window.DispatchScroll(p.X, p.Y, p.XDistance, p.YDistance)
 				}),
 		},
 	}
 }
+
+// protocolWheel converts a protocol wheel delta — positive scrolls right /
+// down, as the commands document (CDP's mouseWheel deltaX / deltaY) — to a
+// MouseEvent's DeltaX / DeltaY, whose positive values scroll left / up
+// (ScrollView, the editor and every other wheel consumer read them so).
+// The commands used to pass the delta through, so "positive scrolls down"
+// scrolled up.
+func protocolWheel(dx, dy float32) (float32, float32) { return -dx, -dy }

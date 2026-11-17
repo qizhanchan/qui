@@ -178,7 +178,9 @@ func (w *Window) SendChord(target, chord string) error {
 	})
 }
 
-// Scroll synthesizes a scroll event on the target.
+// Scroll synthesizes a scroll event on the target. dx / dy are MouseEvent
+// deltas (wheel notches; positive scrolls left / up); the protocol's
+// Agent.scroll takes the opposite, documented direction (protocolWheel).
 func (w *Window) Scroll(target string, dx, dy float32) error {
 	return w.synchronously(func() error { return w.runScroll(target, dx, dy) })
 }
