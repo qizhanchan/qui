@@ -22,7 +22,7 @@ go.work
 build/
 
 # Chrome reference harness dependencies (npm ci --prefix widgets/scripts/web)
-widgets/scripts/web/node_modules/
+widgets/scripts/web/node_modules
 
 # Binaries from `go build ./examples/<name>` run at the repo root
 /filedialog
