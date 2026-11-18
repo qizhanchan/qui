@@ -41,7 +41,8 @@ func gridLayout(cs *ComputedStyle, itemCount int) qui.Layout {
 		AutoColumns: parseGridTracks(cs.raw["grid-auto-columns"], cs.FontSize),
 		AutoRows:    parseGridTracks(cs.raw["grid-auto-rows"], cs.FontSize),
 		ColGap:      colGap, RowGap: rowGap,
-		AutoRepeat: autoRepeat,
+		AutoRepeat:         autoRepeat,
+		SizedItemsKeepSize: true,
 	}
 }
 
@@ -349,6 +350,7 @@ func parseGridTrack(tok string, fs float32) (qui.GridTrack, bool) {
 			return qui.GridTrack{}, false
 		}
 		maxT.AutoMin = false
+		maxT.MinMax = maxT.Kind == qui.GridFixed
 		if px, ok := parseLength(lo, fs, 0); ok {
 			maxT.Min = px
 		} else if maxT.Kind == qui.GridFraction {
@@ -369,6 +371,11 @@ func parseGridTrack(tok string, fs float32) (qui.GridTrack, bool) {
 			return t, true
 		}
 	default:
+		if pct, ok := parsePercentFraction(low); ok {
+			t := qui.GridFixedTrack(0)
+			t.Pct = pct
+			return t, true
+		}
 		if px, ok := parseLength(low, fs, 0); ok {
 			return qui.GridFixedTrack(px), true
 		}

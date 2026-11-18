@@ -602,9 +602,15 @@ type InlineLine struct {
 
 // InlineLayout is the immutable output of BuildInlineLayout.
 type InlineLayout struct {
-	Lines  []InlineLine
-	Width  float32
-	Height float32
+	Lines []InlineLine
+	// Width is the right edge of the widest line, alignment included: a
+	// centred line in a 600px column reaches past its text.
+	Width float32
+	// ContentWidth is the widest line's own width, without the offset
+	// text-align gave it inside its column — what the run needs, which is
+	// what sizing a box from its content (fit-content, max-content) wants.
+	ContentWidth float32
+	Height       float32
 }
 
 // inlineTok is one break unit: a word, an atomic box, a run of preserved
@@ -1038,14 +1044,14 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 	// Pass 2 — fragment placement, on the geometry pass 1 resolved. Each slot
 	// of a line is placed on its own and shifted to where that slot sits.
 	out := InlineLayout{}
-	var maxLineW float32
+	var maxLineW, maxContentW float32
 	for li := range lineIdx {
 		ascent, descent := lineAsc[li], lineDesc[li]
 		lineY := lineTop[li]
 		baseline := lineY + ascent
 
 		var frags []InlineFrag
-		lineW := float32(0)
+		lineW, contentW := float32(0), float32(0)
 		for si, segIdxs := range lineSegToks[li] {
 			if len(segIdxs) == 0 {
 				continue
@@ -1095,6 +1101,9 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 			// Centre / right alignment happens INSIDE the slot: a centred line
 			// beside a floating image centres in what is left of the column.
 			alignRight := (opts.Align == TextAlignEnd && !paragraphRTL) || (opts.Align == TextAlignStart && paragraphRTL)
+			if right := shift + segWidth; right > contentW {
+				contentW = right
+			}
 			if opts.MaxWidth > 0 && (opts.Align == TextAlignCenter || alignRight) {
 				if off := avail - segWidth; off > 0 {
 					if opts.Align == TextAlignCenter {
@@ -1114,6 +1123,9 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 		if lineW > maxLineW {
 			maxLineW = lineW
 		}
+		if contentW > maxContentW {
+			maxContentW = contentW
+		}
 		out.Lines = append(out.Lines, InlineLine{
 			Frags:      frags,
 			Y:          lineY,
@@ -1128,6 +1140,7 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 	}
 	out.Height = y
 	out.Width = maxLineW
+	out.ContentWidth = maxContentW
 
 	// Unbounded layouts have no column to align against, so they align to the
 	// widest line instead (the bounded case aligned inside its slots above).

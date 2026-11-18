@@ -1550,7 +1550,7 @@ func (ss simpleSelector) matches(n *Node, st selectorState) bool {
 	if n.Type != ElementNode {
 		return false
 	}
-	if ss.tag != "" && ss.tag != "*" && ss.tag != n.Tag {
+	if ss.tag != "" && ss.tag != "*" && ss.tag != n.Tag && !(ss.tag == "svg" && n.svgStandIn()) {
 		return false
 	}
 	if ss.id != "" && ss.id != n.ID() {
@@ -1959,6 +1959,13 @@ func (s *Stylesheet) candidateRules(n *Node) []int {
 	return out
 }
 
+// svgStandIn reports an <img> a host put in place of an inline <svg>
+// (attribute data-svg-inline): `svg` type selectors match it too, so a
+// page's `.icon > svg { width: 18px }` still sizes it.
+func (n *Node) svgStandIn() bool {
+	return n.Tag == "img" && n.Attrs["data-svg-inline"] != ""
+}
+
 func (ix *ruleIndex) collectCandidates(n *Node, id string) []int {
 	lists := make([][]int, 0, 4)
 	if len(ix.any) > 0 {
@@ -1966,6 +1973,11 @@ func (ix *ruleIndex) collectCandidates(n *Node, id string) []int {
 	}
 	if l := ix.byTag[strings.ToLower(n.Tag)]; len(l) > 0 {
 		lists = append(lists, l)
+	}
+	if n.svgStandIn() {
+		if l := ix.byTag["svg"]; len(l) > 0 {
+			lists = append(lists, l)
+		}
 	}
 	if id != "" {
 		if l := ix.byID[id]; len(l) > 0 {

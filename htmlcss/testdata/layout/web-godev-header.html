@@ -1,0 +1,35 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+/* go.dev header: a 100%-tall flex item, content-sized menu items holding
+   a centred, width:100% inline-flex link with text only */
+nav { display: flex; align-items: center; justify-content: space-between; height: 56px; width: 900px; }
+#logo { display: inline-block; width: 80px; height: 30px; }
+#rc { display: flex; align-items: center; justify-content: flex-end; height: 100%; width: 100%; }
+#menu { display: flex; justify-content: flex-end; align-items: stretch; height: 100%; margin: 0; padding: 0; list-style: none; }
+#menu li { display: inline-flex; flex: none; align-items: stretch; margin: 0 5px; position: relative; }
+#menu a { display: inline-flex; align-items: center; padding: 0 24px; width: 100%; text-align: center; }
+/* legacy clip on an absolute box hides it */
+#skip { position: absolute; top: 12px; left: 8%; clip: rect(0 0 0 0); overflow: hidden; }
+/* logo grid: minmax(0, 25%) tracks with a gap shrink to fit */
+#grid { display: grid; grid-template-columns: repeat(4, minmax(0, 25%)); gap: 16px 18px; width: 800px; padding: 0; margin: 0; list-style: none; }
+#grid li { height: 40px; }
+/* grid items keep their margins; margin: auto centres one */
+#hero { display: grid; grid-template-columns: 2.5fr minmax(auto, 200px); width: 800px; }
+#blurb { margin: 40px 0 0; height: 50px; }
+#side { height: 60px; }
+#centred { width: 100px; height: 20px; margin: auto; }
+</style></head><body>
+<nav id="nav">
+  <a id="logo" href="#"></a>
+  <a id="skip" href="#">Skip</a>
+  <div id="rc"><ul id="menu">
+    <li id="m1"><a id="a1" href="#">Why Go</a></li>
+    <li id="m2"><a id="a2" href="#">Learn</a></li>
+    <li id="m3"><a id="a3" href="#">Packages</a></li>
+  </ul></div>
+</nav>
+<ul id="grid"><li id="g1"></li><li id="g2"></li><li id="g3"></li><li id="g4"></li><li id="g5"></li></ul>
+<div id="hero"><div id="blurb"></div><div id="side"></div><div id="centred"></div></div>
+</body></html>

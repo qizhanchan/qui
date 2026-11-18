@@ -47,6 +47,16 @@ type Popup struct {
 	// focusable descendant. Focus returns where it was on close. Leave it
 	// off for a popup that must not take focus from a field (autocomplete).
 	AutoFocus bool
+	// Opener, while the press that opened the popup is still held on it,
+	// makes the popup transparent to the pointer: the release reaches the
+	// opener (its click completes as if nothing covered it) even when the
+	// popup opened right over it — a macOS-style select list placed over
+	// its field.
+	Opener Widget
+	// BlockScroll keeps the wheel from scrolling what is under the popup
+	// while it is shown (qui.ScrollBlockingOverlay): an anchored list then
+	// cannot drift away from its trigger.
+	BlockScroll bool
 	// NoClamp keeps ShowAt's position verbatim; by default the popup is
 	// shifted to stay inside the window.
 	NoClamp bool
@@ -528,6 +538,11 @@ func popupSurface(w Widget) (bg, border Color, borderSize, radius float32) {
 func (p *Popup) Handle(event Event) bool {
 	switch e := event.(type) {
 	case MouseEvent:
+		// A wheel the window routed to this scroll-blocking popup from
+		// beneath it (ScrollBlockingOverlay) ends here.
+		if e.Type() == EventScroll && p.BlockScroll && e.Target() == Widget(p) {
+			return true
+		}
 		if e.Type() == EventMouseDown {
 			if !p.Bounds().Contains(Point{X: e.X, Y: e.Y}) {
 				if p.DismissOnOutsideClick {
@@ -613,6 +628,9 @@ func nextTabTarget(w *Window, shift bool) Widget {
 // outside clicks too so Handle can dismiss them. Otherwise outside clicks
 // fall through to whatever's underneath.
 func (p *Popup) HitTest(point Point) Widget {
+	if p.Opener != nil && p.window != nil && p.window.PressHeldOn(p.Opener) {
+		return nil
+	}
 	if r := p.root(); r != nil {
 		if p.Bounds().Contains(point) {
 			if hit := r.HitTest(point); hit != nil {
@@ -631,3 +649,6 @@ func (p *Popup) HitTest(point Point) Widget {
 	}
 	return nil
 }
+
+// BlocksScroll implements qui.ScrollBlockingOverlay.
+func (p *Popup) BlocksScroll() bool { return p.BlockScroll }

@@ -231,8 +231,11 @@ type ComputedStyle struct {
 	BackgroundImageURL string
 
 	// Positioning + overflow (Wave 2).
-	Position                             string // "", static, relative, absolute, fixed
-	ZIndexSet                            bool
+	Position  string // "", static, relative, absolute, fixed
+	ZIndexSet bool
+	// ZIndexItem: a flex or grid item, whose z-index applies even when it
+	// is not positioned (CSS Flexbox § 4.3 / Grid § 9.5).
+	ZIndexItem                           bool
 	AspectRatio                          float32 // CSS aspect-ratio (width / height), 0 = auto
 	WidthPctOffset, HeightPctOffset      float32 // px added to WidthPct / HeightPct (calc(% ± px))
 	FlexBasisPct, FlexBasisPctOffset     float32 // a percentage flex-basis (and its calc() px)   // z-index is an integer, not auto
@@ -1321,11 +1324,19 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 
 	// --- positioning + overflow ---
 	cs.Position = strings.ToLower(strings.TrimSpace(m["position"]))
+	// The legacy `clip: rect()` (absolutely positioned boxes only) is a
+	// clip-path inset; `clip: rect(0 0 0 0)` is how sites hide skip links.
+	if cs.ClipPath == nil && (cs.Position == "absolute" || cs.Position == "fixed") {
+		if v, ok := m["clip"]; ok {
+			cs.ClipPath = parseClipRect(v, fs)
+		}
+	}
 	if v, ok := m["z-index"]; ok {
 		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
 			cs.ZIndex, cs.ZIndexSet = n, true
 		}
 	}
+	cs.ZIndexItem = parent != nil && (isFlexDisplay(parent.Display) || isGridDisplay(parent.Display))
 	if v, ok := m["top"]; ok {
 		if pct, ok := parsePercentFraction(v); ok {
 			cs.InsetPct[0], cs.HasTop = pct, true

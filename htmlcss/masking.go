@@ -171,6 +171,37 @@ type clipPathSpec struct {
 	path       *svg.Path
 }
 
+// parseClipRect parses the legacy clip property, rect(top, right, bottom,
+// left) — offsets from the border box's top-left corner, `auto` meaning
+// that edge — as the equivalent inset() clip-path. nil for auto or junk.
+func parseClipRect(v string, fs float32) *clipPathSpec {
+	low := strings.ToLower(strings.TrimSpace(v))
+	if !strings.HasPrefix(low, "rect(") || !strings.HasSuffix(low, ")") {
+		return nil
+	}
+	args := strings.FieldsFunc(low[5:len(low)-1], func(r rune) bool { return r == ',' || r == ' ' || r == '\t' })
+	if len(args) != 4 {
+		return nil
+	}
+	c := &clipPathSpec{shape: "inset"}
+	for i, a := range args {
+		if a == "auto" {
+			continue // that edge of the box: a zero inset
+		}
+		l, ok := parseLenPct(a, fs)
+		if !ok || l.pct != 0 {
+			return nil
+		}
+		switch i {
+		case 0, 3: // top, left: offsets from the near edge are insets
+			c.inset[i] = l
+		default: // right, bottom: measured from the top-left too
+			c.inset[i] = lenPct{px: -l.px, pct: 1}
+		}
+	}
+	return c
+}
+
 // parseClipPath parses a clip-path value. ok=false for none, url()
 // references (no SVG <clipPath> support) and unparsable values.
 func parseClipPath(v string, fs float32) (*clipPathSpec, bool) {

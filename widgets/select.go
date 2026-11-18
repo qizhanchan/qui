@@ -61,6 +61,9 @@ type Select struct {
 	// as an HTTP-method picker.
 	ItemColors  []Color
 	SelectedIdx int
+	// AlignSelected opens a raw-HTML select's list with the selected option
+	// over the field (a macOS pop-up button) instead of below it.
+	AlignSelected bool
 	// Label is the floating label — rests in the content area at
 	// body-large size when the field is unselected + unfocused, floats up
 	// to body-small when selected or focused. Outlined variant cuts a
@@ -1166,8 +1169,17 @@ func (cb *Select) openDropdown() {
 	// The select keeps keyboard focus while its list is open (as in a
 	// browser: document.activeElement stays the <select>) and forwards the
 	// list's navigation keys from Handle.
+	// The list stays where it opened: the page under it does not scroll.
+	popup.BlockScroll = true
 	if showAnchoredPopupGap(w, popup, list, func() Rect { return InteractionBoundsOf(cb) }, size, 2, false, false) == nil {
 		return
+	}
+	if cb.AlignSelected && cb.native() {
+		// Placed over the field at once — the list never visibly moves.
+		// The opening press's release still belongs to the field
+		// (Popup.Opener), so its click completes underneath.
+		popup.Opener = cb
+		cb.alignSelectedRow(popup, list, selRow)
 	}
 	cb.list = list
 	// Open on the current option, as a browser does: Enter keeps it,
@@ -1188,6 +1200,27 @@ func (cb *Select) openDropdown() {
 	if cb.OnOpen != nil {
 		cb.OnOpen()
 	}
+}
+
+// alignSelectedRow moves an open list so its selected row lies over the
+// field, its text where the field's text is — a macOS pop-up button (and
+// Chrome's <select> there). A list that does not fit the window, and so
+// scrolls, keeps its anchored placement.
+func (cb *Select) alignSelectedRow(popup *Popup, list *menuListView, row int) {
+	w := cb.Window()
+	if w == nil || popup.Scrolls() || list.scroll != nil || row < 0 || row >= len(list.rows) || list.rows[row] == nil {
+		return
+	}
+	anchor := InteractionBoundsOf(cb)
+	pb := popup.Bounds()
+	rb := list.rows[row].Bounds()
+	y := anchor.Y + anchor.H/2 - (rb.Y - pb.Y) - rb.H/2
+	lead, _, _ := cb.nativeInsets()
+	x := anchor.X + lead - (rb.X - pb.X + menuLabelOffset(list.style))
+	win := w.Size()
+	y = max(min(y, win.H-pb.H-popupEdge), popupEdge)
+	x = max(min(x, win.W-pb.W-popupEdge), popupEdge)
+	popup.RelayoutAt(x, y, Size{W: pb.W, H: pb.H})
 }
 
 func (cb *Select) closeDropdown() {

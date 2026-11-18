@@ -177,7 +177,15 @@ func expandFont(v string, m map[string]string) {
 		size, lh = sizeField[:idx], sizeField[idx+1:]
 	}
 	setIfAbsent(m, "font-size", size)
+	// Omitted parts reset to their initial values, as for any shorthand:
+	// `font: bold 14px Roboto` under a `line-height: 1.4` parent has a
+	// normal line height (and an upright, non-bold face unless named).
+	if lh == "" {
+		lh = "normal"
+	}
 	setIfAbsent(m, "line-height", lh)
+	setIfAbsent(m, "font-weight", "normal")
+	setIfAbsent(m, "font-style", "normal")
 	if sizeIdx+1 < len(fields) {
 		setIfAbsent(m, "font-family", strings.Join(fields[sizeIdx+1:], " "))
 	}

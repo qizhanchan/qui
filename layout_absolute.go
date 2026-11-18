@@ -76,9 +76,10 @@ func placeAbsolute(ch Widget, cb Rect) {
 		sx, sy = sp.X, sp.Y
 	}
 	x, w := resolveAnchorAxisStatic(pos.Anchor, AnchorLeft, AnchorRight,
-		pos.Left, pos.Right, pos.Width, cb.X, cb.W, ch, true, sx)
+		pos.Left, pos.Right, pos.Width, cb.X, cb.W, ch, true, sx, 0)
 	y, h := resolveAnchorAxisStatic(pos.Anchor, AnchorTop, AnchorBottom,
-		pos.Top, pos.Bottom, pos.Height, cb.Y, cb.H, ch, false, sy)
+		pos.Top, pos.Bottom, pos.Height, cb.Y, cb.H, ch, false, sy,
+		applyConstraints(Size{W: w}, widgetMinSize(ch), widgetMaxSize(ch)).W)
 	clamped := applyConstraints(Size{W: w, H: h}, widgetMinSize(ch), widgetMaxSize(ch))
 	ch.Layout(Rect{X: x, Y: y, W: clamped.W, H: clamped.H})
 }
@@ -92,14 +93,16 @@ func resolveAnchorAxis(anchor, startBit, endBit AnchorSide,
 	startDist, endDist, explicit, parentStart, parentExtent float32,
 	child Widget, widthAxis bool) (pos, size float32) {
 	return resolveAnchorAxisStatic(anchor, startBit, endBit, startDist, endDist, explicit,
-		parentStart, parentExtent, child, widthAxis, parentStart)
+		parentStart, parentExtent, child, widthAxis, parentStart, 0)
 }
 
 // resolveAnchorAxisStatic is resolveAnchorAxis with the axis's static
-// position: where the box goes when neither inset is set.
+// position: where the box goes when neither inset is set. usedW is the
+// box's resolved width when sizing the height axis (its content is laid
+// out at that width); 0 measures at the containing block's extent.
 func resolveAnchorAxisStatic(anchor, startBit, endBit AnchorSide,
 	startDist, endDist, explicit, parentStart, parentExtent float32,
-	child Widget, widthAxis bool, static float32) (pos, size float32) {
+	child Widget, widthAxis bool, static, usedW float32) (pos, size float32) {
 
 	start := anchor&startBit != 0
 	end := anchor&endBit != 0
@@ -135,7 +138,7 @@ func resolveAnchorAxisStatic(anchor, startBit, endBit AnchorSide,
 		pos = parentStart + startDist
 		size = explicit
 		if size <= 0 {
-			size = anchorMeasure(child, parentExtent, widthAxis)
+			size = anchorMeasure(child, parentExtent, widthAxis, usedW)
 		}
 		if size < minAxis {
 			size = minAxis
@@ -143,7 +146,7 @@ func resolveAnchorAxisStatic(anchor, startBit, endBit AnchorSide,
 	case end:
 		size = explicit
 		if size <= 0 {
-			size = anchorMeasure(child, parentExtent, widthAxis)
+			size = anchorMeasure(child, parentExtent, widthAxis, usedW)
 		}
 		if size < minAxis {
 			size = minAxis
@@ -155,7 +158,7 @@ func resolveAnchorAxisStatic(anchor, startBit, endBit AnchorSide,
 		pos = static
 		size = explicit
 		if size <= 0 {
-			size = anchorMeasure(child, parentExtent, widthAxis)
+			size = anchorMeasure(child, parentExtent, widthAxis, usedW)
 		}
 		if size < minAxis {
 			size = minAxis
@@ -164,8 +167,15 @@ func resolveAnchorAxisStatic(anchor, startBit, endBit AnchorSide,
 	return pos, size
 }
 
-func anchorMeasure(child Widget, parentExtent float32, widthAxis bool) float32 {
-	sz := MeasureChild(child, Size{W: parentExtent, H: parentExtent})
+func anchorMeasure(child Widget, parentExtent float32, widthAxis bool, usedW float32) float32 {
+	avail := Size{W: parentExtent, H: parentExtent}
+	if !widthAxis && usedW > 0 {
+		// The height of content laid out at the box's own width — not at
+		// the containing block's HEIGHT taken as a width (a menu hung off
+		// a 56px header item would wrap its text into a 56px column).
+		avail.W = usedW
+	}
+	sz := MeasureChild(child, avail)
 	if widthAxis {
 		return sz.W
 	}

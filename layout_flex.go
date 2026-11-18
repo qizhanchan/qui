@@ -670,6 +670,16 @@ func (l FlexLayout) remeasureCross(items []flexItem, bounds Rect) {
 			av = Size{W: bounds.W, H: innerMain}
 		}
 		sz := measureWithConstraints(it.w, av)
+		// A percentage cross size resolves against the container, as in
+		// measureFlexItems: the content's own extent does not replace it
+		// (`height: 100%` in a 56px row is 56px, whatever its text needs).
+		if s := it.w.Style(); s != nil {
+			if l.Direction == Horizontal && s.Height == 0 && s.HeightPct > 0 && bounds.H > 0 {
+				sz.H = applyConstraints(Size{W: sz.W, H: s.pctHeight(s.HeightPct, bounds.H)}, widgetMinSize(it.w), widgetMaxSize(it.w)).H
+			} else if l.Direction == Vertical && s.Width == 0 && s.WidthPct > 0 && bounds.W > 0 && widthPctDefinite() {
+				sz.W = applyConstraints(Size{W: s.pctWidth(s.WidthPct, bounds.W), H: sz.H}, widgetMinSize(it.w), widgetMaxSize(it.w)).W
+			}
+		}
 		if l.Direction == Horizontal {
 			it.natural.H = sz.H + it.marginCrossSum
 		} else {

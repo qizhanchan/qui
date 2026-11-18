@@ -56,7 +56,20 @@ func contentMinWidth(w Widget) float32 {
 	return v
 }
 
+// MinContentOverrider lets a widget answer its min-content width itself
+// in some states (ok=false falls back to the usual measurement) — an
+// image with a natural ratio but no natural width, whose min-content
+// contribution is zero, while Measure(0) still means "unconstrained".
+type MinContentOverrider interface {
+	MinContentOverride() (float32, bool)
+}
+
 func contentMinWidthUncached(w Widget) float32 {
+	if o, ok := w.(MinContentOverrider); ok {
+		if v, ok := o.MinContentOverride(); ok {
+			return v
+		}
+	}
 	s := w.Style()
 	var v float32
 	switch {

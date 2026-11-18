@@ -1,0 +1,22 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+body { margin: 0; padding: 0; font: 16px/22px GoRegular; }
+/* go.dev's playground buttons: inline-flex boxes with centred text in a
+   block whose line also holds whitespace (so its strut counts). The
+   button's baseline is its centred text's, not text set at its top. */
+.row { display: flex; gap: 8px; width: 400px; }
+.sec { white-space: nowrap; }
+.btn { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
+       height: 28px; padding: 0 10px; min-width: 65px; border: none; font: 14px GoRegular; }
+.end { display: inline-flex; align-items: flex-end; height: 40px; font: 14px GoRegular; }
+.tall { line-height: 40px; }
+</style></head><body>
+<div class="row" id="row"><span class="btn" id="run">Run</span>
+<div class="sec" id="sec">
+  <span class="btn" id="share">Share</span>
+  <a class="btn" id="tour" href="#">Tour</a>
+</div></div>
+<div id="mix">text <span class="btn" id="b2">Go</span> more <span class="end" id="e1">end</span></div>
+<div class="tall" id="t">x <span class="btn" id="b3">Tall</span></div>
+</body></html>

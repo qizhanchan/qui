@@ -182,13 +182,22 @@ func chooseLayout(cs *ComputedStyle) qui.Layout {
 		if cs.FlexDirection == qui.Vertical {
 			gap, cross = cross, gap
 		}
+		// A column wraps only at a definite height: with an auto one the
+		// container grows to its items (one line), as Chrome lays out
+		// go.dev's `flex-flow: column wrap` menus.
+		wrap := cs.Wrap
+		if wrap && cs.FlexDirection == qui.Vertical && !cs.HasHeight && cs.HeightPct == 0 &&
+			cs.MaxHeight == 0 && cs.MaxHeightPct == 0 &&
+			!(cs.HasTop && cs.HasBottom && (cs.Position == "absolute" || cs.Position == "fixed")) {
+			wrap = false
+		}
 		return qui.FlexLayout{
 			Direction:    cs.FlexDirection,
 			Justify:      cs.Justify,
 			AlignItems:   cs.AlignItems,
 			Gap:          gap,
 			CrossGap:     cross,
-			Wrap:         cs.Wrap,
+			Wrap:         wrap,
 			AlignContent: cs.AlignContent,
 		}
 	}
@@ -1043,7 +1052,10 @@ func applyStacking(box *widgets.Box, cs *ComputedStyle) {
 	case "relative", "absolute", "fixed", "sticky":
 		box.Positioned = true
 	default:
-		box.Positioned = false
+		// A flex / grid item with a z-index stacks like a positioned box
+		// (go.dev's static header, z-index: 10 in a flex body, keeps its
+		// menus above the page).
+		box.Positioned = cs.ZIndexItem && cs.ZIndexSet
 	}
 	op := cs.Opacity
 	box.StackingContext = box.Positioned && cs.ZIndexSet ||

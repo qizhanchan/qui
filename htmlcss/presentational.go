@@ -34,9 +34,11 @@ func presentationalHints(n *Node) []Declaration {
 				continue
 			}
 			if v, ok := n.Attrs[k]; ok {
-				if n.Tag == "svg" {
+				if n.Tag == "svg" || n.Tag == "img" && n.Attrs["data-svg-inline"] != "" {
 					// SVG width/height are presentation attributes: any
-					// CSS length (1.33em, 100%), a bare number is px.
+					// CSS length (1.33em, 100%), a bare number is px. An
+					// <img> a host put in place of an inline <svg>
+					// (data-svg-inline) keeps that reading.
 					if l := svgLength(v); l != "" {
 						add(k, l)
 					}

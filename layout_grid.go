@@ -21,6 +21,14 @@ type GridTrack struct {
 	// shrinks below its items' min-content size (a bare `1fr` is
 	// minmax(auto, 1fr); minmax(0, 1fr) has no such floor).
 	AutoMin bool
+	// Pct makes a Fixed track a percentage (0–1] of the grid's content
+	// size on its axis (CSS `25%`); where that size is indefinite the
+	// track sizes as Auto.
+	Pct float32
+	// MinMax marks a Fixed track declared minmax(Min, Size): it grows from
+	// Min only as far as the free space allows, so tracks that overflow the
+	// grid shrink back toward Min (repeat(4, minmax(0, 25%)) with a gap).
+	MinMax bool
 }
 
 // GridRepeat is CSS repeat(auto-fill | auto-fit, tracks): Tracks repeat,
@@ -79,6 +87,11 @@ type GridLayout struct {
 	RowGap      float32
 	// AutoRepeat, when set, inserts repeat(auto-fill/auto-fit) columns.
 	AutoRepeat *GridRepeat
+	// SizedItemsKeepSize lays an item with a declared width / height at
+	// that size instead of stretching it over its area (CSS grid's
+	// align/justify-self: normal). Tables leave it off: a cell always fills
+	// its row.
+	SizedItemsKeepSize bool
 }
 
 // expandRepeat resolves AutoRepeat against the available width.
@@ -128,6 +141,31 @@ func (l GridLayout) expandRepeat(children []Widget, availW float32) GridLayout {
 	g.Columns = cols
 	g.AutoRepeat = nil
 	return g
+}
+
+// resolvePctTracks turns percentage tracks into pixels against avail, or
+// into Auto tracks when avail is indefinite (0, or an intrinsic-size pass
+// for columns). tracks is copied only when it holds one.
+func resolvePctTracks(tracks []GridTrack, avail float32, columnAxis bool) []GridTrack {
+	var out []GridTrack
+	for i, t := range tracks {
+		if t.Pct <= 0 {
+			continue
+		}
+		if out == nil {
+			out = append([]GridTrack(nil), tracks...)
+		}
+		if avail > 0 && (!columnAxis || widthPctDefinite()) {
+			out[i].Kind, out[i].Size = GridFixed, t.Pct*avail
+		} else {
+			out[i].Kind, out[i].Size = GridAuto, 0
+		}
+		out[i].Pct = 0
+	}
+	if out == nil {
+		return tracks
+	}
+	return out
 }
 
 // gridTrackBase is the size a track needs at least, for auto-repeat counts.
@@ -235,9 +273,74 @@ func (l GridLayout) Apply(children []Widget, bounds Rect) {
 		cellY := bounds.Y + trackOffset(rowHeights, l.RowGap, p.Row)
 		cellW := trackSpan(colWidths, l.ColGap, p.Col, p.ColSpan)
 		cellH := trackSpan(rowHeights, l.RowGap, p.Row, p.RowSpan)
-		clamped := applyConstraints(Size{W: cellW, H: cellH}, widgetMinSize(ch), widgetMaxSize(ch))
-		ch.Layout(Rect{X: cellX, Y: cellY, W: clamped.W, H: clamped.H})
+		ch.Layout(gridItemRect(ch, Rect{X: cellX, Y: cellY, W: cellW, H: cellH}, l.SizedItemsKeepSize))
 	}
+}
+
+// gridItemRect places a grid item in its cell: inside its margins, and
+// stretched to fill what is left unless an auto margin on that axis sizes
+// it to its content and takes the free space (margin: auto centres it).
+// Min / max sizes still clamp it.
+func gridItemRect(ch Widget, cell Rect, keepSize bool) Rect {
+	s := ch.Style()
+	if s == nil {
+		return cell
+	}
+	m := s.Margin
+	in := Rect{X: cell.X + m.Left, Y: cell.Y + m.Top, W: max(cell.W-m.Horizontal(), 0), H: max(cell.H-m.Vertical(), 0)}
+	// With keepSize only an auto size stretches over the area (CSS grid's
+	// align/justify-self: normal); a declared one — a percentage resolves
+	// against the area — stays. Table cells (keepSize off) always fill.
+	w, h := in.W, in.H
+	var p Size
+	if keepSize {
+		p = widgetPreferredSize(ch)
+		if p.W == 0 && s.WidthPct > 0 && widthPctDefinite() {
+			p.W = s.pctWidth(s.WidthPct, in.W)
+		}
+		if p.H == 0 && s.HeightPct > 0 {
+			p.H = s.pctHeight(s.HeightPct, in.H)
+		}
+	}
+	if p.W > 0 {
+		w = p.W
+	}
+	if p.H > 0 {
+		h = p.H
+	}
+	autoX := s.MarginLeftAuto || s.MarginRightAuto
+	autoY := s.MarginTopAuto || s.MarginBottomAuto
+	if autoX || autoY {
+		nat := measureWithConstraints(ch, Size{W: in.W})
+		if autoX && p.W == 0 {
+			w = min(nat.W, in.W)
+		}
+		if autoY && p.H == 0 {
+			if autoX {
+				nat = measureWithConstraints(ch, Size{W: w})
+			}
+			h = min(nat.H, in.H)
+		}
+	}
+	sz := applyConstraints(Size{W: w, H: h}, widgetMinSize(ch), widgetMaxSize(ch))
+	x, y := in.X, in.Y
+	if free := in.W - sz.W; autoX && free > 0 {
+		switch {
+		case s.MarginLeftAuto && s.MarginRightAuto:
+			x += free / 2
+		case s.MarginLeftAuto:
+			x += free
+		}
+	}
+	if free := in.H - sz.H; autoY && free > 0 {
+		switch {
+		case s.MarginTopAuto && s.MarginBottomAuto:
+			y += free / 2
+		case s.MarginTopAuto:
+			y += free
+		}
+	}
+	return Rect{X: x, Y: y, W: sz.W, H: sz.H}
 }
 
 // Measure returns the grid's intrinsic size for `avail`: columns are
@@ -275,7 +378,9 @@ func (l GridLayout) Measure(children []Widget, avail Size) Size {
 			continue
 		}
 		cw := trackSpan(colWidths, gl.ColGap, p.Col, p.ColSpan)
-		nat := measureWithConstraints(ch, Size{W: cw, H: 0})
+		m := ch.Style().Margin
+		nat := measureWithConstraints(ch, Size{W: max(cw-m.Horizontal(), 0), H: 0})
+		nat.H += m.Vertical()
 		if nat.H > rowHeights[p.Row] {
 			rowHeights[p.Row] = nat.H
 		}
@@ -393,6 +498,7 @@ func (l GridLayout) autoPlace(placements []GridItem) {
 func (l GridLayout) resolveTracks(tracks []GridTrack, avail, gap float32,
 	children []Widget, placements []GridItem, columnAxis bool,
 	crossSizes []float32, crossGap float32) []float32 {
+	tracks = resolvePctTracks(tracks, avail, columnAxis)
 	sizes := make([]float32, len(tracks))
 	used := gap * float32(len(tracks)-1) // total inter-track gaps
 	var fractionSum float32
@@ -424,7 +530,9 @@ func (l GridLayout) resolveTracks(tracks []GridTrack, avail, gap float32,
 					// Measure at the cell's resolved column-span width so
 					// wrapping text contributes its true height.
 					cw := trackSpan(crossSizes, crossGap, p.Col, p.ColSpan)
-					nat := measureWithConstraints(ch, Size{W: cw, H: 0})
+					m := ch.Style().Margin
+					nat := measureWithConstraints(ch, Size{W: cw - m.Horizontal(), H: 0})
+					nat.H += m.Vertical()
 					if nat.H > max {
 						max = nat.H
 					}
@@ -449,6 +557,31 @@ func (l GridLayout) resolveTracks(tracks []GridTrack, avail, gap float32,
 		for i, tr := range tracks {
 			if tr.Kind != GridFraction {
 				used += sizes[i]
+			}
+		}
+	}
+
+	// minmax(min, length) tracks give back what overflows, down to min.
+	if avail > 0 && used > avail {
+		over := used - avail
+		for range len(tracks) {
+			n := 0
+			for i, tr := range tracks {
+				if tr.Kind == GridFixed && tr.MinMax && sizes[i] > tr.Min {
+					n++
+				}
+			}
+			if n == 0 || over <= 0.01 {
+				break
+			}
+			per := over / float32(n)
+			for i, tr := range tracks {
+				if tr.Kind == GridFixed && tr.MinMax && sizes[i] > tr.Min {
+					d := min(per, sizes[i]-tr.Min)
+					sizes[i] -= d
+					used -= d
+					over -= d
+				}
 			}
 		}
 	}

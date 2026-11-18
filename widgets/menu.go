@@ -825,6 +825,21 @@ func buildMenuPopup(window *Window, parent *Popup, items []*MenuItem) (*Popup, *
 // align with its trigger text, distinct selectedBg). The provided style
 // is treated as a starting point; gutter collapse for label-only menus
 // still happens here.
+// menuLabelOffset is where a row's label starts, from the row's left edge
+// (mirrors the left-to-right row layout in the row's Draw).
+func menuLabelOffset(st menuStyle) float32 {
+	cursor := st.leadingSpace
+	if st.labelInset > 0 {
+		cursor = st.labelInset
+	} else if st.gutterW > 0 {
+		cursor += st.gutterW
+	}
+	if st.iconW > 0 {
+		cursor += st.iconW
+	}
+	return cursor
+}
+
 func buildMenuPopupStyled(window *Window, parent *Popup, closeParent func(), items []*MenuItem, st menuStyle) (*Popup, *menuListView) {
 	// Snapshot the incoming style BEFORE the gutter collapse below:
 	// submenus inherit the palette but re-decide their own gutter from

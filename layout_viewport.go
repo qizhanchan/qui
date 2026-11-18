@@ -82,9 +82,10 @@ func PlaceFixed(w Widget, vp Rect, scroll Point) {
 		sx, sy = sp.X+scroll.X, sp.Y+scroll.Y
 	}
 	x, ww := resolveAnchorAxisStatic(pos.Anchor, AnchorLeft, AnchorRight,
-		pos.Left, pos.Right, pos.Width, vp.X, vp.W, w, true, sx)
+		pos.Left, pos.Right, pos.Width, vp.X, vp.W, w, true, sx, 0)
 	y, h := resolveAnchorAxisStatic(pos.Anchor, AnchorTop, AnchorBottom,
-		pos.Top, pos.Bottom, pos.Height, vp.Y, vp.H, w, false, sy)
+		pos.Top, pos.Bottom, pos.Height, vp.Y, vp.H, w, false, sy,
+		applyConstraints(Size{W: ww}, widgetMinSize(w), widgetMaxSize(w)).W)
 	clamped := applyConstraints(Size{W: ww, H: h}, widgetMinSize(w), widgetMaxSize(w))
 	r := Rect{X: x, Y: y, W: clamped.W, H: clamped.H}
 	if w.Bounds() != r {

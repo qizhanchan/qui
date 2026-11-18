@@ -86,6 +86,31 @@ func (w *Window) keyTargetBehindModal(target Widget) bool {
 	return true
 }
 
+// scrollTargetBehindBlocker returns the topmost scroll-blocking overlay
+// when target lies beneath it (in the main tree or a lower overlay), nil
+// otherwise.
+func (w *Window) scrollTargetBehindBlocker(target Widget) Widget {
+	for i := len(w.overlays) - 1; i >= 0; i-- {
+		ov := w.overlays[i]
+		if widgetInSubtree(ov, target) {
+			return nil
+		}
+		if b, ok := ov.(ScrollBlockingOverlay); ok && b.BlocksScroll() && !isWidgetHidden(ov) {
+			return ov
+		}
+	}
+	return nil
+}
+
+// PressHeldOn reports whether a mouse press that began on w (or inside w's
+// subtree) is still held — the gesture has not been released yet. A popup
+// opened by that press uses it to let the press's release reach its
+// opener (PressHeldOn → transparent), however it overlaps it.
+func (w *Window) PressHeldOn(target Widget) bool {
+	c := w.mouseCaptured
+	return c != nil && target != nil && (c == target || widgetInSubtree(target, c))
+}
+
 func (w *Window) hitTestAll(p Point) Widget {
 	for i := len(w.overlays) - 1; i >= 0; i-- {
 		if isWidgetHidden(w.overlays[i]) {
@@ -282,10 +307,18 @@ func (w *Window) dispatch(event Event) {
 	// The keyboard counterpart of hitTestAll's modal guard: with nothing
 	// focused the key would fall back to the main root, and focus can be
 	// set programmatically behind a modal. Either way the modal takes it.
-	switch event.(type) {
+	switch ev := event.(type) {
 	case KeyEvent, CharEvent:
 		if w.keyTargetBehindModal(target) {
 			target = w.overlays[w.topModalIndex()]
+		}
+	case MouseEvent:
+		// The wheel under a scroll-blocking overlay goes to the overlay,
+		// which scrolls nothing (ScrollBlockingOverlay).
+		if ev.eventType == EventScroll {
+			if b := w.scrollTargetBehindBlocker(target); b != nil {
+				target = b
+			}
 		}
 	}
 

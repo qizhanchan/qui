@@ -32,6 +32,15 @@ type ModalOverlay interface {
 	Modal() bool
 }
 
+// ScrollBlockingOverlay overlays keep the wheel from scrolling what lies
+// beneath them while they are shown — a select's option list, which stays
+// where it opened (a browser's native menu holds the page still the same
+// way). Wheel events over the overlay itself, or over overlays above it,
+// are delivered as usual.
+type ScrollBlockingOverlay interface {
+	BlocksScroll() bool
+}
+
 // FocusVisibleAware widgets are told whether the current focus came from
 // the keyboard (true) or a click (false), right after SetFocused(true) —
 // the CSS :focus-visible distinction, so a focus ring can show for Tab and

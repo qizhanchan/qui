@@ -125,7 +125,8 @@ func BenchmarkInlineRemeasure(b *testing.B) {
 
 // Measured at widths it fits in, a run answers its max-content size
 // without shaping again — and the answer is the one a full layout gives,
-// whatever the alignment (a centred run checks, then lays out per width).
+// whatever the alignment: the run's content width, never the offset a
+// centred or end-aligned line gets inside a wider slot.
 func TestInlineMeasureFitMatchesLayout(t *testing.T) {
 	for _, align := range []TextAlign{TextAlignStart, TextAlignCenter, TextAlignEnd} {
 		b := inlineWithText("short run")
@@ -137,7 +138,7 @@ func TestInlineMeasureFitMatchesLayout(t *testing.T) {
 		for _, w := range []float32{1000, 400, 999, 30, 250, 1000, 61} {
 			got := b.Measure(Size{W: w, H: 17})
 			ref.buildLayout(w)
-			want := Size{W: ref.layout.Width, H: ref.layout.Height}
+			want := Size{W: ref.layout.ContentWidth, H: ref.layout.Height}
 			if got != want {
 				t.Fatalf("align %v width %v: measured %+v, want %+v", align, w, got, want)
 			}
@@ -152,7 +153,7 @@ func TestInlineMeasureFitMatchesLayout(t *testing.T) {
 		for _, w := range []float32{40, 90, 2000, 60} {
 			got := b.Measure(Size{W: w})
 			ref.buildLayout(w)
-			if want := (Size{W: ref.layout.Width, H: ref.layout.Height}); got != want {
+			if want := (Size{W: ref.layout.ContentWidth, H: ref.layout.Height}); got != want {
 				t.Fatalf("nowrap align %v width %v: measured %+v, want %+v", align, w, got, want)
 			}
 		}
@@ -170,7 +171,7 @@ func TestInlineMeasureFitMatchesLayout(t *testing.T) {
 		for _, w := range []float32{30, 500, 70, 900} {
 			got := b.Measure(Size{W: w})
 			ref.buildLayout(w)
-			if want := (Size{W: ref.layout.Width, H: ref.layout.Height}); got != want {
+			if want := (Size{W: ref.layout.ContentWidth, H: ref.layout.Height}); got != want {
 				t.Fatalf("boxed run width %v: measured %+v, want %+v", w, got, want)
 			}
 		}

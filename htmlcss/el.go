@@ -9,6 +9,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -390,6 +392,13 @@ type El struct {
 	// ancestor-state rule. Lazily filled at draw time (one cascade per
 	// distinct combination, usually one); reset each restyle.
 	ancestorVariants map[uint32]*ancestorVariant
+	// stateLayout: an ancestor-state variant changes how this element lays
+	// out (`.item:hover > a ~ .submenu { display: flex }`), which no paint
+	// swap can show. Its triggers' state boundaries then restyle it, and
+	// the restyle applies the variant of the active triggers (stateBase
+	// keeps the resting style the variant replaced, nil when none did).
+	stateLayout bool
+	stateBase   *ComputedStyle
 
 	lastCS *ComputedStyle
 }
@@ -1802,6 +1811,9 @@ func (e *El) ensureBacking() {
 		sel.SetItemDisabled(e.selectDisabled)
 		sel.ItemColors = e.selectItemColors
 		sel.SelectedIdx = e.selectedIdx
+		// Chrome on macOS opens a <select> as a native pop-up menu: the
+		// selected option over the field.
+		sel.AlignSelected = runtime.GOOS == "darwin"
 		e.backing = sel
 	case "input":
 		switch e.attrs["type"] {
@@ -2670,12 +2682,16 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	if e.displayNone {
 		e.flowKids = nil
 		e.textStateActive = false
-		// A hidden element can't show an ancestor-state swap — drop its
-		// trigger registrations (a later toggle back restyles and relinks).
-		if len(e.stateTriggers) > 0 && e.engine != nil {
-			e.engine.removeStateDep(e)
+		// A hidden element can't show an ancestor-state paint swap, but
+		// a state rule may give it a box (a hover menu's display: flex):
+		// linkAncestorState keeps only such layout triggers.
+		e.linkAncestorState(cs)
+		if !e.stateLayout {
+			if len(e.stateTriggers) > 0 && e.engine != nil {
+				e.engine.removeStateDep(e)
+			}
+			e.stateTriggers = e.stateTriggers[:0]
 		}
-		e.stateTriggers = e.stateTriggers[:0]
 		e.ancestorVariants = nil
 		e.setContainerChildren(nil)
 		e.SetStyle(qui.Style{})
@@ -3083,12 +3099,18 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		}
 		// Web-compat: a text-only block flows as an inline run (not a
 		// Label), so its lines can wrap around floats.
+		textOnly := false
 		if webCompat && e.flowKids == nil && e.text != "" && len(e.elementKids) == 0 &&
 			e.iconSrc == nil && !e.isImg() && !e.isControl() && e.backing == nil &&
 			!strings.HasPrefix(cs.Display, "table") {
 			e.flowKids = e.buildPseudoLeaf(cs)
+			textOnly = true
 		}
 		switch {
+		case textOnly && (isFlexDisplay(cs.Display) || isGridDisplay(cs.Display)):
+			// A text-only flex / grid container: its run is the one
+			// anonymous item, placed by the container's own layout
+			// (align-items: center on a link's text, justify-content).
 		case e.flowKids != nil:
 			// Mixed inline content: anonymous inline runs (InlineBoxes)
 			// interleaved with block children (see syncChildren).
@@ -4653,6 +4675,35 @@ func (e *El) naturalImageSize() (qui.Size, bool) {
 	return qui.Size{}, false
 }
 
+// MinContentOverride implements qui.MinContentOverrider: an auto-width
+// picture with a ratio but no natural size (an SVG with only a viewBox)
+// fills whatever width it is given, so it asks for none — Chrome lays a
+// row of such logos into narrow cells without widening them.
+func (e *El) MinContentOverride() (float32, bool) {
+	cs := e.lastCS
+	if !webCompat || cs == nil || !e.isImg() || e.iconSrc != nil || cs.HasWidth || cs.WidthPct > 0 {
+		return 0, false
+	}
+	if _, ok := e.naturalImageSize(); ok {
+		return 0, false
+	}
+	if _, ok := e.naturalImageRatio(); !ok {
+		return 0, false
+	}
+	return e.Style().ContentInsets().Horizontal(), true
+}
+
+// naturalImageRatio is the width / height ratio of a picture that has one
+// but no natural size — an SVG with only a viewBox.
+func (e *El) naturalImageRatio() (float32, bool) {
+	if w, ok := e.imgWidget.(*svgImage); ok {
+		if d, ok := w.src.(*svg.Document); ok && d.ViewBox.W > 0 && d.ViewBox.H > 0 {
+			return d.ViewBox.W / d.ViewBox.H, true
+		}
+	}
+	return 0, false
+}
+
 // replacedSize is CSS replaced-element sizing for an <img> (CSS 2.1
 // § 10.3.2 / 10.6.2): a specified width or height scales the other by the
 // picture's intrinsic ratio, and min / max-width clamps keep that ratio
@@ -4660,6 +4711,15 @@ func (e *El) naturalImageSize() (qui.Size, bool) {
 func (e *El) replacedSize(avail qui.Size) (qui.Size, bool) {
 	cs := e.lastCS
 	nat, ok := e.naturalImageSize()
+	// An SVG with a viewBox but no width / height has a natural ratio and
+	// no natural size: an auto-sized one fills its containing block's
+	// width (300px when that is unknown), the height following the ratio.
+	ratioOnly := false
+	if !ok {
+		if r, rok := e.naturalImageRatio(); rok {
+			nat, ok, ratioOnly = qui.Size{W: r, H: 1}, true, true
+		}
+	}
 	if cs == nil || !ok {
 		return qui.Size{}, false
 	}
@@ -4695,6 +4755,12 @@ func (e *El) replacedSize(avail qui.Size) (qui.Size, bool) {
 		h = w / ratio
 	case hasH:
 		w = h * ratio
+	case ratioOnly:
+		w = cbW
+		if avail.W <= 0 || avail.W >= 1e6 {
+			w = 300
+		}
+		h = w / ratio
 	default:
 		w, h = nat.W, nat.H
 	}
@@ -4862,9 +4928,30 @@ func (e *El) linkAncestorState(cs *ComputedStyle) {
 	}
 	e.stateTriggers = e.stateTriggers[:0]
 	e.ancestorVariants = nil
-	sensH := ancestorStateSensitive(cs, cs.AncestorHover)
-	sensF := ancestorStateSensitive(cs, cs.AncestorFocus)
-	sensA := ancestorStateSensitive(cs, cs.AncestorActive)
+	// While a layout variant is applied, cs is that variant: sensitivity
+	// is a property of the resting style.
+	if e.stateBase != nil {
+		cs = e.stateBase
+	}
+	// A paint swap recolors only this element's own text; a color its
+	// element children inherit (a menu link's icon) needs the restyle too.
+	inheritKids := false
+	for _, k := range e.elementKids {
+		if ke, ok := k.(*El); ok && !ke.isTextSeg() {
+			inheritKids = true
+			break
+		}
+	}
+	restyles := func(v *ComputedStyle) bool {
+		return stateLayoutDiffers(cs, v) || inheritKids && v != nil && v.Color != cs.Color
+	}
+	layH := restyles(cs.AncestorHover)
+	layF := restyles(cs.AncestorFocus)
+	layA := restyles(cs.AncestorActive)
+	e.stateLayout = layH || layF || layA
+	sensH := layH || ancestorStateSensitive(cs, cs.AncestorHover)
+	sensF := layF || ancestorStateSensitive(cs, cs.AncestorFocus)
+	sensA := layA || ancestorStateSensitive(cs, cs.AncestorActive)
 	if (!sensH && !sensF && !sensA) || e.engine == nil || e.engine.sheet == nil || e.node == nil {
 		return
 	}
@@ -4927,7 +5014,54 @@ func (e *El) notifyStateDeps() {
 	}
 	for dep := range e.engine.stateDeps[e] {
 		dep.Invalidate()
+		if dep.stateLayout {
+			e.engine.markDirtyKind(dep, dirtySelf)
+		}
 	}
+}
+
+// stateLayoutDiffers reports whether the state variant v lays out
+// differently from the resting style base (paint-only changes excluded).
+func stateLayoutDiffers(base, v *ComputedStyle) bool {
+	if base == nil || v == nil {
+		return false
+	}
+	a, b := layoutView(base), layoutView(v)
+	for _, x := range []*ComputedStyle{a, b} {
+		x.Hover, x.Focus, x.Active, x.FocusVisible = nil, nil, nil, nil
+		x.AncestorHover, x.AncestorFocus, x.AncestorActive = nil, nil, nil
+	}
+	return !reflect.DeepEqual(a, b)
+}
+
+// layoutStateVariant is the style a restyle applies to an element whose
+// ancestor-state variants change its layout: cs with the rules of its
+// currently active triggers, or nil when none is active. The variant keeps
+// cs's own state variants, so hover / focus styling still works on it.
+func (e *El) layoutStateVariant(cs, parent *ComputedStyle) *ComputedStyle {
+	if !e.stateLayout || e.engine == nil || e.engine.sheet == nil || e.node == nil {
+		return nil
+	}
+	mask := e.triggerMask()
+	if mask == 0 {
+		return nil
+	}
+	var st selectorState
+	for i, t := range e.stateTriggers {
+		if mask&(1<<(uint(i)*3)) != 0 {
+			st.hoverNodes = append(st.hoverNodes, t.el.node)
+		}
+		if mask&(1<<(uint(i)*3+1)) != 0 {
+			st.focusNodes = append(st.focusNodes, t.el.node)
+		}
+		if mask&(1<<(uint(i)*3+2)) != 0 {
+			st.activeNodes = append(st.activeNodes, t.el.node)
+		}
+	}
+	v := *interpret(e.node, mergedDecls(e.node, e.engine.sheet, st), parent)
+	v.Hover, v.Focus, v.Active, v.FocusVisible = cs.Hover, cs.Focus, cs.Active, cs.FocusVisible
+	v.AncestorHover, v.AncestorFocus, v.AncestorActive = cs.AncestorHover, cs.AncestorFocus, cs.AncestorActive
+	return &v
 }
 
 // Draw skips a display:none element entirely, and — for an element whose
@@ -5657,6 +5791,77 @@ func (e *El) InlineBaseline() float32 {
 	if cs.OverflowClip || e.overflowScroll || (e.text == "" && e.flowKids == nil && e.textLabel == nil) {
 		return 0
 	}
+	if b, ok := e.flexRowBaseline(cs); ok {
+		return b
+	}
+	return e.textTopBaseline(cs)
+}
+
+// flexRowBaseline is a row flex container's baseline (CSS Flexbox § 8.5):
+// its first item's baseline where that item sits in the container — an
+// `align-items: center` button's text is centered, not at its top, so a
+// row of inline-flex buttons beside text lines up on the text.
+func (e *El) flexRowBaseline(cs *ComputedStyle) (float32, bool) {
+	if !isFlexDisplay(cs.Display) || cs.FlexDirection != qui.Horizontal {
+		return 0, false
+	}
+	var item qui.Widget
+	for _, k := range e.ChildList() {
+		if k == nil {
+			continue
+		}
+		if ke, ok := k.(*El); ok && (ke.displayNone || ke.lastCS != nil &&
+			(ke.lastCS.Position == "absolute" || ke.lastCS.Position == "fixed")) {
+			continue
+		}
+		item = k
+		break
+	}
+	if item == nil {
+		return 0, false
+	}
+	var itemBase float32
+	if ke, ok := item.(*El); ok {
+		itemBase = ke.InlineBaseline()
+		if itemBase == 0 {
+			return 0, false // a box without text: bottom-on-baseline
+		}
+	} else {
+		itemBase = e.textHalfLeadingAscent(cs) // the container's own text run
+	}
+	st := e.Style()
+	ins := st.ContentInsets()
+	contentH := qui.MeasureConstrained(e, qui.Size{}).H - ins.Vertical()
+	itemH := qui.MeasureChild(item, qui.Size{}).H
+	m := item.Style().Margin
+	align := qui.FlexItemOf(item).Align
+	if align == qui.AlignDefault {
+		align = cs.AlignItems
+	}
+	var off float32
+	switch align {
+	case qui.AlignCenter:
+		off = (contentH - itemH - m.Vertical()) / 2
+	case qui.AlignEnd:
+		off = contentH - itemH - m.Vertical()
+	}
+	return ins.Top + max(off, 0) + m.Top + itemBase, true
+}
+
+// textTopBaseline is the baseline of text set at the top of the content
+// box: padding + border + half-leading + ascent.
+func (e *El) textTopBaseline(cs *ComputedStyle) float32 {
+	st := e.Style()
+	borderTop := st.BorderSize
+	if st.BorderWidths.Top > borderTop {
+		borderTop = st.BorderWidths.Top
+	}
+	return st.Padding.Top + borderTop + e.textHalfLeadingAscent(cs)
+}
+
+// textHalfLeadingAscent is the first text line's baseline from the top of
+// its line box: half the leading plus the font's ascent.
+func (e *El) textHalfLeadingAscent(cs *ComputedStyle) float32 {
 	f := fontFrom(cs)
 	m := qui.GetFontFaceFor(f).Metrics()
 	// Un-Ceil'd, matching the layout engine's inline metrics — rounding each
@@ -5674,12 +5879,7 @@ func (e *El) InlineBaseline() float32 {
 	if half < 0 {
 		half = 0
 	}
-	st := e.Style()
-	borderTop := st.BorderSize
-	if st.BorderWidths.Top > borderTop {
-		borderTop = st.BorderWidths.Top
-	}
-	return st.Padding.Top + borderTop + half + ascent
+	return half + ascent
 }
 
 // ClipboardTableCell reports this cell's table membership so the window's

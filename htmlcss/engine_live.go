@@ -260,6 +260,9 @@ func (eng *StyleEngine) ensureFocusHook() {
 	eng.unhookFocus = win.AddFocusChangeListener(func() {
 		for dep := range eng.focusDeps {
 			dep.Invalidate()
+			if dep.stateLayout {
+				eng.markDirtyKind(dep, dirtySelf)
+			}
 		}
 	})
 }
@@ -767,6 +770,12 @@ func (eng *StyleEngine) restyleWalk(e *El, parent *ComputedStyle) {
 		cs = parent // text segments match no selectors; pure inheritance
 	} else {
 		cs = eng.computeMemo(e.node, parent)
+		// An active trigger of a layout-changing ancestor-state rule (an
+		// open hover menu) styles the element through that rule.
+		e.stateBase = nil
+		if v := e.layoutStateVariant(cs, parent); v != nil {
+			e.stateBase, cs = cs, v
+		}
 	}
 	eng.styled++
 	e.styledPass = eng.pass

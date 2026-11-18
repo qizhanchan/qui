@@ -438,7 +438,7 @@ func (b *InlineBox) Measure(available Size) Size {
 		return sz
 	}
 	b.buildLayout(available.W)
-	return Size{W: b.layout.Width, H: b.layout.Height}
+	return Size{W: b.layout.ContentWidth, H: b.layout.Height}
 }
 
 // measureFit answers Measure from the max-content size when the run fits
@@ -465,7 +465,7 @@ func (b *InlineBox) measureFit(w float32) (Size, bool) {
 	}
 	if !b.haveFit || b.fitKey != key {
 		l := BuildInlineLayout(b.buildItems(itemsW), b.options(0))
-		b.fit = Size{W: l.Width, H: l.Height}
+		b.fit = Size{W: l.ContentWidth, H: l.Height}
 		b.fitKey, b.haveFit = key, true
 		b.fitOK, b.fitBad = false, false
 	}
@@ -485,7 +485,7 @@ func (b *InlineBox) measureFit(w float32) (Size, bool) {
 	}
 	if !b.fitOK {
 		b.buildLayout(w)
-		if (Size{W: b.layout.Width, H: b.layout.Height}) != b.fit {
+		if (Size{W: b.layout.ContentWidth, H: b.layout.Height}) != b.fit {
 			b.fitBad = true
 			return Size{}, false
 		}
@@ -1126,12 +1126,19 @@ func (b *InlineBox) drawTextShadows(canvas Canvas, layout InlineLayout, origin R
 	}
 }
 
-// PaintBounds covers the runs' text shadows, which paint past the box.
+// PaintBounds covers the runs' text shadows and the atomic boxes riding in
+// the run (an inline-flex button's box-shadow), which paint past the box —
+// a damage repaint clipped to the bounds alone cut a button's shadow off.
 func (b *InlineBox) PaintBounds() Rect {
 	r := b.Bounds()
 	for i := range b.parts {
 		if len(b.parts[i].shadows) > 0 {
 			r = r.Union(textShadowBounds(b.Bounds(), b.parts[i].shadows))
+		}
+	}
+	for _, c := range b.ChildList() {
+		if c != nil {
+			r = r.Union(PaintBoundsOf(c))
 		}
 	}
 	return r
