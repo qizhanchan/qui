@@ -147,3 +147,45 @@ func TestDropShadowNestedColorArguments(t *testing.T) {
 		}
 	}
 }
+
+func TestSquareSectionAtViewportEdge(t *testing.T) {
+	res := RenderDoc(`<body><div></div><section id=s></section></body>`, `body{margin:0}div{height:60px}section{height:200px;background:linear-gradient(to right,#eee,#fff);border-top:1px solid #ddd}`, Options{})
+	res.Root.Layout(qui.Rect{W: 160, H: 100})
+	img := image.NewRGBA(image.Rect(0, 0, 160, 100))
+	c := qui.NewImageCanvas(img)
+	c.ClipRect(qui.Rect{W: 160, H: 100})
+	res.Root.Draw(c)
+	for _, p := range []image.Point{{0, 61}, {0, 99}} {
+		if img.RGBAAt(p.X, p.Y).A != 255 {
+			t.Fatalf("square section corner clipped at %v", p)
+		}
+	}
+}
+
+func TestUnderlineOffsetInheritedByMonospaceLink(t *testing.T) {
+	res := RenderDoc(`<body><p><a href="#"><code id=c>__import__()</code></a></p></body>`, `p{text-underline-offset:4px}code{font:15.44px Menlo}`, Options{})
+	cs := res.ByID["c"].(*El).lastCS
+	paint := cs.decorationPaint()
+	if !paint.HasUnderlineOffset || paint.UnderlineOffset != 4 {
+		t.Fatal("offset lost in text paint")
+	}
+}
+
+func TestInlineSVGRootCSSPaint(t *testing.T) {
+	res := RenderDoc(`<body><span style="color:#747474"><svg id=s width=20 height=20 viewBox="0 0 20 20"><rect width=20 height=20 /></svg></span></body>`, `svg{fill:currentColor}`, Options{ScriptDOM: true})
+	s := res.ByID["s"].(*El)
+	check := func(want float32) {
+		t.Helper()
+		r, _, _, _ := s.inlineSVG.Rasterize(20, 20, qui.Color{}).At(10, 10).RGBA()
+		if absf(float32(r)/65535-want) > .01 {
+			t.Fatalf("CSS SVG paint got %v want %v", r, want)
+		}
+	}
+	check(116.0 / 255)
+	s.SetAttr("style", "fill:red")
+	res.Engine.FlushPendingStyles()
+	check(1)
+	s.RemoveAttr("style")
+	res.Engine.FlushPendingStyles()
+	check(116.0 / 255)
+}

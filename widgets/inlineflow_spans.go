@@ -28,6 +28,7 @@ type InlineSpanStyle struct {
 	// font size) for its runs; 0 inherits the enclosing one, < 0 is
 	// normal.
 	LineHeightScale float32
+	Font            Font // font of the inline box, including when it only contains replaced content
 	// BaselineShift raises (+) or lowers (-) the span's content (CSS
 	// vertical-align: super / sub / <length>); nested shifts add up.
 	BaselineShift float32

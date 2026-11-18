@@ -21,7 +21,9 @@ import {launchChrome} from './chrome.mjs';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import puppeteer from 'puppeteer-core';
+import {createRequire} from 'node:module';
+const require = createRequire(process.env.QUI_WEB_DIR ? path.resolve(process.env.QUI_WEB_DIR, 'package.json') : import.meta.url);
+const puppeteer = require('puppeteer-core');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixtureDir = path.resolve(__dirname, '../../../htmlcss/testdata/layout');

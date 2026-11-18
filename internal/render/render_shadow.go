@@ -1,6 +1,7 @@
 package render
 
 import (
+	"image"
 	"math"
 
 	"github.com/qizhanchan/qui/internal/gfx"
@@ -112,4 +113,14 @@ func stampRoundedAlphaAt(buf []uint8, bufW, bufH, left, top int, w, h, radius fl
 		stampCorner(float32(left)+radius, float32(bottom)-radius, left, bottom-rInt, left+rInt, bottom)
 		stampCorner(float32(right)-radius, float32(bottom)-radius, right-rInt, bottom-rInt, right, bottom)
 	}
+}
+
+// Shadow edges and their knockout must share the exact fractional border
+// geometry. Rounding origins and dimensions independently can erase a thin
+// bottom ring, particularly at HiDPI scales.
+func stampShadowAlpha(dst []uint8, w, h, x, y int, rect gfx.Rect, radius float32) {
+	radius = max(0, min(radius, min(rect.W, rect.H)/2))
+	path := gfx.NewPath().AddRRect(rect, radius)
+	mask := rasterizePathToAlpha(path.Flatten(func(p gfx.Point) gfx.Point { return p }), image.Rect(x, y, x+w, y+h))
+	copy(dst, mask.Pix)
 }

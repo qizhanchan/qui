@@ -2,9 +2,11 @@ package render
 
 import (
 	"image"
+	"math"
 	"testing"
 
 	"github.com/qizhanchan/qui/internal/gfx"
+	"github.com/qizhanchan/qui/internal/typeset"
 )
 
 // TestDrawShadowProducesDarkPixels confirms that DrawShadow lays down
@@ -87,5 +89,54 @@ func TestDrawShadowZeroBlurStillStamps(t *testing.T) {
 		gfx.Color{R: 1, G: 0, B: 0, A: 1})
 	if img.RGBAAt(20, 20).R == 0 {
 		t.Errorf("crisp shadow stamp missing at center")
+	}
+}
+
+func TestFractionalShadowRingPreservesBottom(t *testing.T) {
+	for _, scale := range []float32{1, 2} {
+		img := image.NewRGBA(image.Rect(0, 0, 400, 180))
+		c := NewImageCanvasForTest(img)
+		c.Scale(scale, scale)
+		r := gfx.Rect{X: 20, Y: 20.34375, W: 166.6875, H: 47.375}
+		c.DrawShadow(r, 9999, gfx.ElevationSpec{Spread: 1, Opacity: 1, Knockout: true}, gfx.Color{A: 1})
+		x := int((r.X + r.W/2) * scale)
+		outerY := int(math.Ceil(float64((r.Y + r.H) * scale)))
+		if a := img.RGBAAt(x, outerY).A; a < 100 {
+			t.Fatalf("scale %v: fractional bottom edge disappeared: %d", scale, a)
+		}
+		coverage := 0
+		for y := int((r.Y + r.H - 1) * scale); y < int((r.Y+r.H+2)*scale); y++ {
+			coverage += int(img.RGBAAt(x, y).A)
+		}
+		if coverage < int(200*scale) {
+			t.Fatalf("scale %v: bottom ring coverage %d", scale, coverage)
+		}
+	}
+}
+
+func TestUnderlineOffsetSeparatesUnderscoreInk(t *testing.T) {
+	f := gfx.Font{Family: "Menlo", Size: 15.44}
+	layout := typeset.BuildTextLayout("__import__()", f, typeset.TextLayoutOptions{LineHeightScale: 24 / 15.44})
+	img := image.NewRGBA(image.Rect(0, 0, 200, 60))
+	c := NewImageCanvasForTest(img)
+	r := gfx.Rect{W: 200, H: 24}
+	typeset.DrawTextLayout(c, layout, r, gfx.Color{A: 1}, f)
+	typeset.DrawTextDecorationPaint(c, layout, r, gfx.Color{A: 1}, f, typeset.DecorationUnderline, typeset.DecorationPaint{Color: gfx.Color{R: 1, A: 1}, HasColor: true, UnderlineOffset: 4, HasUnderlineOffset: true})
+	lastGlyph, lastLine := -1, -1
+	for y := 0; y < 60; y++ {
+		for x := 0; x < 200; x++ {
+			p := img.RGBAAt(x, y)
+			if p.A > 100 {
+				if p.R < 40 && p.G < 40 && p.B < 40 {
+					lastGlyph = max(lastGlyph, y)
+				}
+				if p.R > 150 && p.G < 40 && p.B < 40 {
+					lastLine = max(lastLine, y)
+				}
+			}
+		}
+	}
+	if lastGlyph < 0 || lastLine <= lastGlyph+1 {
+		t.Fatalf("underline merged with glyph ink: glyph bottom %d, line bottom %d", lastGlyph, lastLine)
 	}
 }

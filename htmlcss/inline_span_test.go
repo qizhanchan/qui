@@ -67,3 +67,16 @@ func TestInlineSpanFolding(t *testing.T) {
 		t.Fatalf("expected the text to wrap onto several lines, height %.1f", h)
 	}
 }
+
+func TestImageOnlyInlineSpanRespectsQuirksStrut(t *testing.T) {
+	src := `<body style="margin:0;font:16px/24px sans-serif"><div><a href="#"><img width="16" height="16"></a></div></body>`
+	boxes := webInlineBoxes(t, src, LimitedQuirksMode)
+	if len(boxes) == 0 {
+		t.Fatal("missing inline formatting context")
+	}
+	for _, b := range boxes {
+		if b.Bounds().H != 16 {
+			t.Fatalf("image-only quirks line height %v, want 16", b.Bounds().H)
+		}
+	}
+}

@@ -845,7 +845,7 @@ func drawShadowImplRaw(img *image.RGBA, rect gfx.Rect, radius float32, spec gfx.
 	dstY0 += wy0
 
 	srcAlpha := make([]uint8, bufW*bufH)
-	stampRoundedAlphaAt(srcAlpha, bufW, bufH, margin-wx0, margin-wy0, shadowRect.W, shadowRect.H, shadowRadius)
+	stampShadowAlpha(srcAlpha, bufW, bufH, dstX0, dstY0, shadowRect, shadowRadius)
 
 	dstAlpha := make([]uint8, bufW*bufH)
 	if blur > 0 {
@@ -859,7 +859,7 @@ func drawShadowImplRaw(img *image.RGBA, rect gfx.Rect, radius float32, spec gfx.
 	// box even when its background is transparent. Apply after blurring.
 	if spec.Knockout {
 		hole := make([]uint8, bufW*bufH)
-		stampRoundedAlphaAt(hole, bufW, bufH, int(math.Round(float64(rect.X)))-dstX0, int(math.Round(float64(rect.Y)))-dstY0, rect.W, rect.H, radius)
+		stampShadowAlpha(hole, bufW, bufH, dstX0, dstY0, rect, radius)
 		for i, coverage := range hole {
 			srcAlpha[i] = uint8(uint32(srcAlpha[i]) * uint32(255-coverage) / 255)
 		}

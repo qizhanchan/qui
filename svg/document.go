@@ -156,3 +156,12 @@ func MustParseBytes(data []byte) *Document {
 	}
 	return doc
 }
+
+// SetRootPaints supplies the embedding CSS cascade's fill and stroke.
+func (d *Document) SetRootPaints(fill, stroke Paint) {
+	if d.Root.Style.Fill == fill && d.Root.Style.Stroke == stroke {
+		return
+	}
+	d.Root.Style.Fill, d.Root.Style.Stroke = fill, stroke
+	d.invalidateCache()
+}

@@ -3,6 +3,7 @@ package htmlcss
 import (
 	"cmp"
 	"maps"
+	"math"
 	"slices"
 	"sort"
 	"strconv"
@@ -99,11 +100,13 @@ type ComputedStyle struct {
 	HasDecorationColor  bool
 	DecorationStyle     qui.DecorationLineStyle
 	DecorationThickness float32 // px; 0 = auto
-	NoWrap              bool    // white-space: nowrap / pre (no soft-wrapping)
-	PreserveWS          bool    // white-space: pre / pre-wrap (keep spaces + newlines)
-	PreserveNL          bool    // white-space: pre-line (collapse spaces, keep newlines)
-	Ellipsis            bool    // text-overflow: ellipsis
-	TextTransform       string  // "", uppercase, lowercase, capitalize
+	UnderlineOffset     float32
+	HasUnderlineOffset  bool
+	NoWrap              bool   // white-space: nowrap / pre (no soft-wrapping)
+	PreserveWS          bool   // white-space: pre / pre-wrap (keep spaces + newlines)
+	PreserveNL          bool   // white-space: pre-line (collapse spaces, keep newlines)
+	Ellipsis            bool   // text-overflow: ellipsis
+	TextTransform       string // "", uppercase, lowercase, capitalize
 	// BreakWord allows breaking inside a word with no break opportunity that
 	// does not fit its line: overflow-wrap: break-word | anywhere, its legacy
 	// alias word-wrap, and word-break: break-all (approximated — a word that
@@ -953,6 +956,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		cs.TextIndent = parent.TextIndent
 		cs.LigatureFeatures = parent.LigatureFeatures
 		cs.FeatureSettings = parent.FeatureSettings
+		cs.UnderlineOffset, cs.HasUnderlineOffset = parent.UnderlineOffset, parent.HasUnderlineOffset
 		cs.AccentColor = parent.AccentColor
 		cs.HasAccentColor = parent.HasAccentColor
 		cs.ScrollbarThumb = parent.ScrollbarThumb
@@ -1251,6 +1255,12 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 			if px, ok := parseLength(v, fs, fs); ok {
 				cs.DecorationThickness = px
 			}
+		}
+	}
+	if v, ok := m["text-underline-offset"]; ok {
+		cs.UnderlineOffset, cs.HasUnderlineOffset = 0, false
+		if px, valid := parseLength(v, fs, fs); valid {
+			cs.UnderlineOffset, cs.HasUnderlineOffset = px, true
 		}
 	}
 	if v, ok := m["white-space"]; ok {
@@ -1746,10 +1756,11 @@ func parseDecorationExtras(cs *ComputedStyle, v string, fs float32) {
 // for the renderer (zero value = text color, solid, auto thickness).
 func (cs *ComputedStyle) decorationPaint() qui.DecorationPaint {
 	return qui.DecorationPaint{
-		Color:     cs.DecorationColor,
-		HasColor:  cs.HasDecorationColor,
-		Style:     cs.DecorationStyle,
-		Thickness: cs.DecorationThickness,
+		Color:           cs.DecorationColor,
+		HasColor:        cs.HasDecorationColor,
+		Style:           cs.DecorationStyle,
+		Thickness:       cs.DecorationThickness,
+		UnderlineOffset: cs.UnderlineOffset, HasUnderlineOffset: cs.HasUnderlineOffset,
 	}
 }
 
@@ -2004,6 +2015,11 @@ func parseWebBorder(m map[string]string, cs *ComputedStyle, fs float32) {
 		}
 		if styles[i] == qui.BorderNone {
 			widths[i] = 0
+		} else if widths[i] > 0 {
+			// Blink snaps border widths down to device pixels, with a one-pixel
+			// minimum for nonzero borders. These used widths affect layout too.
+			scale := max(devicePixelRatio, 1)
+			widths[i] = max(1, float32(math.Floor(float64(widths[i]*scale)))) / scale
 		}
 	}
 	cs.BorderStyle = qui.BorderSolid

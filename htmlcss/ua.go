@@ -210,6 +210,13 @@ func defaultDisplay(tag string) string {
 // input types borrow <button>'s chrome and checkbox / radio inputs get
 // their own rule.
 func uaTagFor(n *Node) string {
+	if webCompat && (n.Tag == "ul" || n.Tag == "ol") {
+		for p := n.Parent; p != nil; p = p.Parent {
+			if p.Tag == "ul" || p.Tag == "ol" {
+				return "nested-list"
+			}
+		}
+	}
 	if webCompat && n.Tag == "abbr" {
 		if _, ok := n.Attr("title"); ok {
 			return "abbr-titled"
@@ -299,6 +306,8 @@ func uaDeclarations(tag string) []Declaration {
 		return decls("font-family", "monospace")
 	case "pre":
 		return decls("font-family", "monospace", "margin", "1em 0", "white-space", "pre")
+	case "nested-list":
+		return decls("margin", "0", "padding-left", "40px")
 	case "ul", "ol":
 		return decls("margin", "1em 0", "padding-left", "40px")
 	case "dl":

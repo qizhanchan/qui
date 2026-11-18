@@ -51,6 +51,9 @@ func RenderDoc(htmlSrc, cssSrc string, opts Options) RenderResult {
 	} else if opts.Window != nil {
 		vw = opts.Window.Size().W
 	}
+	if opts.Window != nil {
+		SetDevicePixelRatio(opts.Window.DevicePixelRatio())
+	}
 	SetViewportUnits(vw, opts.ViewportHeight)
 	eng := NewStyleEngineViewport(css, vw)
 	eng.opts = opts

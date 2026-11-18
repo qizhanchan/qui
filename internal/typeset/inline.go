@@ -333,6 +333,13 @@ func inlineLineVMetrics(toks []inlineTok, idxs []int, scale, spacing, mid, baseA
 	var topBox, bottomBox float32 // tallest vertical-align: top / bottom box
 	for _, ti := range idxs {
 		t := toks[ti]
+		if t.box && t.span > 0 && t.font.Size > 0 && !strutText {
+			// An enclosing non-replaced inline box contributes its line-height
+			// even when its only child is an image or SVG.
+			strut := inlineTok{font: t.font, lh: t.lh}
+			ab, bb := strut.aboveBelow(scale, spacing, mid, leadBelow, roundNormal)
+			ascent, descent = max(ascent, ab), max(descent, bb)
+		}
 		if t.box && (t.valign == InlineTop || t.valign == InlineBottom) {
 			// Aligned to the line box's edge, not the baseline: they only
 			// stretch the line once the rest of it is known (below).
@@ -1659,7 +1666,7 @@ func tokenizeInline(items []InlineItem, preserve bool) []inlineTok {
 		}
 		if it.Box {
 			tok := inlineTok{box: true, boxIndex: it.BoxIndex, valign: it.VAlign, size: it.Size, baseline: it.Baseline,
-				span: it.Span, srcItem: ii, srcStart: 0, srcEnd: 1}
+				span: it.Span, font: it.Font, lh: it.LineHeightScale, srcItem: ii, srcStart: 0, srcEnd: 1}
 			stampSpace(&tok)
 			ins.lead(&tok)
 			toks = append(toks, tok)

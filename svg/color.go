@@ -197,3 +197,7 @@ func formatColor(c qui.Color) string {
 	}
 	return fmt.Sprintf("rgba(%d,%d,%d,%s)", r, g, b, fmtNum(clampUnit(c.A)))
 }
+
+// ParsePaint parses an SVG fill or stroke value, including currentColor
+// and local paint-server references. It is shared with the HTML CSS cascade.
+func ParsePaint(value string) (Paint, error) { return parsePaint(value) }

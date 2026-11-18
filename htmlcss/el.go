@@ -57,7 +57,8 @@ type El struct {
 	domText    string
 	domTextSet bool
 	// inlineSVG is an inline <svg> element's drawing (inlinesvg.go).
-	inlineSVG *svg.Document
+	inlineSVG                      *svg.Document
+	inlineSVGFill, inlineSVGStroke svg.Paint
 	// attrMu guards the attrs MAP ONLY, and only against the one reader
 	// that is not on the main goroutine: the AX / DOM introspection surface
 	// (Role, AccessibleName, inspect.go), which an agent HTTP handler walks
@@ -4120,6 +4121,7 @@ func inlineSpanStyle(e *El, cs, parent *ComputedStyle) widgets.InlineSpanStyle {
 		NoWrap:          cs.NoWrap,
 		Hyphenate:       cs.HyphensAuto,
 		LineHeightScale: spanLineHeight(cs),
+		Font:            fontFrom(cs),
 		Padding:         cs.Padding,
 		Margin:          qui.Insets{Left: cs.Margin.Left, Right: cs.Margin.Right},
 		Radius:          cs.Radius,
@@ -4333,6 +4335,18 @@ func (e *El) ensureImg(cs *ComputedStyle) {
 	}
 	if e.inlineSVG != nil {
 		e.inlineSVG.SetColor(cs.Color)
+		fill, stroke := e.inlineSVGFill, e.inlineSVGStroke
+		if value, ok := cs.raw["fill"]; ok {
+			if paint, err := svg.ParsePaint(value); err == nil {
+				fill = paint
+			}
+		}
+		if value, ok := cs.raw["stroke"]; ok {
+			if paint, err := svg.ParsePaint(value); err == nil {
+				stroke = paint
+			}
+		}
+		e.inlineSVG.SetRootPaints(fill, stroke)
 		// Intrinsic size: numeric width / height attributes; ratio: the
 		// viewBox (else that size); CSS sizes win (an <svg> with neither
 		// is 300×150, the replaced-element default).

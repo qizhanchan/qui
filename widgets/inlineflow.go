@@ -195,7 +195,11 @@ func (b *InlineBox) AddBox(w Widget, valign InlineVAlign) {
 		b.InvalidateLayout()
 		return
 	}
-	b.parts = append(b.parts, inlinePart{isBox: true, child: w, valign: valign, span: b.curSpan()})
+	var font Font
+	if span := b.curSpan(); span > 0 {
+		font = b.spans[span-1].style.Font
+	}
+	b.parts = append(b.parts, inlinePart{isBox: true, child: w, valign: valign, span: b.curSpan(), font: font, lh: b.curLineHeight()})
 	b.haveLay = false
 	b.haveFit = false
 	b.InvalidateLayout()
@@ -255,7 +259,8 @@ func (b *InlineBox) buildItems(maxW float32) []InlineItem {
 				Size:        Size{W: sz.W + m.Horizontal(), H: sz.H + m.Vertical()},
 				VAlign:      p.valign,
 				BoxIndex:    boxN,
-				Span:        p.span,
+				Font:        p.font, LineHeightScale: p.lh,
+				Span: p.span,
 			}
 			// A text-carrying atomic box (e.g. a styled link kept as its own
 			// box) reports its baseline so the IFC aligns it with the run.

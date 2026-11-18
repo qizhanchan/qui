@@ -1,0 +1,10 @@
+{
+ "fixture": "web-inline-replaced-span-lineheight",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "container": [0,0,68.45,50],
+  "icon": [8,16.59,16,16],
+  "second": [44.45,16.59,16,16]
+ }
+}

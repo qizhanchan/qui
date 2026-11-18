@@ -31,6 +31,7 @@ func (e *El) setInlineSVGMarkup(markup string) {
 		doc = &svg.Document{}
 	}
 	e.inlineSVG = doc
+	e.inlineSVGFill, e.inlineSVGStroke = doc.Root.Style.Fill, doc.Root.Style.Stroke
 	e.imgSrc = "\x00reload"
 }
 

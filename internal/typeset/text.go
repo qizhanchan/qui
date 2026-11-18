@@ -103,10 +103,12 @@ const (
 // the text color, as a solid line, at the auto (font-derived) thickness — so
 // callers that don't set it keep the historical behavior.
 type DecorationPaint struct {
-	Color     gfx.Color           // line color; used only when HasColor is set
-	HasColor  bool                // when false, the decoration uses the text color
-	Style     DecorationLineStyle // solid / double / dotted / dashed / wavy
-	Thickness float32             // px; <= 0 = auto (font-derived)
+	Color              gfx.Color           // line color; used only when HasColor is set
+	HasColor           bool                // when false, the decoration uses the text color
+	Style              DecorationLineStyle // solid / double / dotted / dashed / wavy
+	Thickness          float32             // px; <= 0 = auto (font-derived)
+	UnderlineOffset    float32             // distance from baseline; used when HasUnderlineOffset
+	HasUnderlineOffset bool
 }
 
 // ParagraphStyle describes high-level paragraph layout behavior.
@@ -613,7 +615,13 @@ func drawDecorationRun(canvas gfx.Canvas, deco TextDecoration, x, w, top, lineHe
 		lineColor = paint.Color
 	}
 	if deco&DecorationUnderline != 0 {
-		drawDecoLine(canvas, paint.Style, x, baseline+descent*0.4, w, thickness, lineColor)
+		underlineY := baseline + descent*0.4
+		if paint.HasUnderlineOffset {
+			// DrawText centers glyphs on their cap-height box. Explicit CSS
+			// offsets are measured from that same painted baseline.
+			underlineY = top + (lineHeight+ShapedLineCapHeight(fontSpec))/2 + paint.UnderlineOffset
+		}
+		drawDecoLine(canvas, paint.Style, x, underlineY, w, thickness, lineColor)
 	}
 	if deco&DecorationLineThrough != 0 {
 		drawDecoLine(canvas, paint.Style, x, baseline-ascent*0.32, w, thickness, lineColor)

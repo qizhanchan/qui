@@ -896,6 +896,7 @@ func layoutView(cs *ComputedStyle) *ComputedStyle {
 	v.Underline, v.LineThrough, v.Overline = false, false, false
 	v.DecorationColor, v.HasDecorationColor = qui.Color{}, false
 	v.DecorationStyle, v.DecorationThickness = 0, 0
+	v.UnderlineOffset, v.HasUnderlineOffset = 0, false
 	v.Background, v.HasBackground, v.BackgroundImageURL = qui.Color{}, false, ""
 	v.Gradient = nil
 	v.BorderColor, v.SideColors = qui.Color{}, qui.SideColors{}

@@ -1,0 +1,12 @@
+{
+ "fixture": "web-fractional-border-widths",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "em": [0,20,240,82],
+  "text": [20,37,200,48],
+  "small": [0,122,242,26],
+  "fraction": [0,168,244,28],
+  "after": [0,216,640,24]
+ }
+}
