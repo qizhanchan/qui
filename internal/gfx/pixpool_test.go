@@ -3,6 +3,7 @@ package gfx
 import (
 	"image"
 	"testing"
+	"time"
 )
 
 func TestPixPoolReuseAndZero(t *testing.T) {
@@ -26,4 +27,22 @@ func TestPixPoolReuseAndZero(t *testing.T) {
 	}
 	PutRGBA(img)
 	PutPix(make([]uint8, 1000)) // foreign buffer: ignored, must not panic
+}
+
+func TestPixPoolTrimsWhenIdle(t *testing.T) {
+	old := pixPoolIdle
+	pixPoolIdle = 20 * time.Millisecond
+	defer func() { pixPoolIdle = old }()
+	TrimPixPool()
+	PutPix(GetPix(4096, false))
+	if PixPoolBytes() == 0 {
+		t.Fatal("returned buffer not pooled")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for PixPoolBytes() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("pool still holds %d bytes after idle", PixPoolBytes())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }

@@ -1226,6 +1226,11 @@ void* quiCocoaEnterMetalMode(uintptr_t handle) {
         layer.colorspace = cs;
         CGColorSpaceRelease(cs);
         layer.framebufferOnly = YES;
+        // Two drawables, not the default three: a frame is rasterized on
+        // the CPU and the GPU only blits it, so the third never buys
+        // throughput, and each one is a full-window IOSurface (16 MB for a
+        // 1280x800 window at 2x).
+        layer.maximumDrawableCount = 2;
         layer.opaque = [box.window isOpaque];
         // During a live resize the old drawable stays pinned top-left
         // rather than stretched until the new-size frame arrives.
