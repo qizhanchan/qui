@@ -163,7 +163,7 @@ func (eng *StyleEngine) buildStaticEl(n *Node, styles map[*Node]*ComputedStyle) 
 		case TextNode:
 			// Scripts see every text node (React hydrates against them);
 			// otherwise inter-block whitespace is dropped up front.
-			if !hasInlineish && collapseText(c.Text) == "" && !eng.opts.ScriptDOM {
+			if !hasInlineish && collapseText(c.Text) == "" && !eng.opts.ScriptDOM && !eng.opts.DocumentRoot {
 				continue
 			}
 			kids = append(kids, newTextEl(c.Text, eng))

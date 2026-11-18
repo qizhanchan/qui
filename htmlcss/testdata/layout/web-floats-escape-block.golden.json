@@ -1,0 +1,20 @@
+{
+ "fixture": "web-floats-escape-block",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "inline-case": [0,0,400,168],
+  "description": [0,0,400,144],
+  "image": [260,0,140,96],
+  "following": [0,144,400,24],
+  "blocks": [0,180,400,128],
+  "empty": [0,188,400,8],
+  "nested": [0,188,400,8],
+  "nested-float": [252,192,140,96],
+  "cleared": [0,288,400,20],
+  "isolated": [0,320,400,132],
+  "bfc": [0,320,400,96],
+  "contained": [260,320,140,96],
+  "after-bfc": [0,432,400,20]
+ }
+}

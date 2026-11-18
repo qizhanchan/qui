@@ -1,0 +1,14 @@
+{
+ "fixture": "web-inline-block-descendant-baseline",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "line": [0,0,640,24],
+  "cache": [0,24,50.7,24],
+  "summary": [0,24,50.7,24],
+  "next": [0,48,640,24],
+  "line2": [0,72,640,24],
+  "block": [35.64,72,81.25,24],
+  "nested-line": [35.64,72,81.25,24]
+ }
+}

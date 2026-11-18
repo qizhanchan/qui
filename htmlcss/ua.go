@@ -210,9 +210,9 @@ func defaultDisplay(tag string) string {
 // input types borrow <button>'s chrome and checkbox / radio inputs get
 // their own rule.
 func uaTagFor(n *Node) string {
-	if webCompat && (n.Tag == "ul" || n.Tag == "ol") {
+	if webCompat && (n.Tag == "ul" || n.Tag == "ol" || n.Tag == "menu") {
 		for p := n.Parent; p != nil; p = p.Parent {
-			if p.Tag == "ul" || p.Tag == "ol" {
+			if p.Tag == "ul" || p.Tag == "ol" || p.Tag == "menu" {
 				return "nested-list"
 			}
 		}
@@ -279,7 +279,7 @@ func uaDeclarations(tag string) []Declaration {
 	case "caption":
 		// Table caption: centered with a little breathing room (browser UA).
 		return decls("text-align", "center", "padding", "6px 0")
-	case "em", "i", "cite", "dfn", "var":
+	case "em", "i", "cite", "dfn", "var", "address":
 		return decls("font-style", "italic")
 	case "kbd", "samp", "tt":
 		return decls("font-family", "monospace")
@@ -308,7 +308,7 @@ func uaDeclarations(tag string) []Declaration {
 		return decls("font-family", "monospace", "margin", "1em 0", "white-space", "pre")
 	case "nested-list":
 		return decls("margin", "0", "padding-left", "40px")
-	case "ul", "ol":
+	case "ul", "ol", "menu":
 		return decls("margin", "1em 0", "padding-left", "40px")
 	case "dl":
 		return decls("margin", "1em 0")

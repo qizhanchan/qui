@@ -1,0 +1,12 @@
+{
+ "fixture": "web-nested-list-margins-sm",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "tags": [68.73,0.25,23.95,27],
+  "tag-item": [68.73,0.25,23.95,27],
+  "byline": [0,27.25,640,24],
+  "outer": [0,67.25,640,48],
+  "inner": [40,91.25,600,24]
+ }
+}

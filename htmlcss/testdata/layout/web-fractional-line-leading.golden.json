@@ -1,0 +1,9 @@
+{
+ "fixture": "web-fractional-line-leading",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "baseline": [65.7,13,10,4],
+  "after": [0,243.44,640,23.2]
+ }
+}

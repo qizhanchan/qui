@@ -1,0 +1,7 @@
+<!doctype html><meta charset="utf-8"><style>
+@font-face{font-family:GoRegular;src:url("../../../widgets/scripts/web/go-regular.ttf")}
+body{margin:0;font:16px/24px GoRegular}.case{display:flow-root;width:400px;margin-bottom:12px}.float{float:right;width:120px;height:96px;padding-left:20px}.clear{clear:both;height:20px;margin-top:16px}
+</style>
+<div class="case" id="inline-case"><div id="description"><a href="#"><span id="image" class="float"></span></a>Text after an inline link containing a float must wrap around the floated box, using the rest of the line width until the float ends. More words ensure that several lines are measured beside and below the image.</div><div id="following">Following text.</div></div>
+<div class="case" id="blocks"><div id="empty" style="margin:8px 0"><div id="nested" style="padding:4px 8px"><div class="float" id="nested-float"></div></div></div><div class="clear" id="cleared"></div></div>
+<div class="case" id="isolated"><div style="display:flow-root" id="bfc"><div class="float" id="contained"></div></div><div class="clear" id="after-bfc"></div></div>

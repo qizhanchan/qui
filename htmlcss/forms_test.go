@@ -146,6 +146,8 @@ func TestInputButtonTypesRenderAsButtons(t *testing.T) {
 		{`<input id="b" type="submit">`, "Submit"},
 		{`<input id="b" type="reset">`, "Reset"},
 		{`<input id="b" type="submit" value="Send it">`, "Send it"},
+		{`<input id="b" type="submit" value="">`, ""},
+		{`<input id="b" type="reset" value="">`, ""},
 		{`<input id="b" type="button" value="Poke">`, "Poke"},
 	}
 	for _, c := range cases {
@@ -166,7 +168,7 @@ func TestInputButtonTypesRenderAsButtons(t *testing.T) {
 			t.Errorf("%s: expected borrowed button chrome (face + border)", c.html)
 		}
 		res.Root.Layout(qui.Rect{X: 0, Y: 0, W: 300, H: 100})
-		if el.textLabel == nil || el.textLabel.Selectable {
+		if (c.wantLabel != "" && el.textLabel == nil) || (el.textLabel != nil && el.textLabel.Selectable) {
 			t.Errorf("%s: button label should be a non-selectable face", c.html)
 		}
 	}

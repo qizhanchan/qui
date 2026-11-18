@@ -1734,8 +1734,8 @@ func (e *El) isButtonInput() bool {
 // buttonInputLabel returns the visible label for a push-button input: the
 // `value` attribute, or a type-appropriate default ("Submit"/"Reset").
 func buttonInputLabel(attrs map[string]string) string {
-	if v := collapseText(attrs["value"]); v != "" {
-		return v
+	if v, present := attrs["value"]; present {
+		return collapseText(v)
 	}
 	switch attrs["type"] {
 	case "submit":
@@ -2932,6 +2932,11 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	// Box decorations (background / border / radius / shadow / gradient /
 	// transform / overflow-clip / relative offset / hover-focus-active).
 	applyBox(&e.Box, cs, e.isStyleRoot())
+	// Replaced image content is clipped by border-radius even when overflow
+	// is visible; ordinary descendants only clip for authored overflow.
+	if e.isImg() && (cs.Radius > 0 || !cs.Corners.IsZero() || cs.borderRadii != nil) {
+		e.Box.ClipChildren = true
+	}
 	if e.blockInInline {
 		e.Box.Display = qui.FlowBlock
 	}
@@ -3151,7 +3156,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		// Web-compat: a text-only block flows as an inline run (not a
 		// Label), so its lines can wrap around floats.
 		textOnly := false
-		if webCompat && e.flowKids == nil && e.text != "" && len(e.elementKids) == 0 &&
+		if webCompat && !e.pseudoKids && e.flowKids == nil && e.text != "" && len(e.elementKids) == 0 &&
 			e.iconSrc == nil && !e.isImg() && !e.isControl() && e.backing == nil &&
 			!strings.HasPrefix(cs.Display, "table") {
 			e.flowKids = e.buildPseudoLeaf(cs)
@@ -3708,6 +3713,14 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 			if ke, ok := elementKids[i].(*El); ok && styles[i] != nil && styles[i].InlineStatic && (!(styles[i].HasLeft || styles[i].HasRight) || !(styles[i].HasTop || styles[i].HasBottom)) {
 				// Mark its place in the line for its static position.
 				run = append(run, i)
+			} else if ok && styles[i] != nil && (styles[i].Position == "absolute" || styles[i].Position == "fixed") {
+				// A block-level out-of-flow box also needs its original place when
+				// inline runs cause the actual absolute children to be collected last.
+				flushRun()
+				if ke.staticMarker == nil {
+					ke.staticMarker = newStaticMarker()
+				}
+				out = append(out, ke.staticMarker)
 			} else if ok {
 				ke.staticMarker = nil
 			}
@@ -4110,9 +4123,29 @@ func inlineHasContent(e *El) bool {
 // filters and box-changing :hover variants still need a widget of their
 // own. Width / height do not apply to inline boxes at all.
 func spanFoldable(cs *ComputedStyle) bool {
-	return !cs.HasShadow && cs.Gradient == nil && !cs.HasOpacity && cs.Transform == nil &&
-		cs.Filter == nil && cs.ClipPath == nil && cs.Mask == nil && cs.BackdropFilter == nil &&
-		!cs.hasStateBoxVariant()
+	if cs.HasShadow || cs.Gradient != nil || cs.HasOpacity || cs.Transform != nil ||
+		cs.Filter != nil || cs.ClipPath != nil || cs.Mask != nil || cs.BackdropFilter != nil {
+		return false
+	}
+	// Inline spans already paint background changes without becoming atomic
+	// boxes (whose border would incorrectly include the entire line height).
+	if (cs.AncestorHover != nil && boxDecorationsDiffer(cs, cs.AncestorHover)) || (cs.AncestorFocus != nil && boxDecorationsDiffer(cs, cs.AncestorFocus)) || (cs.AncestorActive != nil && boxDecorationsDiffer(cs, cs.AncestorActive)) {
+		return false
+	}
+	for _, v := range []*ComputedStyle{cs.Hover, cs.Focus, cs.FocusVisible, cs.Active} {
+		if v == nil {
+			continue
+		}
+		// Background is handled by the span's retained paint state. Use the
+		// shared comparison for borders so an unpainted currentColor border
+		// does not make a text-color-only variant atomic.
+		paint := *v
+		paint.HasBackground, paint.Background = cs.HasBackground, cs.Background
+		if boxDecorationsDiffer(cs, &paint) {
+			return false
+		}
+	}
+	return true
 }
 
 // inlineSpanStyle is a folded inline element's span decoration.
@@ -4161,7 +4194,17 @@ func inlineSpanStyle(e *El, cs, parent *ComputedStyle) widgets.InlineSpanStyle {
 		st.BaselineShift = pfs/3 + 1
 	case "sub": // Blink: the parent's font size / 5 + 1
 		st.BaselineShift = -(pfs/5 + 1)
-	case "", "baseline", "middle", "top", "bottom", "text-top", "text-bottom":
+	case "middle":
+		if webCompat && parent != nil {
+			scale := cs.LineHeight
+			if scale < 0 {
+				scale = -2
+			}
+			ascent, descent := qui.CSSInlineMetrics(fontFrom(cs), scale)
+			metrics := qui.FontMetricsFor(fontFrom(parent))
+			st.BaselineShift = float32(metrics.XHeight)/128 - (ascent-descent)/2
+		}
+	case "", "baseline", "top", "bottom", "text-top", "text-bottom":
 	default:
 		if px, ok := parseLength(v, cs.FontSize, cs.LineHeight*cs.FontSize); ok {
 			st.BaselineShift = px
@@ -4175,6 +4218,25 @@ func inlineSpanStyle(e *El, cs, parent *ComputedStyle) widgets.InlineSpanStyle {
 		}
 		if h.HasBackground && h.Background != cs.Background {
 			st.Hover.Background = h.Background
+			st.Hover.HasBackground = true
+		}
+	}
+	if cs.Focus != nil || cs.FocusVisible != nil || cs.Active != nil {
+		st.State = func() *widgets.InlineSpanHover {
+			v := cs
+			if e.Focused() && cs.Focus != nil {
+				v = cs.Focus
+			}
+			if e.FocusVisibleNow() && cs.FocusVisible != nil {
+				v = cs.FocusVisible
+			}
+			if e.Pressed() && cs.Active != nil {
+				v = cs.Active
+			}
+			if v == cs {
+				return nil
+			}
+			return &widgets.InlineSpanHover{HasColor: v.Color != cs.Color, Color: v.Color, HasDeco: v.decoration() != cs.decoration(), Decoration: v.decoration(), DecoPaint: v.decorationPaint(), HasBackground: v.HasBackground != cs.HasBackground || v.Background != cs.Background, Background: v.Background}
 		}
 	}
 	return st
@@ -6016,6 +6078,23 @@ func (e *El) InlineBaseline() float32 {
 	}
 	if b, ok := e.flexRowBaseline(cs); ok {
 		return b
+	}
+	// A block child can supply an inline-block's last line baseline (for
+	// example a closed details element's summary). Hidden and floated children
+	// do not supply in-flow lines.
+	if !cs.OverflowClip && !e.overflowScroll && e.text == "" && e.flowKids == nil && e.textLabel == nil {
+		kids := e.ChildList()
+		for i := len(kids) - 1; i >= 0; i-- {
+			child, ok := kids[i].(*El)
+			if !ok || child.displayNone || child.lastCS == nil || child.Style().Float != qui.FloatNone || child.lastCS.Position == "absolute" || child.lastCS.Position == "fixed" {
+				continue
+			}
+			if baseline := child.InlineBaseline(); baseline > 0 {
+				height := qui.MeasureConstrained(e, qui.Size{}).H
+				childHeight := qui.MeasureConstrained(child, qui.Size{}).H
+				return height - e.Style().ContentInsets().Bottom - child.Style().Margin.Bottom - childHeight + baseline
+			}
+		}
 	}
 	// CSS: an inline-block with no in-flow line boxes, or whose overflow is
 	// not visible, takes its bottom margin edge as its baseline — 0 here

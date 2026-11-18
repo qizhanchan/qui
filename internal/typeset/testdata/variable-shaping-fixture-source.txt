@@ -1,0 +1,5 @@
+Open Sans Latin variable font, downloaded with the frozen postgres-docs corpus.
+Source URL: https://www.postgresql.org/media/webfonts/latin.woff2
+Decoded from WOFF2 with q-browser internal/webfont; glyphs and metrics are unchanged.
+TTF SHA-256: 52731971b4b027e5de57267f905790931800b48ef11efd06889d0fcfd261e267
+License: SIL OFL 1.1, Open Sans Project Authors; official notice included.

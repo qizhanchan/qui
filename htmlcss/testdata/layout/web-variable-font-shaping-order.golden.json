@@ -1,0 +1,11 @@
+{
+ "fixture": "web-variable-font-shaping-order",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "regular": [0,0,110.3,24],
+  "bold": [0,24,118.78,24],
+  "regular-again": [0,48,110.3,24],
+  "bold-again": [0,72,118.78,24]
+ }
+}

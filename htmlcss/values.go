@@ -525,7 +525,7 @@ type calcParser struct {
 }
 
 func (p *calcParser) skipSpace() {
-	for p.pos < len(p.src) && p.src[p.pos] == ' ' {
+	for p.pos < len(p.src) && isSpace(p.src[p.pos]) {
 		p.pos++
 	}
 }
@@ -597,7 +597,7 @@ func (p *calcParser) factor() (float32, bool) {
 	// Unary sign: `calc(-1 * 8px)`, `calc(100% - -4px)`. A sign directly
 	// before a number/paren/function is part of the operand, never an
 	// operator (binary +/- need whitespace around them in CSS).
-	if c := p.src[p.pos]; (c == '-' || c == '+') && p.pos+1 < len(p.src) && p.src[p.pos+1] != ' ' {
+	if c := p.src[p.pos]; (c == '-' || c == '+') && p.pos+1 < len(p.src) && !isSpace(p.src[p.pos+1]) {
 		p.pos++
 		v, ok := p.factor()
 		if c == '-' {
@@ -621,7 +621,7 @@ func (p *calcParser) factor() (float32, bool) {
 	start := p.pos
 	for p.pos < len(p.src) {
 		switch p.src[p.pos] {
-		case '+', '-', '*', '/', '(', ')', ' ':
+		case '+', '-', '*', '/', '(', ')', ' ', '\t', '\n', '\r', '\f':
 			goto done
 		}
 		p.pos++

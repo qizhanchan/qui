@@ -1302,6 +1302,8 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	// The shorthand first, then the longhand: when both survive the
 	// cascade the longhand was declared later (mergedDecls), so it wins.
 	if v, ok := m["background"]; ok {
+		// Every background shorthand resets its omitted color to transparent.
+		cs.Background, cs.HasBackground = qui.Color{}, true
 		// Simplification: treat `background` as a color if it parses as one. Try the whole
 		// value first (so functional colors like rgb()/hsl() with internal
 		// spaces/commas survive), then fall back to the first field.

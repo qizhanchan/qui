@@ -58,10 +58,24 @@ type SelectorList []Selector
 // Matches reports whether e (an element, not a text segment) matches any
 // selector of the list, with its current interactive state.
 func (l SelectorList) Matches(e *El) bool {
+	return l.MatchesForState(e, nil, nil)
+}
+
+// MatchesForState includes DOM pointer and focus targets, even when an inline
+// element is folded into text and has no retained widget state.
+func (l SelectorList) MatchesForState(e, hover, focus *El) bool {
 	if e == nil || e.isTextSeg() || e.tag == "#comment" || e.node == nil {
 		return false
 	}
-	st := selectorState{hover: e.Hovering(), focus: e.Focused(), active: e.Pressed()}
+	st := selectorState{hover: e.Hovering(), focus: e.Focused(), active: e.Pressed(), focusVisible: e.FocusVisibleNow()}
+	for p := hover; p != nil; p = p.elParent {
+		st.hoverNodes = append(st.hoverNodes, p.node)
+	}
+	if focus != nil {
+		st.focusNodes = append(st.focusNodes, focus.node)
+	}
+	st.hover = st.hover || nodeIn(st.hoverNodes, e.node)
+	st.focus = st.focus || nodeIn(st.focusNodes, e.node)
 	for _, s := range l {
 		if s.matches(e.node, st) {
 			return true
@@ -73,6 +87,11 @@ func (l SelectorList) Matches(e *El) bool {
 // QueryAll returns the descendants of root (not root itself) that match,
 // in document order; limit > 0 stops after that many.
 func (l SelectorList) QueryAll(root *El, limit int) []*El {
+	return l.QueryAllForState(root, limit, nil, nil)
+}
+
+// QueryAllForState queries with the host's current DOM interactive targets.
+func (l SelectorList) QueryAllForState(root *El, limit int, hover, focus *El) []*El {
 	var out []*El
 	var walk func(e *El) bool
 	walk = func(e *El) bool {
@@ -81,7 +100,7 @@ func (l SelectorList) QueryAll(root *El, limit int) []*El {
 			if !ok || ke.isTextSeg() {
 				continue
 			}
-			if l.Matches(ke) {
+			if l.MatchesForState(ke, hover, focus) {
 				out = append(out, ke)
 				if limit > 0 && len(out) >= limit {
 					return false

@@ -486,6 +486,19 @@ func TestInlineRoundedNormalMetricsPreserveZeroLineHeight(t *testing.T) {
 	}
 }
 
+// The enclosing span and its replaced child both contribute to the line.
+// Initializing negative-leading metrics must not overwrite the span's strut.
+func TestInlineReplacedSpanKeepsOwnLineHeight(t *testing.T) {
+	f := gfx.Font{Size: 16}
+	for _, align := range []InlineVAlign{InlineBaseline, InlineTop, InlineBottom} {
+		items := []InlineItem{{Box: true, Size: gfx.Size{W: 4, H: 4}, Font: f, Span: 1, LineHeightScale: 2.5, VAlign: align}}
+		layout := BuildInlineLayout(items, InlineLayoutOptions{BaseFont: f, LineHeightScale: 1.5, RoundNormalMetrics: true})
+		if layout.Height != 40 {
+			t.Errorf("alignment %v: span line height = %v, want 40", align, layout.Height)
+		}
+	}
+}
+
 // Italic ink may overhang its advance; it must not widen inter-word spaces.
 func TestInlineItalicSpacesUseAdvance(t *testing.T) {
 	f := gfx.Font{Size: 16, Italic: true}

@@ -1,0 +1,11 @@
+{
+ "fixture": "web-vertical-align-middle",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "line": [0,0,640,25.75],
+  "box": [35.64,1.75,20,24],
+  "small-line": [0,25.75,640,25.75],
+  "last": [0,51.5,640,24]
+ }
+}

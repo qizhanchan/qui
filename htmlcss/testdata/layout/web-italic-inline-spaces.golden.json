@@ -1,0 +1,9 @@
+{
+ "fixture": "web-italic-inline-spaces",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "end": [297.89,16,2,2],
+  "address-end": [228.86,40,2,2]
+ }
+}

@@ -1,0 +1,12 @@
+{
+ "fixture": "web-negative-line-leading",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "heading": [0,30,640,20],
+  "after": [0,80,640,20],
+  "mixed": [0,100,640,31],
+  "tiny": [0,131,640,2],
+  "last": [0,133,640,20]
+ }
+}

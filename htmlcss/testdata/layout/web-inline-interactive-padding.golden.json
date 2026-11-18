@@ -1,0 +1,12 @@
+{
+ "fixture": "web-inline-interactive-padding",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "line": [0,0,640,26.63],
+  "tags": [0,0.88,23.95,25.75],
+  "tag-item": [0,0.88,23.95,25.75],
+  "large-line": [0,26.63,640,25.75],
+  "next": [0,52.38,640,24]
+ }
+}

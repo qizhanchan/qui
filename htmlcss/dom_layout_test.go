@@ -67,12 +67,6 @@ var domLayoutAllowlist = []domLayoutAllow{
 	{"controls", "d5", "h", "the native <select> box is 22px tall, Chrome's 19px — its line grows by 2px"},
 	{"controls", "d6", "h", "a <textarea>'s baseline sits on its last line in Chrome, at its bottom edge here"},
 
-	// Floats propagate down and into later siblings, not out of the block
-	// that contains them (layout_float.go): Chrome places #c4, a new
-	// formatting context, beside #c3's float, which overhangs #c3.
-	{"web-float", "c4", "x", "a float does not escape its containing block (c3's float would push c4 right)"},
-	{"web-float", "f5", "x", "a float does not escape its containing block (c3's float would push c4 right)"},
-
 	// A table row is not a box of its own: its cells sit on the table's
 	// grid, so a row element has no geometry (Chrome reports the row band).
 	{"web-table", "dr[12]", "y", "a table row has no box; its cells sit on the table's grid"},
@@ -107,6 +101,14 @@ func TestDOMLayout(t *testing.T) {
 	}
 	if err := qui.LoadFontVariantFromBytes("GoRegular", qui.FontWeightNormal, false, goregular.TTF); err != nil {
 		t.Fatalf("register GoRegular: %v", err)
+	}
+	// The variable-face fixture exercises shaping order independently of OS fonts.
+	variable, err := os.ReadFile("../internal/typeset/testdata/variable-shaping-fixture.ttf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := qui.LoadFontVariantsFromBytes("LayoutVariable", []qui.FontWeight{400, 700}, false, variable); err != nil {
+		t.Fatal(err)
 	}
 	pages, err := filepath.Glob(filepath.Join(dir, "*.html"))
 	if err != nil || len(pages) == 0 {

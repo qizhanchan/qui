@@ -330,6 +330,17 @@ func tabAdvance(x, segW, glyphW float32, opts *InlineLayoutOptions) (float32, Ta
 // caret still needs a line to sit on).
 func inlineLineVMetrics(toks []inlineTok, idxs []int, scale, spacing, mid, baseAsc, baseDesc, baseLA, baseLB float32, strut, cssStrut, strutText, leadBelow, roundNormal bool) (ascent, descent, inkA, inkD float32) {
 	text := false
+	haveMetrics := false
+	include := func(above, below float32) {
+		// Explicit CSS leading can put either edge above the baseline.
+		// Initialize from the first contribution instead of clamping to zero.
+		if !haveMetrics {
+			ascent, descent = above, below
+		} else {
+			ascent, descent = max(ascent, above), max(descent, below)
+		}
+		haveMetrics = true
+	}
 	var topBox, bottomBox float32 // tallest vertical-align: top / bottom box
 	for _, ti := range idxs {
 		t := toks[ti]
@@ -338,7 +349,7 @@ func inlineLineVMetrics(toks []inlineTok, idxs []int, scale, spacing, mid, baseA
 			// even when its only child is an image or SVG.
 			strut := inlineTok{font: t.font, lh: t.lh}
 			ab, bb := strut.aboveBelow(scale, spacing, mid, leadBelow, roundNormal)
-			ascent, descent = max(ascent, ab), max(descent, bb)
+			include(ab, bb)
 		}
 		if t.box && (t.valign == InlineTop || t.valign == InlineBottom) {
 			// Aligned to the line box's edge, not the baseline: they only
@@ -351,12 +362,7 @@ func inlineLineVMetrics(toks []inlineTok, idxs []int, scale, spacing, mid, baseA
 			continue
 		}
 		ab, bb := t.aboveBelow(scale, spacing, mid, leadBelow, roundNormal)
-		if ab > ascent {
-			ascent = ab
-		}
-		if bb > descent {
-			descent = bb
-		}
+		include(ab, bb)
 		if !t.box {
 			text = true
 			if fa := inlineAscent(t.font); fa > inkA {
@@ -367,7 +373,7 @@ func inlineLineVMetrics(toks []inlineTok, idxs []int, scale, spacing, mid, baseA
 			}
 		}
 	}
-	if len(idxs) == 0 || (ascent == 0 && descent == 0) {
+	if !haveMetrics {
 		ascent = baseAsc + baseLA
 		descent = baseDesc + baseLB
 	} else if strut && !text {
@@ -782,6 +788,9 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 	}
 
 	mid := inlineMidRef(opts.BaseFont)
+	if opts.RoundNormalMetrics {
+		mid = float32(FontMetricsFor(opts.BaseFont).XHeight) / 128
+	}
 	strut := baseAsc + baseDesc + baseLA + baseLB
 
 	// Pass 1 — greedy line breaking into token-index groups. Each line also
@@ -1294,8 +1303,10 @@ func (t inlineTok) aboveBelow(scale, spacing, mid float32, leadBelow, roundNorma
 	if roundNormal && spacing <= 0 {
 		above, below = CSSInlineMetrics(t.font, scale)
 	}
-
-	if t.shift > 0 {
+	if roundNormal {
+		above += t.shift
+		below -= t.shift
+	} else if t.shift > 0 {
 		above += t.shift
 	} else {
 		below -= t.shift
@@ -1641,6 +1652,8 @@ func tokenizeInline(items []InlineItem, preserve bool) []inlineTok {
 			return
 		}
 		tok.spaceBefore = true
+		// Inline whitespace uses glyph advance, without standalone italic ink
+		// overhang; adding that overhang to every space opens visible gaps.
 		tok.spaceWidth = MeasureRunes([]rune{' '}, spaceSrc.Font, nil)
 		tok.spaceFont = spaceSrc.Font
 		tok.spaceColor = spaceSrc.Color
@@ -2172,15 +2185,6 @@ func runeNeedsBidi(r rune) bool {
 		return true
 	}
 	return false
-}
-
-// Blink's normal line metrics round ascent, descent and line gap to CSS
-// pixels before constructing line boxes. Keep fractional explicit heights
-// and word-processor spacing independent of this web-only behavior.
-func roundedNormalMetrics(f gfx.Font) (float32, float32) {
-	a, d := inlineAscent(f), inlineDescent(f)
-	gap := float32(math.Round(float64(max(0, NaturalLineHeight(f)-a-d)))) / 2
-	return float32(math.Round(float64(a))) + gap, float32(math.Round(float64(d))) + gap
 }
 
 // Blink's inline box uses integer font metrics and floors the ascent half

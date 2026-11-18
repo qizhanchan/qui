@@ -1,0 +1,9 @@
+{
+ "fixture": "web-calc-whitespace",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "box": [36,0,590,30],
+  "nested": [0,30,120,10]
+ }
+}

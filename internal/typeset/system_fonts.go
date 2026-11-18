@@ -172,11 +172,11 @@ func loadSystemFace(path string, index int) *opentype.Font {
 		if len(face) == 0 {
 			return nil
 		}
-		f, err := opentype.Parse(face)
-		if err != nil {
+		f, usable := parseSystemFontBytes(face)
+		if f == nil {
 			return nil
 		}
-		rememberRawFontBytes(f, face)
+		rememberRawFontBytes(f, usable)
 		return f
 	}
 	if f := parseFace(data, index); f != nil {
@@ -205,4 +205,50 @@ func parseFace(data []byte, index int) *opentype.Font {
 		return nil
 	}
 	return f
+}
+
+// parseSystemFontBytes accepts legacy Unicode cmap identifiers used by system
+// fonts. x/image recognizes Unicode BMP identifier 3 but rejects the older
+// identifiers even when they contain the same supported format-4 mapping.
+func parseSystemFontBytes(data []byte) (*opentype.Font, []byte) {
+	if f, err := opentype.Parse(data); err == nil {
+		return f, data
+	}
+	version, tables, err := ParseSFNTTables(data)
+	if err != nil {
+		return nil, nil
+	}
+	cmap := tables["cmap"]
+	if len(cmap) < 4 {
+		return nil, nil
+	}
+	count := int(be16(cmap, 2))
+	if count > (len(cmap)-4)/8 {
+		return nil, nil
+	}
+	changed := false
+	for i := 0; i < count; i++ {
+		rec := 4 + 8*i
+		if be16(cmap, rec) != 0 || be16(cmap, rec+2) > 2 {
+			continue
+		}
+		off := uint64(be32(cmap, rec+4))
+		if off+2 > uint64(len(cmap)) {
+			continue
+		}
+		format := be16(cmap, int(off))
+		if format == 4 || format == 6 {
+			putBE16(cmap, rec+2, 3)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil, nil
+	}
+	usable := writeSFNT(version, tables)
+	f, err := opentype.Parse(usable)
+	if err != nil {
+		return nil, nil
+	}
+	return f, usable
 }

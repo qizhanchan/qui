@@ -47,3 +47,26 @@ func TestReplacedImageSizing(t *testing.T) {
 		}
 	}
 }
+
+func TestRoundedImageClipsReplacedContent(t *testing.T) {
+	SetWebCompat(true)
+	defer SetWebCompat(false)
+	source := image.NewRGBA(image.Rect(0, 0, 20, 20))
+	for y := 0; y < 20; y++ {
+		for x := 0; x < 20; x++ {
+			source.Pix[y*source.Stride+x*4] = 255
+			source.Pix[y*source.Stride+x*4+3] = 255
+		}
+	}
+	for _, radius := range []string{"10px", "50%"} {
+		res := RenderDoc(`<body style="margin:0"><img id="avatar" src="test.png" width="20" height="20" style="display:block;border-radius:`+radius+`"></body>`, "", Options{Resources: stubImages{source}})
+		res.Root.Layout(qui.Rect{W: 100, H: 40})
+		img := paintWhite(res.Root)
+		if c := img.RGBAAt(0, 0); !near(c, 255, 255, 255, 0) {
+			t.Errorf("%s corner not clipped: %v", radius, c)
+		}
+		if c := img.RGBAAt(10, 10); !near(c, 255, 0, 0, 0) {
+			t.Errorf("%s center missing: %v", radius, c)
+		}
+	}
+}

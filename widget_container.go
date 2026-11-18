@@ -568,10 +568,7 @@ func (c *Container) recordStaticPositions(content Rect) {
 				}
 			}
 		}
-		if st := ch.Style(); st != nil {
-			p.X += st.Margin.Left
-			p.Y += st.Margin.Top
-		}
+		// The absolute placer adds margins to this static border position.
 		sp.SetStaticPosition(p)
 	}
 }

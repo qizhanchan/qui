@@ -1,0 +1,10 @@
+{
+ "fixture": "web-absolute-static-margin",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "first": [5,10,100,60],
+  "float": [11,18,200,30],
+  "second": [15,176,100,60]
+ }
+}

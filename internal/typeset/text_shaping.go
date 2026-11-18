@@ -157,7 +157,7 @@ func SourceHasGlyph(source *opentype.Font, r rune) bool {
 
 var TextShapingState struct {
 	sync.Mutex
-	shaper  shaping.HarfbuzzShaper
+	shapers *lruCache[*gtfont.Face, *shaping.HarfbuzzShaper]
 	seg     shaping.Segmenter
 	fonts   map[*opentype.Font]*gtfont.Font
 	sources map[*gtfont.Font]*opentype.Font
@@ -172,7 +172,7 @@ func init() {
 	TextShapingState.variable = nil
 	TextShapingState.sources = make(map[*gtfont.Font]*opentype.Font)
 	TextShapingState.faces = make(map[shapingFaceKey]*gtfont.Face)
-	TextShapingState.shaper.SetFontCacheSize(64)
+	TextShapingState.shapers = newLRUCache[*gtfont.Face, *shaping.HarfbuzzShaper](64, 64)
 }
 
 func invalidateShapingFontCache() {
@@ -182,8 +182,7 @@ func invalidateShapingFontCache() {
 	TextShapingState.variable = nil
 	TextShapingState.sources = make(map[*gtfont.Font]*opentype.Font)
 	TextShapingState.faces = make(map[shapingFaceKey]*gtfont.Face)
-	TextShapingState.shaper = shaping.HarfbuzzShaper{}
-	TextShapingState.shaper.SetFontCacheSize(64)
+	TextShapingState.shapers = newLRUCache[*gtfont.Face, *shaping.HarfbuzzShaper](64, 64)
 	TextShapingState.Unlock()
 }
 
@@ -502,6 +501,15 @@ func shapeSegmentWithEmojiLocked(input shaping.Input, graphemes []int, fontSpec 
 }
 
 func shapeInputLocked(input shaping.Input) shaping.Output {
+	// go-text caches HarfBuzz fonts by the underlying font program, ignoring
+	// Face variation coordinates and ppem. Keep one shaper per actual face so
+	// the first shaped weight cannot determine every later weight's advances.
+	shaper, ok := TextShapingState.shapers.Get(input.Face)
+	if !ok {
+		shaper = &shaping.HarfbuzzShaper{}
+		shaper.SetFontCacheSize(1)
+		TextShapingState.shapers.Put(input.Face, shaper, 1)
+	}
 	originalSize := input.Size
 	requested := FixedToPx(originalSize)
 	// Retain fractional design-unit advances until the run is accumulated.
@@ -509,7 +517,7 @@ func shapeInputLocked(input shaping.Input) shaping.Output {
 	if originalSize > 0 && originalSize < fixed.I(8192) {
 		input.Size *= 64
 	}
-	output := TextShapingState.shaper.Shape(input)
+	output := shaper.Shape(input)
 	output.Size = originalSize
 	shaperSize := float32(input.Size.Ceil())
 	// go-text's shaper leaves HarfBuzz Ptem unset, which applies AAT trak
@@ -762,16 +770,7 @@ func shapingFaceLocked(source *opentype.Font, spec gfx.Font) (*gtfont.Face, bool
 	if source == UISymbolFallback.Load() {
 		uiSymbolShapingFont.Store(parsed)
 	}
-	// HarfbuzzShaper caches by *Font, although variation coordinates live on
-	// Face. Give each variable instance its own identity (tables stay shared),
-	// so a previously shaped weight/optical size cannot supply its metrics.
-	instance := parsed
-	if TextShapingState.variable[parsed] {
-		copy := *parsed
-		instance = &copy
-		TextShapingState.sources[instance] = source
-	}
-	face := gtfont.NewFace(instance)
+	face := gtfont.NewFace(parsed)
 	face.SetPpem(ppem, ppem)
 	vars := shapingVariations(spec.Variations)
 	if key.wght > 0 {

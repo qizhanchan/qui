@@ -37,16 +37,19 @@ type InlineSpanStyle struct {
 	// Hover, when set, restyles the span's text while the pointer is over
 	// any of its fragments.
 	Hover *InlineSpanHover
+	// State supplies retained focus/press styling without changing inline geometry.
+	State func() *InlineSpanHover
 }
 
 // InlineSpanHover is the text restyle of a hovered span.
 type InlineSpanHover struct {
-	HasColor   bool
-	Color      Color
-	HasDeco    bool
-	Decoration TextDecoration
-	DecoPaint  DecorationPaint
-	Background Color // replaces the span background when A > 0
+	HasColor      bool
+	Color         Color
+	HasDeco       bool
+	Decoration    TextDecoration
+	DecoPaint     DecorationPaint
+	Background    Color // replaces the span background when authored
+	HasBackground bool
 }
 
 type inlineSpanRec struct {
@@ -288,7 +291,7 @@ func (b *InlineBox) drawSpans(canvas Canvas, origin Rect) {
 	for i := range b.spans {
 		st := &b.spans[i].style
 		if st.BackgroundImage != nil || st.Background.A > 0 || (st.BorderColor.A > 0 && st.Border != (Insets{})) ||
-			(st.Hover != nil && st.Hover.Background.A > 0) {
+			(st.Hover != nil && (st.Hover.HasBackground || st.Hover.Background.A > 0)) || st.State != nil {
 			decorated = true
 			break
 		}
@@ -323,8 +326,8 @@ func (b *InlineBox) drawSpans(canvas Canvas, origin Rect) {
 			r.X += origin.X
 			r.Y += origin.Y
 			bg := st.Background
-			if b.hoverSpan == id && st.Hover != nil && st.Hover.Background.A > 0 {
-				bg = st.Hover.Background
+			if hv := b.spanState(id); hv != nil && (hv.HasBackground || hv.Background.A > 0) {
+				bg = hv.Background
 			}
 			if bg.A > 0 {
 				if st.Radius > 0 {
@@ -345,6 +348,10 @@ func (b *InlineBox) drawSpans(canvas Canvas, origin Rect) {
 				continue
 			}
 			bc := st.BorderColor
+			if w := st.Border.Top; st.Radius > 0 && w > 0 && st.Border.Bottom == w && st.Border.Left == w && st.Border.Right == w && b.spanFirst[id] == li && b.spanLast[id] == li {
+				canvas.StrokeRoundedRect(Rect{X: r.X + w/2, Y: r.Y + w/2, W: max(0, r.W-w), H: max(0, r.H-w)}, max(0, st.Radius-w/2), bc, w)
+				continue
+			}
 			if w := st.Border.Top; w > 0 {
 				canvas.FillRect(Rect{X: r.X, Y: r.Y, W: r.W, H: w}, bc)
 			}
@@ -369,31 +376,39 @@ type inlineImageSlice struct {
 func (s inlineImageSlice) ColorAt(x, y float32) Color { return s.image.ColorAt(x-s.x, y-s.y) }
 
 // hoverLayout returns the layout with the hovered span's text restyled.
+func (b *InlineBox) spanState(id int32) *InlineSpanHover {
+	st := b.spans[id-1].style
+	if st.State != nil {
+		if v := st.State(); v != nil {
+			return v
+		}
+	}
+	if b.hoverSpan != 0 && b.inSpan(id, b.hoverSpan) {
+		return b.spans[b.hoverSpan-1].style.Hover
+	}
+	return nil
+}
+
 func (b *InlineBox) hoverLayout() InlineLayout {
-	if b.hoverSpan == 0 {
-		return b.layout
-	}
-	hv := b.spans[b.hoverSpan-1].style.Hover
-	if hv == nil || (!hv.HasColor && !hv.HasDeco) {
-		return b.layout
-	}
 	l := b.layout
-	l.Lines = append([]InlineLine(nil), b.layout.Lines...)
-	for li := range l.Lines {
-		touched := false
-		for _, f := range l.Lines[li].Frags {
-			if f.Span != 0 && b.inSpan(f.Span, b.hoverSpan) {
-				touched = true
-				break
-			}
-		}
-		if !touched {
-			continue
-		}
-		frags := append([]InlineFrag(nil), l.Lines[li].Frags...)
-		for i := range frags {
-			if frags[i].Span == 0 || !b.inSpan(frags[i].Span, b.hoverSpan) {
+	copied := false
+	for li, line := range l.Lines {
+		var frags []InlineFrag
+		for i, f := range line.Frags {
+			if f.Span == 0 {
 				continue
+			}
+			hv := b.spanState(f.Span)
+			if hv == nil || (!hv.HasColor && !hv.HasDeco) {
+				continue
+			}
+			if !copied {
+				l.Lines = append([]InlineLine(nil), l.Lines...)
+				copied = true
+			}
+			if frags == nil {
+				frags = append([]InlineFrag(nil), line.Frags...)
+				l.Lines[li].Frags = frags
 			}
 			if hv.HasColor {
 				frags[i].Color = hv.Color
@@ -403,7 +418,6 @@ func (b *InlineBox) hoverLayout() InlineLayout {
 				frags[i].DecorationPaint = hv.DecoPaint
 			}
 		}
-		l.Lines[li].Frags = frags
 	}
 	return l
 }

@@ -508,6 +508,15 @@ func (f FlowLayout) run(children []Widget, bounds Rect, apply bool) (contentH, m
 			if apply {
 				child.Layout(Rect{X: cx, Y: y + pending.value(), W: bw, H: h})
 			}
+			if band != nil && !newFC {
+				if src, ok := child.(FloatExclusionSource); ok {
+					for _, ex := range src.FlowFloatExclusions(Size{W: bw, H: cb.H}) {
+						ex.Rect.X += cx
+						ex.Rect.Y += y + pending.value()
+						band.floats = append(band.floats, floatBox{r: ex.Rect, side: ex.Side})
+					}
+				}
+			}
 			if !through {
 				y += pending.value() + h
 				pending = edgeMargin(child, true)
@@ -521,6 +530,16 @@ func (f FlowLayout) run(children []Widget, bounds Rect, apply bool) (contentH, m
 	if band != nil && f.Floats.ContainsFloats && len(band.floats) > inheritedN {
 		// A formatting-context root grows to contain its floats.
 		y = max(y, band.bottom())
+	}
+	if band != nil {
+		f.Floats.escapedSize = Size{W: bounds.W, H: bounds.H}
+		f.Floats.Escaped = f.Floats.Escaped[:0]
+		for _, placed := range band.floats[inheritedN:] {
+			r := placed.r
+			r.X -= bounds.X
+			r.Y -= bounds.Y
+			f.Floats.Escaped = append(f.Floats.Escaped, FloatExclusion{Rect: r, Side: placed.side})
+		}
 	}
 	return max(y-bounds.Y, 0), maxW
 }

@@ -1,0 +1,9 @@
+{
+ "fixture": "web-flex-pseudo-text",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "column": [0,0,17.8,48],
+  "row": [0,48,33.94,24]
+ }
+}

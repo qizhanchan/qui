@@ -19,8 +19,8 @@ package qui
 //   - A flow whose host establishes a formatting context grows to contain
 //     its floats; any other flow's height ignores them.
 //
-// Floats propagate downward (into later siblings and their descendants)
-// but not out of the block that contains them.
+// Floats share their formatting context across ordinary block boundaries;
+// only a new formatting context contains them.
 
 // FloatSide is CSS float.
 type FloatSide uint8
@@ -54,6 +54,13 @@ type FloatExclusion struct {
 // Setting different exclusions must invalidate the receiver's layout.
 type FloatExclusionReceiver interface {
 	SetFloatExclusions(ex []FloatExclusion)
+}
+
+// FloatExclusionSource exposes floats escaping an ordinary block, in its
+// border-box coordinates, for following content in the same formatting context.
+// available is the resolved border-box width and the height offered to Measure.
+type FloatExclusionSource interface {
+	FlowFloatExclusions(available Size) []FloatExclusion
 }
 
 // floatBox is one placed float in a flow's coordinates.
@@ -171,6 +178,13 @@ type FloatState struct {
 	// Inherited are the floats of an ancestor flow, in the host's content
 	// box coordinates.
 	Inherited []FloatExclusion
+	// Escaped contains locally placed floats, including descendants, in content
+	// coordinates. Ancestor exclusions are excluded to avoid duplicating them.
+	Escaped []FloatExclusion
+	// escapedSize identifies the measurement that produced Escaped. An intrinsic
+	// margin probe can otherwise replace it while MeasureChild retains a size
+	// computed at the actual flow width.
+	escapedSize Size
 }
 
 // floatStyle reads a child's float / clear / new-formatting-context.
@@ -214,4 +228,26 @@ func (c *Container) SetFloatExclusions(ex []FloatExclusion) {
 	}
 	fl.Floats.Inherited = moved
 	c.InvalidateLayout()
+}
+
+// FlowFloatExclusions implements FloatExclusionSource for ordinary flow blocks.
+func (c *Container) FlowFloatExclusions(available Size) []FloatExclusion {
+	fl, ok := c.LayoutEngine.(FlowLayout)
+	if !ok || fl.Floats == nil || fl.Floats.ContainsFloats {
+		return nil
+	}
+	in := c.Style().ContentInsets()
+	content := Size{W: max(0, available.W-in.Horizontal()), H: max(0, available.H-in.Vertical())}
+	if fl.Floats.escapedSize != content {
+		// Bypass the size memo to restore the float geometry for this offer.
+		// Descendant float sources perform the same check recursively.
+		c.selfOrContainer().Measure(available)
+	}
+	out := make([]FloatExclusion, len(fl.Floats.Escaped))
+	for i, ex := range fl.Floats.Escaped {
+		ex.Rect.X += in.Left
+		ex.Rect.Y += in.Top
+		out[i] = ex
+	}
+	return out
 }

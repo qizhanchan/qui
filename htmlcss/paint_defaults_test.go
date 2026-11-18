@@ -189,3 +189,16 @@ func TestInlineSVGRootCSSPaint(t *testing.T) {
 	res.Engine.FlushPendingStyles()
 	check(116.0 / 255)
 }
+func TestAddressDefaultsToItalic(t *testing.T) {
+	res := RenderDoc(`<body><address id="address">Attribution <a id="link" href="#">operator</a></address></body>`, "", Options{})
+	for _, id := range []string{"address", "link"} {
+		if !res.ByID[id].(*El).lastCS.Italic {
+			t.Errorf("#%s must inherit the address UA italic style", id)
+		}
+	}
+	res.ByID["address"].(*El).SetAttr("style", "font-style:normal")
+	res.Engine.FlushPendingStyles()
+	if res.ByID["link"].(*El).lastCS.Italic {
+		t.Fatal("authored normal style must override the UA default")
+	}
+}
