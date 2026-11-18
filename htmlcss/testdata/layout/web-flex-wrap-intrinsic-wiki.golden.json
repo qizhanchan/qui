@@ -1,0 +1,12 @@
+{
+ "fixture": "web-flex-wrap-intrinsic-wiki",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "row": [0,0,640,66],
+  "start": [44,8,180,50],
+  "end": [240,17,356,32],
+  "narrow": [0,66,260,114],
+  "wrapped": [44,140,172,32]
+ }
+}

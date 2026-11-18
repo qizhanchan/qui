@@ -1,0 +1,10 @@
+{
+ "fixture": "web-hidden-table-rows",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "table": [0,0,31.42,24],
+  "visible": [0,0,31.42,24],
+  "after": [0,24,640,24]
+ }
+}

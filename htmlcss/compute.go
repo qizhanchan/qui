@@ -910,6 +910,8 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	customProps := buildCustomProps(parent, m)
 	m = resolveMapVars(m, customProps)
 	inheritRegisteredProps(m, parent)
+	colorInherited := m["color"] == "inherit" || m["color"] == "unset"
+	lineHeightInherited := m["line-height"] == "inherit" || m["line-height"] == "unset" || m["font"] == "inherit"
 	resolveCSSWideKeywords(m, parent)
 	expandShorthands(m)
 	cs := &ComputedStyle{raw: m, customProps: customProps, Direction: "ltr"}
@@ -1090,7 +1092,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	fs := cs.FontSize
 
 	// --- color ---
-	cs.ColorOwn = false
+	cs.ColorOwn = colorInherited
 	if v, ok := m["color"]; ok {
 		if c, ok := parseColor(v); ok {
 			cs.Color, cs.HasColor = c, true
@@ -1137,7 +1139,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	if v, ok := m["font-family"]; ok {
 		cs.FontFamily = firstFontFamily(v)
 	}
-	cs.LineHeightOwn = false
+	cs.LineHeightOwn = lineHeightInherited
 	if cs.LineHeightPx > 0 && fs > 0 {
 		// Inherited as a length: re-express it over this element's font.
 		cs.LineHeight = cs.LineHeightPx / fs
@@ -1296,9 +1298,14 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		}
 	}
 	if cs.Gradient == nil {
-		if v, ok := m["background"]; ok {
+		if v, ok := m["background"]; ok && cs.BackgroundImageURL == "" {
+			// The first background layer is painted on top. In particular,
+			// a url() in the shorthand must not be lost to later layers.
+			v = strings.TrimSpace(splitTopLevel(v, ',')[0])
 			if g, ok := parseGradient(v); ok {
 				cs.Gradient = g
+			} else if u, ok := parseCSSURL(v); ok {
+				cs.BackgroundImageURL = u
 			}
 		}
 	}

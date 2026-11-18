@@ -4,7 +4,10 @@ package htmlcss
 // defaults that make unstyled HTML look like HTML. Author CSS overrides
 // all of these via the normal cascade (UA is tier 0).
 
-import "sync"
+import (
+	"github.com/qizhanchan/qui"
+	"sync"
+)
 
 // Framework stylesheet: class-keyed defaults for components a framework
 // layer assembles from plain elements (reactive/html's Dialog shell). It
@@ -156,7 +159,7 @@ var webCompat bool
 //     qui.Style.FlexAutoMinWidth).
 //
 // Off by default. Process-wide: a browser turns it on at startup.
-func SetWebCompat(on bool) { webCompat = on }
+func SetWebCompat(on bool) { webCompat = on; qui.SetWebFontMetrics(on) }
 
 // foldableTag reports whether an inline element of this tag may fold into
 // its parent's text run like a <span>: the phrasing tags, plus unknown /

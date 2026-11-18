@@ -354,8 +354,10 @@ type El struct {
 	// rules, which never make the element itself focusable.
 	focusWithinOnly bool
 	// Background-image: url() bitmap, cached by source URL (applyBackgroundImage).
-	bgImg    image.Image
-	bgImgSrc string
+	bgImg        image.Image
+	bgImgSrc     string
+	bgImgNatural qui.Size
+	bgImgRatio   float32
 	// mask-image: url() source, cached by URL (applyMasking).
 	maskSrc    maskSource
 	maskSrcURL string
@@ -2980,7 +2982,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 			txt := unquoteContentWith(content, e.node, func(fn cssFunction) string {
 				return e.counterContent(fn, which, cs, pcs)
 			})
-			if txt == "" {
+			if strings.TrimSpace(content) == "none" || strings.TrimSpace(content) == "normal" || pcs.Display == "none" {
 				continue
 			}
 			if which == "before" {
@@ -3086,9 +3088,9 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		// into one inline run. (Elements with block children only get the
 		// generated content when buildFlow already produced inline runs.)
 		e.pseudoKids = false
-		if e.flowKids == nil && (e.pbText != "" || e.paText != "") &&
+		if e.flowKids == nil && (e.pbText != "" || e.paText != "" || (isFlexDisplay(cs.Display) || isGridDisplay(cs.Display)) && (e.pbCS != nil || e.paCS != nil)) &&
 			e.iconSrc == nil && !e.isImg() {
-			if len(renderableKids(e.elementKids)) > 0 {
+			if len(renderableKids(e.elementKids)) > 0 || isFlexDisplay(cs.Display) || isGridDisplay(cs.Display) {
 				// Element children: the generated content is a box beside
 				// them (a flex / grid item, or a block / inline box in the
 				// flow), never a replacement for them.
@@ -3396,7 +3398,7 @@ func (e *El) buildPseudoLeaf(cs *ComputedStyle) []qui.Widget {
 // styles (pbCS / paCS); syncChildren places them around the children.
 func (e *El) buildPseudoBoxes() {
 	mk := func(slot **El, tag, text string, pcs *ComputedStyle) {
-		if text == "" || pcs == nil {
+		if pcs == nil {
 			return
 		}
 		if *slot == nil {
@@ -3441,9 +3443,19 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 	elementKids, kidParents := e.flatKids(cs)
 	hasFoldCandidate := e.text != "" || webCompat
 	for _, k := range elementKids {
-		if ke, ok := k.(*El); ok && (ke.isTextSeg() || foldableTag(ke.tag)) {
-			hasFoldCandidate = true
-			break
+		if ke, ok := k.(*El); ok {
+			if ke.isTextSeg() || foldableTag(ke.tag) {
+				hasFoldCandidate = true
+				break
+			}
+			// CSS can turn a block tag (e.g. a list wrapper) into an
+			// ordinary inline box. Its children share the enclosing IFC.
+			if webCompat {
+				if kcs := e.childStyle(ke, cs); kcs != nil && kcs.Display == "inline" && !ke.isImg() && !ke.hasNaturalSize() {
+					hasFoldCandidate = true
+					break
+				}
+			}
 		}
 	}
 	if !hasFoldCandidate {
@@ -3769,7 +3781,7 @@ func foldableInline(c *El, cs *ComputedStyle) bool {
 	if c.isTextSeg() {
 		return true // anonymous text always folds
 	}
-	if !foldableTag(c.tag) || c.isControl() || c.iconSrc != nil {
+	if (!foldableTag(c.tag) && !(webCompat && cs != nil && cs.Display == "inline" && !c.isImg() && !c.hasNaturalSize())) || c.isControl() || c.iconSrc != nil {
 		return false
 	}
 	// A <label for=…> stays a real widget so its click can focus/toggle the
@@ -4465,10 +4477,10 @@ func (e *El) syncChildren() {
 			kids = append([]qui.Widget{e.textLabel}, kids...)
 		}
 		if e.pseudoKids {
-			if e.pbText != "" && e.pseudoBefore != nil {
+			if e.pbCS != nil && e.pseudoBefore != nil {
 				kids = append([]qui.Widget{e.pseudoBefore}, kids...)
 			}
-			if e.paText != "" && e.pseudoAfter != nil {
+			if e.paCS != nil && e.pseudoAfter != nil {
 				kids = append(append([]qui.Widget(nil), kids...), e.pseudoAfter)
 			}
 		}
@@ -5905,11 +5917,9 @@ func (e *El) textTopBaseline(cs *ComputedStyle) float32 {
 // its line box: half the leading plus the font's ascent.
 func (e *El) textHalfLeadingAscent(cs *ComputedStyle) float32 {
 	f := fontFrom(cs)
-	m := qui.GetFontFaceFor(f).Metrics()
+	ascent, descent := qui.FontVerticalMetrics(f)
 	// Un-Ceil'd, matching the layout engine's inline metrics — rounding each
 	// half up here would predict a baseline the engine no longer paints at.
-	ascent := float32(m.Ascent) / 64
-	descent := float32(m.Descent) / 64
 	// Half-leading above the first line, matching the internal Label's
 	// top-aligned text layout (line height distributes leading symmetrically).
 	// The line-box height is asked of the engine (memoized) with the same
@@ -5952,47 +5962,6 @@ func (e *El) ClipboardTableCell() (table interface{}, row, col, colSpan, rowSpan
 		row = 0
 	}
 	return t, row, gi.Col, cs, rs, e.tag == "th"
-}
-
-// applyBackgroundImage wires a CSS background-image: url(...) as a stretched
-// bitmap shader on the box. A gradient (if any) takes precedence. The decoded
-// image is cached by URL so restyles don't reload it.
-func (e *El) applyBackgroundImage(cs *ComputedStyle) {
-	if cs.Gradient != nil || cs.BackgroundImageURL == "" {
-		e.bgImg = nil
-		e.bgImgSrc = ""
-		return
-	}
-	if e.bgImg == nil || e.bgImgSrc != cs.BackgroundImageURL {
-		baseDir := ""
-		if e.engine != nil {
-			baseDir = e.engine.opts.BaseDir
-		}
-		e.bgImg = nil
-		if res, ok := e.loadExternal(cs.BackgroundImageURL); ok {
-			switch {
-			case res.Raster != nil:
-				e.bgImg = res.Raster
-			case res.Vector != nil:
-				e.bgImg = rasterizeBackgroundSVG(res.Vector)
-			}
-		}
-		if e.bgImg == nil {
-			e.bgImg = loadRasterImage(cs.BackgroundImageURL, baseDir)
-		}
-		e.bgImgSrc = cs.BackgroundImageURL
-	}
-	if e.bgImg != nil {
-		img := e.bgImg
-		fit := qui.ImageStretch
-		switch strings.ToLower(strings.TrimSpace(cs.raw["background-size"])) {
-		case "cover":
-			fit = qui.ImageCover
-		case "contain":
-			fit = qui.ImageContain
-		}
-		e.Box.BackgroundShader = func(b qui.Rect) qui.Shader { return qui.ImageShader(img, b, fit) }
-	}
 }
 
 // dragZIndex lifts a dragging element above all normal siblings so its
@@ -6677,6 +6646,16 @@ func (e *El) aspectSize(cs *ComputedStyle, avail, m qui.Size) qui.Size {
 			h = st.Height
 		}
 		m.W = max(m.W, fromContent(toContent(h, false)*cs.AspectRatio, true))
+	}
+	return m
+}
+
+// InlineMargin is the margin used when this element rides an inline line.
+// CSS 2.1: top/bottom margins do not apply to non-replaced inline elements.
+func (e *El) InlineMargin() qui.Insets {
+	m := e.Style().Margin
+	if webCompat && e.lastCS != nil && e.lastCS.Display == "inline" && !e.isImg() && !e.hasNaturalSize() {
+		m.Top, m.Bottom = 0, 0
 	}
 	return m
 }

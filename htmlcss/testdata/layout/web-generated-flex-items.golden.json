@@ -1,0 +1,10 @@
+{
+ "fixture": "web-generated-flex-items",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "button": [0,0,160.5,31],
+  "icon": [12,5.5,20,20],
+  "text": [38,5,92.5,21]
+ }
+}

@@ -971,15 +971,24 @@ func (fl FlexLayout) Measure(children []Widget, padded Size) Size {
 	if len(children) == 0 {
 		return Size{}
 	}
-	// Wrap path: pack into lines, sum line heights for cross axis,
-	// take the widest line for the main axis (caller may have given
-	// us less; the line that overflowed already broke).
+	// Use the same hypothetical main sizes and per-line flex resolution as
+	// Apply. Measuring a growing child at the full offer before packing
+	// otherwise creates a spurious extra line (and an oversized row).
 	if fl.Wrap {
+		bounds := Rect{W: padded.W, H: padded.H}
+		items := fl.measureFlexItems(children, bounds)
 		mainAvail := padded.W
 		if fl.Direction == Vertical {
 			mainAvail = padded.H
 		}
-		items := fl.measureFlexItems(children, Rect{W: padded.W, H: padded.H})
+		if mainAvail <= 0 {
+			for i, it := range items {
+				mainAvail += it.basis
+				if i > 0 {
+					mainAvail += fl.Gap
+				}
+			}
+		}
 		lines := packLines(items, mainAvail, fl.Gap)
 		var mainMax, crossSum float32
 		for li, line := range lines {
@@ -988,7 +997,7 @@ func (fl FlexLayout) Measure(children []Widget, padded Size) Size {
 				lineItems[k] = items[idx]
 			}
 			fl.resolveMainSizes(lineItems, mainAvail)
-			fl.remeasureCross(lineItems, Rect{W: padded.W, H: padded.H})
+			fl.remeasureCross(lineItems, bounds)
 			var lineMain, lineCross float32
 			for k, it := range lineItems {
 				lineMain += it.size
@@ -1007,13 +1016,10 @@ func (fl FlexLayout) Measure(children []Widget, padded Size) Size {
 				crossSum += fl.CrossGap
 			}
 		}
-		var result Size
-		if fl.Direction == Horizontal {
-			result = Size{W: mainMax, H: crossSum}
-		} else {
-			result = Size{W: crossSum, H: mainMax}
+		if fl.Direction == Vertical {
+			return Size{W: crossSum, H: mainMax}
 		}
-		return result
+		return Size{W: mainMax, H: crossSum}
 	}
 
 	// Single-line path. Resolve the flex main sizes, then re-measure each
@@ -1095,9 +1101,10 @@ func (fl FlexLayout) Measure(children []Widget, padded Size) Size {
 }
 
 // contentSizedItem reports a flex item whose main size comes from its
-// content: no flex-basis, no growth, no width of its own.
+// content: an auto basis and no width of its own. Growth is distributed
+// after measuring the basis; it must not inflate the intrinsic measurement.
 func contentSizedItem(ch Widget, fx FlexItem) bool {
-	if fx.Basis > 0 || fx.Grow > 0 {
+	if fx.Basis > 0 || fx.Grow > 0 && !fx.BasisAuto {
 		return false
 	}
 	if p := widgetPreferredSize(ch); p.W > 0 {

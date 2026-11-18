@@ -1,6 +1,7 @@
 package htmlcss
 
 import (
+	"math"
 	"strconv"
 	"strings"
 
@@ -314,6 +315,9 @@ func parseLength(s string, fontSize, pctRef float32) (float32, bool) {
 	if s == "" || s == "auto" || s == "none" {
 		return 0, false
 	}
+	if strings.HasPrefix(s, "round(") {
+		return parseRound(s, fontSize, pctRef)
+	}
 	if strings.HasPrefix(s, "calc(") {
 		return parseCalc(s, fontSize, pctRef)
 	}
@@ -352,6 +356,41 @@ func parseLength(s string, fontSize, pctRef float32) (float32, bool) {
 		return parseFloat(s)
 	}
 	return 0, false
+}
+
+// parseRound resolves CSS Values 4 round() with the optional rounding strategy.
+func parseRound(s string, fs, ref float32) (float32, bool) {
+	if !strings.HasSuffix(s, ")") {
+		return 0, false
+	}
+	args := splitTopLevelCommas(s[len("round(") : len(s)-1])
+	strategy := "nearest"
+	if len(args) == 3 {
+		strategy = strings.TrimSpace(args[0])
+		args = args[1:]
+	}
+	if len(args) != 2 {
+		return 0, false
+	}
+	value, ok := parseCalc("("+args[0]+")", fs, ref)
+	step, okStep := parseLength(args[1], fs, ref)
+	if !ok || !okStep || step <= 0 {
+		return 0, false
+	}
+	q := float64(value / step)
+	switch strategy {
+	case "nearest":
+		q = math.Floor(q + 0.5)
+	case "up":
+		q = math.Ceil(q)
+	case "down":
+		q = math.Floor(q)
+	case "to-zero":
+		q = math.Trunc(q)
+	default:
+		return 0, false
+	}
+	return float32(q) * step, true
 }
 
 // parseLengthPct parses a length that may depend on a percentage: a plain

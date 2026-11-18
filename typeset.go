@@ -509,3 +509,6 @@ func TextOutline(text string, font Font, x, baseline float32) (*Path, float32) {
 func FontVerticalMetrics(font Font) (ascent, descent float32) {
 	return typeset.FontVerticalMetrics(font)
 }
+
+// SetWebFontMetrics enables browser-specific platform font metrics.
+func SetWebFontMetrics(on bool) { typeset.SetWebFontMetrics(on) }

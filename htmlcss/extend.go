@@ -424,6 +424,13 @@ var builtinInitial = map[string]string{
 // declaration invalid, so it is dropped — the browser behavior.
 func resolveCSSWideKeywords(m map[string]string, parent *ComputedStyle) {
 	for prop, v := range m {
+		if cssWideKeyword(v) != "" {
+			for _, lh := range shorthandLonghands[prop] {
+				setIfAbsent(m, lh, v)
+			}
+		}
+	}
+	for prop, v := range m {
 		if strings.HasPrefix(prop, "--") {
 			continue
 		}
@@ -447,15 +454,19 @@ func resolveCSSWideKeywords(m map[string]string, parent *ComputedStyle) {
 		}
 		switch kw {
 		case "inherit":
+			if inheritedBuiltins[prop] {
+				// interpret copies the computed value, not the parent's raw
+				// relative expression (which would resolve a second time).
+				delete(m, prop)
+				continue
+			}
 			if parent != nil {
 				if pv, ok := parent.raw[prop]; ok && cssWideKeyword(pv) == "" {
 					m[prop] = pv
 					continue
 				}
 			}
-			if inheritedBuiltins[prop] {
-				delete(m, prop) // the inherited copy already holds the parent's value
-			} else if iv, ok := builtinInitial[prop]; ok {
+			if iv, ok := builtinInitial[prop]; ok {
 				m[prop] = iv
 			} else {
 				delete(m, prop)

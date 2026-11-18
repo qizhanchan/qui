@@ -1,0 +1,12 @@
+{
+ "fixture": "web-computed-inherit",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "heading": [0,0,640,49],
+  "title": [0,12,640,33],
+  "relative": [0,49,640,72],
+  "explicit": [0,49,640,36],
+  "shorthand": [0,85,640,36]
+ }
+}

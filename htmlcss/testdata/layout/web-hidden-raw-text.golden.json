@@ -1,0 +1,10 @@
+{
+ "fixture": "web-hidden-raw-text",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "styleOnly": [0,0,640,0],
+  "mixed": [0,0,640,24],
+  "after": [0,24,640,24]
+ }
+}

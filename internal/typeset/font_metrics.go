@@ -1,12 +1,45 @@
 package typeset
 
 import (
+	"golang.org/x/image/math/fixed"
+	"math"
+	"runtime"
+	"strings"
 	"sync"
+	"sync/atomic"
 
 	"golang.org/x/image/font"
 
 	"github.com/qizhanchan/qui/internal/gfx"
 )
+
+// SetWebFontMetrics enables Blink's platform metric compatibility adjustments.
+// Native qui applications retain the font's authored metrics.
+var webFontMetrics atomic.Bool
+
+func SetWebFontMetrics(on bool) {
+	if webFontMetrics.Swap(on) == on {
+		return
+	}
+	FontCacheMu.Lock()
+	ClearFontFaceCachesUnlocked()
+	FontCacheMu.Unlock()
+}
+
+func browserFontMetrics(spec gfx.Font, m font.Metrics) font.Metrics {
+	if runtime.GOOS != "darwin" || !webFontMetrics.Load() {
+		return m
+	}
+	// Blink FontMetrics::AscentDescentWithHacks matches Safari's legacy
+	// Times/Helvetica/Courier ascent adjustment on macOS (crbug.com/445830).
+	switch strings.ToLower(spec.Family) {
+	case "times", "helvetica", "courier":
+		extra := fixed.I(int(math.Floor(float64(m.Ascent+m.Descent)/64*0.15 + 0.5)))
+		m.Ascent += extra
+		m.Height += extra
+	}
+	return m
+}
 
 // Font metrics cache.
 //
@@ -53,7 +86,7 @@ func FontMetricsFor(spec gfx.Font) font.Metrics {
 	}
 	face := GetFontFaceFor(spec)
 	faceMetricsCallMu.Lock()
-	m := face.Metrics()
+	m := browserFontMetrics(spec, face.Metrics())
 	faceMetricsCallMu.Unlock()
 	fontMetricsMu.Lock()
 	if len(fontMetricsCache) >= fontMetricsCacheLimit {

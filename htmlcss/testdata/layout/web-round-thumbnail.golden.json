@@ -1,0 +1,11 @@
+{
+ "fixture": "web-round-thumbnail",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "thumb": [0,0,250,40],
+  "up": [0,40,260,10],
+  "down": [0,50,250,10],
+  "zero": [0,60,250,10]
+ }
+}

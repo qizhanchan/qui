@@ -121,7 +121,15 @@ func (eng *StyleEngine) buildStaticEl(n *Node, styles map[*Node]*ComputedStyle) 
 		}
 	}
 	if elemKids == 0 {
-		raw := textContent(n)
+		// Only direct text belongs to this leaf. Non-rendered children
+		// (notably an inline <style>) must not leak their source into it.
+		var text strings.Builder
+		for _, c := range n.Children {
+			if c.Type == TextNode {
+				text.WriteString(c.Text)
+			}
+		}
+		raw := text.String()
 		e.text = collapseFor(raw, styles[n])
 		if eng.opts.ScriptDOM && raw != e.text {
 			e.domText, e.domTextSet = raw, true

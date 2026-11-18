@@ -1,0 +1,9 @@
+{
+ "fixture": "web-inline-padding-roundoff",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "line": [0,14.39,640,23.41],
+  "next": [0,52.19,640,23.41]
+ }
+}

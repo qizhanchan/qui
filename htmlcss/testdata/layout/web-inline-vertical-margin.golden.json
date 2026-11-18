@@ -1,0 +1,9 @@
+{
+ "fixture": "web-inline-vertical-margin",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "heading": [0,0,640,41],
+  "after": [0,41,640,24]
+ }
+}

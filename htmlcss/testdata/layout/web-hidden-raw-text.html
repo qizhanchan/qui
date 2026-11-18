@@ -1,0 +1,6 @@
+<!doctype html><style>
+@font-face{font-family:GoRegular;src:url('../../../widgets/scripts/web/go-regular.ttf')}
+body{margin:0;font:16px/1.5 GoRegular}
+</style><div id="styleOnly"><style>.thing{color:red}</style></div>
+<div id="mixed">before<style>.thing{color:blue}</style> after<script>var unused = 'not rendered';</script></div>
+<div id="after">Visible</div>

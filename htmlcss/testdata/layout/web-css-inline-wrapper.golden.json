@@ -1,0 +1,9 @@
+{
+ "fixture": "web-css-inline-wrapper",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "categories": [0,0,640,38],
+  "after": [0,38,640,26]
+ }
+}

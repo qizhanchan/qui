@@ -706,6 +706,9 @@ func gatherTableRows(table *El, tableCS *ComputedStyle) []*El {
 // <caption>); in web-compat mode so does the computed display, so CSS
 // tables of <div>s build like HTML ones.
 func tableRole(parent, ke *El, parentCS *ComputedStyle) string {
+	if cs := parent.childStyle(ke, parentCS); cs != nil && cs.Display == "none" {
+		return ""
+	}
 	switch ke.tag {
 	case "tr":
 		return "table-row"

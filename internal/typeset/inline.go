@@ -1020,7 +1020,7 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 		}
 		// Preserved whitespace never wraps by itself: at the boundary it
 		// hangs past the slot's edge at the end of the current one.
-		if wrap && len(cur) > 0 && !t.space && segW[seg]+gap+contentW > segAvail() {
+		if wrap && len(cur) > 0 && !t.space && segW[seg]+gap+contentW > segAvail()+1e-3 {
 			// Round the float first: the rest of this line continues in the
 			// next slot that can hold the token, and only when there is none
 			// does the line end. A space at a slot boundary is dropped, the

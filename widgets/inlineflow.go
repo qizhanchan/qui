@@ -1035,6 +1035,9 @@ func (b *InlineBox) LinkSourceAt(p Point) (href string, source any, ok bool) {
 // Size, so an inline-block with an explicit CSS width is honored here.
 // boxMargin is an atomic inline child's margin (zero when it has no style).
 func boxMargin(w Widget) Insets {
+	if m, ok := w.(interface{ InlineMargin() Insets }); ok {
+		return m.InlineMargin()
+	}
 	if st := w.Style(); st != nil {
 		return st.Margin
 	}

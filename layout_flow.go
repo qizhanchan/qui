@@ -398,6 +398,9 @@ func (f FlowLayout) run(children []Widget, bounds Rect, apply bool) (contentH, m
 		}
 		switch flowLevelOf(child) {
 		case FlowInline:
+			if im, ok := child.(interface{ InlineMargin() Insets }); ok {
+				m = im.InlineMargin()
+			}
 			seenFlow = true
 			sz := resolveFlowInlineSize(child, cb, bounds.W-m.Left-m.Right)
 			boxW := m.Left + sz.W + m.Right
