@@ -1,0 +1,11 @@
+{
+ "fixture": "web-absolute-grid-intrinsic",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "media": [0,0,400,240],
+  "overlay": [0,176,64,64],
+  "icon": [8,184,48,48],
+  "play": [17,193,30,30]
+ }
+}

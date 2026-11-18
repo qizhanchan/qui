@@ -16,7 +16,7 @@ import (
 // nonRenderedTags never produce a widget.
 var nonRenderedTags = map[string]bool{
 	"script": true, "style": true, "head": true, "meta": true,
-	"link": true, "title": true, "#comment": true,
+	"link": true, "title": true, "noscript": true, "#comment": true,
 }
 
 // buildStaticEl compiles element node n (and its subtree) into an El
@@ -106,7 +106,7 @@ func (eng *StyleEngine) buildStaticEl(n *Node, styles map[*Node]*ComputedStyle) 
 			e.SetElementChildren(kids)
 			return e
 		}
-	case "script", "style":
+	case "script", "style", "noscript":
 		// Raw text elements (ScriptDOM only): the source stays verbatim —
 		// a JSON data block must still parse.
 		e.text = textContent(n)

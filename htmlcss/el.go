@@ -174,6 +174,10 @@ type El struct {
 	// the in-memory bitmap given to SetImage (imgData, which wins over src).
 	// h.Icon's VectorSource path uses iconSrc below instead.
 	imgWidget      qui.Widget
+	imageComplete  bool
+	imageResultSrc string
+	imageResultSet bool
+	imageEvent     func(bool)
 	imgLazyStarted bool
 	imgSrc         string
 	imgData        image.Image
@@ -440,6 +444,11 @@ func newEl(tag string, engine *StyleEngine) *El {
 	e.BaseWidget = qui.NewBaseWidget()
 	e.LayoutEngine = qui.FlowLayout{}
 	e.SetSelf(e)
+	if tag == "svg" && engine.opts.ScriptDOM {
+		// Script-created SVGs acquire their drawing as attributes and children
+		// arrive, just like SVGs built from the initial document.
+		e.setInlineSVGMarkup(`<svg xmlns="http://www.w3.org/2000/svg"/>`)
+	}
 	engine.register(e)
 	return e
 }
@@ -476,6 +485,9 @@ func (e *El) Tag() string { return e.tag }
 // content (CSS table shrink-to-fit) rather than filling its flow band like a
 // normal block. A table with a declared width fills/uses that width instead.
 func (e *El) ShrinkToFitWidth() bool {
+	if cs := e.lastCS; webCompat && cs != nil && !cs.HasWidth && cs.WidthPct == 0 && (cs.Position == "absolute" || cs.Position == "fixed") {
+		return true
+	}
 	if e.lastCS != nil && webCompat && e.isImg() && e.iconSrc == nil {
 		return true // a replaced element is its own size, never the line's
 	}
@@ -4532,6 +4544,13 @@ func (e *El) ensureImg(cs *ComputedStyle) {
 		baseDir = e.engine.opts.BaseDir
 	}
 	if res, ok := e.loadExternal(src); ok {
+		e.imageComplete = !res.Pending
+		if !res.Pending && (!e.imageResultSet || e.imageResultSrc != src) {
+			e.imageResultSet, e.imageResultSrc = true, src
+			if e.imageEvent != nil {
+				e.imageEvent(res.Raster != nil || res.Vector != nil)
+			}
+		}
 		switch {
 		case res.Vector != nil:
 			w, h := float32(20), float32(20)
@@ -4931,7 +4950,28 @@ func (e *El) Measure(available qui.Size) qui.Size {
 		content := qui.MeasureChild(e.scrollInner, qui.Size{W: max(0, available.W-ins.Horizontal())})
 		m.H = content.H + ins.Vertical()
 	}
+	if h, ok := e.zeroHeight(); ok {
+		m.H = h
+	}
 	return m
+}
+
+// A declared zero height is definite. The underlying widget style uses
+// zero for auto, so retain CSS's distinction at the element boundary.
+func (e *El) zeroHeight() (float32, bool) {
+	cs := e.lastCS
+	if !webCompat || cs == nil || !cs.HasHeight || cs.Height != 0 {
+		return 0, false
+	}
+	_, extra := cs.boxSizingExtra()
+	h := e.Style().ContentInsets().Vertical()
+	if cs.MaxHeight > 0 {
+		h = min(h, cs.MaxHeight+extra)
+	}
+	if cs.MinHeight > 0 {
+		h = max(h, cs.MinHeight+extra)
+	}
+	return h, true
 }
 
 // fillLayout stretches an element's single child over its content box.
@@ -4986,6 +5026,9 @@ func (e *El) naturalImageSize() (qui.Size, bool) {
 // row of such logos into narrow cells without widening them.
 func (e *El) MinContentOverride() (float32, bool) {
 	cs := e.lastCS
+	if w, ok := e.replacedIntrinsicWidth(); ok {
+		return w, true
+	}
 	if webCompat && cs != nil && e.isImg() && e.iconSrc == nil && cs.WidthPct > 0 {
 		// A replaced element's cyclic percentage width contributes zero to
 		// its ancestor's min-content size (CSS Sizing 3, cyclic percentages).
@@ -5001,6 +5044,28 @@ func (e *El) MinContentOverride() (float32, bool) {
 		return 0, false
 	}
 	return e.Style().ContentInsets().Horizontal(), true
+}
+
+// MaxContentOverride keeps replaced boxes intrinsic even though their
+// backing layout fills the final content box.
+func (e *El) MaxContentOverride() (float32, bool) {
+	return e.replacedIntrinsicWidth()
+}
+
+func (e *El) replacedIntrinsicWidth() (float32, bool) {
+	cs := e.lastCS
+	if !webCompat || cs == nil || !e.isImg() || e.iconSrc != nil || cs.WidthPct > 0 {
+		return 0, false
+	}
+	if _, ok := e.naturalImageSize(); ok {
+		return 0, false
+	}
+	// A definite height transfers through the intrinsic aspect ratio.
+	if cs.HasHeight || cs.HeightPct > 0 && e.elParent != nil && e.elParent.lastCS != nil && e.elParent.lastCS.HasHeight {
+		sz, ok := e.replacedSize(qui.Size{})
+		return sz.W, ok
+	}
+	return 0, false
 }
 
 // naturalImageRatio is the width / height ratio of a picture that has one
@@ -5057,6 +5122,17 @@ func (e *El) replacedSize(avail qui.Size) (qui.Size, bool) {
 	}
 	if cs.HasHeight {
 		h, hasH = boxH(cs.Height), true
+	} else if cs.HeightPct > 0 {
+		cbH := avail.H
+		if p := e.elParent; p != nil && p.lastCS != nil && p.lastCS.HasHeight {
+			cbH = p.lastCS.Height
+			if p.lastCS.BoxSizing == "border-box" {
+				cbH = max(0, cbH-p.Style().ContentInsets().Vertical())
+			}
+		}
+		if cbH > 0 {
+			h, hasH = boxH(cs.HeightPct*cbH), true
+		}
 	}
 	ratio := nat.W / nat.H
 	if cs.AspectRatio > 0 {
@@ -5516,6 +5592,9 @@ func (e *El) applyStateText(av *ancestorVariant) {
 // updateScrollContent only calls SetContent when the natural size actually
 // differs, so the resulting InvalidateLayout can't loop.
 func (e *El) Layout(rect qui.Rect) {
+	if h, ok := e.zeroHeight(); ok {
+		rect.H = h
+	}
 	if e.overflowScroll && e.scrollView != nil {
 		ins := e.Style().ContentInsets()
 		e.updateScrollContentAt(rect.W-ins.Horizontal(), rect.H-ins.Vertical())

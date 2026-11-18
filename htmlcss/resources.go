@@ -30,6 +30,20 @@ type ImageResource struct {
 	Pending bool
 }
 
+// SetImageEventHandler observes completion of this image's resource request.
+// The host must queue DOM events instead of running script during styling.
+func (e *El) SetImageEventHandler(fn func(bool)) { e.imageEvent = fn }
+
+// ImageState exposes the state of the current image request to the DOM host.
+func (e *El) ImageState() (complete bool, size qui.Size) {
+	src := e.attrs["src"]
+	complete = src == "" || e.imageComplete && e.imageResultSrc == src
+	if e.imageResultSrc == src {
+		size, _ = e.naturalImageSize()
+	}
+	return
+}
+
 // resources returns the engine's loader, or nil.
 func (e *El) resources() ResourceLoader {
 	if e == nil || e.engine == nil {

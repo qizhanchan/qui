@@ -1,0 +1,9 @@
+{
+ "fixture": "web-document-viewport-units",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "full": [0,0,640,240],
+  "part": [0,240,320,120]
+ }
+}

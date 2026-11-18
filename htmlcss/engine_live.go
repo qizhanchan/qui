@@ -46,7 +46,8 @@ type StyleEngine struct {
 	sheet *Stylesheet
 	// scoped is set while flush restyles dirty scopes (vs. a full Restyle).
 	scoped    bool
-	viewportW float32           // @media evaluation width (0 = default), kept for SetCSS
+	viewportW float32 // @media evaluation width (0 = default), kept for SetCSS
+	viewportH float32
 	cssSrc    string            // the stylesheet source, kept for SetViewport
 	opts      Options           // BaseDir (img resolution) + Window (select backing)
 	root      *El               // main-tree root (holds the window for invalidation)
@@ -152,12 +153,23 @@ func (eng *StyleEngine) radioGroup(name string, member *El) *widgets.RadioGroup 
 
 // NewStyleEngine parses css once into a reusable engine (default viewport).
 func NewStyleEngine(css string) *StyleEngine {
-	return &StyleEngine{sheet: ParseCSS(css), cssSrc: css, roots: map[*El]bool{}}
+	return &StyleEngine{sheet: ParseCSS(css), viewportH: viewportUnits[1], cssSrc: css, roots: map[*El]bool{}}
 }
 
 // NewStyleEngineViewport parses css evaluating @media against viewportW.
 func NewStyleEngineViewport(css string, viewportW float32) *StyleEngine {
-	return &StyleEngine{sheet: ParseCSSViewport(css, viewportW), viewportW: viewportW, cssSrc: css, roots: map[*El]bool{}}
+	previous := viewportUnits
+	defer func() { viewportUnits = previous }()
+	SetViewportUnits(viewportW, 0)
+	return &StyleEngine{sheet: ParseCSSViewport(css, viewportW), viewportW: viewportW, viewportH: viewportUnits[1], cssSrc: css, roots: map[*El]bool{}}
+}
+
+// useViewport scopes declaration parsing to this document. Subframes can
+// restyle between parent jobs without changing the parent's vw/vh units.
+func (eng *StyleEngine) useViewport() func() {
+	previous := viewportUnits
+	SetViewportUnits(eng.viewportW, eng.viewportH)
+	return func() { viewportUnits = previous }
 }
 
 // CSS returns the stylesheet source the engine was built with (or last
@@ -168,8 +180,13 @@ func (eng *StyleEngine) CSS() string { return eng.cssSrc }
 // viewport units for a new viewport size and restyles every mounted root
 // in place — a browser window resized without rebuilding its document.
 func (eng *StyleEngine) SetViewport(w, h float32) {
-	SetViewportUnits(w, h)
-	if w == eng.viewportW {
+	changed := w != eng.viewportW || h > 0 && h != eng.viewportH
+	eng.viewportW = w
+	if h > 0 {
+		eng.viewportH = h
+	}
+	defer eng.useViewport()()
+	if !changed {
 		eng.Restyle()
 		return
 	}
@@ -185,6 +202,7 @@ func (eng *StyleEngine) SetViewport(w, h float32) {
 // palette's :root variables — and swap it in place without remounting
 // the element tree.
 func (eng *StyleEngine) SetCSS(css string) {
+	defer eng.useViewport()()
 	eng.cssSrc = css
 	if eng.viewportW > 0 {
 		eng.sheet = ParseCSSViewport(css, eng.viewportW)
@@ -598,6 +616,7 @@ func (eng *StyleEngine) FlushPendingStyles() {
 // is seamless. Falls back to a full Restyle when a scope's inherited
 // style isn't known yet (first style pass still pending).
 func (eng *StyleEngine) flush() {
+	defer eng.useViewport()()
 	dirty := eng.dirty
 	eng.dirty = nil
 	reflow := eng.reflow
@@ -837,6 +856,7 @@ func (eng *StyleEngine) restyleWalk(e *El, parent *ComputedStyle) {
 // h.Mount calls this once after attach; incremental updates go through
 // the scoped flush instead.
 func (eng *StyleEngine) Restyle() {
+	defer eng.useViewport()()
 	eng.dirty = nil // a full pass satisfies any pending scoped work
 	eng.reflow = nil
 	eng.pass++

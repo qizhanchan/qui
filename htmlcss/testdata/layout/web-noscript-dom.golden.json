@@ -1,0 +1,10 @@
+{
+ "fixture": "web-noscript-dom",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "app": [0,0,640,18],
+  "inert": [0,0,0,0],
+  "title": [0,0,640,18]
+ }
+}

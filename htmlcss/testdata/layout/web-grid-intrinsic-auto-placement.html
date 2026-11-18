@@ -1,0 +1,11 @@
+<!doctype html>
+<style>
+@font-face{font-family:GoRegular;src:url('../../../widgets/scripts/web/go-regular.ttf')}
+body{margin:0;font:16px GoRegular}
+.row{display:flex;justify-content:center}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.cell{height:20px;background:#eee}
+.grow{display:flex;width:600px}.grow>div{flex:1}.minimum{min-width:250px}
+</style>
+<div class=row id=row><div class=grid id=grid><div class=cell id=a style="width:40px"></div><div class=cell id=b style="width:80px"></div><div class=cell id=c style="width:50px"></div><div class=cell id=d style="width:110px"></div></div></div>
+<div class=grow id=grow><div class=minimum id=g1>Wide</div><div id=g2>Small</div><div id=g3>Medium text</div></div>

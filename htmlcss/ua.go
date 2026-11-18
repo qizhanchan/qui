@@ -174,7 +174,7 @@ func foldableTag(tag string) bool {
 // defaultDisplay returns the initial CSS display for a tag.
 func defaultDisplay(tag string) string {
 	switch tag {
-	case "none", "head", "title", "meta", "link", "script", "style", "#comment":
+	case "none", "head", "title", "meta", "link", "script", "style", "noscript", "#comment":
 		return "none"
 	// <datalist> is a data holder, not a box: its options feed the linked
 	// input's autocomplete (see htmlcss/datalist.go).

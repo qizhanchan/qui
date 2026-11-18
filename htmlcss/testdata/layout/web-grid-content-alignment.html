@@ -1,0 +1,15 @@
+<!doctype html>
+<style>
+@font-face{font-family:GoRegular;src:url('../../../widgets/scripts/web/go-regular.ttf')}
+body{margin:0;font:16px GoRegular}
+.grid{display:grid;width:200px;height:120px;row-gap:10px;align-content:center}
+.item{height:20px;background:#eee}
+.end{align-content:end}.between{align-content:space-between}.around{align-content:space-around}.evenly{align-content:space-evenly}
+.outer{display:grid;grid-template-columns:100px 200px}.tall{height:200px}.inner{display:grid;align-content:center;height:100%}
+</style>
+<div class=outer id=outer><div id=stretched><div class=inner id=inner><div class=item id=percent-child></div></div></div><div class=tall id=tall></div></div>
+<div class=grid id=center><div class=item id=c1></div><div class=item id=c2></div></div>
+<div class="grid end" id=end><div class=item id=e1></div><div class=item id=e2></div></div>
+<div class="grid between" id=between><div class=item id=b1></div><div class=item id=b2></div></div>
+<div class="grid around" id=around><div class=item id=a1></div><div class=item id=a2></div></div>
+<div class="grid evenly" id=evenly><div class=item id=v1></div><div class=item id=v2></div></div>

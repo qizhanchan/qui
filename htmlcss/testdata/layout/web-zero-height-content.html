@@ -1,0 +1,11 @@
+<!doctype html>
+<style>
+@font-face{font-family:GoRegular;src:url('../../../widgets/scripts/web/go-regular.ttf')}
+body{margin:0;font:16px GoRegular}
+.zero{height:0}.child{height:30px}.padded{padding:4px;border:1px solid}.borderbox{box-sizing:border-box}
+</style>
+<div class=zero id=zero><div class=child id=child></div></div><div id=after style="height:10px"></div>
+<div class="zero padded" id=padded><div class=child></div></div>
+<div class="zero padded borderbox" id=borderbox><div class=child></div></div>
+<div class=zero id=minimum style="min-height:20px"><div class=child></div></div>
+<div id=end style="height:10px"></div>

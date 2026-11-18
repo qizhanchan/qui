@@ -1608,7 +1608,7 @@ func resolveHeightDefiniteness(n *Node, cs, parent *ComputedStyle) {
 	// A stretched item of a row flex container takes the container's
 	// resolved cross size, which is definite for its descendants even
 	// when the flex line was sized from its content.
-	stretched := parent != nil && isFlexDisplay(parent.Display) && parent.FlexDirection == qui.Horizontal &&
+	stretched := parent != nil && (isFlexDisplay(parent.Display) && parent.FlexDirection == qui.Horizontal || isGridDisplay(parent.Display)) &&
 		!cs.HasHeight && cs.HeightPct == 0 &&
 		(cs.AlignSelf == qui.AlignDefault && (parent.AlignItems == qui.AlignStretch || parent.AlignItems == qui.AlignDefault) ||
 			cs.AlignSelf == qui.AlignStretch)

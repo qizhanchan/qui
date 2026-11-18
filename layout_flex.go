@@ -71,6 +71,7 @@ type flexItem struct {
 	w          Widget
 	flex       FlexItem
 	basis      float32 // target size on main axis (pre grow/shrink)
+	growBase   float32 // flex base before the hypothetical min/max clamp
 	size       float32 // final main-axis size
 	shrinkBase float32
 	flexBase   float32 // CSS base before min/max clamping (without margins)
@@ -338,6 +339,7 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 			}
 		}
 		flexBase := basis
+		growBase := flexBase
 		if basis < minMain {
 			basis = minMain
 		}
@@ -361,7 +363,7 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 		if shrinkBase < 0 {
 			shrinkBase = 0
 		}
-		it := flexItem{flexBase: flexBase, maxClamped: maxMain > 0 && flexBase > maxMain, shrinkBase: shrinkBase, w: ch, flex: fx, basis: basis, natural: nat, minMain: minMain, minCross: minCross, maxMain: maxMain, maxCross: maxCross, explicitCross: explicitCross}
+		it := flexItem{growBase: growBase, flexBase: flexBase, maxClamped: maxMain > 0 && flexBase > maxMain, shrinkBase: shrinkBase, w: ch, flex: fx, basis: basis, natural: nat, minMain: minMain, minCross: minCross, maxMain: maxMain, maxCross: maxCross, explicitCross: explicitCross}
 		if l.Direction == Horizontal {
 			it.marginMainStart, it.marginMainSum = margin.Left, margin.Horizontal()
 			it.marginCrossStart, it.marginCrossSum = margin.Top, margin.Vertical()
@@ -378,6 +380,7 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 			}
 		}
 		it.basis += it.marginMainSum
+		it.growBase += it.marginMainSum
 		it.minMain += it.marginMainSum
 		it.minCross += it.marginCrossSum
 		if it.explicitCross > 0 {
@@ -580,6 +583,13 @@ func (l FlexLayout) resolveMainSizes(items []flexItem, mainAvail float32) {
 			for i := range items {
 				items[i].size = items[i].basis
 				active[i] = items[i].flex.Grow > 0
+				if l.CSSSizing && active[i] {
+					// Grow from the flex base, not the hypothetical size.
+					// Otherwise flex:1 columns add unequal content minimums
+					// before sharing space and cannot have equal widths.
+					free += items[i].basis - items[i].growBase
+					items[i].size = items[i].growBase
+				}
 			}
 			remaining := free
 			for remaining > 0 {
@@ -597,6 +607,18 @@ func (l FlexLayout) resolveMainSizes(items []flexItem, mainAvail float32) {
 					dist = free * gs
 				}
 				frozeAny := false
+				if l.CSSSizing {
+					for i := range items {
+						if active[i] && items[i].size+dist*items[i].flex.Grow/gs < items[i].minMain {
+							remaining -= items[i].minMain - items[i].size
+							items[i].size = items[i].minMain
+							active[i], frozeAny = false, true
+						}
+					}
+					if frozeAny {
+						continue
+					}
+				}
 				for i := range items {
 					if !active[i] || items[i].maxMain <= 0 {
 						continue

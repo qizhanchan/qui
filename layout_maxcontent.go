@@ -13,6 +13,10 @@ type MaxContentWidther interface {
 	MaxContentWidth() float32
 }
 
+type MaxContentOverrider interface {
+	MaxContentOverride() (float32, bool)
+}
+
 // MaxContentLayout is implemented by layout engines that derive a
 // container's max-content content width from its in-flow children.
 type MaxContentLayout interface {
@@ -50,6 +54,11 @@ func MaxContentWidth(w Widget) float32 {
 // contentMaxWidth is w's max-content width from its content, before the
 // aspect ratio and min / max widths apply.
 func contentMaxWidth(w Widget) float32 {
+	if o, ok := w.(MaxContentOverrider); ok {
+		if v, ok := o.MaxContentOverride(); ok {
+			return v
+		}
+	}
 	if mc, ok := w.(MaxContentWidther); ok {
 		return mc.MaxContentWidth()
 	}
@@ -138,6 +147,8 @@ func (l FlexLayout) MaxContentWidth(children []Widget) float32 {
 // their widest single-span item.
 func (l GridLayout) MaxContentWidth(children []Widget) float32 {
 	l = l.expandRepeat(children, 0)
+	var placements []GridItem
+	l, placements = l.withImplicit(children)
 	n := len(l.Columns)
 	if n == 0 {
 		var widest float32
@@ -152,12 +163,26 @@ func (l GridLayout) MaxContentWidth(children []Widget) float32 {
 			cols[i] = t.Size
 		}
 	}
-	for _, c := range children {
-		gi := GridItemOf(c)
+	for ci, c := range children {
+		gi := placements[ci]
 		if gi.ColSpan > 1 || gi.Col < 0 || gi.Col >= n || l.Columns[gi.Col].Kind == GridFixed {
 			continue
 		}
 		cols[gi.Col] = max(cols[gi.Col], maxContentMargined(c))
+	}
+	// Flexible tracks share one fr size, including during max-content
+	// sizing. Auto-placed items contribute to their actual column.
+	var fr float32
+	for i, tr := range l.Columns {
+		cols[i] = max(cols[i], tr.Min)
+		if tr.Kind == GridFraction && tr.Size > 0 {
+			fr = max(fr, cols[i]/tr.Size)
+		}
+	}
+	for i, tr := range l.Columns {
+		if tr.Kind == GridFraction {
+			cols[i] = fr * tr.Size
+		}
 	}
 	sum := l.ColGap * float32(n-1)
 	for _, w := range cols {

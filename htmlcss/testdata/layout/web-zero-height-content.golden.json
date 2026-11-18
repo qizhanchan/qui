@@ -1,0 +1,14 @@
+{
+ "fixture": "web-zero-height-content",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "zero": [0,0,640,0],
+  "child": [0,0,640,30],
+  "after": [0,0,640,10],
+  "padded": [0,10,640,10],
+  "borderbox": [0,20,640,10],
+  "minimum": [0,30,640,20],
+  "end": [0,50,640,10]
+ }
+}

@@ -43,6 +43,7 @@ func gridLayout(cs *ComputedStyle, itemCount int) qui.Layout {
 		ColGap:      colGap, RowGap: rowGap,
 		AutoRepeat:         autoRepeat,
 		SizedItemsKeepSize: true,
+		AlignContent:       cs.AlignContent,
 	}
 }
 

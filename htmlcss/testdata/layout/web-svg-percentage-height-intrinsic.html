@@ -1,0 +1,13 @@
+<!doctype html><!-- ScriptDOM -->
+<style>
+@font-face{font-family:GoRegular;src:url('../../../widgets/scripts/web/go-regular.ttf')}
+body{margin:0;font:16px GoRegular}
+.bar{display:flex;justify-content:center;align-items:center;min-height:40px}
+h1{margin:0;display:grid;place-items:center;height:26px;color:#b80000}
+h1 svg{width:auto;height:100%;display:block;fill:currentColor}
+.fixed{height:40px;width:auto;display:block}
+.row{display:flex;width:600px;align-items:center}
+.part{flex:1;display:flex;justify-content:center}
+</style>
+<div class=bar id=bar><h1 id=title><svg id=news viewBox="0 0 104 27"><path d="M0 0h104v27H0z"/></svg></h1></div>
+<div class=row id=row><div class=part id=left>Menu</div><div class=part id=middle><a id=link><svg id=brand class=fixed viewBox="0 0 112 32"><path d="M0 0h112v32H0z"/></svg></a></div><div class=part id=right>Register</div></div>

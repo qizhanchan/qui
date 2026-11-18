@@ -93,6 +93,8 @@ type GridLayout struct {
 	// align/justify-self: normal). Tables leave it off: a cell always fills
 	// its row.
 	SizedItemsKeepSize bool
+	// AlignContent distributes the row tracks inside a definite grid height.
+	AlignContent AlignContent
 }
 
 // expandRepeat resolves AutoRepeat against the available width.
@@ -270,11 +272,30 @@ func (l GridLayout) ApplyWithRows(children []Widget, bounds Rect, rows func([]Re
 	// Grow auto rows so multi-row-spanning children (e.g. table rowspan) fit.
 	growAutoRowsForRowSpans(rowHeights, l.Rows, l.RowGap, colWidths, l.ColGap,
 		children, placements)
+	var rowStart float32
+	if free := bounds.H - trackSpan(rowHeights, l.RowGap, 0, len(rowHeights)); free > 0 {
+		switch l.AlignContent {
+		case AlignContentCenter:
+			rowStart = free / 2
+		case AlignContentEnd:
+			rowStart = free
+		case AlignContentSpaceBetween:
+			if len(rowHeights) > 1 {
+				l.RowGap += free / float32(len(rowHeights)-1)
+			}
+		case AlignContentSpaceAround:
+			extra := free / float32(len(rowHeights))
+			rowStart, l.RowGap = extra/2, l.RowGap+extra
+		case AlignContentSpaceEvenly:
+			extra := free / float32(len(rowHeights)+1)
+			rowStart, l.RowGap = extra, l.RowGap+extra
+		}
+	}
 	if rows != nil {
 		bands := make([]Rect, len(rowHeights))
 		width := trackSpan(colWidths, l.ColGap, 0, len(colWidths))
 		for i, height := range rowHeights {
-			bands[i] = Rect{X: bounds.X, Y: bounds.Y + trackOffset(rowHeights, l.RowGap, i), W: width, H: height}
+			bands[i] = Rect{X: bounds.X, Y: bounds.Y + rowStart + trackOffset(rowHeights, l.RowGap, i), W: width, H: height}
 		}
 		rows(bands)
 	}
@@ -286,7 +307,7 @@ func (l GridLayout) ApplyWithRows(children []Widget, bounds Rect, rows func([]Re
 			continue
 		}
 		cellX := bounds.X + trackOffset(colWidths, l.ColGap, p.Col)
-		cellY := bounds.Y + trackOffset(rowHeights, l.RowGap, p.Row)
+		cellY := bounds.Y + rowStart + trackOffset(rowHeights, l.RowGap, p.Row)
 		cellW := trackSpan(colWidths, l.ColGap, p.Col, p.ColSpan)
 		cellH := trackSpan(rowHeights, l.RowGap, p.Row, p.RowSpan)
 		ch.Layout(gridItemRect(ch, Rect{X: cellX, Y: cellY, W: cellW, H: cellH}, l.SizedItemsKeepSize))
@@ -370,6 +391,12 @@ func gridItemRect(ch Widget, cell Rect, keepSize bool) Rect {
 func (l GridLayout) Measure(children []Widget, avail Size) Size {
 	if len(children) == 0 {
 		return Size{}
+	}
+	if l.SizedItemsKeepSize && !widthPctDefinite() {
+		// A grid measured as an auto-basis flex item has an indefinite
+		// inline size. Fraction tracks use its content, not the flex row's
+		// offered width, before flexing assigns the final width.
+		avail.W = l.MaxContentWidth(children)
 	}
 	gl, placements := l.expandRepeat(children, avail.W).withImplicit(children)
 	if len(gl.Columns) == 0 || len(gl.Rows) == 0 {

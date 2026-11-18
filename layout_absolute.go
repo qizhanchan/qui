@@ -220,6 +220,9 @@ func resolveAnchorAxisStatic(anchor, startBit, endBit AnchorSide,
 }
 
 func anchorMeasure(child Widget, parentExtent float32, widthAxis bool, usedW float32) float32 {
+	if widthAxis && shrinkToFitWidth(child) {
+		return ShrinkToFit(child, parentExtent)
+	}
 	avail := Size{W: parentExtent, H: parentExtent}
 	if !widthAxis && usedW > 0 {
 		// The height of content laid out at the box's own width — not at
