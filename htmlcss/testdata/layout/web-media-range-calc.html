@@ -1,0 +1,12 @@
+<!doctype html>
+<style>
+@font-face{font-family:GoRegular;src:url('../../../widgets/scripts/web/go-regular.ttf')}
+body{margin:0;font:16px GoRegular}
+div{height:20px;width:30px}
+@media (width >= calc(1rem * 2 + (5rem + 2rem) * 2 + 10rem)) {#forward{width:100px;margin-left:calc(1rem * -1);padding-left:1rem}}
+@media (calc(1rem * 2 + (5rem + 2rem) * 2 + 10rem) <= width) {#reverse{width:200px}}
+@media (calc(10rem + 1px) < width < calc(50rem - 1px)) {#between{width:300px}}
+@media (width < calc(1rem * 2 + (5rem + 2rem) * 2 + 10rem)) {#false{width:400px}}
+@media (width	>=	calc(10rem + 1px)) {#tabs{width:120px}}
+</style>
+<div id=forward></div><div id=reverse></div><div id=between></div><div id=false></div><div id=tabs></div>

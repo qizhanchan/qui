@@ -253,7 +253,7 @@ func splitRange(f string) []string {
 	var out []string
 	i := 0
 	for i < len(f) {
-		for i < len(f) && f[i] == ' ' {
+		for i < len(f) && isSpace(f[i]) {
 			i++
 		}
 		if i >= len(f) {
@@ -269,7 +269,17 @@ func splitRange(f string) []string {
 			continue
 		}
 		j := i
-		for j < len(f) && f[j] != ' ' && f[j] != '<' && f[j] != '>' && f[j] != '=' {
+		depth := 0
+		for j < len(f) {
+			c := f[j]
+			if depth == 0 && (isSpace(c) || c == '<' || c == '>' || c == '=') {
+				break
+			}
+			if c == '(' {
+				depth++
+			} else if c == ')' {
+				depth--
+			}
 			j++
 		}
 		out = append(out, f[i:j])

@@ -2668,6 +2668,15 @@ func (e *El) floatState(cs *ComputedStyle) *qui.FloatState {
 // ResolveRelativeSize evaluates nonlinear percentage math when layout knows
 // the containing block. Evaluating min(50px,70%) against zero loses its size.
 func (e *El) ResolveRelativeSize(cb qui.Size) (size qui.Size, width, height bool) {
+	// Replaced elements transfer the containing-block percentage through
+	// their intrinsic ratio. Measuring again at the resolved used width
+	// would apply that percentage twice when determining the auto height.
+	if cs := e.lastCS; cs != nil && cs.widthExpr == "" && cs.heightExpr == "" &&
+		(webCompat && e.isImg() && e.iconSrc == nil || e.hasNaturalSize()) {
+		if sz, ok := e.replacedSize(cb); ok {
+			return sz, true, true
+		}
+	}
 	if cs := e.lastCS; cs != nil {
 		x, y := cs.boxSizingExtra()
 		if cs.widthExpr != "" {

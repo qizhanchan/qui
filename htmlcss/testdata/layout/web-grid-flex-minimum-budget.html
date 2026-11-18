@@ -1,0 +1,14 @@
+<!doctype html>
+<style>
+@font-face{font-family:GoRegular;src:url('../../../widgets/scripts/web/go-regular.ttf')}
+body{margin:0;font:16px GoRegular}
+.grid{display:grid;grid-template-columns:minmax(100px,1fr) 20px minmax(0,400px) 20px minmax(100px,1fr);margin-bottom:10px}
+.grid>div{height:20px}
+#narrow{width:400px}#medium{width:600px}#wide{width:900px}
+#auto{width:400px;grid-template-columns:minmax(100px,1fr) minmax(0,auto)}
+#auto>div:last-child{white-space:nowrap}
+</style>
+<div class=grid id=narrow><div id=n1></div><div></div><div id=n2></div><div></div><div id=n3></div></div>
+<div class=grid id=medium><div id=m1></div><div></div><div id=m2></div><div></div><div id=m3></div></div>
+<div class=grid id=wide><div id=w1></div><div></div><div id=w2></div><div></div><div id=w3></div></div>
+<div class=grid id=auto><div id=a1></div><div id=a2>abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz</div></div>

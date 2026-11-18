@@ -194,6 +194,7 @@ type ComputedStyle struct {
 	FlexDirection qui.Direction
 	Justify       qui.Justify
 	AlignItems    qui.AlignCross
+	JustifyItems  qui.AlignCross
 	RowGap        float32 // row-gap (gap's first value)
 	ColumnGap     float32 // column-gap (gap's second value, else its first)
 	Wrap          bool
@@ -201,6 +202,7 @@ type ComputedStyle struct {
 	FlexGrow      float32
 	// Per-item flex properties (align-self / flex-shrink / flex-basis / order).
 	AlignSelf     qui.AlignCross // AlignDefault = auto (inherit container)
+	JustifySelf   qui.AlignCross
 	FlexShrink    float32
 	HasFlexShrink bool
 	FlexBasis     float32
@@ -1539,6 +1541,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle, aliases ...m
 	// --- flex ---
 	cs.FlexDirection = qui.Horizontal
 	cs.AlignItems = qui.AlignStretch
+	cs.JustifyItems = qui.AlignStretch
 	if v, ok := m["flex-direction"]; ok && strings.Contains(v, "column") {
 		cs.FlexDirection = qui.Vertical
 	}
@@ -1547,6 +1550,9 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle, aliases ...m
 	}
 	if v, ok := m["align-items"]; ok {
 		cs.AlignItems = parseAlign(v)
+	}
+	if v, ok := m["justify-items"]; ok {
+		cs.JustifyItems = parseAlign(v)
 	}
 	cs.RowGap, cs.ColumnGap = gridGaps(cs)
 	if v, ok := m["flex-wrap"]; ok && strings.Contains(v, "wrap") {
@@ -1564,6 +1570,11 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle, aliases ...m
 	if v, ok := m["align-self"]; ok {
 		if s := strings.ToLower(strings.TrimSpace(v)); s != "" && s != "auto" {
 			cs.AlignSelf = parseAlign(s)
+		}
+	}
+	if v, ok := m["justify-self"]; ok {
+		if s := strings.ToLower(strings.TrimSpace(v)); s != "" && s != "auto" {
+			cs.JustifySelf = parseAlign(s)
 		}
 	}
 	if v, ok := m["flex-shrink"]; ok {

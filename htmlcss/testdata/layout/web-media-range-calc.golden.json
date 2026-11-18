@@ -1,0 +1,12 @@
+{
+ "fixture": "web-media-range-calc",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "forward": [-16,0,116,20],
+  "reverse": [0,20,200,20],
+  "between": [0,40,300,20],
+  "false": [0,60,30,20],
+  "tabs": [0,80,120,20]
+ }
+}

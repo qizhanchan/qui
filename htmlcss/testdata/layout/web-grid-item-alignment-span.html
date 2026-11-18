@@ -1,0 +1,13 @@
+<!doctype html>
+<style>
+@font-face{font-family:GoRegular;src:url('../../../widgets/scripts/web/go-regular.ttf')}
+body{margin:0;font:16px GoRegular}
+#grid{display:grid;width:600px;grid-template-columns:2fr 1fr 1fr;grid-template-areas:"intro links links" "social links links";gap:32px 16px;align-items:start}
+#intro{grid-area:intro;display:grid;justify-items:start;row-gap:16px}
+#intro p{margin:0}#logo{width:83px;height:24px}#social{grid-area:social;height:24px}
+.links{grid-row-end:span 2;height:246px}#short{height:210px}
+#center{display:grid;width:300px;height:100px;justify-items:center;align-items:center}
+#end{justify-self:end;align-self:end;width:50px;height:20px}
+</style>
+<div id=grid><div id=intro><a id=logo></a><p id=text>Readable text</p></div><div id=social></div><div class=links id=tall></div><div class=links id=short></div></div>
+<div id=center><div id=natural>Text</div><div id=end></div></div>

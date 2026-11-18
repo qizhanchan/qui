@@ -152,6 +152,7 @@ type Style struct {
 	BasisExtra  float32 // in a row
 	BasisExtraV float32 // in a column
 	AlignSelf   AlignCross
+	JustifySelf AlignCross // per-item inline-axis alignment in a grid
 	// BasisAuto keeps a growing item's basis at its content size (CSS
 	// flex-basis: auto, as in `flex: auto` or a bare flex-grow) instead of
 	// the engine's Grow>0 ⇒ basis 0 default (`flex: <n>`).

@@ -44,6 +44,8 @@ func gridLayout(cs *ComputedStyle, itemCount int) qui.Layout {
 		AutoRepeat:         autoRepeat,
 		SizedItemsKeepSize: true,
 		AlignContent:       cs.AlignContent,
+		AlignItems:         cs.AlignItems,
+		JustifyItems:       cs.JustifyItems,
 	}
 }
 
@@ -105,6 +107,12 @@ func (e *El) applyGridItem(cs, parentCS *ComputedStyle) {
 	if v := strings.TrimSpace(cs.raw["grid-row-start"]); v != "" {
 		end := strings.TrimSpace(cs.raw["grid-row-end"])
 		rowStart, rowSpan = parseGridPlacementNamed(v+" / "+orAuto(end), rowNames)
+	} else if v := strings.TrimSpace(cs.raw["grid-row-end"]); v != "" {
+		start := "auto"
+		if rowStart >= 0 {
+			start = strconv.Itoa(rowStart + 1)
+		}
+		rowStart, rowSpan = parseGridPlacementNamed(start+" / "+v, rowNames)
 	}
 
 	gi := qui.GridItem{ColSpan: colSpan, RowSpan: rowSpan}

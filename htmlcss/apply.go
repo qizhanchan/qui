@@ -617,6 +617,7 @@ func applyCommonStyle(st *qui.Style, cs *ComputedStyle) {
 	// non-shrink 0 case) and order go through the FlexItem interface, which
 	// Style can't express (Shrink==0 collapses with "unset" → CSS default 1).
 	st.AlignSelf = cs.AlignSelf
+	st.JustifySelf = cs.JustifySelf
 	if cs.HasFlexBasis {
 		st.Basis = cs.FlexBasis
 	}
