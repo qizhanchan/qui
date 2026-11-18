@@ -62,3 +62,26 @@ func TestUnescapeCSS(t *testing.T) {
 		t.Errorf("content with escapes = %q", got)
 	}
 }
+
+// Escaped selector names (Tailwind): \: \[ \] \/ and hex escapes are part
+// of the class name; a ']' inside a quoted attribute value is too.
+func TestEscapedSelectors(t *testing.T) {
+	sheet := ParseCSSViewport(`.flex{display:flex} @media (width>=64rem){.lg\:hidden{display:none}}
+.w-\[23px\]{width:23px} .\32xl\:grid{display:grid} .bg-x\/95{height:7px} [data-x="a]b"]{min-height:5px}`, 1280)
+	style := func(cls string) *ComputedStyle {
+		return computeNode(&Node{Type: ElementNode, Tag: "div", Attrs: map[string]string{"class": cls, "data-x": "a]b"}}, sheet, nil)
+	}
+	if d := style("lg:hidden flex").Display; d != "none" {
+		t.Errorf(".lg\\:hidden: display %q", d)
+	}
+	if w := style("w-[23px]").Width; w != 23 {
+		t.Errorf(".w-\\[23px\\]: width %v", w)
+	}
+	if d := style("2xl:grid").Display; d != "grid" {
+		t.Errorf(".\\32xl\\:grid: display %q", d)
+	}
+	cs := style("bg-x/95")
+	if cs.Height != 7 || cs.MinHeight != 5 {
+		t.Errorf(".bg-x\\/95 height %v, [data-x=\"a]b\"] min-height %v", cs.Height, cs.MinHeight)
+	}
+}

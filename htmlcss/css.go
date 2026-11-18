@@ -824,6 +824,12 @@ func tokenizeSelector(s string) []string {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		switch {
+		case c == '\\':
+			// An escape (Tailwind's .md\:p-4, .w-\[2px\], .\32xl) is part
+			// of the name, whatever it escapes.
+			end := skipEscape(s, i)
+			cur.WriteString(s[i:end])
+			i = end - 1
 		case c == '[' || c == '(':
 			depth++
 			cur.WriteByte(c)
@@ -853,6 +859,10 @@ func splitTopLevel(s string, sep byte) []string {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		switch {
+		case c == '\\':
+			end := skipEscape(s, i)
+			cur.WriteString(s[i:end])
+			i = end - 1
 		case c == '[' || c == '(':
 			depth++
 			cur.WriteByte(c)
@@ -880,9 +890,13 @@ func parseSimple(tok string) simpleSelector {
 	i := 0
 	// Leading tag / universal (up to the first .#:[ marker).
 	for i < len(tok) && !isSimpleBoundary(tok[i]) {
+		if tok[i] == '\\' {
+			i = skipEscape(tok, i)
+			continue
+		}
 		i++
 	}
-	ss.tag = strings.ToLower(tok[:i])
+	ss.tag = strings.ToLower(UnescapeCSS(tok[:i]))
 	for i < len(tok) {
 		marker := tok[i]
 		i++
@@ -948,20 +962,56 @@ func (s Selector) pseudoElement() string {
 	return s.parts[len(s.parts)-1].sel.pseudoElem
 }
 
-// readName reads a class/id name up to the next simple-selector boundary.
+// readName reads a class/id name up to the next simple-selector boundary
+// (an escaped boundary character is part of the name) and resolves its
+// escapes.
 func readName(tok string, i int) (string, int) {
 	start := i
 	for i < len(tok) && !isSimpleBoundary(tok[i]) {
+		if tok[i] == '\\' {
+			i = skipEscape(tok, i)
+			continue
+		}
 		i++
 	}
-	return tok[start:i], i
+	return UnescapeCSS(tok[start:i]), i
+}
+
+// skipEscape returns the index just past the CSS escape at s[i] ('\\'): up
+// to six hex digits plus one whitespace, or the one escaped character.
+func skipEscape(s string, i int) int {
+	i++ // the backslash
+	if i >= len(s) {
+		return i
+	}
+	if !isHexDigit(s[i]) {
+		return i + 1
+	}
+	j := i
+	for j < len(s) && j-i < 6 && isHexDigit(s[j]) {
+		j++
+	}
+	if j < len(s) && (s[j] == ' ' || s[j] == '\t' || s[j] == '\n') {
+		j++
+	}
+	return j
 }
 
 // readBracket reads the contents of an attribute clause after the '[' (at
 // index i), returning the inner text and the index just past the ']'.
 func readBracket(tok string, i int) (string, int) {
 	start := i
-	for i < len(tok) && tok[i] != ']' {
+	var quote byte
+	for i < len(tok) && (quote != 0 || tok[i] != ']') {
+		switch c := tok[i]; {
+		case c == '\\':
+			i = skipEscape(tok, i)
+			continue
+		case quote != 0 && c == quote:
+			quote = 0
+		case quote == 0 && (c == '"' || c == '\''):
+			quote = c
+		}
 		i++
 	}
 	inner := tok[start:i]
