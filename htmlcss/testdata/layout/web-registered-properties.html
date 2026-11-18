@@ -1,0 +1,7 @@
+<!doctype html><style>
+@font-face{font-family:GoRegular;src:url("../../../widgets/scripts/web/go-regular.ttf")}
+@property --x{syntax:"<length>";inherits:false;initial-value:10px}
+@property --y{syntax:"*";inherits:false;initial-value:0}
+@property --offset{syntax:"<length>";inherits:true;initial-value:15px}
+body{margin:0;font:16px/24px GoRegular}#parent{--x:40px;--offset:20px}#child{width:var(--x);height:var(--offset)}#inherited{--x:inherit;width:var(--x);height:var(--offset)}#translate{width:100px;height:40px;translate:var(--y) calc(calc(1 / 2 * 100%) * -1)}
+</style><div id="parent"><div id="child"></div><div id="inherited"></div></div><div id="translate"></div>

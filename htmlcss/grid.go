@@ -407,7 +407,7 @@ func parseGridTrack(tok string, fs float32) (qui.GridTrack, bool) {
 func gridGaps(cs *ComputedStyle) (row, col float32) {
 	fs := cs.FontSize
 	twoLen := func(v string) (float32, float32) {
-		f := strings.Fields(v)
+		f := fieldsTopLevel(v)
 		if len(f) == 0 {
 			return 0, 0
 		}

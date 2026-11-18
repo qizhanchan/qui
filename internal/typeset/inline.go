@@ -122,6 +122,9 @@ type InlineLayoutOptions struct {
 	MaxWidth float32
 	// Wrap enables soft-wrapping at word boundaries when MaxWidth > 0.
 	Wrap bool
+	// Balance short paragraphs by narrowing their wrapping width while
+	// retaining the greedy layout's line count (CSS text-wrap: balance).
+	Balance bool
 	// Align controls per-line horizontal alignment within MaxWidth.
 	Align TextAlign
 	// Direction controls the paragraph base direction. Auto resolves the
@@ -736,6 +739,50 @@ func (t *inlineTok) spaceStyledLike() bool {
 
 // BuildInlineLayout lays out a mix of text runs and atomic boxes into lines.
 func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayout {
+	if opts.Balance && opts.Wrap && opts.MaxWidth > 0 && len(opts.Exclusions) == 0 && !opts.PreserveWhitespace {
+		opts.Balance = false
+		original := BuildInlineLayout(items, opts)
+		if lines := len(original.Lines); lines > 1 && lines <= 6 {
+			lo, hi := float32(0), opts.MaxWidth
+			for hi-lo > 0.25 {
+				mid := (lo + hi) / 2
+				trial := opts
+				trial.MaxWidth = mid
+				if len(BuildInlineLayout(items, trial).Lines) > lines {
+					lo = mid
+				} else {
+					hi = mid
+				}
+			}
+			trial := opts
+			trial.MaxWidth = hi
+			balanced := BuildInlineLayout(items, trial)
+			var paragraph []rune
+			for _, item := range items {
+				paragraph = append(paragraph, []rune(item.Text)...)
+			}
+			rtl := resolveTextDirection(paragraph, opts.Direction) == di.DirectionRTL
+			alignRight := opts.Align == TextAlignEnd && !rtl || opts.Align == TextAlignStart && rtl
+			shift := opts.MaxWidth - hi
+			if opts.Align == TextAlignCenter {
+				shift /= 2
+			} else if !alignRight {
+				shift = 0
+			}
+			if shift > 0 {
+				for i := range balanced.Lines {
+					line := &balanced.Lines[i]
+					line.Width += shift
+					for j := range line.Frags {
+						line.Frags[j].Rect.X += shift
+					}
+				}
+				balanced.Width += shift
+			}
+			return balanced
+		}
+		return original
+	}
 	// The two line-height units travel together so every metric below
 	// resolves them the same way (see lineBox).
 	scale, spacing := opts.LineHeightScale, opts.LineSpacing

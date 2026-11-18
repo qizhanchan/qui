@@ -262,7 +262,7 @@ func expandFlex(v string, m map[string]string) {
 // expandInset expands `inset: <t> [r] [b] [l]` (CSS logical shorthand for
 // top/right/bottom/left) using the standard 1–4 value rule.
 func expandInset(v string, m map[string]string) {
-	f := strings.Fields(v)
+	f := fieldsTopLevel(v)
 	var t, r, b, l string
 	switch len(f) {
 	case 1:
@@ -314,6 +314,31 @@ func capitalizeWords(s string) string {
 // mergeLogicalBox maps horizontal writing-mode box edges while folding the
 // cascade, so logical and physical properties compete in cascade order.
 func mergeLogicalBox(m map[string]string, d Declaration, rtl bool) {
+	if edge, ok := strings.CutPrefix(d.Property, "inset-"); ok {
+		start, end := "left", "right"
+		if rtl {
+			start, end = end, start
+		}
+		switch edge {
+		case "inline-start":
+			m[start] = d.Value
+		case "inline-end":
+			m[end] = d.Value
+		case "block-start":
+			m["top"] = d.Value
+		case "block-end":
+			m["bottom"] = d.Value
+		case "inline", "block":
+			values := fieldsTopLevel(d.Value)
+			if len(values) > 0 && len(values) <= 2 {
+				if edge == "block" {
+					start, end = "top", "bottom"
+				}
+				m[start], m[end] = values[0], values[len(values)-1]
+			}
+		}
+		return
+	}
 	if strings.HasPrefix(d.Property, "border-") {
 		start, end := "left", "right"
 		if rtl {

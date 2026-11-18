@@ -26,6 +26,10 @@ func (e *El) buildInlineSVG(n *Node) {
 }
 
 func (e *El) setInlineSVGMarkup(markup string) {
+	if e.inlineSVGMarkup == markup {
+		return
+	}
+	e.inlineSVGMarkup = markup
 	doc, err := svg.ParseBytes([]byte(markup))
 	if err != nil || doc == nil {
 		doc = &svg.Document{}
@@ -43,6 +47,9 @@ func (e *El) RefreshInlineSVG() {
 	}
 	var b strings.Builder
 	writeSVGEl(&b, e, true)
+	if b.String() == e.inlineSVGMarkup {
+		return
+	}
 	e.setInlineSVGMarkup(b.String())
 	if e.lastCS != nil {
 		e.applyComputed(e.lastCS)
@@ -105,22 +112,28 @@ func writeSVGEl(b *strings.Builder, e *El, root bool) {
 	b.WriteByte('<')
 	b.WriteString(svgTag(e.tag))
 	for _, k := range e.AttrNames() {
-		if k == "style" && e.lastCS != nil {
+		if k == "style" {
 			continue
 		}
 		v, _ := e.readAttr(k)
 		writeSVGAttr(b, k, v)
 	}
-	if e.lastCS != nil {
-		style := e.attrs["style"]
-		for _, prop := range []string{"fill", "fill-rule", "fill-opacity", "stroke", "stroke-width", "stroke-opacity", "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "stroke-dashoffset", "opacity", "color"} {
-			if v, ok := e.lastCS.raw[prop]; ok {
-				style += ";" + prop + ":" + v
+	style, _ := e.readAttr("style")
+	if cs := e.lastCS; cs != nil {
+		// Page selectors and custom properties belong to the document's
+		// CSS engine. Pass their computed paint values to the SVG renderer.
+		style += ";color:" + colorCSS(cs.Color)
+		for _, property := range []string{"fill", "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "stroke-dashoffset", "fill-rule", "clip-rule", "opacity", "fill-opacity", "stroke-opacity", "stop-color", "stop-opacity", "display", "visibility"} {
+			if value, ok := cs.raw[property]; ok {
+				if color, valid := parseColor(value); valid {
+					value = colorCSS(color)
+				}
+				style += ";" + property + ":" + value
 			}
 		}
-		if style != "" {
-			writeSVGAttr(b, "style", style)
-		}
+	}
+	if style != "" {
+		writeSVGAttr(b, "style", style)
 	}
 	if _, ok := e.readAttr("xmlns"); root && !ok {
 		writeSVGAttr(b, "xmlns", "http://www.w3.org/2000/svg")

@@ -36,8 +36,10 @@ import (
 //   - a stylesheet containing :has() promotes a dirty element to its
 //     top-level root, because a descendant mutation can change any ancestor.
 type StyleEngine struct {
-	lazyImages map[*El]bool          // script-enabled loading=lazy images awaiting a nearby viewport
-	animEvents AnimationEventHandler // CSS animation / transition events (anim.go)
+	containerRestyling bool
+	customEqual        map[customPropPair]bool
+	lazyImages         map[*El]bool          // script-enabled loading=lazy images awaiting a nearby viewport
+	animEvents         AnimationEventHandler // CSS animation / transition events (anim.go)
 	// linkHandler, when set, decides what a link click does (events.go).
 	linkHandler LinkHandler
 	// tooltipStyled: the stylesheet set the window's tooltip colors.
@@ -371,7 +373,8 @@ const (
 	// selector reads it (unless the sheet has a [style] clause — then the
 	// change is dirtySelf), so the element alone is restyled, and its
 	// descendants only when it changed something they inherit.
-	dirtyStyleAttr dirtyKind = iota
+	dirtyStyleAttr   dirtyKind = iota
+	dirtyLocalParent           // selector-relevant attribute, absent from every :has argument
 	// dirtySelf: the element's own subtree (its attributes or text changed
 	// and nothing in the sheet lets that affect a sibling or an ancestor).
 	dirtySelf
@@ -457,6 +460,68 @@ func (eng *StyleEngine) markStyleAttr(e *El) {
 		eng.addReflow(p)
 	}
 	eng.markDirtyKind(e, dirtyStyleAttr)
+}
+
+// markAttributeDirty avoids widening an unrelated diagnostic/ARIA attribute
+// to the whole document merely because some other selector uses :has().
+func (e *El) markAttributeDirty(name string, previous ...string) {
+	eng := e.engine
+	if eng == nil {
+		e.markDirty()
+		return
+	}
+	if !eng.hasHasRule() && name != "style" {
+		e.markDirty()
+		return
+	}
+	switch name {
+	case "type", "checked", "selected", "disabled", "required", "readonly", "contenteditable", "placeholder", "value", "open", "dir", "lang", "href":
+		e.markDirty()
+		return
+	}
+	if name == "class" || name == "id" || eng.mentionsAttr(name) {
+		if eng.hasAttrInHas(name) || eng.hasIdentityInHas(e, name, previous) {
+			e.markDirty()
+		} else {
+			if p := e.elParent; p != nil {
+				eng.addReflow(p)
+			}
+			eng.markDirtyKind(e, dirtyLocalParent)
+		}
+		return
+	}
+	eng.markStyleAttr(e)
+}
+
+func (eng *StyleEngine) hasAttrInHas(name string) bool {
+	var inHas func([]Selector) bool
+	inHas = func(selectors []Selector) bool {
+		for _, selector := range selectors {
+			for _, compound := range selector.parts {
+				for _, pseudo := range compound.sel.pseudos {
+					if pseudo.kind == pseudoHas && selectorsMentionAttr(pseudo.args, name) || inHas(pseudo.args) {
+						return true
+					}
+				}
+			}
+		}
+		return false
+	}
+	if eng.sheet != nil {
+		for _, rule := range eng.sheet.Rules {
+			if inHas(rule.Selectors) {
+				return true
+			}
+		}
+	}
+	frameworkCSS.mu.RLock()
+	defer frameworkCSS.mu.RUnlock()
+	for _, rule := range frameworkCSS.rules {
+		if inHas(rule.Selectors) {
+			return true
+		}
+	}
+	return false
 }
 
 // mentionsAttr reports whether any author or framework selector has an
@@ -635,6 +700,17 @@ func (eng *StyleEngine) flush() {
 	defer eng.useViewport()()
 	dirty := eng.dirty
 	eng.dirty = nil
+	defer func() {
+		roots := map[*El]bool{}
+		for e := range dirty {
+			if root := e.InlineSVGRoot(); root != nil {
+				roots[root] = true
+			}
+		}
+		for root := range roots {
+			root.RefreshInlineSVG()
+		}
+	}()
 	reflow := eng.reflow
 	eng.reflow = nil
 	startPass := eng.pass
@@ -660,10 +736,15 @@ func (eng *StyleEngine) flush() {
 	for e, k := range dirty {
 		s := e.restyleScope()
 		switch k {
+		case dirtyLocalParent:
+			s = e.elParent
+			if s == nil {
+				s = e.selfScope(true)
+			}
 		case dirtySelf:
 			s = e.selfScope()
 		case dirtyStyleAttr:
-			s = e.selfScope()
+			s = e.selfScope(true)
 			if s == e {
 				attrOnly[e] = true
 			}
@@ -731,6 +812,7 @@ func (eng *StyleEngine) computeMemo(n *Node, parent *ComputedStyle) *ComputedSty
 	if eng.memoPass != eng.pass || eng.memo == nil {
 		eng.memo = map[cascadeMemoKey]*ComputedStyle{}
 		eng.memoPass = eng.pass
+		eng.customEqual = nil
 	}
 	k := cascadeMemoKey{n, parent}
 	if cs, ok := eng.memo[k]; ok {
@@ -770,6 +852,9 @@ func (eng *StyleEngine) restyleAttrScope(e *El, parent *ComputedStyle) {
 	for k := range e.styleKids {
 		eng.restyleWalk(k, cs)
 	}
+	if e.inlineSVG != nil {
+		e.RefreshInlineSVG()
+	}
 }
 
 // inheritView returns cs with the element's own box sizes cleared — the
@@ -781,6 +866,7 @@ func inheritView(cs *ComputedStyle) *ComputedStyle {
 		return nil
 	}
 	v := *cs
+	v.customPropsID = nil
 	// The state variants carry the element's sizes as well.
 	v.Hover, v.Focus, v.Active, v.FocusVisible = inheritView(cs.Hover), inheritView(cs.Focus), inheritView(cs.Active), inheritView(cs.FocusVisible)
 	v.AncestorHover, v.AncestorFocus, v.AncestorActive = inheritView(cs.AncestorHover), inheritView(cs.AncestorFocus), inheritView(cs.AncestorActive)
@@ -833,7 +919,7 @@ func (eng *StyleEngine) restyleWalk(e *El, parent *ComputedStyle) {
 	// cached measurement below it, so resizing a panel through its style
 	// re-shaped all the text inside, every frame of the drag.
 	if eng.scoped && prev != nil && !eng.mustApply[e] && !e.pseudoRules && e.onStyle == nil && e.canvasUser == nil &&
-		reflect.DeepEqual(widgetStyleView(prev), widgetStyleView(cs)) {
+		(eng.stylesEqual(prev, cs) || reflect.DeepEqual(widgetStyleView(prev), widgetStyleView(cs))) {
 		// An inherited custom-property table may change without changing any
 		// resolved declaration here. Keep that table for descendants and
 		// future mutations, while preserving this element's measured widgets.
@@ -871,6 +957,9 @@ func (eng *StyleEngine) restyleWalk(e *El, parent *ComputedStyle) {
 	// Portal content declared under this element inherits from it.
 	for k := range e.styleKids {
 		eng.restyleWalk(k, cs)
+	}
+	if e.inlineSVG != nil {
+		e.RefreshInlineSVG()
 	}
 }
 
@@ -1076,7 +1165,7 @@ func layoutView(cs *ComputedStyle) *ComputedStyle {
 	v.AppRegion = ""
 	// The declarations and custom properties are already resolved into the
 	// fields above.
-	v.raw, v.customProps = nil, nil
+	v.raw, v.customProps, v.customPropsID = nil, nil, nil
 	v.Hover, v.Focus, v.Active, v.FocusVisible = layoutView(cs.Hover), layoutView(cs.Focus), layoutView(cs.Active), layoutView(cs.FocusVisible)
 	v.AncestorHover, v.AncestorFocus, v.AncestorActive = layoutView(cs.AncestorHover), layoutView(cs.AncestorFocus), layoutView(cs.AncestorActive)
 	return &v

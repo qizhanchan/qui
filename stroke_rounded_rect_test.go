@@ -73,3 +73,21 @@ func TestStrokeRoundedRectThinStrokeKeepsRoundInner(t *testing.T) {
 		t.Errorf("pixel (6,6) alpha %d, want 0 (outside the rounded corner)", a)
 	}
 }
+
+// Fractional AA coverage must preserve opaque white. Truncating the output
+// alpha to 254 while RGB stays 255 creates invalid premultiplied pixels;
+// PNG's unpremultiplication then wraps them to isolated black dots.
+func TestTranslucentWhiteRoundedOutlinePreservesOpaqueWhite(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 300, 320))
+	canvas := render.NewImageCanvasForTest(img)
+	canvas.FillRect(Rect{W: 300, H: 320}, ColorWhite)
+	canvas.StrokeRoundedRect(Rect{X: 14, Y: 14, W: 264, H: 282}, 25, Color{R: 1, G: 1, B: 1, A: .15}, 1)
+	for y := 0; y < 320; y++ {
+		for x := 0; x < 300; x++ {
+			p := img.RGBAAt(x, y)
+			if p.R != 255 || p.G != 255 || p.B != 255 || p.A != 255 {
+				t.Fatalf("white outline corrupted pixel %d,%d: %v", x, y, p)
+			}
+		}
+	}
+}

@@ -60,6 +60,7 @@ type El struct {
 	// inlineSVG is an inline <svg> element's drawing (inlinesvg.go).
 	inlineSVG                      *svg.Document
 	inlineStyledMarkup             string
+	inlineSVGMarkup                string
 	inlineSVGFill, inlineSVGStroke svg.Paint
 	// attrMu guards the attrs MAP ONLY, and only against the one reader
 	// that is not on the main goroutine: the AX / DOM introspection surface
@@ -559,7 +560,8 @@ func (e *El) setAttr(k, v string) {
 	// Presence-aware equality: a missing key and an empty value must NOT
 	// compare equal, or boolean attributes (disabled, switch, checked)
 	// could never be set to their canonical "" value.
-	if old, ok := e.attrs[k]; ok && old == v {
+	old, present := e.attrs[k]
+	if present && old == v {
 		return
 	}
 	e.storeAttr(k, v)
@@ -586,7 +588,7 @@ func (e *El) setAttr(k, v string) {
 		e.attrChanged(k)
 		return
 	}
-	e.markDirty()
+	e.markAttributeDirty(k, old)
 	e.attrChanged(k)
 }
 
@@ -669,7 +671,8 @@ func (e *El) RemoveAttr(k string) {
 	if e.engine != nil && (k == "slot" || k == "name") {
 		e.engine.distributionDirty = true
 	}
-	if _, ok := e.attrs[k]; !ok {
+	old, present := e.attrs[k]
+	if !present {
 		return
 	}
 	e.dropAttr(k)
@@ -682,7 +685,7 @@ func (e *El) RemoveAttr(k string) {
 	if k == "placeholder" {
 		e.applyPlaceholder("")
 	}
-	e.markDirty()
+	e.markAttributeDirty(k, old)
 	e.attrChanged(k)
 }
 
@@ -1267,8 +1270,8 @@ func (e *El) inheritParent() *El {
 // would inherit from have no style yet (a subtree still being assembled),
 // the topmost of those, so it is styled from a known parent. :has() widens
 // it like restyleScope. Detached elements return nil.
-func (e *El) selfScope() *El {
-	if e.engine != nil && e.engine.hasHasRule() {
+func (e *El) selfScope(local ...bool) *El {
+	if (len(local) == 0 || !local[0]) && e.engine != nil && e.engine.hasHasRule() {
 		return e.restyleScope()
 	}
 	s := e
@@ -2811,6 +2814,13 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	if cs == nil {
 		return
 	}
+	if e.domTextSet {
+		// Document-root builds do not know inherited white-space yet.
+		// Recompute the render text from its retained DOM source once CSS
+		// is available, including when white-space changes dynamically.
+		e.text = collapseFor(e.domText, cs)
+	}
+	e.node.queryContainer, e.node.containerNames = queryContainerStyle(cs)
 	cs = e.viewportPropagated(cs)
 	defer e.runStyleHooks(cs)
 
@@ -2887,7 +2897,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		// (the widget default would pad a text flex item by 4×6).
 		e.SetStyle(qui.Style{})
 		e.ensureLabel()
-		applyTextStyle(e.textLabel, collapseText(e.segText()), cs, textLabelOpts{boxless: true})
+		applyTextStyle(e.textLabel, collapseFor(e.segText(), cs), cs, textLabelOpts{boxless: true})
 		e.syncChildren()
 		return
 	}
@@ -3307,7 +3317,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 			// typography on the internal label; box model stays on the box
 			// (mirror of build.go's visual-box path so padding isn't doubled).
 			e.ensureLabel()
-			applyTextStyle(e.textLabel, e.text, cs, textLabelOpts{boxless: true})
+			applyTextStyle(e.textLabel, collapseFor(e.TextContent(), cs), cs, textLabelOpts{boxless: true})
 		}
 
 		// Browser parity: a push-button control centers its single-leaf
@@ -3531,6 +3541,7 @@ func (e *El) buildPseudoLeaf(cs *ComputedStyle) []qui.Widget {
 		e.inlinePool = append(e.inlinePool, ib)
 	}
 	ib.Wrap = !cs.NoWrap
+	ib.Balance = cs.TextBalance
 	ib.Align = cs.TextAlign
 	ib.PreserveWhitespace = cs.PreserveWS
 	ib.TrimTrailingEmptyLine = webCompat
@@ -3799,6 +3810,7 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 		}
 		poolUsed++
 		ib.Wrap = !cs.NoWrap
+		ib.Balance = cs.TextBalance
 		ib.Align = cs.TextAlign
 		ib.PreserveWhitespace = cs.PreserveWS
 		ib.TrimTrailingEmptyLine = webCompat
@@ -3995,7 +4007,7 @@ func (e *El) refreshSegLabel() {
 	if e.textLabel == nil || e.lastCS == nil {
 		return
 	}
-	applyTextStyle(e.textLabel, collapseText(e.segText()), e.lastCS, textLabelOpts{boxless: true})
+	applyTextStyle(e.textLabel, collapseFor(e.segText(), e.lastCS), e.lastCS, textLabelOpts{boxless: true})
 }
 
 // foldableInline reports whether a child element can fold into the parent's
@@ -5063,6 +5075,7 @@ func (e *El) Measure(available qui.Size) qui.Size {
 	if e.displayNone {
 		return qui.Size{}
 	}
+	e.updateContainerWidth(available.W)
 	if webCompat && e.isImg() && e.iconSrc == nil || e.hasNaturalSize() {
 		if sz, ok := e.replacedSize(available); ok {
 			return sz
@@ -5180,6 +5193,14 @@ func (e *El) MinContentOverride() (float32, bool) {
 		return qui.MinContentWidth(e.scrollInner) + e.Style().ContentInsets().Horizontal(), true
 	}
 	cs := e.lastCS
+	if e.node.queryContainer {
+		return e.Style().ContentInsets().Horizontal(), true
+	}
+	if webCompat && cs != nil && e.tag == "img" && e.attrs["data-svg-inline"] == "" && e.iconSrc == nil && cs.MaxWidthPct > 0 && !cs.HasHeight {
+		// A cyclic percentage maximum is zero for the min-content
+		// contribution of a replaced element (CSS Sizing 3 §5.2.1).
+		return e.Style().ContentInsets().Horizontal(), true
+	}
 	if w, ok := e.replacedIntrinsicWidth(); ok {
 		return w, true
 	}
@@ -5203,6 +5224,9 @@ func (e *El) MinContentOverride() (float32, bool) {
 // MaxContentOverride measures CSS content through the internal scrolling
 // viewport, and keeps replaced boxes intrinsic despite their filling layout.
 func (e *El) MaxContentOverride() (float32, bool) {
+	if e.node.queryContainer {
+		return e.Style().ContentInsets().Horizontal(), true
+	}
 	if webCompat && e.overflowScroll && e.scrollInner != nil {
 		return qui.MaxContentWidth(e.scrollInner) + e.Style().ContentInsets().Horizontal(), true
 	}
@@ -5231,6 +5255,15 @@ func (e *El) naturalImageRatio() (float32, bool) {
 	if w, ok := e.imgWidget.(*svgImage); ok {
 		if d, ok := w.src.(*svg.Document); ok && d.ViewBox.W > 0 && d.ViewBox.H > 0 {
 			return d.ViewBox.W / d.ViewBox.H, true
+		}
+	}
+	if e.tag == "img" {
+		// HTML dimensions supply an auto aspect ratio before a lazy or
+		// pending image loads; author height:auto must not collapse it.
+		w, wok := parseFloat(e.attrs["width"])
+		h, hok := parseFloat(e.attrs["height"])
+		if wok && hok && w > 0 && h > 0 {
+			return w / h, true
 		}
 	}
 	return 0, false
@@ -5755,6 +5788,7 @@ func (e *El) Layout(rect qui.Rect) {
 			rect.X += g / 2
 		}
 	}
+	e.updateContainerWidth(rect.W, true)
 	if h, ok := e.zeroHeight(); ok {
 		rect.H = h
 	}

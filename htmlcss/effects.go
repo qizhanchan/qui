@@ -71,6 +71,9 @@ func resolveTransformOps(ops []transformOp, w, h float32) qui.Matrix {
 // lengthOrPct parses a translate argument: px (pct 0) or a percentage.
 func lengthOrPct(tok string, fs float32) (px, pct float32, ok bool) {
 	tok = strings.TrimSpace(tok)
+	if value, fraction, _, valid := parseLengthPct(tok, fs); valid {
+		return value, fraction, true
+	}
 	if strings.HasSuffix(tok, "%") {
 		if f, o := parseFloat(strings.TrimSuffix(tok, "%")); o {
 			return 0, f / 100, true
@@ -94,6 +97,7 @@ type gradientSpec struct {
 	centerX, centerY lenPct
 	hasCenter        bool
 	conicLUT         *qui.ConicLUT // built on first paint (UI thread)
+	repeating        bool
 }
 
 // shaderFor builds a qui.LinearGradient whose endpoints span the box
@@ -138,11 +142,15 @@ func (g *gradientSpec) shaderFor(bounds qui.Rect) qui.Shader {
 	if len(g.stopTokens) > 0 {
 		stops = gradientStopsAt(g.stopTokens, 2*half)
 	}
-	return qui.LinearGradient{
+	gradient := qui.LinearGradient{
 		Start: qui.Point{X: cx - dx*half, Y: cy - dy*half},
 		End:   qui.Point{X: cx + dx*half, Y: cy + dy*half},
 		Stops: stops,
 	}
+	if g.repeating && len(stops) >= 2 {
+		return repeatingLinearShader{gradient, stops[0].Offset, stops[len(stops)-1].Offset}
+	}
+	return gradient
 }
 
 func absf(v float32) float32 {
@@ -373,7 +381,7 @@ func parseTransform(v string, fs float32) (*transformSpec, bool) {
 func individualTransformOps(m map[string]string, fs float32) []transformOp {
 	var ops []transformOp
 	if v := strings.TrimSpace(m["translate"]); v != "" && v != "none" {
-		f := strings.Fields(v)
+		f := fieldsTopLevel(v)
 		op := transformOp{kind: 't'}
 		op.a, op.aPct, _ = lengthOrPct(f[0], fs)
 		if len(f) > 1 {
@@ -462,6 +470,7 @@ func parseLinearGradient(v string) (*gradientSpec, bool) {
 	}
 	g.stopTokens = parts[idx:]
 	g.stops = parseGradientStops(parts[idx:])
+	g.stopTokens = parts[idx:]
 	if len(g.stops) < 2 {
 		return nil, false
 	}
@@ -479,6 +488,12 @@ func parseGradient(v string) (*gradientSpec, bool) {
 		return g, ok
 	}
 	switch {
+	case strings.HasPrefix(low, "repeating-linear-gradient("):
+		g, ok := parseLinearGradient(strings.TrimSpace(v)[len("repeating-"):])
+		if ok {
+			g.repeating = true
+		}
+		return g, ok
 	case strings.HasPrefix(low, "linear-gradient("):
 		return parseLinearGradient(v)
 	case strings.HasPrefix(low, "radial-gradient("):

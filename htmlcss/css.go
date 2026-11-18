@@ -130,6 +130,7 @@ type Selector struct {
 
 // Rule is a group of selectors sharing a declaration block.
 type Rule struct {
+	Containers   []string // enclosing @container conditions, outermost first
 	Selectors    []Selector
 	Declarations []Declaration
 	// Layer is the rule's cascade layer: 0 unlayered, else the layer's
@@ -194,6 +195,9 @@ type stateSel struct {
 // Stylesheet is an ordered list of rules (source order is preserved and
 // used as the final cascade tie-breaker).
 type Stylesheet struct {
+	ContainerConditions []string
+	// Properties are document-local @property registrations.
+	Properties   map[string]PropertyDef
 	FontFamilies map[string]string
 	Rules        []Rule
 	// FontFaces holds each @font-face rule's descriptors (font-family,
@@ -311,9 +315,10 @@ func ParseCSSViewport(src string, viewportW float32) *Stylesheet {
 // blocks: the viewport @media / @container evaluate against, and the
 // cascade layers in order of first appearance.
 type cssParseCtx struct {
-	viewportW float32
-	layers    map[string]int
-	anonLayer int
+	viewportW  float32
+	layers     map[string]int
+	anonLayer  int
+	containers []string
 }
 
 // layerRank returns the rank of the named layer (1-based, by first
@@ -401,17 +406,41 @@ func (c *cssParseCtx) atRule(prelude, block string, sheet *Stylesheet, layer int
 			c.nestedGroup(block, sheet, layer, parents)
 		}
 	case "@container":
-		// Approximation: container queries are evaluated against the
-		// viewport (a container is never wider than it).
-		if containerMatches(cond, c.viewportW) {
-			c.nestedGroup(block, sheet, layer, parents)
+		if !slices.Contains(sheet.ContainerConditions, cond) {
+			sheet.ContainerConditions = append(sheet.ContainerConditions, cond)
 		}
+		c.containers = append(c.containers, cond)
+		c.nestedGroup(block, sheet, layer, parents)
+		c.containers = c.containers[:len(c.containers)-1]
 	case "@layer":
 		c.nestedGroup(block, sheet, c.layerRank(strings.TrimSpace(cond)), parents)
 	case "@scope", "@starting-style":
 		// Not modeled: @starting-style only matters for transitions.
 	case "@font-face":
 		sheet.FontFaces = append(sheet.FontFaces, parseDeclarations(block))
+	case "@property":
+		if !strings.HasPrefix(cond, "--") || len(cond) > 256 || strings.ContainsAny(cond, " \t\r\n") {
+			return
+		}
+		var def PropertyDef
+		var syntax, inherits bool
+		for _, d := range parseDeclarations(block) {
+			switch d.Property {
+			case "syntax":
+				syntax = strings.Trim(d.Value, `"'`) != ""
+			case "inherits":
+				inherits = d.Value == "true" || d.Value == "false"
+				def.Inherited = d.Value == "true"
+			case "initial-value":
+				def.Initial = d.Value
+			}
+		}
+		if syntax && inherits {
+			if sheet.Properties == nil {
+				sheet.Properties = map[string]PropertyDef{}
+			}
+			sheet.Properties[cond] = def
+		}
 	case "@keyframes", "@-webkit-keyframes":
 		if name := strings.Trim(strings.TrimSpace(cond), `"'`); name != "" {
 			if sheet.Keyframes == nil {
@@ -443,6 +472,7 @@ func (c *cssParseCtx) styleRule(selText, body string, sheet *Stylesheet, layer i
 	}
 	decls, nested := splitNestedBody(body)
 	rule := Rule{
+		Containers:   append([]string(nil), c.containers...),
 		Selectors:    parseSelectorList(selText),
 		Declarations: parseDeclarations(decls),
 		Layer:        layer,

@@ -1,0 +1,11 @@
+{
+ "fixture": "web-flex-preserved-leaf-space",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "row": [0,0,640,24],
+  "first": [0,0,39.7,24],
+  "second": [39.7,0,43.42,24],
+  "last": [109.22,0,26.7,24]
+ }
+}

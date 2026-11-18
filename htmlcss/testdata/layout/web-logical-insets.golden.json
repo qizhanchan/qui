@@ -1,0 +1,13 @@
+{
+ "fixture": "web-logical-insets",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "fixed": [10,12,610,30],
+  "parent": [0,60,400,150],
+  "absolute": [10,65,360,130],
+  "rtl": [0,210,400,50],
+  "child": [40,220,340,20],
+  "override": [15,250,595,25]
+ }
+}

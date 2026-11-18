@@ -24,6 +24,11 @@ const maxVarExpansion = 64 << 10
 // tokens on its root would otherwise copy them into every element).
 // varResolver only writes into the fresh table built here.
 func buildCustomProps(parent *ComputedStyle, m map[string]string) map[string]string {
+	props, _ := buildCustomPropTable(parent, m)
+	return props
+}
+
+func buildCustomPropTable(parent *ComputedStyle, m map[string]string) (map[string]string, *byte) {
 	own := false
 	for k := range m {
 		if strings.HasPrefix(k, "--") {
@@ -32,7 +37,7 @@ func buildCustomProps(parent *ComputedStyle, m map[string]string) map[string]str
 		}
 	}
 	if parent != nil && parent.customProps != nil && (!own || sameCustomProps(parent.customProps, m)) {
-		return parent.customProps
+		return parent.customProps, parent.customPropsID
 	}
 	props := map[string]string{}
 	if parent != nil {
@@ -44,6 +49,13 @@ func buildCustomProps(parent *ComputedStyle, m map[string]string) map[string]str
 	r := varResolver{done: props, raw: map[string]string{}}
 	for k, v := range m {
 		if strings.HasPrefix(k, "--") {
+			if v == "initial" {
+				delete(props, k)
+				continue
+			}
+			if v == "inherit" || v == "unset" {
+				continue
+			}
 			if strings.Contains(v, "var(") {
 				r.raw[k] = v
 				delete(props, k)
@@ -55,7 +67,7 @@ func buildCustomProps(parent *ComputedStyle, m map[string]string) map[string]str
 	for k := range r.raw {
 		r.resolveProp(k) // stores into props (r.done) or leaves it out
 	}
-	return props
+	return props, new(byte)
 }
 
 // resolveMapVars returns a copy of m with var() substituted in every
@@ -146,10 +158,11 @@ func (r *varResolver) substitute(value string) (string, bool) {
 			}
 			j++
 		}
-		name, fallback := splitVarArgs(value[i+4 : j]) // between '(' and ')'
+		inner := value[i+4 : j]
+		name, fallback := splitVarArgs(inner) // between '(' and ')'
 		repl, ok := r.resolveProp(strings.TrimSpace(name))
 		if !ok {
-			if fallback == "" {
+			if fallback == "" && len(splitTopLevel(inner, ',')) < 2 {
 				return "", false
 			}
 			if repl, ok = r.substitute(fallback); !ok {

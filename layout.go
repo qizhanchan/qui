@@ -217,6 +217,10 @@ var pctIndefinite int
 // widthPctDefinite reports whether percentage widths resolve now.
 func widthPctDefinite() bool { return pctIndefinite == 0 }
 
+// IntrinsicWidthMeasurement reports that the current width offer is only
+// a probe for content sizing, rather than the containing block's used size.
+func IntrinsicWidthMeasurement() bool { return pctIndefinite > 0 }
+
 // measureIntrinsic measures w with its descendants' percentage widths
 // indefinite.
 func measureIntrinsic(w Widget, avail Size, measure func(Widget, Size) Size) Size {

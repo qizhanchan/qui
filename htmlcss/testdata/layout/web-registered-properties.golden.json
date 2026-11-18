@@ -1,0 +1,11 @@
+{
+ "fixture": "web-registered-properties",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "parent": [0,0,640,40],
+  "child": [0,0,10,20],
+  "inherited": [0,20,40,20],
+  "translate": [0,20,100,40]
+ }
+}

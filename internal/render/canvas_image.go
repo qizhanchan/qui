@@ -1047,10 +1047,13 @@ func drawCornerRingAA(img *image.RGBA, cx, cy, rOuter, rInner float32, x0, y0, x
 			a := float32(src.A) / 255 * cov
 			ia := 1 - a
 			out := color.RGBA{
-				R: uint8(float32(src.R)*a + float32(dst.R)*ia),
-				G: uint8(float32(src.G)*a + float32(dst.G)*ia),
-				B: uint8(float32(src.B)*a + float32(dst.B)*ia),
-				A: uint8(float32(src.A)*cov + float32(dst.A)*ia),
+				R: uint8(float32(src.R)*a + float32(dst.R)*ia + .5),
+				G: uint8(float32(src.G)*a + float32(dst.G)*ia + .5),
+				B: uint8(float32(src.B)*a + float32(dst.B)*ia + .5),
+				// Keep opaque destinations opaque. Truncating alpha alone can
+				// leave RGB=255, A=254, which PNG unpremultiplication
+				// wraps to an isolated black pixel on a white outline.
+				A: uint8(float32(src.A)*cov + float32(dst.A)*ia + .5),
 			}
 			img.SetRGBA(px, py, out)
 		}

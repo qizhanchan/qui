@@ -264,3 +264,56 @@ func TestPointerEventsToggleSkipsDescendantCascade(t *testing.T) {
 	}
 	_ = eng
 }
+
+func TestHasRuleDoesNotWidenUnselectedAttributes(t *testing.T) {
+	eng, _, section, _, p, _, _, _ := scopedFixture(t, `div:has(.selected){color:red}`)
+	before := eng.styled
+	section.SetAttr("style", "height:90px")
+	if got := eng.styled - before; got != 1 {
+		t.Fatalf("unselected style attribute walked %d elements", got)
+	}
+	before = eng.styled
+	p.SetAttr("aria-expanded", "true")
+	if got := eng.styled - before; got != 1 {
+		t.Fatalf("unselected ARIA attribute walked %d elements", got)
+	}
+	p.RemoveAttr("aria-expanded")
+	eng.SetCSS(`div:has([aria-expanded=true]){color:red}`)
+	p.SetAttr("aria-expanded", "true")
+	if section.lastCS.Color.R < .9 {
+		t.Fatal("attribute selected inside :has did not restyle ancestor")
+	}
+}
+
+func TestHasRuleDoesNotWidenOtherSelectedAttributes(t *testing.T) {
+	eng, _, section, _, p, _, _, _ := scopedFixture(t, `div:has([data-other]){color:red}p[data-active]{color:blue}`)
+	before := eng.styled
+	p.SetAttr("data-active", "")
+	if walked := eng.styled - before; walked != 3 {
+		t.Fatalf("unrelated :has widened local attribute to %d elements", walked)
+	}
+	if p.lastCS.Color.B < .9 {
+		t.Fatal("local attribute selector did not update")
+	}
+	p.SetAttr("data-other", "")
+	if section.lastCS.Color.R < .9 {
+		t.Fatal("attribute used by :has did not restyle ancestors")
+	}
+}
+
+func TestHasRuleClassIdentityInvalidation(t *testing.T) {
+	eng, _, section, _, p, _, _, _ := scopedFixture(t, `div:has(.selected){color:red}.local{background:blue}`)
+	before := eng.styled
+	p.SetClass("local")
+	if got := eng.styled - before; got != 3 {
+		t.Fatalf("unrelated class walked %d elements", got)
+	}
+	p.SetClass("local selected")
+	if section.lastCS.Color.R < .9 {
+		t.Fatal("new class did not invalidate :has ancestor")
+	}
+	p.SetClass("local")
+	if section.lastCS.Color.R > .9 {
+		t.Fatal("removed class did not invalidate :has ancestor")
+	}
+}

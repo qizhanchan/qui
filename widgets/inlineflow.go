@@ -27,6 +27,7 @@ type InlineBox struct {
 	// Wrap enables soft-wrapping at the box's width (default true once set
 	// by callers). Align controls per-line horizontal alignment.
 	Wrap               bool
+	Balance            bool
 	Align              TextAlign
 	LineHeightScale    float32
 	RoundNormalMetrics bool
@@ -299,6 +300,7 @@ func (b *InlineBox) options(maxW float32) InlineLayoutOptions {
 	o := InlineLayoutOptions{
 		MaxWidth:              maxW,
 		Wrap:                  b.Wrap,
+		Balance:               b.Balance,
 		Align:                 b.Align,
 		LineHeightScale:       b.LineHeightScale,
 		RoundNormalMetrics:    b.RoundNormalMetrics,
@@ -359,6 +361,7 @@ type inlineLayoutKey struct {
 	// leaves this box's text/font key untouched.
 	childSig              uint64
 	wrap                  bool
+	balance               bool
 	align                 TextAlign
 	lineHeightScale       float32
 	roundNormalMetrics    bool
@@ -380,7 +383,7 @@ func (b *InlineBox) layoutKeyFor(maxW float32) inlineLayoutKey {
 	return inlineLayoutKey{
 		maxW: maxW, fontGen: FontRegistryGeneration(), floatGen: b.floatGen,
 		localeGen: LocaleGeneration(), childSig: b.childLayoutSig(maxW),
-		wrap: b.Wrap, align: b.Align,
+		wrap: b.Wrap, balance: b.Balance, align: b.Align,
 		lineHeightScale:    b.LineHeightScale,
 		roundNormalMetrics: b.RoundNormalMetrics,
 		hyphenate:          b.Hyphenate,

@@ -1,0 +1,11 @@
+{
+ "fixture": "web-calculated-line-height",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "number": [0,0,640,48],
+  "child": [0,16,640,32],
+  "length": [0,48,640,40],
+  "lengthchild": [0,68,640,20]
+ }
+}

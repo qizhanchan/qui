@@ -102,6 +102,7 @@ type ComputedStyle struct {
 	DecorationThickness float32 // px; 0 = auto
 	UnderlineOffset     float32
 	HasUnderlineOffset  bool
+	TextBalance         bool
 	NoWrap              bool   // white-space: nowrap / pre (no soft-wrapping)
 	PreserveWS          bool   // white-space: pre / pre-wrap (keep spaces + newlines)
 	PreserveNL          bool   // white-space: pre-line (collapse spaces, keep newlines)
@@ -336,7 +337,8 @@ type ComputedStyle struct {
 	// customProps is this node's CSS custom-property table (--x → value),
 	// inherited from the parent and overridden by the node's own
 	// declarations. Propagated to children so var() resolves down the tree.
-	customProps map[string]string
+	customProps   map[string]string
+	customPropsID *byte
 }
 
 // isVisualBox reports whether the element carries box decorations or
@@ -512,6 +514,9 @@ func pseudoDecls(n *Node, sheet *Stylesheet, which string) map[string]string {
 	order := 0
 	for _, ri := range sheet.candidateRules(n) {
 		rule := &sheet.Rules[ri]
+		if !matchesContainers(n, rule.Containers) {
+			continue
+		}
 		best := -1
 		var ba, bb, bc int
 		for _, sel := range rule.Selectors {
@@ -840,6 +845,12 @@ func mergedDeclsRest(n *Node, sheet *Stylesheet, st selectorState, rest *restMat
 	}
 	for k, ri := range cands {
 		rule := &sheet.Rules[ri]
+		if !matchesContainers(n, rule.Containers) {
+			if record && rest != nil {
+				rest.spec[k] = -1
+			}
+			continue
+		}
 		best := -1
 		var ba, bb, bc int
 		if reuse && states[ri] == 0 {
@@ -906,6 +917,32 @@ func mergedDeclsRest(n *Node, sheet *Stylesheet, st selectorState, rest *restMat
 		merged[m.decl.Property] = m.decl.Value
 		mergeLogicalBox(merged, m.decl, direction == "rtl")
 	}
+	for name, def := range sheet.Properties {
+		v, own := merged[name]
+		if !own && len(parents) > 0 && parents[0] != nil {
+			inherited, exists := parents[0].customProps[name]
+			if def.Inherited || exists && inherited == def.Initial || !exists && def.Initial == "" {
+				// The inherited table already carries the initial value.
+				// Keep sharing it instead of materializing every registered
+				// default on every node (and copying the whole theme table).
+				continue
+			}
+		}
+		if own && (v == "inherit" || v == "unset" && def.Inherited) {
+			delete(merged, name)
+			continue
+		}
+		if !own && def.Inherited && len(parents) > 0 && parents[0] != nil {
+			continue
+		}
+		if !own || v == "initial" || v == "unset" || v == "revert" {
+			v = def.Initial
+			if v == "" {
+				v = "initial" // the guaranteed-invalid value, not inherited
+			}
+			merged[name] = v
+		}
+	}
 	// A closed details element's content lives in a hidden UA slot. Author
 	// display declarations on that content cannot make it render through
 	// the closed slot (in particular display:flex on action buttons).
@@ -948,14 +985,14 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle, aliases ...m
 	// Resolve CSS custom properties + var() before reading any property:
 	// build this node's inherited custom-prop table, then substitute var()
 	// throughout the normal declarations.
-	customProps := buildCustomProps(parent, m)
+	customProps, customPropsID := buildCustomPropTable(parent, m)
 	m = resolveMapVars(m, customProps)
 	inheritRegisteredProps(m, parent)
 	colorInherited := m["color"] == "inherit" || m["color"] == "unset"
 	lineHeightInherited := m["line-height"] == "inherit" || m["line-height"] == "unset" || m["font"] == "inherit"
 	resolveCSSWideKeywords(m, parent)
 	expandShorthands(m)
-	cs := &ComputedStyle{raw: m, customProps: customProps, Direction: "ltr"}
+	cs := &ComputedStyle{raw: m, customProps: customProps, customPropsID: customPropsID, Direction: "ltr"}
 	if parent != nil && parent.Direction != "" {
 		cs.Direction = parent.Direction
 	}
@@ -998,6 +1035,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle, aliases ...m
 		cs.HyphensAuto = parent.HyphensAuto
 		cs.Language = parent.Language
 		cs.NoWrap = parent.NoWrap
+		cs.TextBalance = parent.TextBalance
 		cs.PreserveWS = parent.PreserveWS
 		cs.PreserveNL = parent.PreserveNL
 		// overflow-wrap / word-break are inherited too.
@@ -1203,7 +1241,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle, aliases ...m
 			cs.LineHeight = 0 // the face's own line height (text layouts read <=0 as normal)
 			cs.LineHeightPx = 0
 			cs.LineHeightOwn = true
-		} else if lh, ok := parseFloat(strings.TrimSpace(v)); ok && !strings.ContainsAny(v, "px%rem") {
+		} else if lh, ok := parseNumber(v); ok {
 			cs.LineHeight = lh // unitless multiplier
 			if lh == 0 {
 				cs.LineHeight = -1
@@ -1307,6 +1345,16 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle, aliases ...m
 		case "pre-line":
 			cs.PreserveNL = true // collapse spaces, keep explicit newlines
 		}
+	}
+	if v, ok := m["text-wrap"]; ok {
+		cs.TextBalance = strings.Contains(v, "balance")
+		cs.NoWrap = strings.Contains(v, "nowrap")
+	}
+	if v, ok := m["text-wrap-style"]; ok {
+		cs.TextBalance = v == "balance"
+	}
+	if v, ok := m["text-wrap-mode"]; ok {
+		cs.NoWrap = v == "nowrap"
 	}
 	// overflow-wrap (word-wrap is the legacy alias) and word-break both feed
 	// the same engine switch; a later declaration wins, and `normal` resets.

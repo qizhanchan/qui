@@ -9,6 +9,26 @@ import (
 // applyBackgroundImage loads the first URL layer, including SVG, and resolves
 // its tile in the CSS positioning area rather than stretching the border box.
 func (e *El) applyBackgroundImage(cs *ComputedStyle) {
+	if cs.Gradient != nil && cs.raw["background-size"] != "" {
+		props := map[string]string{"mask-image": "url(background)"}
+		for _, p := range []string{"-size", "-position", "-repeat", "-origin"} {
+			if value, ok := cs.raw["background"+p]; ok {
+				props["mask"+p] = value
+			}
+		}
+		spec, _ := parseMask(props, cs.FontSize)
+		if spec.origin == "" {
+			spec.origin = "padding-box"
+		}
+		border, padding, margin := boxEdges(cs)
+		e.Box.BackgroundShader = func(b qui.Rect) qui.Shader {
+			area := referenceBox(b, spec.origin, border, padding, margin)
+			w, h := spec.tileSize(area, 0, 0, 0)
+			tile := qui.Rect{X: area.X + spec.posX.resolve(area.W-w), Y: area.Y + spec.posY.resolve(area.H-h), W: w, H: h}
+			return backgroundTileShader{shader: cs.Gradient.shaderFor(tile), tile: tile, repeatX: spec.repeatX, repeatY: spec.repeatY}
+		}
+		return
+	}
 	if layers := backgroundGradients(cs); len(layers) > 0 {
 		border, padding, margin := boxEdges(cs)
 		e.Box.BackgroundShader = func(b qui.Rect) qui.Shader {

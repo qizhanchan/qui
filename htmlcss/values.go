@@ -526,10 +526,28 @@ func parseCalc(s string, fontSize, pctRef float32) (float32, bool) {
 	return v, true
 }
 
+// parseNumber also accepts arithmetic whose operands are all numbers.
+// A calculated line-height such as calc(1 / .75) is a multiplier, whereas
+// calc(1rem + 4px) is an inherited absolute length.
+func parseNumber(s string) (float32, bool) {
+	s = strings.TrimSpace(s)
+	if v, ok := parseFloat(s); ok {
+		return v, true
+	}
+	if !strings.HasPrefix(s, "calc(") {
+		return 0, false
+	}
+	p := &calcParser{src: strings.ReplaceAll(s, "calc(", "("), numbersOnly: true}
+	v, ok := p.expr()
+	p.skipSpace()
+	return v, ok && p.pos == len(p.src)
+}
+
 type calcParser struct {
 	src              string
 	pos              int
 	fontSize, pctRef float32
+	numbersOnly      bool
 }
 
 func (p *calcParser) skipSpace() {
@@ -640,6 +658,9 @@ done:
 		return 0, false
 	}
 	if p.pos < len(p.src) && p.src[p.pos] == '(' {
+		if p.numbersOnly {
+			return 0, false
+		}
 		// A nested math function — min(10px, 2em) — evaluated whole by
 		// parseLength once its balanced argument list is read.
 		depth := 0
@@ -656,6 +677,9 @@ done:
 			}
 		}
 		return 0, false
+	}
+	if p.numbersOnly {
+		return parseFloat(tok)
 	}
 	return parseLength(tok, p.fontSize, p.pctRef)
 }
