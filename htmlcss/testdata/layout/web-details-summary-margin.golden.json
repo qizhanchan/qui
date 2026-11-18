@@ -1,0 +1,18 @@
+{
+ "fixture": "web-details-summary-margin",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "host": [0,16,640,56],
+  "closed": [0,16,640,56],
+  "summary": [0,16,640,24],
+  "next": [0,72,640,24],
+  "open": [0,112,640,80],
+  "openSummary": [0,112,640,24],
+  "content": [0,168,640,24],
+  "last": [0,192,640,24],
+  "headingDetails": [0,237.27,640,56],
+  "heading": [0,237.27,640,24],
+  "afterHeading": [0,293.27,640,24]
+ }
+}

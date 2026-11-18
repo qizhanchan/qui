@@ -548,11 +548,12 @@ func pseudoStyle(n *Node, sheet *Stylesheet, which string, parent *ComputedStyle
 	if merged == nil {
 		return nil, ""
 	}
-	content, ok := merged["content"]
+	cs := interpret(n, merged, parent, sheet.FontFamilies)
+	content, ok := cs.raw["content"]
 	if !ok {
 		return nil, "" // no content → no generated box
 	}
-	return interpret(n, merged, parent, sheet.FontFamilies), unquoteContent(content, n)
+	return cs, unquoteContent(content, n)
 }
 
 // pseudoStyleContent is pseudoStyle returning the raw `content` value
@@ -564,13 +565,14 @@ func pseudoStyleContent(n *Node, sheet *Stylesheet, which string, parent *Comput
 	if merged == nil {
 		return nil, "", false
 	}
-	content, has = merged["content"]
 	// A pseudo-element starts as an inline box, regardless of its
 	// originating element's UA display (li must not generate another marker).
 	if _, ok := merged["display"]; !ok {
 		merged["display"] = "inline"
 	}
-	return interpret(n, merged, parent, sheet.FontFamilies), content, has
+	cs = interpret(n, merged, parent, sheet.FontFamilies)
+	content, has = cs.raw["content"]
+	return cs, content, has
 }
 
 // UnescapeCSS resolves CSS escapes in an identifier or string body: a
@@ -637,6 +639,10 @@ func unquoteContentWith(v string, n *Node, counter func(fn cssFunction) string) 
 	for i < len(v) {
 		c := v[i]
 		switch {
+		case c == '/':
+			// CSS generated-content alternative text is for accessibility,
+			// not another painted component of the content list.
+			return sb.String()
 		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
 			i++
 		case c == '"' || c == '\'':
@@ -884,6 +890,12 @@ func mergedDeclsRest(n *Node, sheet *Stylesheet, st selectorState, rest *restMat
 		}
 		merged[m.decl.Property] = m.decl.Value
 		mergeLogicalBox(merged, m.decl, direction == "rtl")
+	}
+	// A closed details element's content lives in a hidden UA slot. Author
+	// display declarations on that content cannot make it render through
+	// the closed slot (in particular display:flex on action buttons).
+	if hiddenByClosedDetails(n) {
+		merged["display"] = "none"
 	}
 	return merged
 }
@@ -1555,7 +1567,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle, aliases ...m
 		cs.JustifyItems = parseAlign(v)
 	}
 	cs.RowGap, cs.ColumnGap = gridGaps(cs)
-	if v, ok := m["flex-wrap"]; ok && strings.Contains(v, "wrap") {
+	if v := strings.TrimSpace(m["flex-wrap"]); v == "wrap" || v == "wrap-reverse" {
 		cs.Wrap = true
 	}
 	cs.AlignContent = qui.AlignContentStretch // CSS initial (normal → stretch)

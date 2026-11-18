@@ -371,6 +371,7 @@ type El struct {
 	// each restyle from the stylesheet's pseudo-element rules.
 	pbText, paText string
 	pbCS, paCS     *ComputedStyle
+	pseudoRules    bool
 	// pseudoBefore / pseudoAfter are ::before / ::after as boxes of their
 	// own, used when the element has element children (generated content
 	// then sits beside them instead of folding into a text leaf).
@@ -2751,6 +2752,12 @@ func (e *El) viewportPropagated(cs *ComputedStyle) *ComputedStyle {
 // applyComputed pushes a freshly-computed style onto this element, reusing
 // the one-shot builder's appliers. Called top-down by StyleEngine.restyle.
 func (e *El) applyComputed(cs *ComputedStyle) {
+	// Browser documents defer their cascade until after the static tree is
+	// built. Reapply whitespace processing to the retained DOM source now
+	// that white-space (including inherited pre/pre-wrap) is known.
+	if e.domTextSet {
+		e.text = collapseFor(e.domText, cs)
+	}
 	prev := e.lastCS
 	e.lastCS = cs
 	if cs != nil {
@@ -2897,9 +2904,6 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		e.flowKids = nil
 		e.ensureBacking()
 		if e.backing != nil {
-			if sel, ok := e.backing.(*widgets.Select); ok {
-				sel.NoAppearance = cs.raw["appearance"] == "none" || cs.raw["-webkit-appearance"] == "none"
-			}
 			applyCommon(e.backing, cs)
 			// A control's own line-height sizes its text line (padded
 			// raw-HTML fields grow to border + padding + line); an
@@ -2911,6 +2915,13 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 				}
 			})
 			applyControlColors(e.backing, cs, &e.nativeStates)
+			if selectControl, ok := e.backing.(*widgets.Select); ok {
+				// The backing control paints its own surface. Its CSS image
+				// must be composited there, between that surface and its text.
+				e.applyBackgroundImage(cs)
+				selectControl.BackgroundShader = e.Box.BackgroundShader
+				e.Box.BackgroundShader = nil
+			}
 			// The El — not the backing — is the flex item in the parent's
 			// layout, so flex-grow / width / margin must sit on the El; the
 			// backing then fills the El's width as a flow block. Without this
@@ -3079,9 +3090,11 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 
 	// ::before / ::after generated content (resolved from pseudo-element rules).
 	e.pbText, e.pbCS, e.paText, e.paCS = "", nil, "", nil
+	e.pseudoRules = false
 	if e.engine != nil && e.engine.sheet != nil && e.node != nil && !e.isTextSeg() {
 		for _, which := range [...]string{"before", "after"} {
 			pcs, content, has := pseudoStyleContent(e.node, e.engine.sheet, which, cs)
+			e.pseudoRules = e.pseudoRules || pcs != nil
 			if pcs == nil || !has {
 				continue
 			}
@@ -3204,7 +3217,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		textOnly := false
 		if webCompat && !e.pseudoKids && e.flowKids == nil && e.text != "" && len(e.elementKids) == 0 &&
 			e.iconSrc == nil && !e.isImg() && !e.isControl() && e.backing == nil &&
-			!strings.HasPrefix(cs.Display, "table") {
+			!strings.HasPrefix(cs.Display, "table") && !(cs.Ellipsis && cs.NoWrap) {
 			e.flowKids = e.buildPseudoLeaf(cs)
 			textOnly = true
 		}
@@ -3425,6 +3438,7 @@ func (e *El) hoistControlLayout(cs *ComputedStyle) {
 	}
 	est.MinWidthPct, est.MaxWidthPct = cs.MinWidthPct, cs.MaxWidthPct
 	bst.Width, bst.WidthPct = 0, 0
+	bst.WidthSet = false
 	bst.PctExtra = qui.Size{}
 	bst.MinWidth, bst.MaxWidth = 0, 0
 	bst.MinWidthPct, bst.MaxWidthPct = 0, 0
@@ -3497,12 +3511,25 @@ func (e *El) buildPseudoLeaf(cs *ComputedStyle) []qui.Widget {
 	st.Padding = qui.Insets{}
 	st.Background = qui.Color{}
 	if e.pbText != "" {
-		ib.AddTextPaint(transformText(e.pbText, e.pbCS.TextTransform), fontFrom(e.pbCS), e.pbCS.Color, e.pbCS.decoration(), e.pbCS.decorationPaint(), "")
-		ib.ShadowLastText(e.pbCS.TextShadows)
+		if webCompat {
+			e.appendInlinePseudo(ib, e, cs, "before", "", nil)
+		} else {
+			ib.AddTextPaint(transformText(e.pbText, e.pbCS.TextTransform), fontFrom(e.pbCS), e.pbCS.Color, e.pbCS.decoration(), e.pbCS.decorationPaint(), "")
+			ib.ShadowLastText(e.pbCS.TextShadows)
+		}
 	}
 	if collapseText(e.text) != "" {
 		n0 := ib.PartCount()
-		text := transformText(e.text, cs.TextTransform)
+		text := e.text
+		if webCompat && (e.pbCS != nil || e.paCS != nil) {
+			// With generated siblings, leading/trailing DOM whitespace is
+			// between inline components rather than at the paragraph edge.
+			text = e.TextContent()
+			if !cs.PreserveWS {
+				text = collapseInline(text)
+			}
+		}
+		text = transformText(text, cs.TextTransform)
 		if pcs, _, _ := pseudoStyleContent(e.node, e.engine.sheet, "first-letter", cs); pcs != nil {
 			if end := firstLetterEnd(text); end > 0 {
 				ib.AddTextPaint(text[:end], fontFrom(pcs), pcs.Color, pcs.decoration(), pcs.decorationPaint(), "")
@@ -3514,8 +3541,12 @@ func (e *El) buildPseudoLeaf(cs *ComputedStyle) []qui.Widget {
 		ib.ShadowLastText(cs.TextShadows)
 	}
 	if e.paText != "" {
-		ib.AddTextPaint(transformText(e.paText, e.paCS.TextTransform), fontFrom(e.paCS), e.paCS.Color, e.paCS.decoration(), e.paCS.decorationPaint(), "")
-		ib.ShadowLastText(e.paCS.TextShadows)
+		if webCompat {
+			e.appendInlinePseudo(ib, e, cs, "after", "", nil)
+		} else {
+			ib.AddTextPaint(transformText(e.paText, e.paCS.TextTransform), fontFrom(e.paCS), e.paCS.Color, e.paCS.decoration(), e.paCS.decorationPaint(), "")
+			ib.ShadowLastText(e.paCS.TextShadows)
+		}
 	}
 	return []qui.Widget{ib}
 }
@@ -3572,6 +3603,21 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 		return nil // a folded element's content rides in its ancestor's run
 	}
 	elementKids, kidParents := e.flatKids(cs)
+	// Generated children also participate in a mixed inline/block formatting
+	// context. Previously they were only assembled for leaf or flex boxes.
+	if webCompat && (e.pbCS != nil || e.paCS != nil) {
+		e.buildPseudoBoxes()
+		kids := make([]qui.Widget, 0, len(elementKids)+2)
+		parents := make([]*ComputedStyle, 0, len(elementKids)+2)
+		if e.pbCS != nil {
+			kids, parents = append(kids, e.pseudoBefore), append(parents, cs)
+		}
+		kids, parents = append(kids, elementKids...), append(parents, kidParents...)
+		if e.paCS != nil {
+			kids, parents = append(kids, e.pseudoAfter), append(parents, cs)
+		}
+		elementKids, kidParents = kids, parents
+	}
 	hasFoldCandidate := e.text != "" || webCompat
 	for _, k := range elementKids {
 		if ke, ok := k.(*El); ok {
@@ -3998,6 +4044,12 @@ func (e *El) hasBlockLevelChild(cs *ComputedStyle) bool {
 }
 
 func (e *El) childStyle(c *El, parent *ComputedStyle) *ComputedStyle {
+	if c == e.pseudoBefore {
+		return e.pbCS
+	}
+	if c == e.pseudoAfter {
+		return e.paCS
+	}
 	if c.isTextSeg() {
 		return parent // text segments match no selectors; pure inheritance
 	}
@@ -4116,7 +4168,8 @@ func (e *El) appendInlinePseudo(ib *widgets.InlineBox, owner *El, parent *Comput
 		return
 	}
 	txt := unquoteContentWith(content, owner.node, func(fn cssFunction) string { return owner.counterContent(fn, which, parent, cs) })
-	if cs.Display == "inline" && !cs.isVisualBox() {
+	if cs.Display == "inline" && !cs.isVisualBox() && !cs.HasBackground &&
+		cs.Padding.Horizontal() == 0 && cs.Margin.Horizontal() == 0 {
 		ib.AddLinkText(transformText(txt, cs.TextTransform), fontFrom(cs), cs.Color, cs.decoration(), cs.decorationPaint(), href, linkSource(link))
 		return
 	}
@@ -6284,8 +6337,11 @@ func (e *El) flexRowBaseline(cs *ComputedStyle) (float32, bool) {
 	}
 	st := e.Style()
 	ins := st.ContentInsets()
-	contentH := qui.MeasureConstrained(e, qui.Size{}).H - ins.Vertical()
-	itemH := qui.MeasureConstrained(item, qui.Size{}).H
+	// Unconstrained text measurement may use its min-content width. That
+	// would wrap a multiword item and invent extra cross-axis centering in
+	// an otherwise single-line inline-flex. Use its intrinsic row width.
+	contentH := qui.MeasureConstrained(e, qui.Size{W: qui.MaxContentWidth(e)}).H - ins.Vertical()
+	itemH := qui.MeasureConstrained(item, qui.Size{W: qui.MaxContentWidth(item)}).H
 	m := item.Style().Margin
 	align := qui.FlexItemOf(item).Align
 	if align == qui.AlignDefault {
@@ -6980,6 +7036,10 @@ func (e *El) MarginsCollapseWithChildren() bool {
 	}
 	return true
 }
+
+// The hidden details-content slot keeps its preceding summary's bottom
+// margin inside the details box; the summary's top margin may collapse.
+func (e *El) MarginsCollapseWithLastChild() bool { return e.tag != "details" }
 
 // staticMarker is the zero-size inline atom holding an inline-level
 // out-of-flow element's place in a line.

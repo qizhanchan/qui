@@ -68,8 +68,12 @@ type Style struct {
 	// then falls back to widget MinSize/MaxSize/PreferredSize and finally
 	// to Measure. Width/Height act as a preferred-size override on the
 	// respective axis; MinWidth/MinHeight/MaxWidth/MaxHeight clamp.
-	Width     float32
-	Height    float32
+	Width  float32
+	Height float32
+	// WidthSet/HeightSet distinguish a definite zero from the default auto
+	// size. Positive sizes remain definite without these flags.
+	WidthSet  bool
+	HeightSet bool
 	MinWidth  float32
 	MinHeight float32
 	MaxWidth  float32

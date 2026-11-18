@@ -15,6 +15,18 @@ func whiteCanvas(w, h int) (*image.RGBA, Canvas) {
 	return img, NewImageCanvas(img)
 }
 
+func TestTransparentBorderArrowHasDiagonalJoins(t *testing.T) {
+	img, canvas := whiteCanvas(30, 30)
+	style := Style{BorderStyle: BorderSolid, BorderWidths: Insets{Top: 10, Bottom: 10, Left: 10}, BorderColors: SideColors{Left: Color{R: 1, A: 1}}}
+	paintPerSideBorders(canvas, Rect{X: 5, Y: 5, W: 10, H: 20}, &style)
+	if p := img.RGBAAt(12, 6); p.G != 255 {
+		t.Errorf("transparent corner painted as a rectangle: %v", p)
+	}
+	if p := img.RGBAAt(7, 15); p.R < 240 || p.G > 20 {
+		t.Errorf("arrow body missing: %v", p)
+	}
+}
+
 func TestBoxClipPathClipsPaintAndHits(t *testing.T) {
 	box := NewBox(nil)
 	box.Style().Background = Color{B: 1, A: 1}

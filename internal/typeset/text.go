@@ -464,6 +464,16 @@ func BuildTextLayoutUncached(text string, fontSpec gfx.Font, opts TextLayoutOpti
 			lines[len(lines)-1] = last
 		}
 	}
+	// CSS nowrap ellipsis truncates overflowing inline content even when
+	// it occupies only one line; MaxLines truncation alone never sees it.
+	if opts.Ellipsis && !opts.Wrap && opts.MaxWidth > 0 {
+		for i := range lines {
+			if lines[i].Width > opts.MaxWidth {
+				lines[i].Text, lines[i].Width, lines[i].Shaped = ellipsizeTextLine(lines[i].Text, opts.MaxWidth, fontSpec, opts.Direction, faces)
+				truncated = true
+			}
+		}
+	}
 
 	// Justify: widen each soft-wrapped line's word gaps until it fills the
 	// layout width. The extra rides on JustifyExtra (per space) so drawing

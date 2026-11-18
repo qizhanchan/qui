@@ -54,7 +54,8 @@ type Select struct {
 	WebMetrics bool
 	// NoAppearance removes the platform arrow and extra native theme sizing
 	// for CSS appearance:none; the control still opens its option popup.
-	NoAppearance bool
+	NoAppearance     bool
+	BackgroundShader func(Rect) Shader
 	BaseWidget
 	Items []string
 	// ItemDisabled marks unselectable options, parallel to Items (a shorter
@@ -866,6 +867,11 @@ func (cb *Select) Draw(canvas Canvas) {
 	// stays transparent so its border does the work.
 	if cb.Variant != SelectOutlined && style.Background.A > 0 {
 		canvas.FillRoundedRect(b, radius, style.Background)
+	}
+	if cb.BackgroundShader != nil {
+		if shader := cb.BackgroundShader(b); shader != nil {
+			canvas.DrawShape(ShapeRRect{Rect: b, Radius: radius}, Paint{Shader: shader, AntiAlias: true})
+		}
 	}
 
 	accent := style.Border

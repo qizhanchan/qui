@@ -1,0 +1,9 @@
+{
+ "fixture": "web-pre-document-text",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "code": [0,0,640,85],
+  "after": [0,85,640,21]
+ }
+}

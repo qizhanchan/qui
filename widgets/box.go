@@ -851,35 +851,32 @@ func paintPerSideBorders(canvas Canvas, b Rect, st *Style) {
 		}
 		return st.Border
 	}
-	if st.BorderStyle == BorderSolid && (st.BorderColors.Top != st.BorderColors.Right || st.BorderColors.Top != st.BorderColors.Bottom || st.BorderColors.Top != st.BorderColors.Left) {
-		// Adjacent CSS borders meet along the outer-to-inner corner, not
-		// overlapping rectangles. With a zero-sized content box these
-		// trapezoids become the triangles used by CSS arrow decorations.
-		x0, y0, x1, y1 := b.X, b.Y, b.X+b.W, b.Y+b.H
-		ix0, iy0, ix1, iy1 := x0+w.Left, y0+w.Top, x1-w.Right, y1-w.Bottom
-		draw := func(c Color, points ...Point) {
-			if c.A <= 0 {
+	if st.BorderStyle == BorderSolid {
+		// Adjacent CSS borders meet on the corner diagonal. Rectangular
+		// strips paint transparent-border arrows as squares and overwrite
+		// neighbouring colors at ordinary corners.
+		x0, y0, x3, y3 := b.X, b.Y, b.X+b.W, b.Y+b.H
+		x1, x2 := x0+w.Left, x3-w.Right
+		y1, y2 := y0+w.Top, y3-w.Bottom
+		if x1 > x2 {
+			x1 = x0 + b.W*w.Left/(w.Left+w.Right)
+			x2 = x1
+		}
+		if y1 > y2 {
+			y1 = y0 + b.H*w.Top/(w.Top+w.Bottom)
+			y2 = y1
+		}
+		fill := func(width float32, color Color, a, c, d, e Point) {
+			if width <= 0 || color.A <= 0 {
 				return
 			}
-			p := NewPath().MoveTo(points[0].X, points[0].Y)
-			for _, v := range points[1:] {
-				p.LineTo(v.X, v.Y)
-			}
-			p.Close()
-			canvas.DrawShape(ShapePath{Path: p}, Paint{Color: c, AntiAlias: true})
+			path := NewPath().MoveTo(a.X, a.Y).LineTo(c.X, c.Y).LineTo(d.X, d.Y).LineTo(e.X, e.Y).Close()
+			canvas.DrawShape(ShapePath{Path: path}, DefaultPaint(color))
 		}
-		if w.Top > 0 {
-			draw(sideColor(st.BorderColors.Top), Point{X: x0, Y: y0}, Point{X: x1, Y: y0}, Point{X: ix1, Y: iy0}, Point{X: ix0, Y: iy0})
-		}
-		if w.Right > 0 {
-			draw(sideColor(st.BorderColors.Right), Point{X: x1, Y: y0}, Point{X: x1, Y: y1}, Point{X: ix1, Y: iy1}, Point{X: ix1, Y: iy0})
-		}
-		if w.Bottom > 0 {
-			draw(sideColor(st.BorderColors.Bottom), Point{X: x1, Y: y1}, Point{X: x0, Y: y1}, Point{X: ix0, Y: iy1}, Point{X: ix1, Y: iy1})
-		}
-		if w.Left > 0 {
-			draw(sideColor(st.BorderColors.Left), Point{X: x0, Y: y1}, Point{X: x0, Y: y0}, Point{X: ix0, Y: iy0}, Point{X: ix0, Y: iy1})
-		}
+		fill(w.Top, sideColor(st.BorderColors.Top), Point{x0, y0}, Point{x3, y0}, Point{x2, y1}, Point{x1, y1})
+		fill(w.Right, sideColor(st.BorderColors.Right), Point{x3, y0}, Point{x3, y3}, Point{x2, y2}, Point{x2, y1})
+		fill(w.Bottom, sideColor(st.BorderColors.Bottom), Point{x3, y3}, Point{x0, y3}, Point{x1, y2}, Point{x2, y2})
+		fill(w.Left, sideColor(st.BorderColors.Left), Point{x0, y3}, Point{x0, y0}, Point{x1, y1}, Point{x1, y2})
 		return
 	}
 	if w.Top > 0 {

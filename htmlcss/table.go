@@ -341,6 +341,16 @@ func (t *tableLayout) resolved(children []qui.Widget, availW float32) qui.GridLa
 			continue // fixed layout reads the first row only
 		}
 		w := ch.Style().Width // explicit cell width, border-box
+		// max-width constrains the cell's intrinsic column contribution,
+		// rather than shrinking its used border box inside an assigned track.
+		var maxCellW float32
+		if cell, ok := ch.(*El); ok && webCompat && cell.lastCS != nil && cell.lastCS.MaxWidth > 0 {
+			extra, _ := cell.lastCS.boxSizingExtra()
+			maxCellW = max(cell.lastCS.MaxWidth+extra, ch.Style().MinWidth)
+			if w > maxCellW {
+				w = maxCellW
+			}
+		}
 		if t.fixed {
 			if w > 0 && cs == 1 && !explicit[gi.Col] {
 				maxc[gi.Col], explicit[gi.Col] = w, true
@@ -356,6 +366,9 @@ func (t *tableLayout) resolved(children []qui.Widget, availW float32) qui.GridLa
 				r := ch.Style().BorderWidths.Right
 				mx, mn = mx-r, mn-r
 			}
+		}
+		if maxCellW > 0 {
+			mx, mn = min(mx, maxCellW), min(mn, maxCellW)
 		}
 		if cs > 1 {
 			spans = append(spans, span{gi.Col, cs, mx, mn})

@@ -1,0 +1,11 @@
+{
+ "fixture": "web-nowrap-ellipsis",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "row": [0,0,120,30],
+  "title": [0,0,33.5,30],
+  "chip": [41.5,0,78.5,30],
+  "after": [0,30,640,24]
+ }
+}

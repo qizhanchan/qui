@@ -547,6 +547,7 @@ func applyCommonStyle(st *qui.Style, cs *ComputedStyle) {
 	// the CONTENT box, so add padding+border to reach the outer box that
 	// qui.Style.Width/Height denote. border-box adds nothing (already outer).
 	extraH, extraV := cs.boxSizingExtra()
+	st.WidthSet, st.HeightSet = cs.HasWidth, cs.HasHeight
 	if cs.HasWidth {
 		st.Width = cs.Width + extraH
 	}
@@ -605,6 +606,12 @@ func applyCommonStyle(st *qui.Style, cs *ComputedStyle) {
 	st.MinHeightPct = cs.MinHeightPct
 	st.MaxWidthPct = cs.MaxWidthPct
 	st.MaxHeightPct = cs.MaxHeightPct
+	// Chrome's table algorithm determines a cell's used width; max-width
+	// must not shrink that cell inside the column after tracks are solved.
+	// Doing so also wraps its text at the smaller cap and inflates rows.
+	if webCompat && cs.Display == "table-cell" {
+		st.MaxWidth, st.MaxWidthPct = 0, 0
+	}
 	// Flex sizing is reset every restyle — El instances are reused across
 	// renders (and across conditionally-swapped subtrees), so a dropped
 	// flex-grow / flex-basis / align-self must clear rather than linger.
@@ -688,6 +695,7 @@ func applyControlColors(w qui.Widget, cs *ComputedStyle, native **qui.StateStyle
 			c.HoverStyle = &st
 		}
 	case *widgets.Select:
+		c.NoAppearance = cs.raw["appearance"] == "none" || cs.raw["-webkit-appearance"] == "none"
 		if cs.HasColor {
 			qui.UpdateStyle(c, func(style *qui.Style) { style.Foreground = cs.Color })
 		}

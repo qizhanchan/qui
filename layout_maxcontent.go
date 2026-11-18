@@ -35,7 +35,7 @@ const maxContentMeasure = 1 << 20
 // its min-content width instead). Min / max widths clamp it.
 func MaxContentWidth(w Widget) float32 {
 	s := w.Style()
-	if p := widgetPreferredSize(w); p.W > 0 {
+	if p := widgetPreferredSize(w); p.W > 0 || explicitZeroWidth(w) {
 		return p.W
 	}
 	v := cachedIntrinsic(w, true, func() float32 { return contentMaxWidth(w) })

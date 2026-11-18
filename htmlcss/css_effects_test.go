@@ -495,3 +495,14 @@ func TestWebDiscMarkerGeometry(t *testing.T) {
 		t.Fatalf("disc bounds=(%d,%d)-(%d,%d)", x0, y0, x1, y1)
 	}
 }
+
+func TestSelectAppearanceNonePaintsCSSImage(t *testing.T) {
+	uri := "data:image/svg+xml," + url.PathEscape(`<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><path fill="red" d="M0 0h8v8H0z"/></svg>`)
+	_, res := renderWeb(t, `<!doctype html><body style="margin:0"><select id="css-image-select" style="appearance:none;width:120px;height:30px;border:1px solid #ccc;background:white url('`+uri+`') right center/8px 8px no-repeat"><option>Value</option></select></body>`)
+	img := paintWhite(res.Root)
+	e := res.ByID["css-image-select"].(*El)
+	b := e.Bounds()
+	if c := img.RGBAAt(int(b.X+b.W-5), int(b.Y+b.H/2)); !near(c, 255, 0, 0, 10) {
+		t.Fatalf("CSS select image missing: %v", c)
+	}
+}

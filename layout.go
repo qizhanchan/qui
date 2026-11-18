@@ -160,6 +160,16 @@ func widgetPreferredSize(w Widget) Size {
 	return p
 }
 
+func explicitZeroWidth(w Widget) bool {
+	s := w.Style()
+	return s != nil && s.WidthSet && s.Width == 0 && widgetPreferredSize(w).W == 0
+}
+
+func explicitZeroHeight(w Widget) bool {
+	s := w.Style()
+	return s != nil && s.HeightSet && s.Height == 0 && widgetPreferredSize(w).H == 0
+}
+
 // applyMinSize floors a size by the per-axis minimums.
 func applyMinSize(size, min Size) Size {
 	if size.W < min.W {
@@ -254,10 +264,10 @@ func measureWithConstraints(w Widget, avail Size) Size {
 	p := widgetPreferredSize(w)
 	min, max := widgetMinSize(w), widgetMaxSize(w)
 	m := MeasureChild(w, ownWidthAvail(avail, p.W, min.W, max.W))
-	if p.W > 0 {
+	if p.W > 0 || explicitZeroWidth(w) {
 		m.W = p.W
 	}
-	if p.H > 0 {
+	if p.H > 0 || explicitZeroHeight(w) {
 		m.H = p.H
 	}
 	return applyConstraints(m, min, max)
@@ -309,10 +319,10 @@ func MeasureConstrained(w Widget, avail Size) Size {
 	}
 	min, max := resolvedMinSize(w, avail), resolvedMaxSize(w, avail)
 	m := MeasureChild(w, ownWidthAvail(avail, p.W, min.W, max.W))
-	if p.W > 0 {
+	if p.W > 0 || explicitZeroWidth(w) {
 		m.W = p.W
 	}
-	if p.H > 0 {
+	if p.H > 0 || explicitZeroHeight(w) {
 		m.H = p.H
 	}
 	return applyConstraints(m, min, max)

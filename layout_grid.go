@@ -361,10 +361,10 @@ func gridItemRect(ch Widget, cell Rect, keepSize bool, justify, align AlignCross
 			p.H = s.pctHeight(s.HeightPct, in.H)
 		}
 	}
-	if p.W > 0 {
+	if p.W > 0 || keepSize && explicitZeroWidth(ch) {
 		w = p.W
 	}
-	if p.H > 0 {
+	if p.H > 0 || keepSize && explicitZeroHeight(ch) {
 		h = p.H
 	}
 	if keepSize {

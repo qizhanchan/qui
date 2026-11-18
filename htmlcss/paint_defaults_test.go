@@ -2,6 +2,7 @@ package htmlcss
 
 import (
 	"image"
+	"strings"
 	"testing"
 
 	"github.com/qizhanchan/qui"
@@ -200,5 +201,18 @@ func TestAddressDefaultsToItalic(t *testing.T) {
 	res.Engine.FlushPendingStyles()
 	if res.ByID["link"].(*El).lastCS.Italic {
 		t.Fatal("authored normal style must override the UA default")
+	}
+}
+
+func TestWebNowrapEllipsisUsesTruncatedText(t *testing.T) {
+	_, res := renderWeb(t, `<!doctype html><body style="margin:0"><h1 id=title style="font:24px/30px Arial;margin:0;width:44px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">http</h1></body>`)
+	e := res.ByID["title"].(*El)
+	if e.textLabel == nil {
+		t.Fatal("nowrap ellipsis did not reach a text layout")
+	}
+	p := e.textLabel.Paragraph
+	layout := qui.BuildTextLayout("http", e.textLabel.Style().Font, p.LayoutOptions(44))
+	if len(layout.Lines) != 1 || !strings.HasSuffix(layout.Lines[0].Text, "…") || layout.Lines[0].Width > 44 {
+		t.Fatalf("overflowing title was not ellipsized: %+v", layout.Lines)
 	}
 }

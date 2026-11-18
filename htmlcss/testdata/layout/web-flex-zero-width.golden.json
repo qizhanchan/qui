@@ -1,0 +1,11 @@
+{
+ "fixture": "web-flex-zero-width",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "row": [0,0,640,56],
+  "logo": [0,28,0,0],
+  "heading": [0,16,60,24],
+  "chip": [68,16,33.3,24]
+ }
+}

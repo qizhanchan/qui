@@ -1,0 +1,10 @@
+{
+ "fixture": "web-select-appearance-none-pkg",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "row": [0,0,640,30],
+  "select": [89.61,0,116,30],
+  "next": [0,30,640,16]
+ }
+}

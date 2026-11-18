@@ -223,6 +223,9 @@ func collapseEdges(w Widget) (top, bottom bool) {
 	top = in.Top == 0
 	bottom = in.Bottom == 0 && s.Height == 0 && s.HeightPct == 0 &&
 		s.MinHeight == 0 && s.MinHeightPct == 0 && widgetPreferredSize(w).H == 0
+	if edge, ok := w.(interface{ MarginsCollapseWithLastChild() bool }); ok && !edge.MarginsCollapseWithLastChild() {
+		bottom = false
+	}
 	return top, bottom
 }
 

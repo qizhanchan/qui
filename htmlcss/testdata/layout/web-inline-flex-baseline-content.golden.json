@@ -1,0 +1,13 @@
+{
+ "fixture": "web-inline-flex-baseline-content",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "line": [0,0,640,24],
+  "long": [0,0,144.36,24],
+  "medium": [148.25,0,124.06,24],
+  "short": [276.2,0,43.72,24],
+  "last": [323.81,0,47.69,24],
+  "after": [0,24,640,24]
+ }
+}

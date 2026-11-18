@@ -14,6 +14,26 @@ func expandShorthands(m map[string]string) {
 	if v, ok := m["flex"]; ok {
 		expandFlex(v, m)
 	}
+	if v, ok := m["flex-flow"]; ok {
+		direction, wrap := "row", "nowrap"
+		directions, wraps, valid := 0, 0, true
+		for _, token := range strings.Fields(strings.ToLower(v)) {
+			switch token {
+			case "row", "row-reverse", "column", "column-reverse":
+				direction = token
+				directions++
+			case "nowrap", "wrap", "wrap-reverse":
+				wrap = token
+				wraps++
+			default:
+				valid = false
+			}
+		}
+		if valid && directions <= 1 && wraps <= 1 && directions+wraps > 0 {
+			setIfAbsent(m, "flex-direction", direction)
+			setIfAbsent(m, "flex-wrap", wrap)
+		}
+	}
 	if v, ok := m["inset"]; ok {
 		expandInset(v, m)
 	}

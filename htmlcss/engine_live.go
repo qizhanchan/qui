@@ -813,14 +813,19 @@ func (eng *StyleEngine) restyleWalk(e *El, parent *ComputedStyle) {
 	// invalidates): re-applying rebuilds its inline flow and drops every
 	// cached measurement below it, so resizing a panel through its style
 	// re-shaped all the text inside, every frame of the drag.
-	if eng.scoped && prev != nil && !eng.mustApply[e] && reflect.DeepEqual(prev, cs) {
+	if eng.scoped && prev != nil && !eng.mustApply[e] && !e.pseudoRules && e.onStyle == nil && e.canvasUser == nil &&
+		reflect.DeepEqual(widgetStyleView(prev), widgetStyleView(cs)) {
+		// An inherited custom-property table may change without changing any
+		// resolved declaration here. Keep that table for descendants and
+		// future mutations, while preserving this element's measured widgets.
+		e.lastCS = cs
 		for _, kid := range e.elementKids {
 			if ke, ok := kid.(*El); ok {
-				eng.restyleWalk(ke, prev)
+				eng.restyleWalk(ke, cs)
 			}
 		}
 		for k := range e.styleKids {
-			eng.restyleWalk(k, prev)
+			eng.restyleWalk(k, cs)
 		}
 		return
 	}
@@ -844,6 +849,19 @@ func (eng *StyleEngine) restyleWalk(e *El, parent *ComputedStyle) {
 	for k := range e.styleKids {
 		eng.restyleWalk(k, cs)
 	}
+}
+
+// Custom properties only affect widget state through the declarations that
+// consume them. Pseudo-element owners still reapply to resolve their content.
+func widgetStyleView(cs *ComputedStyle) *ComputedStyle {
+	if cs == nil {
+		return nil
+	}
+	v := *cs
+	v.customProps = nil
+	v.Hover, v.Focus, v.Active, v.FocusVisible = widgetStyleView(cs.Hover), widgetStyleView(cs.Focus), widgetStyleView(cs.Active), widgetStyleView(cs.FocusVisible)
+	v.AncestorHover, v.AncestorFocus, v.AncestorActive = widgetStyleView(cs.AncestorHover), widgetStyleView(cs.AncestorFocus), widgetStyleView(cs.AncestorActive)
+	return &v
 }
 
 // Restyle recomputes and re-applies CSS for EVERY element in the tree.

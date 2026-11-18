@@ -30,7 +30,7 @@ func (c *Container) layoutEngine() Layout { return c.LayoutEngine }
 // layout engine (MinContentLayout) reports, else its max-content width —
 // never narrower than it can really get. Min / max widths clamp it.
 func MinContentWidth(w Widget) float32 {
-	if p := widgetPreferredSize(w); p.W > 0 {
+	if p := widgetPreferredSize(w); p.W > 0 || explicitZeroWidth(w) {
 		return p.W
 	}
 	return max(contentMinWidth(w), aspectWidth(w.Style()))

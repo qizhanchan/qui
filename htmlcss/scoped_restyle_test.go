@@ -55,6 +55,29 @@ func TestScopedRestyleWalksOnlyParentSubtree(t *testing.T) {
 	}
 }
 
+func TestUnusedInheritedVariableKeepsMeasuredWidgets(t *testing.T) {
+	eng, body, _, _, p1, _, _, _ := scopedFixture(t, `:root{--unused:1px} .consumer{width:var(--unused)}`)
+	before := eng.applied
+	body.SetAttr("style", "--unused:20px")
+	if applied := eng.applied - before; applied != 1 {
+		t.Fatalf("unused inherited variable rebuilt %d widgets, want root only", applied)
+	}
+	// The skipped widgets still inherit the new value when they begin
+	// consuming it after a later DOM mutation.
+	p1.SetClass("consumer")
+	if p1.lastCS.Width != 20 {
+		t.Fatalf("skipped widget kept a stale variable table: width=%g", p1.lastCS.Width)
+	}
+}
+
+func TestInheritedVariableCanCreateGeneratedContent(t *testing.T) {
+	_, body, _, _, p1, _, _, _ := scopedFixture(t, `p::after{content:var(--suffix, none)}`)
+	body.SetAttr("style", `--suffix:"visible"`)
+	if p1.paText != "visible" {
+		t.Fatalf("variable change skipped a previously absent pseudo-element: %q", p1.paText)
+	}
+}
+
 // A descendant selector keyed off an ancestor class re-applies to the
 // whole subtree when the ancestor's class changes.
 func TestScopedRestyleDescendantCascade(t *testing.T) {

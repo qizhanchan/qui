@@ -1,0 +1,12 @@
+{
+ "fixture": "web-table-cell-max-width",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "table": [0,0,600,90],
+  "label": [0,0,132,56.5],
+  "text": [132,0,468,56.5],
+  "text2": [132,56.5,468,33],
+  "after": [0,90,640,24]
+ }
+}

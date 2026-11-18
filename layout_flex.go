@@ -310,12 +310,12 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 			}
 			if l.Direction == Horizontal {
 				minMain = ContentMinWidth(ch)
-				if p.W > 0 && p.W < minMain {
+				if (p.W > 0 || explicitZeroWidth(ch)) && p.W < minMain {
 					minMain = p.W
 				}
 			} else {
 				minMain = nat.H
-				if p.H > 0 && p.H < minMain {
+				if (p.H > 0 || explicitZeroHeight(ch)) && p.H < minMain {
 					minMain = p.H
 				}
 			}
