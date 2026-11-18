@@ -3,6 +3,7 @@ package typeset
 import (
 	"io"
 	"log"
+	"os"
 	"strings"
 	"sync"
 
@@ -52,7 +53,9 @@ func PreloadSystemFontIndex() { loadSystemFontIndex() }
 
 func loadSystemFontIndex() map[string][]fontscan.Footprint {
 	sysFontsOnce.Do(func() {
-		fps, err := fontscan.SystemFonts(log.New(io.Discard, "", 0), "")
+		cacheDir, cleanup := systemFontCacheDir()
+		defer cleanup()
+		fps, err := fontscan.SystemFonts(log.New(io.Discard, "", 0), cacheDir)
 		idx := map[string][]fontscan.Footprint{}
 		if err == nil {
 			for _, fp := range fps {
@@ -62,6 +65,30 @@ func loadSystemFontIndex() map[string][]fontscan.Footprint {
 		sysFontIndex = idx
 	})
 	return sysFontIndex
+}
+
+// fontscan treats an unwritable index cache as a failed font scan. Keep
+// installed fonts available in sandboxed/read-only profiles by selecting a
+// writable cache before its process-wide, one-shot initialization.
+func systemFontCacheDir() (string, func()) {
+	dir, _ := os.UserCacheDir()
+	return writableSystemFontCacheDir(dir)
+}
+
+func writableSystemFontCacheDir(dir string) (string, func()) {
+	if dir != "" {
+		if f, err := os.CreateTemp(dir, "qui-font-cache-"); err == nil {
+			name := f.Name()
+			f.Close()
+			os.Remove(name)
+			return dir, func() {}
+		}
+	}
+	dir, err := os.MkdirTemp("", "qui-font-index-")
+	if err != nil {
+		return "", func() {}
+	}
+	return dir, func() { os.RemoveAll(dir) }
 }
 
 // SystemFontFamilyInstalled reports whether family is installed on the

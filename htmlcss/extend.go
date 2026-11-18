@@ -216,6 +216,36 @@ func (e *El) UserData(key string) any { return e.userData[key] }
 // first restyle).
 func (e *El) ComputedStyle() *ComputedStyle { return e.lastCS }
 
+// ComputedStyleForState resolves the current CSS cascade, including the
+// host's DOM pointer/focus targets (which may be folded inline elements).
+// Resting styles remain available through ComputedStyle for layout.
+func (e *El) ComputedStyleForState(hover, focus *El) *ComputedStyle {
+	if e.engine == nil || e.engine.sheet == nil {
+		return e.lastCS
+	}
+	var st selectorState
+	for p := hover; p != nil; p = p.elParent {
+		st.hoverNodes = append(st.hoverNodes, p.node)
+	}
+	for p := focus; p != nil; p = p.elParent {
+		st.focusNodes = append(st.focusNodes, p.node)
+	}
+	var resolve func(*El) *ComputedStyle
+	resolve = func(el *El) *ComputedStyle {
+		var parent *ComputedStyle
+		if el.elParent != nil {
+			parent = resolve(el.elParent)
+		}
+		s := st
+		s.hover = el.Hovering() || nodeIn(st.hoverNodes, el.node)
+		s.focus = el.Focused() || nodeIn(st.focusNodes, el.node)
+		s.focusVisible = el.FocusVisibleNow()
+		s.active = el.Pressed()
+		return interpret(el.node, mergedDecls(el.node, el.engine.sheet, s), parent)
+	}
+	return resolve(e)
+}
+
 // SetOnStyle registers fn to run after every restyle of the element with
 // its computed style — map CSS onto native setters, read a --var.
 func (e *El) SetOnStyle(fn func(cs *ComputedStyle)) { e.onStyle = fn }

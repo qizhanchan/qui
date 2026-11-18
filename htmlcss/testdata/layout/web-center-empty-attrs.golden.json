@@ -1,0 +1,9 @@
+{
+ "fixture": "web-center-empty-attrs",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "centered": [64,0,512,20],
+  "label": [64,0,512,20]
+ }
+}

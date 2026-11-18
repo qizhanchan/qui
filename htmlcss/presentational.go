@@ -19,7 +19,7 @@ var dimensionTags = map[string]bool{
 }
 
 func presentationalHints(n *Node) []Declaration {
-	if n == nil || n.Type != ElementNode || len(n.Attrs) == 0 {
+	if n == nil || n.Type != ElementNode {
 		return nil
 	}
 	var out []Declaration

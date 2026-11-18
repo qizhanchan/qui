@@ -91,9 +91,12 @@ func (e *El) buildTable(cs *ComputedStyle) {
 	// Column widths are resolved per layout pass by tableLayout; here we only
 	// record the <col> widths. Rows are always auto (tallest cell).
 	tl := &tableLayout{
-		cols:  make([]colWidth, nCols),
-		fill:  cs.HasWidth || cs.WidthPct > 0,
-		fixed: strings.EqualFold(strings.TrimSpace(cs.raw["table-layout"]), "fixed"),
+		owner:     e,
+		rows:      rows,
+		rowOffset: dataOffset,
+		cols:      make([]colWidth, nCols),
+		fill:      cs.HasWidth || cs.WidthPct > 0,
+		fixed:     strings.EqualFold(strings.TrimSpace(cs.raw["table-layout"]), "fixed"),
 	}
 	copy(tl.cols, gatherColWidths(e, cs))
 
@@ -199,10 +202,14 @@ func rowMinHeight(table, tr *El, tableCS *ComputedStyle) float32 {
 //     explicit cell widths; the remaining width is shared equally by the
 //     rest, whatever their content.
 type tableLayout struct {
-	grid  qui.GridLayout
-	cols  []colWidth // <col> widths; len = column count
-	fill  bool       // the table has a width: columns fill it
-	fixed bool       // table-layout: fixed
+	owner     *El
+	rows      []*El
+	rowOffset int
+	partRects map[*El]qui.Rect
+	grid      qui.GridLayout
+	cols      []colWidth // <col> widths; len = column count
+	fill      bool       // the table has a width: columns fill it
+	fixed     bool       // table-layout: fixed
 	// collapse: border-collapse: collapse. applyTableCollapse gives a
 	// last-column cell its right edge on top of its left one, so its
 	// measured width is one border wider than its column's share.
@@ -253,7 +260,39 @@ func (t *tableLayout) Measure(children []qui.Widget, avail qui.Size) qui.Size {
 }
 
 func (t *tableLayout) Apply(children []qui.Widget, bounds qui.Rect) {
-	t.resolved(children, bounds.W).Apply(children, bounds)
+	t.resolved(children, bounds.W).ApplyWithRows(children, bounds, func(bands []qui.Rect) {
+		t.partRects = make(map[*El]qui.Rect)
+		for i, row := range t.rows {
+			if i+t.rowOffset >= len(bands) {
+				break
+			}
+			r := bands[i+t.rowOffset]
+			t.partRects[row] = r
+			for p := row.elParent; p != nil && p != t.owner; p = p.elParent {
+				if prev, ok := t.partRects[p]; ok {
+					t.partRects[p] = prev.Union(r)
+				} else {
+					t.partRects[p] = r
+				}
+			}
+		}
+	})
+}
+
+// TablePartBounds returns a structural row/group's border box in window
+// coordinates. These DOM elements have no widget box: the table owns their
+// cells and transforms, so map the resolved row band through that table.
+func (e *El) TablePartBounds() (qui.Rect, bool) {
+	for p := e.elParent; p != nil; p = p.elParent {
+		if t, ok := p.LayoutEngine.(*tableLayout); ok {
+			r, found := t.partRects[e]
+			if !found {
+				return qui.Rect{}, false
+			}
+			return qui.InteractionRectFor(p, r), true
+		}
+	}
+	return qui.Rect{}, false
 }
 
 // tableMaxContent is the measuring width for a cell's max-content size.

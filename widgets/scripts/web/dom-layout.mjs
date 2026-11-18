@@ -21,6 +21,7 @@ import {launchChrome} from './chrome.mjs';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import puppeteer from 'puppeteer-core';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixtureDir = path.resolve(__dirname, '../../../htmlcss/testdata/layout');
@@ -45,10 +46,18 @@ async function main() {
       .filter((f) => f.endsWith('.html'))
       .map((f) => f.slice(0, -'.html'.length));
   }
-  const browser = await launchChrome(['--font-render-hinting=none']);
+  const endpoint = process.env.CHROME_URL;
+  if (endpoint) {
+    const url = new URL(endpoint);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('invalid Chrome DevTools URL');
+  }
+  const browser = endpoint
+    ? await puppeteer.connect({browserURL: endpoint, defaultViewport: null})
+    : await launchChrome(['--font-render-hinting=none']);
+  const context = endpoint ? await browser.createBrowserContext() : null;
   try {
     for (const name of names.sort()) {
-      const page = await browser.newPage();
+      const page = await (context || browser).newPage();
       page.on('pageerror', (e) => console.log(`  [pageerror] ${e.message}`));
       page.on('requestfailed', (r) => console.log(`  [requestfailed] ${r.url()} :: ${r.failure()?.errorText}`));
       await page.setViewport(VIEWPORT);
@@ -76,7 +85,11 @@ ${lines.join(',\n')}
       console.log(`wrote ${out} (${Object.keys(boxes).length} boxes)`);
     }
   } finally {
-    await browser.close();
+    if (context) {
+      try { await context.close(); } finally { browser.disconnect(); }
+    } else {
+      await browser.close();
+    }
   }
 }
 

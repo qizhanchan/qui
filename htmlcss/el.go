@@ -3360,6 +3360,7 @@ func (e *El) buildPseudoLeaf(cs *ComputedStyle) []qui.Widget {
 	ib.Align = cs.TextAlign
 	ib.PreserveWhitespace = cs.PreserveWS
 	ib.BreakLongWords = cs.BreakWord
+	ib.RoundNormalMetrics = webCompat
 	ib.LineHeightScale = 0
 	if cs.LineHeight > 0 {
 		ib.LineHeightScale = cs.LineHeight
@@ -3566,6 +3567,7 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 		ib.Align = cs.TextAlign
 		ib.PreserveWhitespace = cs.PreserveWS
 		ib.BreakLongWords = cs.BreakWord
+		ib.RoundNormalMetrics = webCompat
 		ib.LineHeightScale = 0
 		if cs.LineHeight > 0 {
 			ib.LineHeightScale = cs.LineHeight
@@ -6554,7 +6556,7 @@ func (e *El) ConsumesTab(shift bool) bool {
 // or replaced content.
 func (e *El) MarginsCollapseWithChildren() bool {
 	cs := e.lastCS
-	if cs == nil || cs.Display != "block" || cs.OverflowClip || e.overflowScroll {
+	if cs == nil || (cs.Display != "block" && !e.blockInInline) || cs.OverflowClip || e.overflowScroll {
 		return false
 	}
 	if e.backing != nil || e.isImg() || e.tag == "button" || e.isButtonInput() {

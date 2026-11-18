@@ -242,6 +242,13 @@ func (l GridLayout) withImplicit(children []Widget) (GridLayout, []GridItem) {
 // columns and [rowStart..rowStart+rowSpan-1] rows, including any
 // col/row gaps internal to that span.
 func (l GridLayout) Apply(children []Widget, bounds Rect) {
+	l.ApplyWithRows(children, bounds, nil)
+}
+
+// ApplyWithRows also reports the resolved row bands. Table layout uses
+// these for DOM geometry of rows and groups whose cells are hoisted onto
+// the grid, including empty rows and rows crossed by spanning cells.
+func (l GridLayout) ApplyWithRows(children []Widget, bounds Rect, rows func([]Rect)) {
 	if len(children) == 0 {
 		return
 	}
@@ -262,6 +269,14 @@ func (l GridLayout) Apply(children []Widget, bounds Rect) {
 	// Grow auto rows so multi-row-spanning children (e.g. table rowspan) fit.
 	growAutoRowsForRowSpans(rowHeights, l.Rows, l.RowGap, colWidths, l.ColGap,
 		children, placements)
+	if rows != nil {
+		bands := make([]Rect, len(rowHeights))
+		width := trackSpan(colWidths, l.ColGap, 0, len(colWidths))
+		for i, height := range rowHeights {
+			bands[i] = Rect{X: bounds.X, Y: bounds.Y + trackOffset(rowHeights, l.RowGap, i), W: width, H: height}
+		}
+		rows(bands)
+	}
 
 	// Walk children and lay each out into its spanning cell rect.
 	for i, ch := range children {

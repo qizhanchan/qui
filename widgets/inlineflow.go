@@ -26,9 +26,10 @@ type InlineBox struct {
 
 	// Wrap enables soft-wrapping at the box's width (default true once set
 	// by callers). Align controls per-line horizontal alignment.
-	Wrap            bool
-	Align           TextAlign
-	LineHeightScale float32
+	Wrap               bool
+	Align              TextAlign
+	LineHeightScale    float32
+	RoundNormalMetrics bool
 
 	// PreserveWhitespace switches the IFC to word-processor whitespace
 	// semantics (every space kept and addressable, wrap-boundary spaces
@@ -274,6 +275,7 @@ func (b *InlineBox) options(maxW float32) InlineLayoutOptions {
 		Wrap:               b.Wrap,
 		Align:              b.Align,
 		LineHeightScale:    b.LineHeightScale,
+		RoundNormalMetrics: b.RoundNormalMetrics,
 		BaseFont:           b.Style().Font,
 		PreserveWhitespace: b.PreserveWhitespace,
 		BreakLongWords:     b.BreakLongWords,
@@ -332,6 +334,7 @@ type inlineLayoutKey struct {
 	wrap               bool
 	align              TextAlign
 	lineHeightScale    float32
+	roundNormalMetrics bool
 	preserveWhitespace bool
 	breakLongWords     bool
 	family             string
@@ -350,6 +353,7 @@ func (b *InlineBox) layoutKeyFor(maxW float32) inlineLayoutKey {
 		localeGen: LocaleGeneration(), childSig: b.childLayoutSig(maxW),
 		wrap: b.Wrap, align: b.Align,
 		lineHeightScale:    b.LineHeightScale,
+		roundNormalMetrics: b.RoundNormalMetrics,
 		preserveWhitespace: b.PreserveWhitespace,
 		breakLongWords:     b.BreakLongWords,
 		family:             f.Family, size: f.Size, weight: f.Weight,

@@ -1,0 +1,12 @@
+{
+ "fixture": "web-block-inline-margins",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "host": [0,3,640,10],
+  "arrow": [2,3,10,10],
+  "after": [0,19,640,7],
+  "cellhost": [0,29,14,10],
+  "cellarrow": [2,29,10,10]
+ }
+}
