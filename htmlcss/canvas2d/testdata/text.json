@@ -1,0 +1,68 @@
+{
+ "w": 200,
+ "h": 150,
+ "ops": [
+  [
+   "font",
+   "24px GoRegular"
+  ],
+  [
+   "fillStyle",
+   "#222"
+  ],
+  [
+   "fillText",
+   "Hello, canvas",
+   10,
+   40
+  ],
+  [
+   "textAlign",
+   "center"
+  ],
+  [
+   "textBaseline",
+   "middle"
+  ],
+  [
+   "font",
+   "bold 18px GoRegular"
+  ],
+  [
+   "fillStyle",
+   "#a00"
+  ],
+  [
+   "fillText",
+   "Centered",
+   100,
+   80
+  ],
+  [
+   "textAlign",
+   "right"
+  ],
+  [
+   "textBaseline",
+   "top"
+  ],
+  [
+   "strokeStyle",
+   "blue"
+  ],
+  [
+   "lineWidth",
+   1
+  ],
+  [
+   "font",
+   "30px GoRegular"
+  ],
+  [
+   "strokeText",
+   "Edge",
+   190,
+   100
+  ]
+ ]
+}

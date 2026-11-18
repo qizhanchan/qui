@@ -1,0 +1,39 @@
+{
+ "w": 200,
+ "h": 150,
+ "ops": [
+  [
+   "$p=createPattern:checker",
+   "repeat"
+  ],
+  [
+   "fillStyle",
+   "$p"
+  ],
+  [
+   "fillRect",
+   0,
+   0,
+   90,
+   90
+  ],
+  [
+   "drawImage:checker",
+   100,
+   10,
+   80,
+   40
+  ],
+  [
+   "imageSmoothingEnabled",
+   false
+  ],
+  [
+   "drawImage:checker",
+   100,
+   60,
+   80,
+   80
+  ]
+ ]
+}

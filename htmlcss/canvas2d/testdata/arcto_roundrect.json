@@ -1,0 +1,67 @@
+{
+ "w": 200,
+ "h": 150,
+ "ops": [
+  [
+   "beginPath"
+  ],
+  [
+   "moveTo",
+   20,
+   130
+  ],
+  [
+   "arcTo",
+   20,
+   20,
+   120,
+   20,
+   30
+  ],
+  [
+   "arcTo",
+   180,
+   20,
+   180,
+   130,
+   50
+  ],
+  [
+   "lineTo",
+   180,
+   130
+  ],
+  [
+   "lineWidth",
+   5
+  ],
+  [
+   "strokeStyle",
+   "teal"
+  ],
+  [
+   "stroke"
+  ],
+  [
+   "beginPath"
+  ],
+  [
+   "roundRect",
+   40,
+   60,
+   110,
+   50,
+   [
+    12,
+    24
+   ]
+  ],
+  [
+   "fillStyle",
+   "orange"
+  ],
+  [
+   "fill"
+  ]
+ ]
+}

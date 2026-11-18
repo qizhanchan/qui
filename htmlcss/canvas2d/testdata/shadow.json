@@ -1,0 +1,64 @@
+{
+ "w": 200,
+ "h": 150,
+ "ops": [
+  [
+   "shadowColor",
+   "rgba(0,0,0,0.6)"
+  ],
+  [
+   "shadowBlur",
+   10
+  ],
+  [
+   "shadowOffsetX",
+   8
+  ],
+  [
+   "shadowOffsetY",
+   6
+  ],
+  [
+   "fillStyle",
+   "#48f"
+  ],
+  [
+   "fillRect",
+   30,
+   30,
+   80,
+   60
+  ],
+  [
+   "shadowBlur",
+   0
+  ],
+  [
+   "shadowColor",
+   "red"
+  ],
+  [
+   "shadowOffsetX",
+   -5
+  ],
+  [
+   "beginPath"
+  ],
+  [
+   "arc",
+   150,
+   90,
+   30,
+   0,
+   6.2832,
+   false
+  ],
+  [
+   "fillStyle",
+   "white"
+  ],
+  [
+   "fill"
+  ]
+ ]
+}
