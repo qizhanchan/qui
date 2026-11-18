@@ -36,6 +36,12 @@ type InlineBox struct {
 	// qui.InlineLayoutOptions.PreserveWhitespace.
 	PreserveWhitespace bool
 
+	// Strut makes the box's own font and line height a floor for every
+	// line (CSS's strut; see InlineLayoutOptions.Strut).
+	Strut bool
+	// StrutNeedsText: see InlineLayoutOptions.StrutNeedsText.
+	StrutNeedsText bool
+
 	// BreakLongWords adds a character-level break for a run with no break
 	// opportunity that is wider than the box (a pasted URL, a space-free
 	// CJK/digit string). Off = CSS overflow-wrap:normal, where such a run
@@ -83,6 +89,12 @@ type InlineBox struct {
 	// control surface (e.g. a <label for> whose click toggles a checkbox)
 	// so a drag doesn't turn it into selectable prose.
 	Selectable bool
+
+	// Inline elements (OpenSpan / CloseSpan; see inlineflow_spans.go).
+	spans               []inlineSpanRec
+	spanStack           []int32
+	hoverSpan           int32
+	spanFirst, spanLast []int
 }
 
 // inlinePart is one appended piece: a styled text run or an atomic child.
@@ -99,6 +111,12 @@ type inlinePart struct {
 
 	child  Widget
 	valign InlineVAlign
+
+	span     int32   // innermost open span when added
+	shift    float32 // its cumulative baseline shift
+	lh       float32 // its line-height scale (0 = the box's)
+	inset    float32 // > 0: a span's start / end edge (no text, no box)
+	insetEnd bool
 }
 
 // NewInlineBox constructs an empty inline box. Append content with
@@ -129,7 +147,8 @@ func (b *InlineBox) AddLinkText(text string, font Font, color Color, deco TextDe
 	if text == "" {
 		return
 	}
-	b.parts = append(b.parts, inlinePart{text: text, font: font, color: color, deco: deco, decoPaint: decoPaint, href: href, linkSrc: source})
+	b.parts = append(b.parts, inlinePart{text: text, font: font, color: color, deco: deco, decoPaint: decoPaint, href: href, linkSrc: source,
+		span: b.curSpan(), shift: b.curShift(), lh: b.curLineHeight()})
 	b.haveLay = false
 	b.haveFit = false
 	b.InvalidateLayout()
@@ -149,7 +168,7 @@ func (b *InlineBox) AddBox(w Widget, valign InlineVAlign) {
 		b.InvalidateLayout()
 		return
 	}
-	b.parts = append(b.parts, inlinePart{isBox: true, child: w, valign: valign})
+	b.parts = append(b.parts, inlinePart{isBox: true, child: w, valign: valign, span: b.curSpan()})
 	b.haveLay = false
 	b.haveFit = false
 	b.InvalidateLayout()
@@ -169,6 +188,9 @@ func (b *InlineBox) AddBreak() {
 // Any text selection is dropped: its offsets referred to the old content.
 func (b *InlineBox) Clear() {
 	b.parts = b.parts[:0]
+	b.spans = b.spans[:0]
+	b.spanStack = b.spanStack[:0]
+	b.hoverSpan = 0
 	b.ClearChildren()
 	b.haveLay = false
 	b.haveFit = false
@@ -183,6 +205,10 @@ func (b *InlineBox) buildItems(maxW float32) []InlineItem {
 	items := make([]InlineItem, 0, len(b.parts))
 	boxN := 0
 	for _, p := range b.parts {
+		if p.inset > 0 {
+			items = append(items, InlineItem{Inset: p.inset, InsetEnd: p.insetEnd, Span: p.span})
+			continue
+		}
 		if p.isBox {
 			// The box rides the line as its margin box (CSS: an atomic
 			// inline's margins take inline space); Layout insets it again.
@@ -193,6 +219,7 @@ func (b *InlineBox) buildItems(maxW float32) []InlineItem {
 				Size:     Size{W: sz.W + m.Horizontal(), H: sz.H + m.Vertical()},
 				VAlign:   p.valign,
 				BoxIndex: boxN,
+				Span:     p.span,
 			}
 			// A text-carrying atomic box (e.g. a styled link kept as its own
 			// box) reports its baseline so the IFC aligns it with the run.
@@ -213,6 +240,9 @@ func (b *InlineBox) buildItems(maxW float32) []InlineItem {
 			DecorationPaint: p.decoPaint,
 			Href:            p.href,
 			LinkSource:      p.linkSrc,
+			Span:            p.span,
+			BaselineShift:   p.shift,
+			LineHeightScale: p.lh,
 		})
 	}
 	return items
@@ -227,6 +257,8 @@ func (b *InlineBox) options(maxW float32) InlineLayoutOptions {
 		BaseFont:           b.Style().Font,
 		PreserveWhitespace: b.PreserveWhitespace,
 		BreakLongWords:     b.BreakLongWords,
+		Strut:              b.Strut,
+		StrutNeedsText:     b.StrutNeedsText,
 	}
 	if maxW > 0 && len(b.floatEx) > 0 {
 		in := b.Style().ContentInsets()
@@ -473,8 +505,9 @@ func (b *InlineBox) Draw(canvas Canvas) {
 	if b.Style().Background.A > 0 {
 		canvas.FillRect(origin, b.Style().Background)
 	}
+	b.drawSpans(canvas, origin)
 	b.drawSelection(canvas, origin)
-	DrawInlineText(canvas, b.layout, origin)
+	DrawInlineText(canvas, b.hoverLayout(), origin)
 	for _, child := range b.ChildList() {
 		if boxChildHidden(child) {
 			continue

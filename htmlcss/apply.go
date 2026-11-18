@@ -19,6 +19,15 @@ import (
 	"github.com/qizhanchan/qui/widgets"
 )
 
+// QuirksMode is a document's rendering mode.
+type QuirksMode uint8
+
+const (
+	NoQuirksMode QuirksMode = iota
+	LimitedQuirksMode
+	QuirksModeFull
+)
+
 // Options tune box construction.
 type Options struct {
 	// BaseDir resolves relative <img src> paths. Empty = current dir.
@@ -38,6 +47,11 @@ type Options struct {
 	// carries html's own styles. Apps leave it off and treat body as the
 	// window's root.
 	DocumentRoot bool
+	// Quirks is the document's mode (HTML § 13.2.6.4.1, from its DOCTYPE):
+	// in QuirksMode and LimitedQuirksMode a line's strut — the block's own
+	// font and line-height — only counts on lines with text directly in
+	// the block (the quirks spec's line height calculation quirk).
+	Quirks QuirksMode
 	// Resources, when set, loads the document's external images (remote
 	// URLs and anything else the host resolves). See ResourceLoader.
 	Resources ResourceLoader

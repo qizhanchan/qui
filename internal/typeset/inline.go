@@ -65,6 +65,23 @@ type InlineItem struct {
 	// the line baseline, in px — superscript/subscript. A raised run
 	// grows the line's ascent so it never collides with the line above.
 	BaselineShift float32
+	// LineHeightScale overrides the layout's LineHeightScale for this run
+	// (CSS: each inline box contributes its own line-height); 0 = the
+	// layout's, < 0 = normal (the face's own height).
+	LineHeightScale float32
+	// Span is the host's id of the innermost inline element (CSS inline
+	// box) the run or box belongs to; 0 = none. It is echoed into the
+	// fragments (which merge only within one span) so the host can paint
+	// the element's background / border per line and hit-test it.
+	Span int32
+
+	// Inset — when > 0 on an item with neither Text nor Box, this is an
+	// inline element's start (InsetEnd false) or end edge: its margin +
+	// border + padding, in px. It takes inline space glued to the first /
+	// last token of the element (no break opportunity between them); an
+	// element with no content gets an empty box of that width.
+	Inset    float32
+	InsetEnd bool
 
 	// Box — when true this is an atomic inline box laid out as one
 	// unbreakable unit. Size is its outer box; VAlign chooses vertical
@@ -191,6 +208,13 @@ type InlineLayoutOptions struct {
 	// its baseline, with the font's descent below. Without it such a line is
 	// exactly as tall as its boxes.
 	BoxLineStrut bool
+	// Strut gives EVERY line the BaseFont's line box (CSS's strut: the
+	// block's own font and line-height are a floor for each line, however
+	// small the text on it).
+	Strut bool
+	// StrutNeedsText limits Strut to lines carrying text outside any span
+	// (Span 0): the quirks-mode line height calculation quirk.
+	StrutNeedsText bool
 
 	// LeadingBelow is a word processor's line spacing: the room a LineSpacing
 	// above one line adds goes BELOW the text instead of half above and half
@@ -292,7 +316,7 @@ func tabAdvance(x, segW, glyphW float32, opts *InlineLayoutOptions) (float32, Ta
 // token reaches above and below the baseline, plus the ink ascent/descent of
 // the text on it (an empty line falls back to the reference font, since the
 // caret still needs a line to sit on).
-func inlineLineVMetrics(toks []inlineTok, idxs []int, scale, spacing, mid, baseAsc, baseDesc, baseLA, baseLB float32, strut, leadBelow bool) (ascent, descent, inkA, inkD float32) {
+func inlineLineVMetrics(toks []inlineTok, idxs []int, scale, spacing, mid, baseAsc, baseDesc, baseLA, baseLB float32, strut, cssStrut, strutText, leadBelow bool) (ascent, descent, inkA, inkD float32) {
 	text := false
 	var topBox, bottomBox float32 // tallest vertical-align: top / bottom box
 	for _, ti := range idxs {
@@ -330,6 +354,17 @@ func inlineLineVMetrics(toks []inlineTok, idxs []int, scale, spacing, mid, baseA
 	} else if strut && !text {
 		ascent = max(ascent, baseAsc+baseLA)
 		descent = max(descent, baseDesc+baseLB)
+	} else if cssStrut {
+		ascent = max(ascent, baseAsc+baseLA)
+		descent = max(descent, baseDesc+baseLB)
+	} else if strutText {
+		for _, ti := range idxs {
+			if t := toks[ti]; !t.box && t.span == 0 {
+				ascent = max(ascent, baseAsc+baseLA)
+				descent = max(descent, baseDesc+baseLB)
+				break
+			}
+		}
 	}
 	// A top / bottom box taller than the line grows it away from the edge it
 	// is pinned to (CSS: a bottom-aligned box pushes the line's top up).
@@ -508,6 +543,8 @@ type InlineFrag struct {
 	LinkSource      any
 	Background      gfx.Color
 	BaselineShift   float32
+	// Span echoes InlineItem.Span.
+	Span int32
 
 	Box      bool
 	BoxIndex int
@@ -589,7 +626,12 @@ type inlineTok struct {
 	linkSrc    any
 	background gfx.Color
 	shift      float32
+	span       int32
+	lh         float32 // run line-height scale (0 = the layout's)
+	// width includes padL / padR: inline element edges (InlineItem.Inset)
+	// glued before / after the token's glyphs.
 	width      float32
+	padL, padR float32
 
 	// space marks a preserved-whitespace run token (PreserveWhitespace
 	// mode): it never triggers a soft wrap itself — at a wrap boundary it
@@ -623,6 +665,7 @@ type inlineTok struct {
 	spaceHref      string
 	spaceLinkSrc   any
 	spaceBg        gfx.Color
+	spaceSpan      int32
 	// Source range of the collapsed whitespace run the joining space
 	// stands for, within the run's LAST contributing item (best-effort:
 	// a run spanning items keeps only the final item's slice, matching
@@ -767,7 +810,7 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 		if len(lineIdx) == 0 {
 			ind = opts.FirstIndent
 		}
-		asc, desc, inkA, inkD := inlineLineVMetrics(toks, cur, scale, spacing, mid, baseAsc, baseDesc, baseLA, baseLB, opts.BoxLineStrut, leadBelow)
+		asc, desc, inkA, inkD := inlineLineVMetrics(toks, cur, scale, spacing, mid, baseAsc, baseDesc, baseLA, baseLB, opts.BoxLineStrut, opts.Strut && !opts.StrutNeedsText, opts.Strut && opts.StrutNeedsText, leadBelow)
 		lineIdx = append(lineIdx, cur)
 		lineSegs = append(lineSegs, segs)
 		lineSegToks = append(lineSegToks, segToks)
@@ -1121,6 +1164,9 @@ func (t inlineTok) aboveBelow(scale, spacing, mid float32, leadBelow bool) (abov
 	}
 	fa := inlineAscent(t.font)
 	fd := inlineDescent(t.font)
+	if t.lh != 0 {
+		scale, spacing = max(t.lh, 0), 0 // < 0: line-height normal
+	}
 	la, lb := inlineLeading(t.font, scale, spacing, leadBelow)
 	above, below = fa+la, fd+lb
 	if t.shift > 0 {
@@ -1155,6 +1201,7 @@ func placeInlineLine(toks []inlineTok, idxs []int, baseline, asc, desc, mid, jus
 	reordered := !sameTokenOrder(logicalIdxs, idxs)
 	var frags []InlineFrag
 	var x float32
+	padAfter := false // the last fragment is followed by an element's end edge
 	for pos, ti := range idxs {
 		t := toks[ti]
 		// Bidi reordering can move a token away from the space that preceded
@@ -1174,6 +1221,7 @@ func placeInlineLine(toks []inlineTok, idxs []int, baseline, asc, desc, mid, jus
 				t.spaceHref = prev.spaceHref
 				t.spaceLinkSrc = prev.spaceLinkSrc
 				t.spaceBg = prev.spaceBg
+				t.spaceSpan = prev.spaceSpan
 				t.spaceSrcItem = prev.spaceSrcItem
 				t.spaceSrcStart = prev.spaceSrcStart
 				t.spaceSrcEnd = prev.spaceSrcEnd
@@ -1232,7 +1280,8 @@ func placeInlineLine(toks []inlineTok, idxs []int, baseline, asc, desc, mid, jus
 			frags = append(frags, InlineFrag{
 				Box:      true,
 				BoxIndex: t.boxIndex,
-				Rect:     gfx.Rect{X: x + gap, Y: by, W: t.size.W, H: t.size.H},
+				Span:     t.span,
+				Rect:     gfx.Rect{X: x + gap + t.padL, Y: by, W: t.size.W - t.padL - t.padR, H: t.size.H},
 				SrcItem:  t.srcItem,
 				SrcStart: t.srcStart,
 				SrcEnd:   t.srcEnd,
@@ -1260,6 +1309,7 @@ func placeInlineLine(toks []inlineTok, idxs []int, baseline, asc, desc, mid, jus
 				frags[n-1].Href == t.spaceHref &&
 				frags[n-1].LinkSource == t.spaceLinkSrc &&
 				frags[n-1].Background == t.spaceBg &&
+				frags[n-1].Span == t.spaceSpan && !padAfter &&
 				frags[n-1].BaselineShift == 0 {
 				prev := &frags[n-1]
 				prev.Text += " "
@@ -1285,26 +1335,34 @@ func placeInlineLine(toks []inlineTok, idxs []int, baseline, asc, desc, mid, jus
 			frags[n-1].Href == t.href &&
 			frags[n-1].LinkSource == t.linkSrc &&
 			frags[n-1].Background == t.background &&
+			frags[n-1].Span == t.span && !padAfter && t.padL == 0 &&
 			frags[n-1].BaselineShift == t.shift {
 			contig := frags[n-1].SrcItem == t.srcItem && frags[n-1].SrcEnd == t.srcStart
 			if (!preserve && !reordered) || contig {
 				prev := &frags[n-1]
 				prev.Text += t.text
-				prev.Rect.W += t.width
+				prev.Rect.W += t.width - t.padR
 				if contig {
 					prev.SrcEnd = t.srcEnd
 				}
 				x += t.width
+				padAfter = t.padR > 0
 				continue
 			}
 		}
+		if gap > 0 && t.padL > 0 {
+			// The space belongs outside the element whose edge follows.
+			x += gap
+			gap = 0
+		}
+		x += t.padL
 		text := t.text
-		w := t.width
+		w := t.width - t.padL - t.padR
 		srcItem, srcStart, srcEnd := t.srcItem, t.srcStart, t.srcEnd
 		if gap > 0 {
 			// Line/box-leading space with no text fragment to host it.
 			text = " " + t.text
-			w = gap + t.width
+			w = gap + w
 			if t.spaceSrcItem == t.srcItem && t.spaceSrcEnd == t.srcStart &&
 				t.spaceSrcEnd-t.spaceSrcStart == 1 {
 				srcStart = t.spaceSrcStart // " word" is the verbatim slice
@@ -1322,12 +1380,14 @@ func placeInlineLine(toks []inlineTok, idxs []int, baseline, asc, desc, mid, jus
 			LinkSource:      t.linkSrc,
 			Background:      t.background,
 			BaselineShift:   t.shift,
+			Span:            t.span,
 			Rect:            gfx.Rect{X: x, Y: ty, W: w, H: ink},
 			SrcItem:         srcItem,
 			SrcStart:        srcStart,
 			SrcEnd:          srcEnd,
 		})
-		x += w
+		x += w + t.padR
+		padAfter = t.padR > 0
 	}
 	return frags, x
 }
@@ -1433,15 +1493,26 @@ func tokenizeInline(items []InlineItem, preserve bool) []inlineTok {
 		tok.spaceHref = spaceSrc.Href
 		tok.spaceLinkSrc = spaceSrc.LinkSource
 		tok.spaceBg = spaceSrc.Background
+		tok.spaceSpan = spaceSrc.Span
 		tok.spaceSrcItem = spaceSrcItem
 		tok.spaceSrcStart = spaceSrcStart
 		tok.spaceSrcEnd = spaceSrcEnd
 	}
+	ins := insetGlue{}
 	for ii, it := range items {
+		if it.Inset > 0 && !it.Box && it.Text == "" {
+			if tok, ok := ins.edge(&toks, it, ii); ok {
+				stampSpace(&tok)
+				pendingSpace = false
+				toks = append(toks, tok)
+			}
+			continue
+		}
 		if it.Box {
 			tok := inlineTok{box: true, boxIndex: it.BoxIndex, valign: it.VAlign, size: it.Size, baseline: it.Baseline,
-				srcItem: ii, srcStart: 0, srcEnd: 1}
+				span: it.Span, srcItem: ii, srcStart: 0, srcEnd: 1}
 			stampSpace(&tok)
+			ins.lead(&tok)
 			toks = append(toks, tok)
 			pendingSpace = false
 			continue
@@ -1452,6 +1523,7 @@ func tokenizeInline(items []InlineItem, preserve bool) []inlineTok {
 			r := runes[i]
 			if r == '\n' {
 				toks = append(toks, inlineTok{forceBreak: true, srcItem: ii, srcStart: i, srcEnd: i + 1})
+				ins.last = -1
 				pendingSpace = false
 				i++
 				continue
@@ -1488,12 +1560,15 @@ func tokenizeInline(items []InlineItem, preserve bool) []inlineTok {
 					linkSrc:    it.LinkSource,
 					background: it.Background,
 					shift:      it.BaselineShift,
+					span:       it.Span,
+					lh:         it.LineHeightScale,
 					width:      MeasureRunes(segment, it.Font, nil),
 					srcItem:    ii,
 					srcStart:   start + breakStart,
 					srcEnd:     start + boundary.Offset,
 				}
 				stampSpace(&tok)
+				ins.lead(&tok)
 				toks = append(toks, tok)
 				pendingSpace = false
 				breakStart = boundary.Offset
@@ -1511,10 +1586,19 @@ func tokenizeInline(items []InlineItem, preserve bool) []inlineTok {
 // are precise.
 func tokenizePreserve(items []InlineItem) []inlineTok {
 	var toks []inlineTok
+	ins := insetGlue{}
 	for ii, it := range items {
+		if it.Inset > 0 && !it.Box && it.Text == "" {
+			if tok, ok := ins.edge(&toks, it, ii); ok {
+				toks = append(toks, tok)
+			}
+			continue
+		}
 		if it.Box {
-			toks = append(toks, inlineTok{box: true, boxIndex: it.BoxIndex, valign: it.VAlign, size: it.Size,
-				baseline: it.Baseline, srcItem: ii, srcStart: 0, srcEnd: 1})
+			tok := inlineTok{box: true, boxIndex: it.BoxIndex, valign: it.VAlign, size: it.Size,
+				span: it.Span, baseline: it.Baseline, srcItem: ii, srcStart: 0, srcEnd: 1}
+			ins.lead(&tok)
+			toks = append(toks, tok)
 			continue
 		}
 		runes := []rune(it.Text)
@@ -1522,6 +1606,7 @@ func tokenizePreserve(items []InlineItem) []inlineTok {
 		for i < len(runes) {
 			if runes[i] == '\n' {
 				toks = append(toks, inlineTok{forceBreak: true, srcItem: ii, srcStart: i, srcEnd: i + 1})
+				ins.last = -1
 				i++
 				continue
 			}
@@ -1539,9 +1624,12 @@ func tokenizePreserve(items []InlineItem) []inlineTok {
 					linkSrc:    it.LinkSource,
 					background: it.Background,
 					shift:      it.BaselineShift,
+					span:       it.Span,
+					lh:         it.LineHeightScale,
 					width:      MeasureRunes(runes[i:i+1], it.Font, nil),
 					srcItem:    ii, srcStart: i, srcEnd: i + 1,
 				})
+				ins.last = -1
 				i++
 				continue
 			}
@@ -1556,7 +1644,7 @@ func tokenizePreserve(items []InlineItem) []inlineTok {
 			from := start
 			for _, b := range preserveBreaks(runes[start:i], space) {
 				seg := runes[from : start+b]
-				toks = append(toks, inlineTok{
+				tok := inlineTok{
 					text:       string(seg),
 					font:       it.Font,
 					color:      it.Color,
@@ -1568,15 +1656,74 @@ func tokenizePreserve(items []InlineItem) []inlineTok {
 					shift:      it.BaselineShift,
 					width:      MeasureRunes(seg, it.Font, nil),
 					space:      space,
+					span:       it.Span,
+					lh:         it.LineHeightScale,
 					srcItem:    ii,
 					srcStart:   from,
 					srcEnd:     start + b,
-				})
+				}
+				ins.lead(&tok)
+				toks = append(toks, tok)
 				from = start + b
 			}
 		}
 	}
 	return toks
+}
+
+// insetGlue glues inline element edges (InlineItem.Inset) to the tokens
+// next to them: a start edge waits for the element's first token and
+// widens it on the left, an end edge widens the last token on the right.
+// An edge with no token to ride on (an empty element, or one ending right
+// after a forced break) becomes an empty box of its width.
+type insetGlue struct {
+	pending float32 // start edges not yet placed
+	span    int32
+	last    int // index of the last content token, -1 after a break
+	started bool
+}
+
+// lead attaches pending start edges to tok (about to be appended).
+func (g *insetGlue) lead(tok *inlineTok) {
+	g.started = true
+	if g.pending > 0 {
+		if tok.box {
+			tok.size.W += g.pending
+			tok.padL = g.pending
+		} else {
+			tok.padL = g.pending
+			tok.width += g.pending
+		}
+		g.pending = 0
+	}
+	g.last = -2 // the token being appended; resolved in edge
+}
+
+// edge handles one Inset item; it returns a token to append when the edge
+// cannot glue to a neighbor.
+func (g *insetGlue) edge(toks *[]inlineTok, it InlineItem, ii int) (inlineTok, bool) {
+	if !it.InsetEnd {
+		g.pending += it.Inset
+		g.span = it.Span
+		return inlineTok{}, false
+	}
+	w := it.Inset
+	if g.pending > 0 {
+		// Nothing since the element started: it is an empty box.
+		w += g.pending
+		g.pending = 0
+	} else if n := len(*toks); g.started && g.last == -2 && n > 0 && !(*toks)[n-1].forceBreak {
+		t := &(*toks)[n-1]
+		if t.box {
+			t.size.W += w
+		} else {
+			t.width += w
+		}
+		t.padR += w
+		return inlineTok{}, false
+	}
+	return inlineTok{box: true, boxIndex: -1, size: gfx.Size{W: w}, span: it.Span,
+		srcItem: ii, srcStart: 0, srcEnd: 0}, true
 }
 
 // preserveBreaks are the ends of the tokens a preserved run splits into:
@@ -1660,7 +1807,7 @@ func splitInlineTok(t inlineTok, avail float32, force bool) (head, tail inlineTo
 	for bi := 1; bi < len(boundaries); bi++ {
 		i, end := boundaries[bi-1], boundaries[bi]
 		cw := MeasureRunes(runes[i:end], t.font, nil)
-		if w+cw > avail {
+		if w+cw+t.padL > avail {
 			break
 		}
 		w += cw
@@ -1677,10 +1824,12 @@ func splitInlineTok(t inlineTok, avail float32, force bool) (head, tail inlineTo
 	}
 	head, tail = t, t
 	head.text = string(runes[:cut])
-	head.width = MeasureRunes(runes[:cut], t.font, nil)
+	head.width = MeasureRunes(runes[:cut], t.font, nil) + t.padL
+	head.padR = 0
 	head.srcEnd = t.srcStart + cut
 	tail.text = string(runes[cut:])
-	tail.width = MeasureRunes(runes[cut:], t.font, nil)
+	tail.width = MeasureRunes(runes[cut:], t.font, nil) + t.padR
+	tail.padL = 0
 	tail.srcStart = t.srcStart + cut
 	tail.spaceBefore = false
 	return head, tail, true

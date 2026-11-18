@@ -3185,6 +3185,7 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 		kindFold = iota
 		kindAtomic
 		kindBlock
+		kindAside // display:none / out of flow: kept, but never splits a run
 	)
 	kinds := make([]int, len(e.elementKids))
 	styles := make([]*ComputedStyle, len(e.elementKids))
@@ -3208,6 +3209,8 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 			if collapseText(ke.text) != "" {
 				anyFold = true
 			}
+		case webCompat && kcs != nil && (kcs.Display == "none" || kcs.Position == "absolute" || kcs.Position == "fixed"):
+			kinds[i] = kindAside
 		case kcs != nil && kcs.Display == "inline" && ke.hasBlockLevelChild(kcs):
 			ke.blockInInline = true
 			kinds[i] = kindBlock
@@ -3269,6 +3272,9 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 				continue
 			}
 			if ke != nil && (!ke.isTextSeg() || collapseText(ke.text) != "") {
+				if webCompat && !ke.isTextSeg() && !inlineHasContent(ke) {
+					continue // an empty inline (`<a id=top></a>`) makes no line
+				}
 				meaningfulText = true
 			}
 		}
@@ -3296,6 +3302,8 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 		if cs.LineHeight > 0 {
 			ib.LineHeightScale = cs.LineHeight
 		}
+		ib.Strut = webCompat
+		ib.StrutNeedsText = e.engine != nil && e.engine.opts.Quirks != NoQuirksMode
 		// Box model stays on the element's Box (applyBox already ran);
 		// the InlineBox carries only typography.
 		st := ib.Style()
@@ -3316,16 +3324,21 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 		}
 		out = append(out, ib)
 	}
+	var aside []qui.Widget
 	for i := range e.elementKids {
-		if kinds[i] == kindBlock {
+		switch kinds[i] {
+		case kindBlock:
 			flushRun()
 			out = append(out, e.elementKids[i])
+			continue
+		case kindAside:
+			aside = append(aside, e.elementKids[i])
 			continue
 		}
 		run = append(run, i)
 	}
 	flushRun()
-	return out
+	return append(out, aside...)
 }
 
 // renderableKids filters out anonymous whitespace-only text segments —
@@ -3381,6 +3394,13 @@ func foldableInline(c *El, cs *ComputedStyle) bool {
 	}
 	if c.onPinch != nil {
 		return false
+	}
+	if webCompat {
+		// A web page's inline elements are CSS inline boxes: they fold
+		// into the run as spans (InlineBox.OpenSpan) that carry their
+		// own box decoration and :hover text style, so links and code
+		// wrap across lines like they do in a browser.
+		return cs == nil || ((cs.Display == "" || cs.Display == "inline") && spanFoldable(cs))
 	}
 	if c.attrs["id"] != "" {
 		return false
@@ -3481,16 +3501,124 @@ func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *Compu
 	if kcs == nil {
 		kcs = parent
 	}
+	if webCompat {
+		ib.OpenSpan(inlineSpanStyle(ke, kcs, parent))
+		defer ib.CloseSpan()
+	}
 	if ke.text != "" {
 		ib.AddLinkText(ke.text, fontFrom(kcs), kcs.Color, kcs.decoration(), kcs.decorationPaint(), href, linkSource(link))
 	}
 	for _, k := range ke.elementKids {
 		if kke, ok := k.(*El); ok {
-			e.appendInlineChild(ib, kke, e.childStyle(kke, kcs), kcs, href, link)
+			kkcs := e.childStyle(kke, kcs)
+			if webCompat && kkcs != nil && (kkcs.Display == "none" || kkcs.Position == "absolute" || kkcs.Position == "fixed") {
+				continue // out of the run (an absolute one is not drawn yet)
+			}
+			e.appendInlineChild(ib, kke, kkcs, kcs, href, link)
 		} else {
 			ib.AddBox(k, qui.InlineBaseline)
 		}
 	}
+}
+
+// spanLineHeight is a span's line-height scale: < 0 for normal.
+func spanLineHeight(cs *ComputedStyle) float32 {
+	if cs.LineHeight > 0 {
+		return cs.LineHeight
+	}
+	return -1
+}
+
+// inlineHasContent reports whether a folded inline element contributes
+// anything to a line: text, a forced break, an atomic box, or a
+// horizontal edge (CSS 2.1 § 9.4.2: a line box with none of these is
+// treated as zero-height).
+func inlineHasContent(e *El) bool {
+	if collapseText(e.text) != "" || e.tag == "br" {
+		return true
+	}
+	if cs := e.lastCS; cs != nil && cs.Padding.Left+cs.Padding.Right+cs.Margin.Left+cs.Margin.Right+cs.BorderWidth > 0 {
+		return true
+	}
+	for _, k := range e.elementKids {
+		ke, ok := k.(*El)
+		if !ok {
+			return true
+		}
+		if ke.isTextSeg() {
+			if collapseText(ke.text) != "" {
+				return true
+			}
+			continue
+		}
+		if !foldableTag(ke.tag) || inlineHasContent(ke) {
+			return true
+		}
+	}
+	return false
+}
+
+// spanFoldable reports whether an inline element's style can be painted
+// as an InlineBox span (web-compat): backgrounds, borders, padding, radius
+// and text-only :hover changes can; shadows, gradients, images, opacity,
+// filters and box-changing :hover variants still need a widget of their
+// own. Width / height do not apply to inline boxes at all.
+func spanFoldable(cs *ComputedStyle) bool {
+	return !cs.HasShadow && cs.Gradient == nil && !cs.HasOpacity && cs.Transform == nil &&
+		cs.Filter == nil && cs.BackgroundImageURL == "" && !cs.hasStateBoxVariant()
+}
+
+// inlineSpanStyle is a folded inline element's span decoration.
+func inlineSpanStyle(e *El, cs, parent *ComputedStyle) widgets.InlineSpanStyle {
+	st := widgets.InlineSpanStyle{
+		LineHeightScale: spanLineHeight(cs),
+		Padding:         cs.Padding,
+		Margin:          qui.Insets{Left: cs.Margin.Left, Right: cs.Margin.Right},
+		Radius:          cs.Radius,
+		Source:          e,
+	}
+	if cs.HasBackground {
+		st.Background = cs.Background
+	}
+	if cs.BorderStyle != qui.BorderNone {
+		if cs.HasSideBorders {
+			st.Border = cs.SideWidths
+			st.BorderColor = cs.SideColors.Top
+			if st.Border.Top == 0 {
+				st.BorderColor = cs.SideColors.Left
+			}
+		} else if cs.BorderWidth > 0 {
+			w := cs.BorderWidth
+			st.Border = qui.Insets{Top: w, Right: w, Bottom: w, Left: w}
+			st.BorderColor = cs.BorderColor
+		}
+	}
+	pfs := cs.FontSize
+	if parent != nil {
+		pfs = parent.FontSize
+	}
+	switch v := strings.ToLower(strings.TrimSpace(cs.raw["vertical-align"])); v {
+	case "super":
+		st.BaselineShift = pfs / 3
+	case "sub":
+		st.BaselineShift = -pfs / 5
+	case "", "baseline", "middle", "top", "bottom", "text-top", "text-bottom":
+	default:
+		if px, ok := parseLength(v, cs.FontSize, cs.LineHeight*cs.FontSize); ok {
+			st.BaselineShift = px
+		}
+	}
+	if h := cs.Hover; h != nil && (h.Color != cs.Color || h.decoration() != cs.decoration() ||
+		(h.HasBackground && h.Background != cs.Background)) {
+		st.Hover = &widgets.InlineSpanHover{
+			HasColor: h.Color != cs.Color, Color: h.Color,
+			HasDeco: h.decoration() != cs.decoration(), Decoration: h.decoration(), DecoPaint: h.decorationPaint(),
+		}
+		if h.HasBackground && h.Background != cs.Background {
+			st.Hover.Background = h.Background
+		}
+	}
+	return st
 }
 
 // intAttr parses a positive integer attribute, or returns def.
