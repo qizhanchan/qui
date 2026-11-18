@@ -133,3 +133,28 @@ func TestCursorResetsWhenNothingClaims(t *testing.T) {
 		t.Fatalf("cursor stuck after leaving the claiming widget: got %v", got)
 	}
 }
+
+// TestRefreshCursorWithoutMove: a widget whose cursor changed for a
+// reason other than pointer movement (a held modifier) gets it applied
+// at the last pointer position; before any move there is nothing to do.
+func TestRefreshCursorWithoutMove(t *testing.T) {
+	win := NewTestWindow(Size{W: 200, H: 200})
+	leaf := &cursorProbe{builtIn: CursorText, hasBuiltIn: true}
+	leaf.SetSelf(leaf)
+	win.SetRoot(leaf)
+	leaf.Layout(Rect{W: 200, H: 200})
+
+	win.RefreshCursor() // no pointer yet
+	if got := win.Cursor(); got != CursorDefault {
+		t.Fatalf("refresh before any move set %v", got)
+	}
+	hoverAt(win, 10, 10)
+	if got := win.Cursor(); got != CursorText {
+		t.Fatalf("hover = %v, want CursorText", got)
+	}
+	leaf.builtIn = CursorHand
+	win.RefreshCursor()
+	if got := win.Cursor(); got != CursorHand {
+		t.Fatalf("after refresh = %v, want CursorHand", got)
+	}
+}

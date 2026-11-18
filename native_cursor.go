@@ -87,6 +87,19 @@ func (w *Window) updateCursorFromHover(cursorX, cursorY float32) {
 	w.SetCursor(w.resolveCursor(Point{X: cursorX, Y: cursorY}))
 }
 
+// RefreshCursor re-resolves the cursor at the pointer's last position
+// without a mouse move — for a widget whose cursor depends on state the
+// pointer didn't change, such as a held modifier (⌘ over a terminal link
+// shows a hand). Widgets call it instead of SetCursor, which would fight
+// the hover resolution. UI thread.
+func (w *Window) RefreshCursor() {
+	if w == nil || !w.hoverPointOK {
+		return
+	}
+	w.assertUIThread("Window.RefreshCursor")
+	w.updateCursorFromHover(w.hoverPoint.X, w.hoverPoint.Y)
+}
+
 // resolveCursor implements the two-tier rule documented at the top of this
 // file. Nothing claiming a shape means CursorDefault — the pointer resets
 // itself when it slides off the last widget that cared.

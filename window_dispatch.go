@@ -648,6 +648,7 @@ func (w *Window) syncHoverPath(me MouseEvent) {
 		})
 	}
 	w.hoverPath = newPath
+	w.hoverPoint, w.hoverPointOK = Point{X: me.X, Y: me.Y}, true
 	w.updateTooltipFromHover(me.X, me.Y)
 	w.updateCursorFromHover(me.X, me.Y)
 }

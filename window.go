@@ -279,6 +279,10 @@ type Window struct {
 	popupFocusable bool
 	// cursorShape is the last cursor style requested by widgets.
 	cursorShape CursorShape
+	// hoverPoint is where the last mouse move put the pointer (window
+	// coordinates), for RefreshCursor; hoverPointOK once there was one.
+	hoverPoint   Point
+	hoverPointOK bool
 	// raw is the raw keyboard capture configuration (keyboard_raw.go).
 	raw rawKeyboardState
 	// keyCapture is system shortcut capture (keyboard_capture.go).
