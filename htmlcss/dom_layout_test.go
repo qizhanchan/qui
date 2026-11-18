@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -128,6 +129,9 @@ func TestDOMLayout(t *testing.T) {
 }
 
 func runDOMLayoutFixture(t *testing.T, dir, name string, used []bool) {
+	if name == "web-hyphens-auto" && runtime.GOOS != "darwin" {
+		t.Skip("golden uses the macOS hyphenation dictionary")
+	}
 	html, err := os.ReadFile(filepath.Join(dir, name+".html"))
 	if err != nil {
 		t.Fatal(err)

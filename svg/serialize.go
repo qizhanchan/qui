@@ -161,6 +161,8 @@ func formatStyle(s Style) string {
 
 func formatPaint(p Paint) string {
 	switch p.Kind {
+	case PaintGradient:
+		return "url(#" + p.reference + ")"
 	case PaintCurrentColor:
 		return "currentColor"
 	case PaintNone:

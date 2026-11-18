@@ -85,3 +85,28 @@ func TestTextDecorationDefaultsZeroPaint(t *testing.T) {
 		t.Errorf("plain underline should yield a zero paint, got %+v", dp)
 	}
 }
+
+func TestDecoratingAncestorUnderlinesNestedCode(t *testing.T) {
+	boxes := webInlineBoxes(t, `<!doctype html><body style="margin:0"><p><a href="#"><code style="text-decoration:none"><span>function()</span></code></a></p></body>`, NoQuirksMode)
+	if len(boxes) != 1 {
+		t.Fatalf("inline boxes: %d", len(boxes))
+	}
+	var canvas qui.RecordingCanvas
+	boxes[0].Draw(&canvas)
+	if len(canvas.Fills) == 0 {
+		t.Fatal("ancestor underline did not reach nested code text")
+	}
+}
+
+func TestTitledAbbreviationHasBrowserDottedUnderline(t *testing.T) {
+	SetWebCompat(true)
+	defer SetWebCompat(false)
+	res := RenderDoc(`<!doctype html><p><abbr id="titled" title="separator"><span>/</span></abbr><abbr id="plain">x</abbr><abbr id="override" title="meaning" style="text-decoration:none">y</abbr></p>`, "", Options{DocumentRoot: true})
+	cs := res.ByID["titled"].(*El).lastCS
+	if !cs.Underline || cs.DecorationStyle != qui.DecorationDotted {
+		t.Fatalf("abbreviation decoration: %+v", cs.decorationPaint())
+	}
+	if res.ByID["plain"].(*El).lastCS.Underline || res.ByID["override"].(*El).lastCS.Underline {
+		t.Fatal("abbreviation underline ignored title or author override")
+	}
+}

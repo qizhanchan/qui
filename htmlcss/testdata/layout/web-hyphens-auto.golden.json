@@ -1,0 +1,10 @@
+{
+ "fixture": "web-hyphens-auto",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "auto": [0,0,150,72],
+  "manual": [0,72,150,96],
+  "plain": [0,168,105,72]
+ }
+}

@@ -20,25 +20,23 @@ type Length struct {
 // SetLength returns a Length explicitly carrying v.
 func SetLength(v float32) Length { return Length{V: v, Set: true} }
 
-// PaintKind tags whether a Paint inherits, paints nothing, or paints a
-// solid color. v1 has no gradient/pattern variants — when those land,
-// add new Kinds and a payload union.
+// PaintKind selects inheritance, no paint, a color, or a paint server.
 type PaintKind uint8
 
 const (
-	PaintInherit      PaintKind = iota // zero value — pull from parent / default
-	PaintNone                          // SVG fill="none" / stroke="none"
-	PaintSolid                         // Color is a solid RGBA paint
-	PaintCurrentColor                  // resolve against the element color, independent of fill/stroke
+	PaintInherit PaintKind = iota // zero value — pull from parent / default
+	PaintNone                     // SVG fill="none" / stroke="none"
+	PaintSolid                    // Color is a solid RGBA paint
+	PaintGradient
+	PaintCurrentColor // resolve against the element color, independent of fill/stroke
 )
 
-// Paint describes how to fill or stroke a region. v1 only supports the
-// "solid color" variant beyond inherit/none; future gradient + pattern
-// types will live alongside PaintKind values without changing this
-// struct's name.
+// Paint describes how to fill or stroke a region, including local linear gradients.
 type Paint struct {
-	Kind  PaintKind
-	Color qui.Color
+	Kind      PaintKind
+	Color     qui.Color
+	reference string
+	gradient  *linearGradient
 }
 
 // SolidPaint is a convenience constructor for the common case.
@@ -122,6 +120,7 @@ func (s *Style) SetNoDash() {
 // inheritance has been collapsed, and defaults have been applied. Only
 // the renderer touches it.
 type resolvedStyle struct {
+	bounds        ViewBox
 	Color         qui.Color
 	Fill          Paint
 	Stroke        Paint

@@ -10,6 +10,7 @@ import (
 	gtfont "github.com/go-text/typesetting/font"
 	"github.com/go-text/typesetting/fontscan"
 	"golang.org/x/image/font/opentype"
+	"golang.org/x/image/font/sfnt"
 
 	"github.com/qizhanchan/qui/internal/gfx"
 )
@@ -24,6 +25,8 @@ import (
 // The index of installed fonts comes from go-text's fontscan, which scans
 // the platform font directories once and caches the result on disk (the
 // first scan on a new machine takes a few seconds).
+
+var systemTypefaceNames sync.Map // *opentype.Font -> PostScript name
 
 var (
 	sysFontsOn   bool
@@ -136,6 +139,9 @@ func ensureSystemFamilyUnlocked(family string) bool {
 		// normal-width face of the same weight.
 		if fp.Aspect.Stretch != 0 && fp.Aspect.Stretch != gtfont.StretchNormal {
 			continue
+		}
+		if name, err := f.Name(&sfnt.Buffer{}, sfnt.NameIDPostScript); err == nil {
+			systemTypefaceNames.Store(f, name)
 		}
 		got = append(got, loaded{fontVariantKey{family: key, weight: w, italic: italic}, f})
 	}

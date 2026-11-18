@@ -1,0 +1,15 @@
+{
+ "fixture": "web-bfc-margin-containment",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "flex": [0,0,200,46],
+  "item": [0,0,200,46],
+  "inner": [0,10,200,20],
+  "child": [0,10,200,20],
+  "empty": [0,46,200,0],
+  "float": [0,46,200,46],
+  "fchild": [0,56,200,20],
+  "after": [0,92,640,10]
+ }
+}

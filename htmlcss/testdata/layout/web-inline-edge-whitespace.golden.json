@@ -1,0 +1,13 @@
+{
+ "fixture": "web-inline-edge-whitespace",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "first": [0,0,200,48],
+  "next": [75.55,17,1,1],
+  "second": [0,48,200,24],
+  "tail": [133.34,65,1,1],
+  "third": [0,72,200,24],
+  "last": [75.55,89,1,1]
+ }
+}

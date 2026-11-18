@@ -210,6 +210,11 @@ func defaultDisplay(tag string) string {
 // input types borrow <button>'s chrome and checkbox / radio inputs get
 // their own rule.
 func uaTagFor(n *Node) string {
+	if webCompat && n.Tag == "abbr" {
+		if _, ok := n.Attr("title"); ok {
+			return "abbr-titled"
+		}
+	}
 	if n.Tag != "input" {
 		return n.Tag
 	}
@@ -224,6 +229,18 @@ func uaTagFor(n *Node) string {
 
 // uaDeclarations returns the default declarations for a tag.
 func uaDeclarations(tag string) []Declaration {
+	if webCompat {
+		switch tag {
+		case "abbr-titled":
+			return decls("text-decoration", "underline dotted")
+		case "button":
+			return decls("padding", "1px 6px", "background-color", "#efefef", "border", "2px solid #767676", "border-radius", "3px", "text-align", "center", "box-sizing", "border-box", "font-family", "Arial", "font-size", "13.3333px", "line-height", "normal")
+		case "input":
+			return decls("font-family", "Arial", "font-size", "13.3333px", "line-height", "normal", "padding", "1px 2px", "border", "2px solid #767676")
+		case "select":
+			return decls("font-family", "Arial", "font-size", "13.3333px", "line-height", "normal", "box-sizing", "border-box", "border", "1px solid #767676", "padding", "0")
+		}
+	}
 	switch tag {
 	// Headings, paragraphs and lists follow Chrome's UA stylesheet
 	// (html.css): font sizes in em of the parent, margins in em of the

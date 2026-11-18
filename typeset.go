@@ -510,5 +510,14 @@ func FontVerticalMetrics(font Font) (ascent, descent float32) {
 	return typeset.FontVerticalMetrics(font)
 }
 
+// FontMetricsFor returns the font's vertical metrics in 26.6 fixed-point units.
+func FontMetricsFor(spec Font) font.Metrics { return typeset.FontMetricsFor(spec) }
+
 // SetWebFontMetrics enables browser-specific platform font metrics.
 func SetWebFontMetrics(on bool) { typeset.SetWebFontMetrics(on) }
+
+// CSSInlineMetrics returns a browser inline line's ascent and descent,
+// including the leading on each side of the baseline.
+func CSSInlineMetrics(f Font, scale float32) (float32, float32) {
+	return typeset.CSSInlineMetrics(f, scale)
+}

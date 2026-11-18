@@ -78,6 +78,7 @@ type shapingFaceKey struct {
 	font       *opentype.Font
 	variations string
 	ppem       uint16
+	opsz       float32 // automatic optical size; explicit opsz overrides it
 	wght       float32 // implied weight axis value (variable fonts only)
 }
 
@@ -168,6 +169,7 @@ var TextShapingState struct {
 
 func init() {
 	TextShapingState.fonts = make(map[*opentype.Font]*gtfont.Font)
+	TextShapingState.variable = nil
 	TextShapingState.sources = make(map[*gtfont.Font]*opentype.Font)
 	TextShapingState.faces = make(map[shapingFaceKey]*gtfont.Face)
 	TextShapingState.shaper.SetFontCacheSize(64)
@@ -177,6 +179,7 @@ func invalidateShapingFontCache() {
 	textGlyphCache.Clear()
 	TextShapingState.Lock()
 	TextShapingState.fonts = make(map[*opentype.Font]*gtfont.Font)
+	TextShapingState.variable = nil
 	TextShapingState.sources = make(map[*gtfont.Font]*opentype.Font)
 	TextShapingState.faces = make(map[shapingFaceKey]*gtfont.Face)
 	TextShapingState.shaper = shaping.HarfbuzzShaper{}
@@ -384,6 +387,17 @@ func ShapeParagraph(text []rune, fontSpec gfx.Font, requested TextDirection) (sh
 	for i := range runs {
 		advance += runs[i].Advance
 	}
+	preciseAdvance := float32(advance) / 64
+	// CoreText supplies fractional advances for installed variable fonts. Keep
+	// that precision until line breaking; per-glyph 26.6 rounding compounds
+	// across long paragraphs and changes wrap decisions at the right edge.
+	if webFontMetrics.Load() && len(fontChain) > 0 && TextShapingState.variable[TextShapingState.fonts[fontChain[0]]] {
+		if name, ok := systemTypefaceNames.Load(fontChain[0]); ok {
+			if width, ok := systemTextAdvance(text, name.(string), fontSpec); ok {
+				preciseAdvance = width
+			}
+		}
+	}
 	return shapedParagraph{
 		Text:       append([]rune(nil), text...),
 		ShapeText:  capsText,
@@ -391,7 +405,7 @@ func ShapeParagraph(text []rune, fontSpec gfx.Font, requested TextDirection) (sh
 		Runs:       runs,
 		graphemes:  graphemes,
 		lineBreaks: LineBreakBoundaries(text),
-		Advance:    float32(advance) / 64,
+		Advance:    preciseAdvance,
 	}, true
 }
 
@@ -488,9 +502,33 @@ func shapeSegmentWithEmojiLocked(input shaping.Input, graphemes []int, fontSpec 
 }
 
 func shapeInputLocked(input shaping.Input) shaping.Output {
+	originalSize := input.Size
+	requested := FixedToPx(originalSize)
+	// Retain fractional design-unit advances until the run is accumulated.
+	// Blink rounds the run, rather than rounding every glyph to 1/64px.
+	if originalSize > 0 && originalSize < fixed.I(8192) {
+		input.Size *= 64
+	}
 	output := TextShapingState.shaper.Shape(input)
-	requested := FixedToPx(input.Size)
+	output.Size = originalSize
 	shaperSize := float32(input.Size.Ceil())
+	// go-text's shaper leaves HarfBuzz Ptem unset, which applies AAT trak
+	// at 12pt for every size. Correct that tracking to the requested CSS size.
+	if input.Face.STAT != nil && !input.Face.Trak.IsEmpty() && !input.Direction.IsVertical() {
+		track := input.Face.Trak.Horiz
+		delta := (track.GetTracking(requested, 0) - track.GetTracking(12, 0)) * shaperSize / float32(input.Face.Upem())
+		adjustment := pxToFixed(delta)
+		previous := -1
+		for i := range output.Glyphs {
+			g := &output.Glyphs[i]
+			if g.ClusterIndex != previous {
+				g.Advance += adjustment
+				g.XAdvance += adjustment
+				previous = g.ClusterIndex
+			}
+		}
+		output.RecomputeAdvance()
+	}
 	if requested <= 0 || shaperSize <= 0 || AbsFloat(requested-shaperSize) < 0.0001 {
 		return output
 	}
@@ -498,15 +536,24 @@ func shapeInputLocked(input shaping.Input) shaping.Output {
 	scaleFixed := func(value fixed.Int26_6) fixed.Int26_6 {
 		return fixed.Int26_6(math.Round(float64(float32(value) * ratio)))
 	}
+	var cumulative, rounded fixed.Int26_6
 	for i := range output.Glyphs {
 		glyph := &output.Glyphs[i]
 		glyph.Width = scaleFixed(glyph.Width)
 		glyph.Height = scaleFixed(glyph.Height)
 		glyph.XBearing = scaleFixed(glyph.XBearing)
 		glyph.YBearing = scaleFixed(glyph.YBearing)
-		glyph.Advance = scaleFixed(glyph.Advance)
-		glyph.XAdvance = scaleFixed(glyph.XAdvance)
-		glyph.YAdvance = scaleFixed(glyph.YAdvance)
+		cumulative += glyph.Advance
+		next := scaleFixed(cumulative)
+		glyph.Advance = next - rounded
+		rounded = next
+		if input.Direction.IsVertical() {
+			glyph.YAdvance = glyph.Advance
+			glyph.XAdvance = scaleFixed(glyph.XAdvance)
+		} else {
+			glyph.XAdvance = glyph.Advance
+			glyph.YAdvance = scaleFixed(glyph.YAdvance)
+		}
 		glyph.XOffset = scaleFixed(glyph.XOffset)
 		glyph.YOffset = scaleFixed(glyph.YOffset)
 	}
@@ -670,6 +717,9 @@ func shapingFaceLocked(source *opentype.Font, spec gfx.Font) (*gtfont.Face, bool
 		variations: canonicalVariationKey(spec.Variations),
 		ppem:       ppem,
 	}
+	if _, explicit := spec.Variations["opsz"]; !explicit {
+		key.opsz = spec.Size
+	}
 	// A variable font's weight axis follows the requested weight (CSS
 	// font-weight drives 'wght' unless font-variation-settings sets it).
 	_, explicitWght := spec.Variations["wght"]
@@ -712,11 +762,23 @@ func shapingFaceLocked(source *opentype.Font, spec gfx.Font) (*gtfont.Face, bool
 	if source == UISymbolFallback.Load() {
 		uiSymbolShapingFont.Store(parsed)
 	}
-	face := gtfont.NewFace(parsed)
+	// HarfbuzzShaper caches by *Font, although variation coordinates live on
+	// Face. Give each variable instance its own identity (tables stay shared),
+	// so a previously shaped weight/optical size cannot supply its metrics.
+	instance := parsed
+	if TextShapingState.variable[parsed] {
+		copy := *parsed
+		instance = &copy
+		TextShapingState.sources[instance] = source
+	}
+	face := gtfont.NewFace(instance)
 	face.SetPpem(ppem, ppem)
 	vars := shapingVariations(spec.Variations)
 	if key.wght > 0 {
 		vars = append(vars, gtfont.Variation{Tag: gtot.MustNewTag("wght"), Value: key.wght})
+	}
+	if key.opsz > 0 {
+		vars = append(vars, gtfont.Variation{Tag: gtot.MustNewTag("opsz"), Value: key.opsz})
 	}
 	face.SetVariations(vars)
 	TextShapingState.faces[key] = face

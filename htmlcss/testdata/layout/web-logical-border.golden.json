@@ -1,0 +1,11 @@
+{
+ "fixture": "web-logical-border",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "start": [0,0,235,25],
+  "rtl": [0,35,240,25],
+  "cascade": [0,70,233,25],
+  "group": [0,105,238,27]
+ }
+}

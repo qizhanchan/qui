@@ -13,7 +13,8 @@ import . "github.com/qizhanchan/qui"
 
 // InlineSpanStyle is an inline element's box decoration.
 type InlineSpanStyle struct {
-	NoWrap bool // white-space: nowrap; descendants share one unbreakable group
+	Hyphenate bool
+	NoWrap    bool // white-space: nowrap; descendants share one unbreakable group
 	// BackgroundImage paints the sliced background of a wrapping inline.
 	// Its positioning area is the unbroken strip of all line fragments.
 	BackgroundImage func(Rect) Shader
@@ -404,4 +405,11 @@ func (b *InlineBox) hoverLayout() InlineLayout {
 		l.Lines[li].Frags = frags
 	}
 	return l
+}
+
+func (b *InlineBox) currentHyphenation() bool {
+	if id := b.curSpan(); id > 0 {
+		return b.spans[id-1].style.Hyphenate
+	}
+	return b.Hyphenate
 }

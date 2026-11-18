@@ -1,6 +1,7 @@
 package widgets
 
 import (
+	"math"
 	"strings"
 	"time"
 	"unicode"
@@ -49,6 +50,8 @@ const (
 //	    func(idx int, value string) { log.Println("picked:", value) })
 //	cb.SelectedIdx = 1  // pre-select "1x"
 type Select struct {
+	// WebMetrics enables browser geometry for the raw HTML trigger.
+	WebMetrics bool
 	BaseWidget
 	Items []string
 	// ItemDisabled marks unselectable options, parallel to Items (a shorter
@@ -435,6 +438,9 @@ func (cb *Select) native() bool {
 // case the text starts at border + padding-left and the arrow sits
 // border + padding-right in (never tighter than the UA gap).
 func (cb *Select) nativeInsets() (lead, trail, arrowGap float32) {
+	if cb.WebMetrics && cb.States.Base.Padding == (Insets{}) {
+		return 2, 16, 4
+	}
 	pad, ok := nativeBoxPadding(&cb.States.Base)
 	if !ok {
 		return htmlSelLeadPad, htmlSelTrailPad, htmlSelArrowGap
@@ -805,6 +811,11 @@ func (cb *Select) Measure(available Size) Size {
 			width = available.W
 		}
 		height := htmlControlHeight
+		if cb.WebMetrics {
+			height = webControlHeight(&cb.States.Base, cb.States.Base.Padding) + 2
+			width = float32(math.Ceil(float64(width)))
+			return Size{W: width, H: height}
+		}
 		if pad, ok := nativeBoxPadding(&cb.States.Base); ok {
 			height = nativePaddedHeight(&cb.States.Base, pad)
 		}
@@ -1306,4 +1317,12 @@ func (cb *Select) selectIndex(idx int) {
 	if cb.OnOptionChange != nil && idx >= 0 {
 		cb.OnOptionChange(idx, cb.option(idx))
 	}
+}
+
+// InlineBaseline aligns the selected label with surrounding CSS text.
+func (cb *Select) InlineBaseline() float32 {
+	if cb.WebMetrics {
+		return webControlBaseline(&cb.States.Base, cb.States.Base.Padding) + 1
+	}
+	return 0
 }

@@ -1,0 +1,11 @@
+{
+ "fixture": "web-inline-leading-baseline",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "one": [0,0,640,25.59],
+  "base": [101.06,16,2,2],
+  "two": [0,25.59,640,25.59],
+  "three": [0,51.19,640,25.59]
+ }
+}

@@ -1,0 +1,9 @@
+{
+ "fixture": "web-inline-generated-text",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "note": [0,0,266,92.78],
+  "after": [0,92.78,640,25.59]
+ }
+}

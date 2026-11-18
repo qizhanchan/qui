@@ -34,6 +34,9 @@ func parsePaint(s string) (Paint, error) {
 	case "inherit":
 		return Paint{Kind: PaintInherit}, nil
 	}
+	if strings.HasPrefix(s, "url(#") && strings.HasSuffix(s, ")") {
+		return Paint{Kind: PaintGradient, reference: strings.TrimSuffix(strings.TrimPrefix(s, "url(#"), ")")}, nil
+	}
 	c, err := parseColor(s)
 	if err != nil {
 		return Paint{}, err

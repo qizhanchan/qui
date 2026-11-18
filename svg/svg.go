@@ -38,8 +38,8 @@
 // expects. Pass a zero tint (all components 0, including alpha) to
 // keep the document's authored colors.
 //
-// Scope: shapes + fills + strokes + transforms only. <text>,
-// gradients, masks, clip-paths, filters, and SMIL animation are
+// Scope: shapes, fills, strokes, transforms, and linear gradients. Text,
+// radial gradients, masks, clip-paths, filters, and SMIL animation are
 // deferred — they parse-and-skip without error, but render as if
 // they weren't there.
 package svg

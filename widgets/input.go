@@ -37,6 +37,8 @@ const (
 )
 
 type Input struct {
+	// WebMetrics sizes a raw HTML control using browser font metrics.
+	WebMetrics bool
 	BaseWidget
 	labelKey messageKey
 	Text     string
@@ -696,6 +698,11 @@ func (t *Input) Measure(available Size) Size {
 	var height float32
 	switch {
 	case t.native():
+		if t.WebMetrics {
+			width = webInputWidth(&t.States.Base, t.Chars)
+			height = webControlHeight(&t.States.Base, t.States.Base.Padding)
+			break
+		}
 		// Raw HTML <input>: fixed 180×22 box at the baseline font, but
 		// grow the height with a larger font so inherited font-size isn't
 		// clipped (border 1 + padding 1 on each side = 4 px of chrome).
@@ -1372,3 +1379,11 @@ func (t *Input) editorVertical(int) (int, bool) { return 0, false }
 func (t *Input) editorTextChanged() {}
 
 func (t *Input) editorRevealCaret() { t.ensureCursorVisible() }
+
+// InlineBaseline aligns the editable text with surrounding CSS text.
+func (t *Input) InlineBaseline() float32 {
+	if t.WebMetrics {
+		return webControlBaseline(&t.States.Base, t.States.Base.Padding)
+	}
+	return 0
+}

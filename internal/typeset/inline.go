@@ -46,6 +46,8 @@ const (
 // of styled text or an atomic box.
 type InlineItem struct {
 	NoWrapGroup int32 // nonzero consecutive items suppress soft breaks within the group
+	Hyphenate   bool
+	Language    string
 	// Text — when non-empty this is a text item. Whitespace collapses: runs
 	// of spaces/tabs are single break opportunities, a trailing space at a
 	// soft wrap is dropped, and '\n' forces a line break (used for <br>).
@@ -625,6 +627,8 @@ type InlineLayout struct {
 // inlineTok is one break unit: a word, an atomic box, a run of preserved
 // whitespace (PreserveWhitespace mode only), or a forced break.
 type inlineTok struct {
+	language   string
+	hyphenate  bool
 	forceBreak bool
 
 	box      bool
@@ -748,6 +752,10 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 
 	maxW := opts.MaxWidth
 	wrap := opts.Wrap && maxW > 0
+	fitEpsilon := float32(1e-3)
+	if opts.RoundNormalMetrics {
+		fitEpsilon = 1.0 / 64
+	}
 
 	// Vertical metrics of the reference (paragraph) font. They size an empty
 	// line, and — with exclusions in play — they are also the height a line
@@ -759,10 +767,13 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 	baseDesc := inlineDescent(opts.BaseFont)
 	leadBelow := opts.LeadingBelow
 	baseLA, baseLB := inlineLeading(opts.BaseFont, scale, spacing, leadBelow)
-	if opts.RoundNormalMetrics && scale == 0 && spacing <= 0 {
-		baseAsc, baseDesc = roundedNormalMetrics(opts.BaseFont)
-		baseLA, baseLB = 0, 0
+	if opts.RoundNormalMetrics && spacing <= 0 {
+		baseAsc = float32(math.Round(float64(baseAsc)))
+		baseDesc = float32(math.Round(float64(baseDesc)))
+		above, below := CSSInlineMetrics(opts.BaseFont, scale)
+		baseLA, baseLB = above-baseAsc, below-baseDesc
 	}
+
 	mid := inlineMidRef(opts.BaseFont)
 	strut := baseAsc + baseDesc + baseLA + baseLB
 
@@ -999,6 +1010,21 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 			end, _ := tabAdvance(x, tokRunWidth(toks, ti+1, nToks), t.width, &opts)
 			contentW = end - x
 		}
+		if wrap && group == 0 && t.hyphenate && !t.box && !t.space && segW[seg]+gap+contentW > segAvail()+fitEpsilon {
+			if head, tail, ok := splitHyphenatedTok(t, segAvail()-segW[seg]-gap); ok {
+				toks = append(toks, head)
+				place(len(toks)-1, gap, head.width)
+				srcCursor = SourcePos{Item: head.srcItem, Off: head.srcEnd}
+				endLine(false)
+				startLine(tail.width, 0)
+				lineStart = SourcePos{Item: tail.srcItem, Off: tail.srcStart}
+				srcCursor = lineStart
+				t = tail
+				contentW = tail.width
+				gap = 0
+				toks[ti] = tail
+			}
+		}
 		// Character-level fallback (CSS overflow-wrap:break-word): a run with
 		// no break opportunity inside it and wider than a whole slot can only
 		// overflow under word-level wrapping — a pasted URL or a long
@@ -1066,7 +1092,7 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 		}
 		// Preserved whitespace never wraps by itself: at the boundary it
 		// hangs past the slot's edge at the end of the current one.
-		if wrap && !insideGroup && len(cur) > 0 && !t.space && segW[seg]+gap+probeW > segAvail()+1e-3 {
+		if wrap && !insideGroup && len(cur) > 0 && !t.space && segW[seg]+gap+probeW > segAvail()+fitEpsilon {
 			// Round the float first: the rest of this line continues in the
 			// next slot that can hold the token, and only when there is none
 			// does the line end. A space at a slot boundary is dropped, the
@@ -1078,7 +1104,7 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 					break
 				}
 			}
-			if segW[seg]+gap+probeW > segAvail() {
+			if segW[seg]+gap+probeW > segAvail()+fitEpsilon {
 				endLine(false)
 				ab, bb := t.aboveBelow(scale, spacing, mid, leadBelow, opts.RoundNormalMetrics)
 				startLine(probeW, ab+bb)
@@ -1217,6 +1243,7 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 			}
 		}
 	}
+
 	return out
 }
 
@@ -1257,9 +1284,10 @@ func (t inlineTok) aboveBelow(scale, spacing, mid float32, leadBelow, roundNorma
 	}
 	la, lb := inlineLeading(t.font, scale, spacing, leadBelow)
 	above, below = fa+la, fd+lb
-	if roundNormal && scale == 0 && spacing <= 0 {
-		above, below = roundedNormalMetrics(t.font)
+	if roundNormal && spacing <= 0 {
+		above, below = CSSInlineMetrics(t.font, scale)
 	}
+
 	if t.shift > 0 {
 		above += t.shift
 	} else {
@@ -1606,7 +1634,7 @@ func tokenizeInline(items []InlineItem, preserve bool) []inlineTok {
 			return
 		}
 		tok.spaceBefore = true
-		tok.spaceWidth, _ = TextMetrics(" ", spaceSrc.Font)
+		tok.spaceWidth = MeasureRunes([]rune{' '}, spaceSrc.Font, nil)
 		tok.spaceFont = spaceSrc.Font
 		tok.spaceColor = spaceSrc.Color
 		tok.spaceDeco = spaceSrc.Decoration
@@ -1673,6 +1701,8 @@ func tokenizeInline(items []InlineItem, preserve bool) []inlineTok {
 				segment := word[breakStart:boundary.Offset]
 				tok := inlineTok{
 					text:       string(segment),
+					hyphenate:  it.Hyphenate,
+					language:   it.Language,
 					font:       it.Font,
 					color:      it.Color,
 					deco:       it.Decoration,
@@ -2060,6 +2090,7 @@ func DrawInlineLine(canvas gfx.Canvas, layout InlineLayout, li int, origin gfx.R
 				H: line.InkAscent + line.InkDescent,
 			}, f.Background)
 		}
+
 		canvas.DrawText(f.Text, r, f.Color, f.Font)
 		if f.Decoration != 0 {
 			drawDecorationRun(canvas, f.Decoration, r.X, r.W, r.Y, r.H, f.Color, f.Font, f.DecorationPaint)
@@ -2143,4 +2174,20 @@ func roundedNormalMetrics(f gfx.Font) (float32, float32) {
 	a, d := inlineAscent(f), inlineDescent(f)
 	gap := float32(math.Round(float64(max(0, NaturalLineHeight(f)-a-d)))) / 2
 	return float32(math.Round(float64(a))) + gap, float32(math.Round(float64(d))) + gap
+}
+
+// Blink's inline box uses integer font metrics and floors the ascent half
+// of the leading to whole CSS pixels; the remainder goes below baseline.
+func CSSInlineMetrics(f gfx.Font, scale float32) (above, below float32) {
+	a := float32(math.Round(float64(inlineAscent(f))))
+	d := float32(math.Round(float64(inlineDescent(f))))
+	height := float32(0)
+	if scale == 0 {
+		gap := float32(math.Round(float64(max(0, NaturalLineHeight(f)-inlineAscent(f)-inlineDescent(f)))))
+		height = a + d + gap
+	} else {
+		height = float32(math.Floor(float64(lineBox(f, scale, 0)*64))) / 64
+	}
+	leading := float32(math.Floor(float64((height - a - d) / 2)))
+	return a + leading, height - a - leading
 }

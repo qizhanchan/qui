@@ -255,19 +255,25 @@ func edgeMargin(w Widget, bottom bool) marginRun {
 	// Floats sit outside margin collapsing: the edge child is the first
 	// (last) in-flow child that is not one.
 	kids := w.(flowHost).inFlowChildren()
-	var k Widget
 	for i := range kids {
 		c := kids[i]
 		if bottom {
 			c = kids[len(kids)-1-i]
 		}
-		if fs, _, _ := floatStyle(c); fs == FloatNone {
-			k = c
+		if fs, _, _ := floatStyle(c); fs != FloatNone {
+			continue
+		}
+		if flowLevelOf(c) != FlowBlock {
 			break
 		}
-	}
-	if k != nil && flowLevelOf(k) == FlowBlock {
-		r.merge(edgeMargin(k, bottom))
+		r.merge(edgeMargin(c, bottom))
+		// An empty trailing/leading block does not stop adjoining margins.
+		// In particular an empty clearfix after a section must carry the
+		// section's bottom margin through to its containing block.
+		ct, cb := collapseEdges(c)
+		if !ct || !cb || MeasureChild(c, Size{W: max(1, w.Bounds().W)}).H != 0 {
+			break
+		}
 	}
 	return r
 }

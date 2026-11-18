@@ -30,6 +30,8 @@ type InlineBox struct {
 	Align              TextAlign
 	LineHeightScale    float32
 	RoundNormalMetrics bool
+	Hyphenate          bool
+	Language           string
 
 	// PreserveWhitespace switches the IFC to word-processor whitespace
 	// semantics (every space kept and addressable, wrap-boundary spaces
@@ -60,6 +62,7 @@ type InlineBox struct {
 	layout  InlineLayout
 	layoutW float32
 	haveLay bool
+	laidOut bool
 	// layoutKey fingerprints the inputs the cached layout was built from.
 	layoutKey inlineLayoutKey
 	// fit memoizes the run's max-content size (fitKey: the inputs it was
@@ -106,7 +109,9 @@ type InlineBox struct {
 
 // inlinePart is one appended piece: a styled text run or an atomic child.
 type inlinePart struct {
-	isBox bool
+	hyphenate bool
+	language  string
+	isBox     bool
 
 	text      string
 	font      Font
@@ -157,7 +162,7 @@ func (b *InlineBox) AddLinkText(text string, font Font, color Color, deco TextDe
 		return
 	}
 	b.parts = append(b.parts, inlinePart{text: text, font: font, color: color, deco: deco, decoPaint: decoPaint, href: href, linkSrc: source,
-		span: b.curSpan(), shift: b.curShift(), lh: b.curLineHeight()})
+		span: b.curSpan(), shift: b.curShift(), lh: b.curLineHeight(), hyphenate: b.currentHyphenation(), language: b.Language})
 	b.haveLay = false
 	b.haveFit = false
 	b.InvalidateLayout()
@@ -275,6 +280,8 @@ func (b *InlineBox) buildItems(maxW float32) []InlineItem {
 			Span:            p.span,
 			BaselineShift:   p.shift,
 			LineHeightScale: p.lh,
+			Hyphenate:       p.hyphenate,
+			Language:        p.language,
 		})
 	}
 	return items
@@ -347,6 +354,7 @@ type inlineLayoutKey struct {
 	align                 TextAlign
 	lineHeightScale       float32
 	roundNormalMetrics    bool
+	hyphenate             bool
 	preserveWhitespace    bool
 	breakLongWords        bool
 	family                string
@@ -367,6 +375,7 @@ func (b *InlineBox) layoutKeyFor(maxW float32) inlineLayoutKey {
 		wrap: b.Wrap, align: b.Align,
 		lineHeightScale:    b.LineHeightScale,
 		roundNormalMetrics: b.RoundNormalMetrics,
+		hyphenate:          b.Hyphenate,
 		preserveWhitespace: b.PreserveWhitespace,
 		breakLongWords:     b.BreakLongWords,
 		family:             f.Family, size: f.Size, weight: f.Weight,
@@ -452,6 +461,13 @@ func (b *InlineBox) MaxContentWidth() float32 {
 func (b *InlineBox) MeasuresByWidthOnly() bool { return true }
 
 func (b *InlineBox) Measure(available Size) Size {
+	// Intrinsic probes can run after Layout (for example while an ancestor
+	// resolves floats). They must not replace the lines used for painting,
+	// selection, and hit testing at the widget's assigned width.
+	if b.laidOut {
+		layout, width, key, have := b.layout, b.layoutW, b.layoutKey, b.haveLay
+		defer func() { b.layout, b.layoutW, b.layoutKey, b.haveLay = layout, width, key, have }()
+	}
 	if sz, ok := b.measureFit(available.W); ok {
 		return sz
 	}
@@ -514,9 +530,8 @@ func (b *InlineBox) measureFit(w float32) (Size, bool) {
 
 func (b *InlineBox) Layout(rect Rect) {
 	b.BaseWidget.Layout(rect)
-	if !b.haveLay || b.layoutW != rect.W {
-		b.buildLayout(rect.W)
-	}
+	b.laidOut = true
+	b.buildLayout(rect.W)
 	origin := b.Bounds()
 	for li := range b.layout.Lines {
 		for _, f := range b.layout.Lines[li].Frags {

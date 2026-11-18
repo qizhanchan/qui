@@ -122,8 +122,8 @@ func (e *El) buildTable(cs *ComputedStyle) {
 	}
 
 	// border-collapse:collapse merges adjacent cell borders into single lines:
-	// spacing is forced to 0 and each cell later paints only its top+left edge
-	// (plus the table's outer right/bottom on edge cells) — see applyTableCollapse.
+	// spacing is forced to 0 and cells share their adjacent edges — see
+	// applyTableCollapse.
 	e.borderCollapse = strings.EqualFold(strings.TrimSpace(cs.raw["border-collapse"]), "collapse")
 	e.tableCols = nCols
 	e.tableDataRows = nDataRows
@@ -158,6 +158,11 @@ func (e *El) buildTable(cs *ComputedStyle) {
 
 	e.flowKids = nil
 	applyBox(&e.Box, cs, e.isStyleRoot()) // the table's own background / border / etc.
+	if webCompat && e.borderCollapse {
+		st := e.Style()
+		st.BorderSize /= 2
+		st.BorderWidths = qui.Insets{Top: st.BorderWidths.Top / 2, Right: st.BorderWidths.Right / 2, Bottom: st.BorderWidths.Bottom / 2, Left: st.BorderWidths.Left / 2}
+	}
 	if gap > 0 {
 		// border-spacing also separates the outer cells from the table's
 		// edge (the separated borders model): inset the grid by it.
@@ -347,7 +352,7 @@ func (t *tableLayout) resolved(children []qui.Widget, availW float32) qui.GridLa
 			mx = qui.MaxContentWidth(ch)
 			mn = qui.MinContentWidth(ch)
 			mx = max(mx, mn)
-			if t.collapse {
+			if t.collapse && !webCompat {
 				r := ch.Style().BorderWidths.Right
 				mx, mn = mx-r, mn-r
 			}
@@ -486,7 +491,8 @@ func (t *tableLayout) firstRow(children []qui.Widget) int {
 }
 
 // applyTableCollapse rewrites a cell's borders for border-collapse:collapse.
-// Each cell keeps only its TOP and LEFT edges; the RIGHT edge is kept only for
+// Web cells own half of every shared edge, preserving the content-box width.
+// Legacy cells keep only TOP and LEFT edges; the RIGHT edge is kept only for
 // last-column cells and the BOTTOM edge only for last-row cells. Interior edges
 // are thus each drawn exactly once (by the lower/right neighbour's top/left),
 // and the outer frame by the edge cells — single hairlines with no doubling
@@ -527,6 +533,9 @@ func (e *El) applyTableCollapse(cs *ComputedStyle) {
 	st.BorderSize = 0
 	st.Border = qui.Color{}
 	st.BorderWidths = qui.Insets{Top: w, Left: w, Right: right, Bottom: bottom}
+	if webCompat {
+		st.BorderWidths = qui.Insets{Top: w / 2, Right: w / 2, Bottom: w / 2, Left: w / 2}
+	}
 	st.BorderColors = qui.SideColors{Top: col, Right: col, Bottom: col, Left: col}
 	st.BorderStyle = cs.BorderStyle
 }

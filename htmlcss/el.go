@@ -151,7 +151,7 @@ type El struct {
 	borderCollapse bool
 
 	// List item marker (li inside ul/ol): when non-empty the element lays
-	// out as a [marker | content] row, content hosted in liContent.
+	// out in normal flow in web mode, or in liContent for legacy layouts.
 	marker  string
 	listTag string // parent list tag ("ol"/"ul") when this El is a marked <li>
 	// Bullet markers (disc/circle/square) draw as geometry via markerShape;
@@ -923,6 +923,12 @@ func (e *El) isPushButton() bool { return e.tag == "button" || e.isButtonInput()
 // range), otherwise to the element itself, and reports whether focus
 // landed — false when the element is detached or not focusable.
 func (e *El) RequestFocus() bool {
+	// Focusing is a synchronous rendering boundary in the browser: resolve
+	// pending styles before choosing the native editor. A newly inserted input
+	// may not have its backing yet while a mount effect calls focus().
+	if e.engine != nil {
+		e.engine.FlushPendingStyles()
+	}
 	win := e.Window()
 	if win == nil {
 		return false
@@ -1811,6 +1817,7 @@ func (e *El) ensureBacking() {
 			return // created on the next restyle once attached
 		}
 		sel := widgets.NewSelect(win, e.selectItems, e.onSelect)
+		sel.WebMetrics = webCompat
 		sel.SetItemDisabled(e.selectDisabled)
 		sel.ItemColors = e.selectItemColors
 		sel.SelectedIdx = e.selectedIdx
@@ -1883,6 +1890,7 @@ func (e *El) ensureBacking() {
 				placeholder = typeFormatHint(e.attrs["type"])
 			}
 			in := widgets.NewInput(placeholder)
+			in.WebMetrics = webCompat
 			in.Chars = intAttr(e.attrs["size"], 20)
 			// Enter fires the input's own onSubmit, then submits the enclosing
 			// <form> (if any) so form-level handlers see the field values.
@@ -3243,9 +3251,9 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	}
 
 	// List-item marker: an li directly inside a ul/ol renders as a
-	// [marker | content] row (hanging indent) unless list-style-type says
-	// none. The row engine goes on the element; the real content layout
-	// moves to the liContent host (see syncChildren).
+	// hanging marker unless list-style-type says none. Web content stays
+	// in normal flow so child paragraph margins can collapse. Legacy
+	// layouts use the liContent host (see syncChildren).
 	e.marker = ""
 	e.listTag = ""
 	e.markerOwnColor = false
@@ -3280,27 +3288,34 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 				// regenerates its own markers on paste.
 				e.markerLabel.Selectable = false
 			}
-			if e.liContent == nil {
-				e.liContent = widgets.NewBox(qui.FlowLayout{})
+			if !webCompat {
+				if e.liContent == nil {
+					e.liContent = widgets.NewBox(qui.FlowLayout{})
+				}
+				e.liContent.LayoutEngine = e.LayoutEngine
+				cst := e.liContent.Style()
+				cst.Grow = 1
+				cst.Basis = 0
+				// The content host is an ANONYMOUS box — it must contribute no
+				// box of its own. widgets.DefaultStyle() ships Padding{4,6,4,6},
+				// which otherwise pushed the content 4px below the marker
+				// baseline and 6px past the row gap.
+				cst.Padding = qui.Insets{}
+				cst.Margin = qui.Insets{}
+				cst.Background = qui.Color{}
 			}
-			e.liContent.LayoutEngine = e.LayoutEngine
-			cst := e.liContent.Style()
-			cst.Grow = 1
-			cst.Basis = 0
-			// The content host is an ANONYMOUS box — it must contribute no
-			// box of its own. widgets.DefaultStyle() ships Padding{4,6,4,6},
-			// which otherwise pushed the content 4px below the marker
-			// baseline and 6px past the row gap.
-			cst.Padding = qui.Insets{}
-			cst.Margin = qui.Insets{}
-			cst.Background = qui.Color{}
 			if e.liMarker == nil {
 				e.liMarker = widgets.NewBox(outsideMarkerLayout{})
 				mst := e.liMarker.Style()
 				mst.Padding, mst.Margin, mst.Background = qui.Insets{}, qui.Insets{}, qui.Color{}
 				mst.Shrink = 0 // (zero wide anyway)
 			}
-			e.LayoutEngine = qui.FlexLayout{Direction: qui.Horizontal, AlignItems: qui.AlignStart}
+			if webCompat {
+				e.liMarker.SetOutOfFlow(true)
+			} else {
+				e.liMarker.SetOutOfFlow(false)
+				e.LayoutEngine = qui.FlexLayout{Direction: qui.Horizontal, AlignItems: qui.AlignStart}
+			}
 		}
 	}
 
@@ -3414,6 +3429,8 @@ func (e *El) buildPseudoLeaf(cs *ComputedStyle) []qui.Widget {
 	ib.PreserveWhitespace = cs.PreserveWS
 	ib.TrimTrailingEmptyLine = webCompat
 	ib.BreakLongWords = cs.BreakWord
+	ib.Hyphenate = cs.HyphensAuto
+	ib.Language = cs.Language
 	ib.RoundNormalMetrics = webCompat
 	ib.LineHeightScale = 0
 	if cs.LineHeight != 0 {
@@ -3636,6 +3653,8 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 		ib.PreserveWhitespace = cs.PreserveWS
 		ib.TrimTrailingEmptyLine = webCompat
 		ib.BreakLongWords = cs.BreakWord
+		ib.Hyphenate = cs.HyphensAuto
+		ib.Language = cs.Language
 		ib.RoundNormalMetrics = webCompat
 		ib.LineHeightScale = 0
 		if cs.LineHeight != 0 {
@@ -3831,7 +3850,7 @@ func foldableInline(c *El, cs *ComputedStyle) bool {
 	if c.isTextSeg() {
 		return true // anonymous text always folds
 	}
-	if (!foldableTag(c.tag) && !(webCompat && cs != nil && cs.Display == "inline" && !c.isImg() && !c.hasNaturalSize())) || c.isControl() || c.iconSrc != nil {
+	if (!foldableTag(c.tag) && !(webCompat && cs != nil && cs.Display == "inline" && !c.isImg() && !c.hasNaturalSize())) || c.isControl() || c.isButtonInput() || c.isFileInput() || c.iconSrc != nil {
 		return false
 	}
 	// A <label for=…> stays a real widget so its click can focus/toggle the
@@ -3922,6 +3941,21 @@ func (e *El) childStyle(c *El, parent *ComputedStyle) *ComputedStyle {
 // source), an atomic box otherwise. Block-level descendants are
 // break-wrapped onto their own lines (anonymous-block approximation).
 func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *ComputedStyle, href string, link *El) {
+	// Text decorations propagate through inline descendants, including ones
+	// with text-decoration:none; they are painted by the decorating ancestor.
+	if webCompat && kcs != nil && parent != nil && kcs != parent && foldableInline(ke, kcs) {
+		propagated := *kcs
+		propagated.Underline = kcs.Underline || parent.Underline
+		propagated.LineThrough = kcs.LineThrough || parent.LineThrough
+		propagated.Overline = kcs.Overline || parent.Overline
+		if kcs.decoration() == 0 && parent.decoration() != 0 {
+			propagated.DecorationColor = parent.DecorationColor
+			propagated.HasDecorationColor = parent.HasDecorationColor
+			propagated.DecorationStyle = parent.DecorationStyle
+			propagated.DecorationThickness = parent.DecorationThickness
+		}
+		kcs = &propagated
+	}
 	if ke.tag == "br" {
 		n0 := ib.PartCount()
 		ib.AddBreak()
@@ -3972,9 +4006,16 @@ func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *Compu
 		defer ib.CloseSpan()
 	}
 	e.appendInlinePseudo(ib, ke, kcs, "before", href, link)
-	if ke.text != "" {
+	text := ke.text
+	if webCompat {
+		text = ke.TextContent()
+		if !kcs.PreserveWS {
+			text = collapseInline(text)
+		}
+	}
+	if text != "" {
 		n0 := ib.PartCount()
-		ib.AddLinkText(ke.text, fontFrom(kcs), kcs.Color, kcs.decoration(), kcs.decorationPaint(), href, linkSource(link))
+		ib.AddLinkText(text, fontFrom(kcs), kcs.Color, kcs.decoration(), kcs.decorationPaint(), href, linkSource(link))
 		tagAdded(ib, n0, ke, tagText)
 		ib.ShadowLastText(kcs.TextShadows)
 	}
@@ -4077,6 +4118,7 @@ func spanFoldable(cs *ComputedStyle) bool {
 func inlineSpanStyle(e *El, cs, parent *ComputedStyle) widgets.InlineSpanStyle {
 	st := widgets.InlineSpanStyle{
 		NoWrap:          cs.NoWrap,
+		Hyphenate:       cs.HyphensAuto,
 		LineHeightScale: spanLineHeight(cs),
 		Padding:         cs.Padding,
 		Margin:          qui.Insets{Left: cs.Margin.Left, Right: cs.Margin.Right},
@@ -4583,12 +4625,15 @@ func (e *El) syncChildren() {
 			kids = append(append([]qui.Widget(nil), kids...), e.pseudoAfter)
 		}
 	}
-	// List-item marker: content moves into the liContent host so the
-	// bullet/number column hangs to the left of (possibly wrapping) content.
-	if mw := e.markerWidget(); mw != nil && e.liContent != nil && e.liMarker != nil {
-		e.attachInto(e.liContent, kids)
+	// Hang the marker outside the content; legacy layouts use a row host.
+	if mw := e.markerWidget(); mw != nil && e.liMarker != nil {
 		e.attachInto(e.liMarker, []qui.Widget{mw})
-		kids = []qui.Widget{e.liMarker, e.liContent}
+		if webCompat {
+			kids = append([]qui.Widget{e.liMarker}, kids...)
+		} else if e.liContent != nil {
+			e.attachInto(e.liContent, kids)
+			kids = []qui.Widget{e.liMarker, e.liContent}
+		}
 	}
 	e.setContainerChildren(kids)
 }
@@ -4742,6 +4787,10 @@ func (e *El) Measure(available qui.Size) qui.Size {
 		available.H = 0
 	}
 	m := e.Box.Measure(available)
+	if webCompat && e.markerWidget() != nil && m.H == 0 && e.lastCS != nil && !e.lastCS.HasHeight {
+		a, d := qui.CSSInlineMetrics(fontFrom(e.lastCS), e.lastCS.LineHeight)
+		m.H = a + d + e.Style().ContentInsets().Vertical()
+	}
 	if cs := e.lastCS; cs != nil && cs.AspectRatio > 0 {
 		m = e.aspectSize(cs, available, m)
 	}
@@ -5339,6 +5388,11 @@ func (e *El) Layout(rect qui.Rect) {
 		e.updateScrollContentAt(rect.W-ins.Horizontal(), rect.H-ins.Vertical())
 	}
 	e.Box.Layout(rect)
+	if webCompat && e.markerWidget() != nil && e.liMarker != nil {
+		ins := e.Style().ContentInsets()
+		sz := qui.MeasureChild(e.liMarker, qui.Size{W: rect.W - ins.Horizontal()})
+		e.liMarker.Layout(qui.Rect{X: rect.X + ins.Left, Y: rect.Y + ins.Top, H: sz.H})
+	}
 	if e.onLayout != nil {
 		e.onLayout(e)
 	}
@@ -5931,6 +5985,11 @@ func (e *El) isDoubleClick(me qui.MouseEvent) bool {
 // baseline (correct for image / block-ish boxes). Satisfies
 // qui.InlineBaselineProvider.
 func (e *El) InlineBaseline() float32 {
+	if b, ok := e.backing.(qui.InlineBaselineProvider); ok {
+		if baseline := b.InlineBaseline(); baseline > 0 {
+			return baseline
+		}
+	}
 	cs := e.lastCS
 	if cs == nil {
 		return 0
@@ -6019,6 +6078,14 @@ func (e *El) textTopBaseline(cs *ComputedStyle) float32 {
 // its line box: half the leading plus the font's ascent.
 func (e *El) textHalfLeadingAscent(cs *ComputedStyle) float32 {
 	f := fontFrom(cs)
+	if webCompat {
+		scale := cs.LineHeight
+		if scale < 0 {
+			scale = -2
+		}
+		above, _ := qui.CSSInlineMetrics(f, scale)
+		return above
+	}
 	ascent, descent := qui.FontVerticalMetrics(f)
 	// Un-Ceil'd, matching the layout engine's inline metrics — rounding each
 	// half up here would predict a baseline the engine no longer paints at.
@@ -6667,7 +6734,7 @@ func (e *El) ConsumesTab(shift bool) bool {
 // or replaced content.
 func (e *El) MarginsCollapseWithChildren() bool {
 	cs := e.lastCS
-	if cs == nil || (cs.Display != "block" && !e.blockInInline) || cs.OverflowClip || e.overflowScroll {
+	if cs == nil || (cs.Display != "block" && !e.blockInInline) || cs.newFormattingContext() || cs.ZIndexItem || e.overflowScroll {
 		return false
 	}
 	if e.backing != nil || e.isImg() || e.tag == "button" || e.isButtonInput() {

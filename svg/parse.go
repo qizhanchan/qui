@@ -61,6 +61,7 @@ func parseSVG(r io.Reader, into *Document) error {
 			break
 		}
 	}
+	resolveGradientPaints(&into.Root, collectLinearGradients(data))
 	return nil
 }
 

@@ -184,3 +184,15 @@ func TestInlineMeasureFitMatchesLayout(t *testing.T) {
 		t.Fatalf("width after AddText %v, want more than %v", after.W, before.W)
 	}
 }
+
+func TestInlineIntrinsicProbePreservesPaintedLines(t *testing.T) {
+	b := inlineWithText("alpha beta gamma delta epsilon zeta eta theta iota")
+	b.Wrap = true
+	b.Layout(Rect{W: 100, H: 200})
+	before := b.LaidOut()
+	b.Measure(Size{W: 1000})
+	after := b.LaidOut()
+	if len(before.Lines) != len(after.Lines) || before.Width != after.Width || before.Height != after.Height {
+		t.Fatalf("intrinsic probe replaced painted lines: %d -> %d (height %.2f -> %.2f)", len(before.Lines), len(after.Lines), before.Height, after.Height)
+	}
+}

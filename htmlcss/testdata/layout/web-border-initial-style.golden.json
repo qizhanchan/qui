@@ -1,0 +1,11 @@
+{
+ "fixture": "web-border-initial-style",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "width": [0,0,200,30],
+  "bottom": [0,40,200,31],
+  "mixed": [0,81,205,32],
+  "style": [0,123,200,38]
+ }
+}

@@ -1,0 +1,10 @@
+{
+ "fixture": "web-native-control-metrics",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "row": [0,0,640,20],
+  "field": [0,2,83,18],
+  "select": [83,2,45,18]
+ }
+}

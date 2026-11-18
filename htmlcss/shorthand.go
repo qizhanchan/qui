@@ -294,6 +294,52 @@ func capitalizeWords(s string) string {
 // mergeLogicalBox maps horizontal writing-mode box edges while folding the
 // cascade, so logical and physical properties compete in cascade order.
 func mergeLogicalBox(m map[string]string, d Declaration, rtl bool) {
+	if strings.HasPrefix(d.Property, "border-") {
+		start, end := "left", "right"
+		if rtl {
+			start, end = end, start
+		}
+		edge := strings.TrimPrefix(d.Property, "border-")
+		set := func(property, value string) {
+			for _, lh := range shorthandLonghands[property] {
+				delete(m, lh)
+			}
+			m[property] = value
+		}
+		for logical, physical := range map[string]string{"inline-start": start, "inline-end": end, "block-start": "top", "block-end": "bottom"} {
+			if edge == logical {
+				set("border-"+physical, d.Value)
+				return
+			}
+			for _, part := range []string{"width", "style", "color"} {
+				if edge == logical+"-"+part {
+					set("border-"+physical+"-"+part, d.Value)
+					return
+				}
+			}
+		}
+		for _, axis := range []string{"inline", "block"} {
+			first, last := start, end
+			if axis == "block" {
+				first, last = "top", "bottom"
+			}
+			if edge == axis {
+				set("border-"+first, d.Value)
+				set("border-"+last, d.Value)
+				return
+			}
+			for _, part := range []string{"width", "style", "color"} {
+				if edge == axis+"-"+part {
+					values := fieldsTopLevel(d.Value)
+					if len(values) > 0 && len(values) <= 2 {
+						set("border-"+first+"-"+part, values[0])
+						set("border-"+last+"-"+part, values[len(values)-1])
+					}
+					return
+				}
+			}
+		}
+	}
 	for _, box := range []string{"margin", "padding"} {
 		if !strings.HasPrefix(d.Property, box+"-") {
 			continue

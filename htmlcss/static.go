@@ -131,7 +131,7 @@ func (eng *StyleEngine) buildStaticEl(n *Node, styles map[*Node]*ComputedStyle) 
 		}
 		raw := text.String()
 		e.text = collapseFor(raw, styles[n])
-		if eng.opts.ScriptDOM && raw != e.text {
+		if (webCompat || eng.opts.ScriptDOM) && raw != e.text {
 			e.domText, e.domTextSet = raw, true
 		}
 		return e

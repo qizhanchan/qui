@@ -91,6 +91,19 @@ func drawShape(d *rasterx.Dasher, m rasterx.Matrix2D, s resolvedStyle, opacity f
 	if s.Stroke.Kind == PaintCurrentColor {
 		s.Stroke = SolidPaint(s.Color)
 	}
+	if s.Fill.Kind == PaintGradient && s.Fill.gradient != nil && s.FillOpacity > 0 {
+		if scanner, ok := d.Scanner.(*rasterx.ScannerGV); ok {
+			if img, ok := scanner.Dest.(*image.RGBA); ok {
+				ad := &fillPathAdder{path: qui.NewPath()}
+				addPath(newMatrixAdder(ad, m))
+				rule := qui.FillNonZero
+				if s.FillRule == FillRuleEvenOdd {
+					rule = qui.FillEvenOdd
+				}
+				qui.NewImageCanvas(img).DrawShape(qui.ShapePath{Path: ad.path}, qui.Paint{Shader: s.Fill.gradient.shader(s.bounds, m, s.FillOpacity*float32(opacity)), FillRule: rule, AntiAlias: true})
+			}
+		}
+	}
 	if s.Fill.Kind == PaintSolid && s.FillOpacity > 0 && s.Fill.Color.A > 0 {
 		fillPass(d, m, s, opacity, addPath)
 	}

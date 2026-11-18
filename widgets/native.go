@@ -1,6 +1,10 @@
 package widgets
 
-import . "github.com/qizhanchan/qui"
+import (
+	"math"
+
+	. "github.com/qizhanchan/qui"
+)
 
 // Native HTML form-control baseline.
 //
@@ -181,4 +185,30 @@ func nativePaddedHeight(st *Style, pad Insets) float32 {
 		h = htmlControlHeight
 	}
 	return h
+}
+
+// Browser controls use the platform's rounded font line metrics without a
+// fixed native-widget minimum. CSS padding and borders complete the box.
+func webControlHeight(st *Style, padding Insets) float32 {
+	m := FontMetricsFor(st.Font)
+	line := float32(math.Round(float64(m.Ascent)/64) + math.Round(float64(m.Descent)/64) + math.Round(float64(m.Height-m.Ascent-m.Descent)/64))
+	if st.LineHeight > 0 {
+		line = st.Font.Size * st.LineHeight
+	}
+	return line + padding.Vertical() + 2*st.BorderSize + st.BorderWidths.Vertical()
+}
+func webInputWidth(st *Style, chars int) float32 {
+	if chars <= 0 {
+		chars = 20
+	}
+	average, _ := TextMetrics("x", st.Font)
+	average = max(average, float32(math.Round(float64(average))))
+	m := FontMetricsFor(st.Font)
+	widest := float32(math.Round(float64(m.Ascent) / 64))
+	return float32(math.Ceil(float64(float32(chars-1)*average+widest))) + st.Padding.Horizontal() + 2*st.BorderSize + st.BorderWidths.Horizontal()
+}
+
+func webControlBaseline(st *Style, padding Insets) float32 {
+	m := FontMetricsFor(st.Font)
+	return float32(math.Round(float64(m.Ascent)/64)) + padding.Top + st.BorderSize + st.BorderWidths.Top
 }

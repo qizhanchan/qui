@@ -248,6 +248,7 @@ func drawElement(e Element, d *rasterx.Dasher, m rasterx.Matrix2D, s resolvedSty
 	base := e.base()
 	cm := applyElementMatrix(m, base.Transform)
 	cs := resolveStyle(s, base.Style)
+	cs.bounds = e.Bounds()
 	cop := op
 	if base.Style.Opacity.Set {
 		cop = op * float64(clampUnit(base.Style.Opacity.V))

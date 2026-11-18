@@ -485,3 +485,14 @@ func TestInlineRoundedNormalMetricsPreserveZeroLineHeight(t *testing.T) {
 		t.Fatalf("normal strut lost its descent: height=%v", h)
 	}
 }
+
+// Italic ink may overhang its advance; it must not widen inter-word spaces.
+func TestInlineItalicSpacesUseAdvance(t *testing.T) {
+	f := gfx.Font{Size: 16, Italic: true}
+	text := "alpha beta gamma delta"
+	width := MeasureRunes([]rune(text), f, nil)
+	l := BuildInlineLayout([]InlineItem{inlineText(text, f)}, InlineLayoutOptions{MaxWidth: width + 0.1, Wrap: true, BaseFont: f})
+	if len(l.Lines) != 1 {
+		t.Fatalf("italic words with advance %.2f wrapped into %d lines", width, len(l.Lines))
+	}
+}

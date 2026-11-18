@@ -452,7 +452,8 @@ func defaultButtonStates(cs *ComputedStyle) (hover, active *qui.Style) {
 // relative to the resting style base.
 func boxDecorationsDiffer(base, v *ComputedStyle) bool {
 	return v.HasBackground != base.HasBackground || v.Background != base.Background ||
-		v.BorderWidth != base.BorderWidth || v.BorderColor != base.BorderColor ||
+		(v.BorderWidth != base.BorderWidth || ((v.BorderWidth > 0 || base.BorderWidth > 0) && v.BorderColor != base.BorderColor)) ||
+		v.SideWidths != base.SideWidths || ((v.HasSideBorders || base.HasSideBorders) && v.SideColors != base.SideColors) ||
 		v.Radius != base.Radius
 }
 

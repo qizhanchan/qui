@@ -16,8 +16,10 @@ import (
 // ComputedStyle is the resolved, ready-to-render style for one element.
 // It is what build.go compiles into qui.Style + a layout engine.
 type ComputedStyle struct {
-	Display string // block | inline | inline-block | flex | none
-	Hidden  bool   // visibility: hidden / collapse (paints nothing, keeps box)
+	HyphensAuto bool
+	Language    string
+	Display     string // block | inline | inline-block | flex | none
+	Hidden      bool   // visibility: hidden / collapse (paints nothing, keeps box)
 
 	// Text / font (inheritable).
 	Color qui.Color
@@ -958,6 +960,8 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		cs.HasScrollbarColor = parent.HasScrollbarColor
 		// white-space is inherited (CSS): a <b> inside a pre keeps
 		// preserving spaces unless it declares its own value.
+		cs.HyphensAuto = parent.HyphensAuto
+		cs.Language = parent.Language
 		cs.NoWrap = parent.NoWrap
 		cs.PreserveWS = parent.PreserveWS
 		cs.PreserveNL = parent.PreserveNL
@@ -987,6 +991,14 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		cs.TextAlign = qui.TextAlignStart
 	}
 
+	if v, ok := n.Attrs["lang"]; ok {
+		cs.Language = v
+	}
+	if v, ok := m["hyphens"]; ok {
+		cs.HyphensAuto = strings.TrimSpace(v) == "auto"
+	} else if v, ok := m["-webkit-hyphens"]; ok {
+		cs.HyphensAuto = strings.TrimSpace(v) == "auto"
+	}
 	// --- display ---
 	cs.Display = strings.ToLower(strings.TrimSpace(m["display"]))
 	if cs.Display == "" {
@@ -1815,6 +1827,10 @@ func firstField(v string) string {
 }
 
 func parseBorder(m map[string]string, cs *ComputedStyle, fs float32) {
+	if webCompat {
+		parseWebBorder(m, cs, fs)
+		return
+	}
 	cs.BorderStyle = qui.BorderSolid
 
 	// HasBorder records that the author DECLARED the border (even as
@@ -1896,6 +1912,116 @@ func parseBorder(m map[string]string, cs *ComputedStyle, fs float32) {
 	}
 }
 
+// CSS borders have an initial style of none. Width/color declarations do not
+// make a border visible; each side computes its used width from its own style.
+func parseWebBorder(m map[string]string, cs *ComputedStyle, fs float32) {
+	width := float32(3) // medium
+	color := cs.Color
+	style := qui.BorderNone
+	_, b := m["border"]
+	_, bw := m["border-width"]
+	_, bs := m["border-style"]
+	cs.HasBorder = b || bw || bs
+	if v, ok := m["border"]; ok {
+		w, hw, c, hc, st, hs := parseBorderShorthand(v, fs)
+		if hw {
+			width = w
+		}
+		if hc {
+			color = c
+		}
+		if hs {
+			style = st
+		}
+	}
+	widths := [4]float32{width, width, width, width}
+	colors := [4]qui.Color{color, color, color, color}
+	styles := [4]qui.BorderStyle{style, style, style, style}
+	for part, apply := range map[string]func(int, string){
+		"width": func(i int, v string) {
+			if w, ok := parseLength(v, fs, 0); ok {
+				widths[i] = w
+			}
+		},
+		"color": func(i int, v string) {
+			if c, ok := parseColor(v); ok {
+				colors[i] = c
+			}
+		},
+		"style": func(i int, v string) { styles[i] = parseBorderStyle(v) },
+	} {
+		if v, ok := m["border-"+part]; ok {
+			f := fieldsTopLevel(v)
+			if len(f) > 0 && len(f) <= 4 {
+				idx := [4]int{0, 0, 0, 0}
+				if len(f) >= 2 {
+					idx[1] = 1
+					idx[3] = 1
+				}
+				if len(f) >= 3 {
+					idx[2] = 2
+				}
+				if len(f) == 4 {
+					idx[3] = 3
+				}
+				for i, j := range idx {
+					apply(i, f[j])
+				}
+			}
+		}
+	}
+	for i, side := range []string{"top", "right", "bottom", "left"} {
+		if v, ok := m["border-"+side]; ok {
+			cs.HasBorder = true
+			w, hw, c, hc, st, hs := parseBorderShorthand(v, fs)
+			widths[i] = 3
+			colors[i] = cs.Color
+			styles[i] = qui.BorderNone
+			if hw {
+				widths[i] = w
+			}
+			if hc {
+				colors[i] = c
+			}
+			if hs {
+				styles[i] = st
+			}
+		}
+		if v, ok := m["border-"+side+"-width"]; ok {
+			cs.HasBorder = true
+			if w, ok := parseLength(v, fs, 0); ok {
+				widths[i] = w
+			}
+		}
+		if v, ok := m["border-"+side+"-color"]; ok {
+			if c, ok := parseColor(v); ok {
+				colors[i] = c
+			}
+		}
+		if v, ok := m["border-"+side+"-style"]; ok {
+			cs.HasBorder = true
+			styles[i] = parseBorderStyle(v)
+		}
+		if styles[i] == qui.BorderNone {
+			widths[i] = 0
+		}
+	}
+	cs.BorderStyle = qui.BorderSolid
+	for i, st := range styles {
+		if widths[i] > 0 {
+			cs.BorderStyle = st
+			break
+		}
+	}
+	cs.BorderColor = colors[0]
+	cs.SideWidths = qui.Insets{Top: widths[0], Right: widths[1], Bottom: widths[2], Left: widths[3]}
+	cs.SideColors = qui.SideColors{Top: colors[0], Right: colors[1], Bottom: colors[2], Left: colors[3]}
+	cs.HasSideBorders = widths[0] != widths[1] || widths[0] != widths[2] || widths[0] != widths[3] || ((widths[0] > 0 || widths[1] > 0 || widths[2] > 0 || widths[3] > 0) && (colors[0] != colors[1] || colors[0] != colors[2] || colors[0] != colors[3]))
+	if !cs.HasSideBorders {
+		cs.BorderWidth = widths[0]
+	}
+}
+
 // parseBorderRadius resolves the uniform Radius plus per-corner Corners from
 // `border-radius` (1–4 values, clockwise from top-left; an elliptical `a / b`
 // keeps only the horizontal radii) and the four `border-<corner>-radius`
@@ -1974,9 +2100,15 @@ func parseBorderRadius(m map[string]string, cs *ComputedStyle, fs float32) {
 // parseBorderShorthand splits a `border` / `border-<side>` value into its
 // width / color / style tokens (any order, any subset).
 func parseBorderShorthand(v string, fs float32) (w float32, hasW bool, c qui.Color, hasC bool, s qui.BorderStyle, hasS bool) {
-	for _, tok := range strings.Fields(v) {
+	for _, tok := range fieldsTopLevel(v) {
 		if bs, ok := borderStyleKeyword(tok); ok {
 			s, hasS = bs, true
+		} else if tok == "thin" {
+			w, hasW = 1, true
+		} else if tok == "medium" {
+			w, hasW = 3, true
+		} else if tok == "thick" {
+			w, hasW = 5, true
 		} else if px, ok := parseLength(tok, fs, 0); ok {
 			w, hasW = px, true
 		} else if col, ok := parseColor(tok); ok {

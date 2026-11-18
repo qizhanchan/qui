@@ -1,0 +1,8 @@
+{
+ "fixture": "web-inline-submit-control",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "submit": [0,2,40,18]
+ }
+}
