@@ -119,6 +119,9 @@ type ParagraphStyle struct {
 	MaxLines        int
 	Ellipsis        bool
 	LineHeightScale float32
+	// CSSBaseline aligns glyphs using font ascent and half-leading, as a
+	// CSS inline box does, instead of vertically centering capital letters.
+	CSSBaseline bool
 	// FirstIndent (px) indents the first line of the paragraph (CSS text-indent).
 	FirstIndent float32
 	// Decoration draws underline / line-through across the text lines
@@ -162,6 +165,7 @@ func (p ParagraphStyle) LayoutOptions(maxWidth float32) TextLayoutOptions {
 		Align:           p.Align,
 		Direction:       p.Direction,
 		LineHeightScale: p.LineHeightScale,
+		CSSBaseline:     p.CSSBaseline,
 		FirstIndent:     p.FirstIndent,
 		BreakLongWords:  p.BreakLongWords,
 	}
@@ -185,6 +189,7 @@ type TextLayoutOptions struct {
 	// LineHeightScale is a CSS `line-height`: a multiple of the FONT SIZE.
 	// <=0 means CSS `line-height: normal` — the face's own height.
 	LineHeightScale float32
+	CSSBaseline     bool
 	// FirstIndent (px) indents the first visual line (CSS text-indent):
 	// the first line wraps within a width reduced by FirstIndent and is
 	// shifted right by it. 0 = no indent.
@@ -219,11 +224,12 @@ type TextLayoutLine struct {
 
 // TextLayout is an immutable line layout result for a text block.
 type TextLayout struct {
-	Lines      []TextLayoutLine
-	Width      float32
-	Height     float32
-	LineHeight float32
-	Truncated  bool
+	Lines       []TextLayoutLine
+	Width       float32
+	Height      float32
+	LineHeight  float32
+	Truncated   bool
+	CSSBaseline bool
 }
 
 // Text-layout memoization. BuildTextLayout is pure in (text, font spec,
@@ -518,11 +524,12 @@ func BuildTextLayoutUncached(text string, fontSpec gfx.Font, opts TextLayoutOpti
 		}
 	}
 	return TextLayout{
-		Lines:      lines,
-		Width:      maxW,
-		Height:     float32(len(lines)) * lineHeight,
-		LineHeight: lineHeight,
-		Truncated:  truncated,
+		Lines:       lines,
+		Width:       maxW,
+		Height:      float32(len(lines)) * lineHeight,
+		LineHeight:  lineHeight,
+		Truncated:   truncated,
+		CSSBaseline: opts.CSSBaseline,
 	}
 }
 
@@ -550,9 +557,16 @@ func DrawTextLayout(canvas gfx.Canvas, layout TextLayout, rect gfx.Rect, color g
 				W: line.Width,
 				H: layout.LineHeight,
 			}
-			if shapedCanvas, ok := canvas.(shapedLineCanvas); ok && line.Shaped != nil {
+			if baselineCanvas, ok := canvas.(baselineLineCanvas); ok && line.Shaped != nil && layout.CSSBaseline {
+				above, _ := CSSInlineMetrics(fs, layout.LineHeight/fs.Size)
+				baselineCanvas.DrawShapedLineAtBaseline(line.Shaped, lineRect.X, y+above, color, fs)
+			} else if shapedCanvas, ok := canvas.(shapedLineCanvas); ok && line.Shaped != nil {
 				shapedCanvas.DrawShapedLine(line.Shaped, lineRect, color, fs)
 			} else {
+				if layout.CSSBaseline {
+					above, _ := CSSInlineMetrics(fs, layout.LineHeight/fs.Size)
+					lineRect.Y += above - plainTextBaseline(fs, layout.LineHeight)
+				}
 				canvas.DrawText(line.Text, lineRect, color, fs)
 			}
 		}
@@ -574,12 +588,25 @@ func DrawTextDecorationPaint(canvas gfx.Canvas, layout TextLayout, rect gfx.Rect
 		return
 	}
 	y := rect.Y
+	if layout.CSSBaseline {
+		above, _ := CSSInlineMetrics(fontSpec, layout.LineHeight/fontSpec.Size)
+		y += above - plainTextBaseline(fontSpec, layout.LineHeight)
+	}
 	for _, line := range layout.Lines {
 		if line.Text != "" && line.Width > 0 {
 			drawDecorationRun(canvas, deco, rect.X+line.Offset, line.Width, y, layout.LineHeight, color, fontSpec, paint)
 		}
 		y += layout.LineHeight
 	}
+}
+
+func plainTextBaseline(fontSpec gfx.Font, lineHeight float32) float32 {
+	m := FontMetricsFor(fontSpec)
+	a := float32(m.Ascent.Ceil())
+	if a <= 0 {
+		a = fontSpec.Size
+	}
+	return a + max(0, (lineHeight-a-float32(m.Descent.Ceil()))/2)
 }
 
 // drawDecorationRun strokes the requested decoration line(s) across one

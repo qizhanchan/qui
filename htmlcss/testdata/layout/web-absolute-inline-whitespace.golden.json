@@ -1,0 +1,12 @@
+{
+ "fixture": "web-absolute-inline-whitespace",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "leading": [0,0,40,26],
+  "first": [0,0,40,20],
+  "middle": [44.45,0,84.45,26],
+  "second": [44.45,0,40,20],
+  "third": [88.91,0,40,20]
+ }
+}

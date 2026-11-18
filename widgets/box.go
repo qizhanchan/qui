@@ -851,6 +851,37 @@ func paintPerSideBorders(canvas Canvas, b Rect, st *Style) {
 		}
 		return st.Border
 	}
+	if st.BorderStyle == BorderSolid && (st.BorderColors.Top != st.BorderColors.Right || st.BorderColors.Top != st.BorderColors.Bottom || st.BorderColors.Top != st.BorderColors.Left) {
+		// Adjacent CSS borders meet along the outer-to-inner corner, not
+		// overlapping rectangles. With a zero-sized content box these
+		// trapezoids become the triangles used by CSS arrow decorations.
+		x0, y0, x1, y1 := b.X, b.Y, b.X+b.W, b.Y+b.H
+		ix0, iy0, ix1, iy1 := x0+w.Left, y0+w.Top, x1-w.Right, y1-w.Bottom
+		draw := func(c Color, points ...Point) {
+			if c.A <= 0 {
+				return
+			}
+			p := NewPath().MoveTo(points[0].X, points[0].Y)
+			for _, v := range points[1:] {
+				p.LineTo(v.X, v.Y)
+			}
+			p.Close()
+			canvas.DrawShape(ShapePath{Path: p}, Paint{Color: c, AntiAlias: true})
+		}
+		if w.Top > 0 {
+			draw(sideColor(st.BorderColors.Top), Point{X: x0, Y: y0}, Point{X: x1, Y: y0}, Point{X: ix1, Y: iy0}, Point{X: ix0, Y: iy0})
+		}
+		if w.Right > 0 {
+			draw(sideColor(st.BorderColors.Right), Point{X: x1, Y: y0}, Point{X: x1, Y: y1}, Point{X: ix1, Y: iy1}, Point{X: ix1, Y: iy0})
+		}
+		if w.Bottom > 0 {
+			draw(sideColor(st.BorderColors.Bottom), Point{X: x1, Y: y1}, Point{X: x0, Y: y1}, Point{X: ix0, Y: iy1}, Point{X: ix1, Y: iy1})
+		}
+		if w.Left > 0 {
+			draw(sideColor(st.BorderColors.Left), Point{X: x0, Y: y1}, Point{X: x0, Y: y0}, Point{X: ix0, Y: iy0}, Point{X: ix0, Y: iy1})
+		}
+		return
+	}
 	if w.Top > 0 {
 		paintBorderEdge(canvas, Rect{X: b.X, Y: b.Y, W: b.W, H: w.Top}, true, w.Top, sideColor(st.BorderColors.Top), st.BorderStyle)
 	}

@@ -182,8 +182,9 @@ func resolveFlowBlockSize(child Widget, cb Size, availW float32) (layoutW, heigh
 // formatting context only — false for a block formatting context root
 // (overflow other than visible, flow-root, a table cell, a control); the
 // layout additionally requires no padding / border on that edge, an auto
-// height for the bottom edge, and FlowLayout on both the container and its
-// parent. Widgets that don't implement it never collapse through.
+// height for the bottom edge, and FlowLayout on the container. Its parent
+// must lay out normal flow, either directly or inside columns. Widgets
+// that don't implement it never collapse through.
 type MarginCollapser interface {
 	MarginsCollapseWithChildren() bool
 }
@@ -210,7 +211,12 @@ func collapseEdges(w Widget) (top, bottom bool) {
 	if p, ok := w.Parent().(flowHost); !ok {
 		return false, false
 	} else if _, ok := p.flowLayout(); !ok {
-		return false, false
+		// A column box is a formatting root, but ordinary blocks inside
+		// it can still collapse with their own children. The multicol
+		// container itself cannot collapse through: it has no FlowLayout.
+		if c, ok := p.(interface{ columnsLayout() bool }); !ok || !c.columnsLayout() {
+			return false, false
+		}
 	}
 	s := w.Style()
 	in := s.ContentInsets()

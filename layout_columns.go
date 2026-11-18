@@ -2,7 +2,7 @@ package qui
 
 // ColumnsLayout balances consecutive, indivisible block boxes across columns.
 // The CSS adapter uses this for multicol containers whose children avoid breaks.
-// Margins collapse between blocks and are discarded at column boundaries.
+// Margins collapse between blocks and are discarded at column breaks.
 type ColumnsLayout struct {
 	Count int
 	Width float32
@@ -19,6 +19,12 @@ func (c ColumnsLayout) run(children []Widget, b Rect, apply bool) Size {
 			n = fit
 		}
 	}
+	if n == 1 {
+		// With no column break this is normal flow inside a formatting
+		// root: retain the final child's margin as part of the height.
+		h, _ := (FlowLayout{}).run(children, b, apply)
+		return Size{W: b.W, H: h}
+	}
 	width := max((b.W-float32(n-1)*c.Gap)/float32(n), 0)
 	type item struct {
 		w             Widget
@@ -32,6 +38,8 @@ func (c ColumnsLayout) run(children []Widget, b Rect, apply bool) Size {
 		}
 		m := child.Style().Margin
 		w, h, _ := resolveFlowBlockSize(child, Size{W: width}, max(width-m.Left-m.Right, 0))
+		m.Top = edgeMargin(child, false).value()
+		m.Bottom = edgeMargin(child, true).value()
 		items = append(items, item{child, w, h, m})
 	}
 	// Find the smallest balanced column height that fits all blocks. A block
@@ -42,7 +50,7 @@ func (c ColumnsLayout) run(children []Widget, b Rect, apply bool) Size {
 			it := items[i]
 			if i > start {
 				h += collapseMargin(pending, it.margin.Top)
-			} else {
+			} else if start == 0 {
 				h += it.margin.Top
 			}
 			h += it.height
@@ -88,7 +96,7 @@ func (c ColumnsLayout) run(children []Widget, b Rect, apply bool) Size {
 		}
 		if i > start {
 			y += collapseMargin(pending, it.margin.Top)
-		} else {
+		} else if start == 0 {
 			y += it.margin.Top
 		}
 		if apply {

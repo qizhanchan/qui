@@ -755,3 +755,13 @@ func (c *Container) flowLayout() (FlowLayout, bool) {
 	}
 	return FlowLayout{}, false
 }
+
+func (c *Container) columnsLayout() bool {
+	switch l := c.LayoutEngine.(type) {
+	case ColumnsLayout:
+		return true
+	case *ColumnsLayout:
+		return l != nil
+	}
+	return false
+}

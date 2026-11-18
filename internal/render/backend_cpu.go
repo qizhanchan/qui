@@ -481,7 +481,7 @@ func (b *CPUBackend) DrawShadow(rect gfx.Rect, radius float32, spec gfx.Elevatio
 	if img == nil {
 		return
 	}
-	drawShadowImplRaw(img, rect, radius, spec, shadowColor, rectToPixelRect(clip))
+	drawShadowImplRaw(img, rect, radius, spec, shadowColor, rectToPixelRectOut(clip))
 }
 
 // DrawText renders `text` inside `rect`, clipped to `clip`. Uses the
@@ -993,7 +993,7 @@ func drawInsetShadowRaw(img *image.RGBA, rect gfx.Rect, radius float32, spec gfx
 	if img == nil || spec.Opacity <= 0 || color.A <= 0 {
 		return
 	}
-	bounds := img.Bounds().Intersect(clip).Intersect(rectToPixelRect(rect))
+	bounds := img.Bounds().Intersect(clip).Intersect(rectToPixelRectOut(rect))
 	if bounds.Empty() {
 		return
 	}
@@ -1009,7 +1009,7 @@ func drawInsetShadowRaw(img *image.RGBA, rect gfx.Rect, radius float32, spec gfx
 	mask := make([]uint8, w*h)
 	inner := gfx.Rect{X: rect.X + spec.X + spec.Spread, Y: rect.Y + spec.Y + spec.Spread, W: rect.W - 2*spec.Spread, H: rect.H - 2*spec.Spread}
 	if inner.W > 0 && inner.H > 0 {
-		stampRoundedAlphaAt(mask, w, h, int(math.Round(float64(inner.X)))-area.Min.X, int(math.Round(float64(inner.Y)))-area.Min.Y, inner.W, inner.H, max(0, radius-spec.Spread))
+		stampShadowAlpha(mask, w, h, area.Min.X, area.Min.Y, inner, max(0, radius-spec.Spread))
 	}
 	for i := range mask {
 		mask[i] = 255 - mask[i]
@@ -1022,7 +1022,7 @@ func drawInsetShadowRaw(img *image.RGBA, rect gfx.Rect, radius float32, spec gfx
 		gfx.BoxBlurV(tmp, mask, w, h, boxR)
 	}
 	inside := make([]uint8, len(mask))
-	stampRoundedAlphaAt(inside, w, h, int(math.Round(float64(rect.X)))-area.Min.X, int(math.Round(float64(rect.Y)))-area.Min.Y, rect.W, rect.H, radius)
+	stampShadowAlpha(inside, w, h, area.Min.X, area.Min.Y, rect, radius)
 	alpha := color.A * spec.Opacity
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {

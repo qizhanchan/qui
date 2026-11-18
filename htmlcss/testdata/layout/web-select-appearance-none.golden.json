@@ -1,0 +1,11 @@
+{
+ "fixture": "web-select-appearance-none",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "row": [0,0,600,28.8],
+  "brand": [0,0,475,28.8],
+  "wrap": [475,0,125,28.8],
+  "select": [475,3,125,23.25]
+ }
+}

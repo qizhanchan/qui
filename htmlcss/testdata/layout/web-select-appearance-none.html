@@ -1,0 +1,14 @@
+<!doctype html>
+<style>
+@font-face {font-family:GoRegular;src:url('../../../widgets/scripts/web/go-regular.ttf')}
+body{margin:0;font:18px/1.6 GoRegular}
+.row{display:flex;align-items:center;width:600px}
+.brand{flex:1}
+.wrap{display:inline-block}
+select{appearance:none;font:15px/1.15 GoRegular;border:1px solid #2a3439;padding:2px 6px;background:white;border-radius:0;box-sizing:border-box}
+.hidden{position:absolute;width:1px;height:1px;margin:-1px;clip:rect(0,0,0,0)}
+</style>
+<div id=row class=row><div id=brand class=brand>Logo</div><div id=wrap class=wrap>
+  <label class=hidden>Language</label>
+  <select id=select><option>English (en-US)</option><option>Français (fr)</option></select>
+</div></div>

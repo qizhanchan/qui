@@ -1,0 +1,13 @@
+{
+ "fixture": "web-flex-max-content-cap",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "row": [0,0,600,72],
+  "first": [0,0,300,72],
+  "second": [324,0,276,72],
+  "explicit": [0,72,320,20],
+  "basis1": [0,72,182.86,20],
+  "basis2": [182.86,72,137.14,20]
+ }
+}

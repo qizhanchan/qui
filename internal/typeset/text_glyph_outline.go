@@ -14,6 +14,12 @@ type shapedLineCanvas interface {
 	DrawShapedLine(line *ShapedLine, rect gfx.Rect, color gfx.Color, fontSpec gfx.Font)
 }
 
+// CSS text layout supplies its baseline explicitly; native controls may
+// continue to center glyphs inside a field through DrawShapedLine.
+type baselineLineCanvas interface {
+	DrawShapedLineAtBaseline(*ShapedLine, float32, float32, gfx.Color, gfx.Font)
+}
+
 func ShapedLineCapHeight(fontSpec gfx.Font) float32 {
 	metrics := FontMetricsFor(fontSpec)
 	capHeight := float32(metrics.CapHeight.Ceil())

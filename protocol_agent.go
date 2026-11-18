@@ -592,22 +592,6 @@ func agentDomain() ProtocolDomain {
 					return AgentActionResult{}, &ProtocolError{Code: ProtocolInvalidParams, Reason: "invalid_params", Message: `give exactly one of "label" or "value"`}
 				}
 				return agentAct(ctx, p.Target, p.TimeoutMs, func(ref string) error {
-					label := p.Label
-					if p.Value != "" {
-						n, err := firstNode(ctx.Window, ref)
-						if err != nil {
-							return err
-						}
-						for _, o := range n.Options {
-							if o.Value == p.Value || (o.Value == "" && o.Label == p.Value) {
-								label = o.Label
-								break
-							}
-						}
-						if label == "" {
-							return NewProtocolError("no_match", "no option with value %q", p.Value)
-						}
-					}
 					n, err := firstNode(ctx.Window, ref)
 					if err != nil {
 						return err
@@ -617,6 +601,18 @@ func agentDomain() ProtocolDomain {
 							n = inner
 						} else {
 							return NewProtocolError("not_text_target", "%s has no options", ref)
+						}
+					}
+					label := p.Label
+					if p.Value != "" {
+						for _, o := range n.Options {
+							if o.Value == p.Value || (o.Value == "" && o.Label == p.Value) {
+								label = o.Label
+								break
+							}
+						}
+						if label == "" {
+							return NewProtocolError("no_match", "no option with value %q", p.Value)
 						}
 					}
 					if err := ctx.Window.Type(n.NodeID.String(), label, TypeOptions{ScrollIntoView: true}); err != nil {

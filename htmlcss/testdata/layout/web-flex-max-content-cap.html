@@ -1,0 +1,13 @@
+<!doctype html>
+<style>
+@font-face {font-family:GoRegular;src:url('../../../widgets/scripts/web/go-regular.ttf')}
+body{margin:0;font:16px/24px GoRegular}
+.row{display:flex;width:600px}
+.card{display:flex;flex-direction:column;max-width:50%}
+.card p{margin:0}
+.first{margin-right:24px}
+.basis{flex:1 1 400px;max-width:200px;min-width:0;height:20px}
+#explicit{width:320px}
+</style>
+<div id=row class=row><div id=first class="card first"><p>Rust is a community project and is very thankful for the many community contributions it receives.</p></div><div id=second class=card><p>The Rust project receives support from companies through the Rust Foundation.</p></div></div>
+<div id=explicit class=row><div id=basis1 class=basis></div><div id=basis2 class=basis style="flex-basis:300px"></div></div>

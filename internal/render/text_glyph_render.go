@@ -19,6 +19,12 @@ func (c imageCanvas) DrawShapedLine(line *typeset.ShapedLine, rect gfx.Rect, col
 	c.drawShapedLineAtBaseline(line, rect.X, baseline, color, fontSpec)
 }
 
+func (c imageCanvas) DrawShapedLineAtBaseline(line *typeset.ShapedLine, x, baseline float32, color gfx.Color, fontSpec gfx.Font) {
+	if line != nil && len(line.Runs) > 0 && c.Backend != nil {
+		c.drawShapedLineAtBaseline(line, x, baseline, color, fontSpec)
+	}
+}
+
 func (c imageCanvas) drawShapedLineAtBaseline(line *typeset.ShapedLine, x, baseline float32, color gfx.Color, fontSpec gfx.Font) {
 	capHeight := typeset.ShapedLineCapHeight(fontSpec)
 	visual := typeset.VisualRunOrder(line.Runs)

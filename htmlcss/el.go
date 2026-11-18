@@ -1820,8 +1820,7 @@ func (e *El) ensureBacking() {
 		}
 		sel := widgets.NewSelect(win, e.selectItems, e.onSelect)
 		sel.WebMetrics = webCompat
-		sel.SetItemDisabled(e.selectDisabled)
-		sel.ItemColors = e.selectItemColors
+		e.syncSelectBacking(sel)
 		sel.SelectedIdx = e.selectedIdx
 		// Chrome on macOS opens a <select> as a native pop-up menu: the
 		// selected option over the field.
@@ -2242,7 +2241,7 @@ func (e *El) SetSelectOptions(items []string) {
 	e.selectItems = items
 	e.selectValues = nil // labels double as values until told otherwise
 	if sel, ok := e.backing.(*widgets.Select); ok {
-		sel.SetItems(items)
+		e.syncSelectBacking(sel)
 	}
 	e.defaultSelection()
 }
@@ -2255,6 +2254,29 @@ func (e *El) SelectOptions() []string { return e.selectItems }
 // at that index.
 func (e *El) SetSelectValues(values []string) {
 	e.selectValues = values
+	if sel, ok := e.backing.(*widgets.Select); ok {
+		e.syncSelectBacking(sel)
+	}
+}
+
+// Keep the native choice widget's accessible values in sync with the DOM
+// model too: agent actions resolve submitted values through its AX tree.
+func (e *El) syncSelectBacking(sel *widgets.Select) {
+	opts := make([]widgets.SelectOption, len(e.selectItems))
+	old := sel.Options()
+	changed := len(old) != len(opts)
+	for i, label := range e.selectItems {
+		opts[i] = widgets.SelectOption{Label: label, Value: e.selectValueAt(i), Disabled: i < len(e.selectDisabled) && e.selectDisabled[i]}
+		if i >= len(old) || old[i].Label != opts[i].Label || old[i].Value != opts[i].Value || old[i].Disabled != opts[i].Disabled {
+			changed = true
+		}
+	}
+	if changed {
+		idx := sel.SelectedIdx
+		sel.SetOptions(opts)
+		sel.SelectedIdx = idx
+	}
+	sel.ItemColors = e.selectItemColors
 }
 
 // SetSelectDisabled marks options as unselectable, parallel to the labels
@@ -2262,7 +2284,7 @@ func (e *El) SetSelectValues(values []string) {
 func (e *El) SetSelectDisabled(disabled []bool) {
 	e.selectDisabled = disabled
 	if sel, ok := e.backing.(*widgets.Select); ok {
-		sel.SetItemDisabled(disabled)
+		e.syncSelectBacking(sel)
 	}
 	e.defaultSelection()
 }
@@ -2349,8 +2371,7 @@ func (e *El) SyncOptions(selected *El) []*El {
 	}
 	e.selectItems, e.selectValues, e.selectDisabled = items, values, disabled
 	if w, ok := e.backing.(*widgets.Select); ok {
-		w.SetItems(items)
-		w.SetItemDisabled(disabled)
+		e.syncSelectBacking(w)
 		w.SelectedIdx = -1
 	}
 	e.selectedSet = false
@@ -2855,6 +2876,9 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		e.flowKids = nil
 		e.ensureBacking()
 		if e.backing != nil {
+			if sel, ok := e.backing.(*widgets.Select); ok {
+				sel.NoAppearance = cs.raw["appearance"] == "none" || cs.raw["-webkit-appearance"] == "none"
+			}
 			applyCommon(e.backing, cs)
 			// A control's own line-height sizes its text line (padded
 			// raw-HTML fields grow to border + padding + line); an
@@ -4072,7 +4096,7 @@ func (e *El) appendInlinePseudo(ib *widgets.InlineBox, owner *El, parent *Comput
 	}
 	txt := unquoteContentWith(content, owner.node, func(fn cssFunction) string { return owner.counterContent(fn, which, parent, cs) })
 	if cs.Display == "inline" && !cs.isVisualBox() {
-		ib.AddLinkText(txt, fontFrom(cs), cs.Color, cs.decoration(), cs.decorationPaint(), href, linkSource(link))
+		ib.AddLinkText(transformText(txt, cs.TextTransform), fontFrom(cs), cs.Color, cs.decoration(), cs.decorationPaint(), href, linkSource(link))
 		return
 	}
 	slot := &owner.pseudoBefore
@@ -6880,6 +6904,7 @@ func newStaticMarker() *staticMarker {
 }
 
 func (m *staticMarker) Measure(qui.Size) qui.Size { return qui.Size{} }
+func (m *staticMarker) InlinePlaceholder() bool   { return true }
 func (m *staticMarker) Draw(qui.Canvas)           {}
 func (m *staticMarker) HitTest(qui.Point) qui.Widget {
 	return nil

@@ -955,6 +955,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle, aliases ...m
 		cs.LetterSpacing = parent.LetterSpacing
 		cs.WordSpacing = parent.WordSpacing
 		cs.TextIndent = parent.TextIndent
+		cs.TextTransform = parent.TextTransform
 		cs.LigatureFeatures = parent.LigatureFeatures
 		cs.FeatureSettings = parent.FeatureSettings
 		cs.UnderlineOffset, cs.HasUnderlineOffset = parent.UnderlineOffset, parent.HasUnderlineOffset
@@ -2492,6 +2493,12 @@ func (cs *ComputedStyle) newFormattingContext() bool {
 		return true
 	}
 	if v := strings.TrimSpace(cs.raw["contain"]); v == "layout" || v == "content" || v == "strict" || v == "paint" {
+		return true
+	}
+	// A multicol container establishes an independent formatting context,
+	// including when its available width fits only one column. Its child
+	// margins and floats therefore stay inside the container.
+	if n, width := columnDimensions(cs); n > 0 || width > 0 {
 		return true
 	}
 	return false

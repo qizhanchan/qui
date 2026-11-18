@@ -73,6 +73,8 @@ type flexItem struct {
 	basis      float32 // target size on main axis (pre grow/shrink)
 	size       float32 // final main-axis size
 	shrinkBase float32
+	flexBase   float32 // CSS base before min/max clamping (without margins)
+	maxClamped bool
 	natural    Size // post-constraints Measure() result (for cross axis)
 	minMain    float32
 	minCross   float32
@@ -326,6 +328,16 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 				basis = nat.H
 			}
 		}
+		// flex-basis:auto measures max-content before applying max-width.
+		// Clamping both bases first incorrectly makes differently sized
+		// capped columns shrink equally when one should stay at its cap.
+		if l.CSSSizing && l.Direction == Horizontal && maxMain > 0 && fx.Basis <= 0 &&
+			(fx.Grow == 0 || fx.BasisAuto) && widgetPreferredSize(ch).W == 0 && ch.Style().WidthPct == 0 {
+			if intrinsic := contentMaxWidth(ch); intrinsic > basis {
+				basis = intrinsic
+			}
+		}
+		flexBase := basis
 		if basis < minMain {
 			basis = minMain
 		}
@@ -349,7 +361,7 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 		if shrinkBase < 0 {
 			shrinkBase = 0
 		}
-		it := flexItem{shrinkBase: shrinkBase, w: ch, flex: fx, basis: basis, natural: nat, minMain: minMain, minCross: minCross, maxMain: maxMain, maxCross: maxCross, explicitCross: explicitCross}
+		it := flexItem{flexBase: flexBase, maxClamped: maxMain > 0 && flexBase > maxMain, shrinkBase: shrinkBase, w: ch, flex: fx, basis: basis, natural: nat, minMain: minMain, minCross: minCross, maxMain: maxMain, maxCross: maxCross, explicitCross: explicitCross}
 		if l.Direction == Horizontal {
 			it.marginMainStart, it.marginMainSum = margin.Left, margin.Horizontal()
 			it.marginCrossStart, it.marginCrossSum = margin.Top, margin.Vertical()
@@ -539,6 +551,14 @@ func (l FlexLayout) resolveMainSizes(items []flexItem, mainAvail float32) {
 	n := len(items)
 	if n == 0 {
 		return
+	}
+	if l.CSSSizing {
+		for _, it := range items {
+			if it.maxClamped {
+				l.resolveClampedBases(items, mainAvail)
+				return
+			}
+		}
 	}
 	var basisSum float32
 	for _, it := range items {

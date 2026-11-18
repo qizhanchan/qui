@@ -52,6 +52,9 @@ const (
 type Select struct {
 	// WebMetrics enables browser geometry for the raw HTML trigger.
 	WebMetrics bool
+	// NoAppearance removes the platform arrow and extra native theme sizing
+	// for CSS appearance:none; the control still opens its option popup.
+	NoAppearance bool
 	BaseWidget
 	Items []string
 	// ItemDisabled marks unselectable options, parallel to Items (a shorter
@@ -438,6 +441,10 @@ func (cb *Select) native() bool {
 // case the text starts at border + padding-left and the arrow sits
 // border + padding-right in (never tighter than the UA gap).
 func (cb *Select) nativeInsets() (lead, trail, arrowGap float32) {
+	if cb.NoAppearance {
+		st := &cb.States.Base
+		return st.Padding.Left + st.BorderSize + st.BorderWidths.Left, st.Padding.Right + st.BorderSize + st.BorderWidths.Right, 0
+	}
 	if cb.WebMetrics && cb.States.Base.Padding == (Insets{}) {
 		return 2, 16, 4
 	}
@@ -812,7 +819,10 @@ func (cb *Select) Measure(available Size) Size {
 		}
 		height := htmlControlHeight
 		if cb.WebMetrics {
-			height = webControlHeight(&cb.States.Base, cb.States.Base.Padding) + 2
+			height = webControlHeight(&cb.States.Base, cb.States.Base.Padding)
+			if !cb.NoAppearance {
+				height += 2
+			}
 			width = float32(math.Ceil(float64(width)))
 			return Size{W: width, H: height}
 		}
@@ -954,6 +964,9 @@ func (cb *Select) Draw(canvas Canvas) {
 // pyramid built from FillRect rows — same "no path rendering" tradeoff
 // as TreeView's chevron, but exact spec geometry (10×5 inside 24×24).
 func (cb *Select) drawChevron(canvas Canvas, field Rect, color Color) {
+	if cb.NoAppearance {
+		return
+	}
 	theme := CurrentTheme()
 	if cb.native() {
 		cb.drawNativeChevron(canvas, field)
@@ -1322,6 +1335,11 @@ func (cb *Select) selectIndex(idx int) {
 // InlineBaseline aligns the selected label with surrounding CSS text.
 func (cb *Select) InlineBaseline() float32 {
 	if cb.WebMetrics {
+		if cb.NoAppearance {
+			st := &cb.States.Base
+			above, _ := CSSInlineMetrics(st.Font, st.LineHeight)
+			return above + st.Padding.Top + st.BorderSize + st.BorderWidths.Top
+		}
 		return webControlBaseline(&cb.States.Base, cb.States.Base.Padding) + 1
 	}
 	return 0

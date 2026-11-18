@@ -1,0 +1,10 @@
+{
+ "fixture": "web-inline-text-transform",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "pill": [0,0,128.02,34],
+  "outer": [132.47,8,222.83,18],
+  "reset": [306.89,8,48.41,18]
+ }
+}

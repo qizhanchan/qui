@@ -45,6 +45,9 @@ const (
 // InlineItem is one participant in an inline formatting context: either a run
 // of styled text or an atomic box.
 type InlineItem struct {
+	// Placeholder records an out-of-flow inline box's static position but
+	// does not separate adjoining collapsible whitespace.
+	Placeholder bool
 	NoWrapGroup int32 // nonzero consecutive items suppress soft breaks within the group
 	Hyphenate   bool
 	Language    string
@@ -640,9 +643,10 @@ type InlineLayout struct {
 // inlineTok is one break unit: a word, an atomic box, a run of preserved
 // whitespace (PreserveWhitespace mode only), or a forced break.
 type inlineTok struct {
-	language   string
-	hyphenate  bool
-	forceBreak bool
+	placeholder bool
+	language    string
+	hyphenate   bool
+	forceBreak  bool
 
 	box      bool
 	boxIndex int
@@ -706,6 +710,15 @@ type inlineTok struct {
 	spaceSrcItem  int
 	spaceSrcStart int
 	spaceSrcEnd   int
+}
+
+func inlineHasContent(toks []inlineTok, indexes []int) bool {
+	for _, i := range indexes {
+		if !toks[i].placeholder {
+			return true
+		}
+	}
+	return false
 }
 
 // spaceStyledLike reports whether the token's joining space draws exactly
@@ -1013,7 +1026,7 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 			srcCursor = lineStart
 		}
 		gap := float32(0)
-		if len(segToks[seg]) > 0 && t.spaceBefore {
+		if !t.placeholder && inlineHasContent(toks, segToks[seg]) && t.spaceBefore {
 			gap = t.spaceWidth
 		}
 		if t.tab {
@@ -1338,6 +1351,7 @@ func placeInlineLine(toks []inlineTok, idxs []int, baseline, asc, desc, mid, jus
 	reordered := !sameTokenOrder(logicalIdxs, idxs)
 	var frags []InlineFrag
 	var x float32
+	seenContent := false
 	padAfter := false // the last fragment is followed by an element's end edge
 	for pos, ti := range idxs {
 		t := toks[ti]
@@ -1371,10 +1385,11 @@ func placeInlineLine(toks []inlineTok, idxs []int, baseline, asc, desc, mid, jus
 			t.spaceFont.WordSpacing += justify
 		}
 		gap := float32(0)
-		if pos > 0 && t.spaceBefore {
+		if seenContent && t.spaceBefore {
 			gap = t.spaceWidth + justify
 		}
 		if t.tab {
+			seenContent = true
 			start := x + gap
 			end, stop := tabAdvance(start+ind, lineRunWidth(toks, idxs, pos+1, justify), t.width, opts)
 			end -= ind
@@ -1423,9 +1438,14 @@ func placeInlineLine(toks []inlineTok, idxs []int, baseline, asc, desc, mid, jus
 				SrcStart: t.srcStart,
 				SrcEnd:   t.srcEnd,
 			})
+			if t.placeholder {
+				continue
+			}
+			seenContent = true
 			x += gap + t.size.W
 			continue
 		}
+		seenContent = true
 		fa := inlineAscent(t.font)
 		fd := inlineDescent(t.font)
 		ink := fa + fd
@@ -1679,11 +1699,14 @@ func tokenizeInline(items []InlineItem, preserve bool) []inlineTok {
 		}
 		if it.Box {
 			tok := inlineTok{box: true, boxIndex: it.BoxIndex, valign: it.VAlign, size: it.Size, baseline: it.Baseline,
-				span: it.Span, font: it.Font, lh: it.LineHeightScale, srcItem: ii, srcStart: 0, srcEnd: 1}
+				placeholder: it.Placeholder,
+				span:        it.Span, font: it.Font, lh: it.LineHeightScale, srcItem: ii, srcStart: 0, srcEnd: 1}
 			stampSpace(&tok)
 			ins.lead(&tok)
 			toks = append(toks, tok)
-			pendingSpace = false
+			if !it.Placeholder {
+				pendingSpace = false
+			}
 			continue
 		}
 		runes := []rune(it.Text)
@@ -2111,9 +2134,18 @@ func DrawInlineLine(canvas gfx.Canvas, layout InlineLayout, li int, origin gfx.R
 			}, f.Background)
 		}
 
-		canvas.DrawText(f.Text, r, f.Color, f.Font)
+		baseline := origin.Y + line.Baseline - f.BaselineShift
+		if c, ok := canvas.(baselineLineCanvas); ok {
+			if shaped, ok := ShapeSingleLine([]rune(f.Text), f.Font, TextDirectionAuto); ok {
+				c.DrawShapedLineAtBaseline(shaped, r.X, baseline, f.Color, f.Font)
+			} else {
+				canvas.DrawText(f.Text, r, f.Color, f.Font)
+			}
+		} else {
+			canvas.DrawText(f.Text, r, f.Color, f.Font)
+		}
 		if f.Decoration != 0 {
-			drawDecorationRun(canvas, f.Decoration, r.X, r.W, r.Y, r.H, f.Color, f.Font, f.DecorationPaint)
+			drawDecorationRun(canvas, f.Decoration, r.X, r.W, baseline-plainTextBaseline(f.Font, r.H), r.H, f.Color, f.Font, f.DecorationPaint)
 		}
 	}
 }

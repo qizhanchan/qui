@@ -262,6 +262,9 @@ func (b *InlineBox) buildItems(maxW float32) []InlineItem {
 				Font:        p.font, LineHeightScale: p.lh,
 				Span: p.span,
 			}
+			if marker, ok := p.child.(interface{ InlinePlaceholder() bool }); ok {
+				it.Placeholder = marker.InlinePlaceholder()
+			}
 			// A text-carrying atomic box (e.g. a styled link kept as its own
 			// box) reports its baseline so the IFC aligns it with the run.
 			if bp, ok := p.child.(InlineBaselineProvider); ok {

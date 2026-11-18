@@ -922,6 +922,7 @@ func applyTextStyle(lbl *widgets.Label, text string, cs *ComputedStyle, o textLa
 		}
 	})
 	p := lbl.Paragraph
+	p.CSSBaseline = webCompat
 	p.Wrap = !cs.NoWrap && !o.noWrap
 	// CSS default is overflow-wrap:normal — a word with no break opportunity
 	// overflows. The native Label default is the opposite (always break), so
@@ -947,7 +948,8 @@ func applyTextStyle(lbl *widgets.Label, text string, cs *ComputedStyle, o textLa
 	layoutChanged := p.Wrap != lbl.Paragraph.Wrap || p.BreakLongWords != lbl.Paragraph.BreakLongWords ||
 		p.Align != lbl.Paragraph.Align || p.Ellipsis != lbl.Paragraph.Ellipsis ||
 		p.MaxLines != lbl.Paragraph.MaxLines || p.LineHeightScale != lbl.Paragraph.LineHeightScale ||
-		p.FirstIndent != lbl.Paragraph.FirstIndent || p.Direction != lbl.Paragraph.Direction
+		p.FirstIndent != lbl.Paragraph.FirstIndent || p.Direction != lbl.Paragraph.Direction ||
+		p.CSSBaseline != lbl.Paragraph.CSSBaseline
 	lbl.Paragraph = p
 	if layoutChanged {
 		lbl.InvalidateLayout()
