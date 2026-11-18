@@ -72,6 +72,12 @@ var domLayoutAllowlist = []domLayoutAllow{
 	{"web-float", "c4", "x", "a float does not escape its containing block (c3's float would push c4 right)"},
 	{"web-float", "f5", "x", "a float does not escape its containing block (c3's float would push c4 right)"},
 
+	// A table row is not a box of its own: its cells sit on the table's
+	// grid, so a row element has no geometry (Chrome reports the row band).
+	{"web-table", "dr[12]", "y", "a table row has no box; its cells sit on the table's grid"},
+	{"web-table", "dr[12]", "w", "a table row has no box; its cells sit on the table's grid"},
+	{"web-table", "dr[12]", "h", "a table row has no box; its cells sit on the table's grid"},
+
 	// Undocumented differences — each a fix candidate.
 	{"pre-wrap", "flex-short", "h", "flex items have no content-based automatic minimum (min-height: auto): qui shrinks text below its content in a too-short column"},
 	{"pre-wrap", "trailing", "h", "a pre-wrap text's final newline adds an empty line in qui; Chrome ends the text there"},
@@ -137,7 +143,7 @@ func runDOMLayoutFixture(t *testing.T, dir, name string, used []bool) {
 		SetWebCompat(true)
 		defer SetWebCompat(false)
 	}
-	got := domLayoutBoxes(string(html))
+	got := domLayoutBoxes(string(html), strings.HasPrefix(name, "web-"))
 
 	ids := make([]string, 0, len(golden.Boxes))
 	for id := range golden.Boxes {
@@ -195,9 +201,10 @@ type domLayoutBox struct {
 
 // domLayoutBoxes renders html through htmlcss at the fixture viewport and
 // returns every id'd El's border box in window coordinates.
-func domLayoutBoxes(html string) map[string]domLayoutBox {
+func domLayoutBoxes(html string, document bool) map[string]domLayoutBox {
 	win := qui.NewTestWindow(domLayoutViewport)
-	res := RenderDoc(html, "", Options{ViewportWidth: domLayoutViewport.W, Window: win})
+	res := RenderDoc(html, "", Options{ViewportWidth: domLayoutViewport.W, ViewportHeight: domLayoutViewport.H,
+		Window: win, DocumentRoot: document})
 	win.SetRoot(res.Root)
 	sz := res.Root.Measure(qui.Size{W: domLayoutViewport.W, H: 0})
 	res.Root.Layout(qui.Rect{W: domLayoutViewport.W, H: max(sz.H, domLayoutViewport.H)})

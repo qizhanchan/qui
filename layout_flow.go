@@ -252,15 +252,21 @@ func edgeMargin(w Widget, bottom bool) marginRun {
 	if (bottom && !cb) || (!bottom && !ct) {
 		return r
 	}
+	// Floats sit outside margin collapsing: the edge child is the first
+	// (last) in-flow child that is not one.
 	kids := w.(flowHost).inFlowChildren()
-	if len(kids) == 0 {
-		return r
+	var k Widget
+	for i := range kids {
+		c := kids[i]
+		if bottom {
+			c = kids[len(kids)-1-i]
+		}
+		if fs, _, _ := floatStyle(c); fs == FloatNone {
+			k = c
+			break
+		}
 	}
-	k := kids[0]
-	if bottom {
-		k = kids[len(kids)-1]
-	}
-	if flowLevelOf(k) == FlowBlock {
+	if k != nil && flowLevelOf(k) == FlowBlock {
 		r.merge(edgeMargin(k, bottom))
 	}
 	return r
@@ -351,7 +357,8 @@ func (f FlowLayout) run(children []Widget, bounds Rect, apply bool) (contentH, m
 		inheritedN = len(band.floats)
 	}
 
-	for i, child := range children {
+	seenFlow := false // a non-float child has been placed
+	for _, child := range children {
 		m := child.Style().Margin
 		fside, clear, newFC := floatStyle(child)
 		if band != nil && fside != FloatNone {
@@ -391,6 +398,7 @@ func (f FlowLayout) run(children []Widget, bounds Rect, apply bool) (contentH, m
 		}
 		switch flowLevelOf(child) {
 		case FlowInline:
+			seenFlow = true
 			sz := resolveFlowInlineSize(child, cb, bounds.W-m.Left-m.Right)
 			boxW := m.Left + sz.W + m.Right
 			if !lineOpen {
@@ -458,11 +466,12 @@ func (f FlowLayout) run(children []Widget, bounds Rect, apply bool) (contentH, m
 			if bwm := m.Left + intrinsicW + m.Right; bwm > maxW {
 				maxW = bwm
 			}
-			if !(top && i == 0) {
+			if !(top && !seenFlow) {
 				// The first child's top margin of a collapsing-through
 				// container belongs to the container's own top margin.
 				pending.merge(edgeMargin(child, false))
 			}
+			seenFlow = true
 			through := h == 0 // an empty block: its margins adjoin each other
 			if through {
 				pending.merge(edgeMargin(child, true))

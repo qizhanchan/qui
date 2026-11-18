@@ -38,7 +38,7 @@ import (
 // buildTable assembles the table El as a grid of its cells. cs is the
 // table's own computed style (its border/background paint normally).
 func (e *El) buildTable(cs *ComputedStyle) {
-	rows := gatherTableRows(e)
+	rows := gatherTableRows(e, cs)
 	caption, capBottom := gatherCaption(e)
 
 	// A caption occupies its own full-width grid row (top or bottom); data
@@ -62,7 +62,7 @@ func (e *El) buildTable(cs *ComputedStyle) {
 		col := 0
 		for _, k := range tr.elementKids {
 			ke, ok := k.(*El)
-			if !ok || (ke.tag != "td" && ke.tag != "th") {
+			if !ok || !isTableCell(tr, ke, cs) {
 				continue
 			}
 			for occupied[[2]int{r, col}] {
@@ -641,25 +641,83 @@ func inlineDeclValue(style, prop string) string {
 
 // gatherTableRows returns the <tr> elements of a table in document order,
 // descending through thead/tbody/tfoot row groups.
-func gatherTableRows(table *El) []*El {
+func gatherTableRows(table *El, tableCS *ComputedStyle) []*El {
 	var rows []*El
-	var walk func(*El)
-	walk = func(el *El) {
+	var walk func(el *El, elCS *ComputedStyle)
+	walk = func(el *El, elCS *ComputedStyle) {
 		for _, k := range el.elementKids {
 			ke, ok := k.(*El)
-			if !ok {
+			if !ok || ke.isTextSeg() {
 				continue
 			}
-			switch ke.tag {
-			case "tr":
+			switch tableRole(el, ke, elCS) {
+			case "table-row":
 				rows = append(rows, ke)
-			case "thead", "tbody", "tfoot":
-				walk(ke)
+			case "table-row-group":
+				walk(ke, el.childStyle(ke, elCS))
 			}
 		}
 	}
-	walk(table)
+	walk(table, tableCS)
 	return rows
+}
+
+// tableRole classifies a table descendant: "table-row", "table-row-group",
+// "table-cell", "table-caption" or "". Tags decide (<tr>, <tbody>, <td>,
+// <caption>); in web-compat mode so does the computed display, so CSS
+// tables of <div>s build like HTML ones.
+func tableRole(parent, ke *El, parentCS *ComputedStyle) string {
+	switch ke.tag {
+	case "tr":
+		return "table-row"
+	case "thead", "tbody", "tfoot":
+		return "table-row-group"
+	case "td", "th":
+		return "table-cell"
+	case "caption":
+		return "table-caption"
+	}
+	if !webCompat {
+		return ""
+	}
+	kcs := parent.childStyle(ke, parentCS)
+	if kcs == nil {
+		return ""
+	}
+	switch kcs.Display {
+	case "table-row":
+		return "table-row"
+	case "table-row-group", "table-header-group", "table-footer-group":
+		return "table-row-group"
+	case "table-cell":
+		return "table-cell"
+	case "table-caption":
+		return "table-caption"
+	}
+	return ""
+}
+
+// isTableCell reports whether ke, a child of row tr, is a cell. The row's
+// own style is approximated by the table's as the parent style: display
+// is not inherited, so the classification does not depend on it.
+func isTableCell(tr, ke *El, tableCS *ComputedStyle) bool {
+	return !ke.isTextSeg() && tableRole(tr, ke, tableCS) == "table-cell"
+}
+
+// hasTableStructure reports whether a display:table element has rows or
+// cells to lay out as a grid. One without (Wikipedia's thumbnail
+// <figure>: an image link and a caption) is a single anonymous cell: it
+// lays out as a shrink-to-fit block.
+func hasTableStructure(e *El, cs *ComputedStyle) bool {
+	for _, k := range e.elementKids {
+		if ke, ok := k.(*El); ok && !ke.isTextSeg() {
+			switch tableRole(e, ke, cs) {
+			case "table-row", "table-row-group", "table-cell":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // maxColSpan is HTML's cap on colspan and <col span>: one malformed

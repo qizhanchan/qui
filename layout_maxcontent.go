@@ -68,10 +68,21 @@ func maxContentByMeasure(w Widget) float32 {
 	return v
 }
 
+// MinContentContributor is implemented by widgets whose contribution to
+// their container's max-content width is only their min-content width —
+// a table caption (CSS 2.1 § 17.4: the caption never widens the table
+// beyond its own minimum; it wraps to the table's width).
+type MinContentContributor interface {
+	ContributesMinContent() bool
+}
+
 // maxContentMargined is a child's max-content width plus its horizontal
 // margins.
 func maxContentMargined(w Widget) float32 {
 	m := w.Style().Margin
+	if c, ok := w.(MinContentContributor); ok && c.ContributesMinContent() {
+		return MinContentWidth(w) + m.Left + m.Right
+	}
 	return MaxContentWidth(w) + m.Left + m.Right
 }
 

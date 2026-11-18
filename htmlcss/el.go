@@ -420,6 +420,12 @@ func (e *El) ShrinkToFitWidth() bool {
 	return e.lastCS != nil && e.lastCS.Display == "table" && !e.lastCS.HasWidth
 }
 
+// ContributesMinContent: a table caption adds only its min-content width
+// to its table's max-content width (qui.MinContentContributor).
+func (e *El) ContributesMinContent() bool {
+	return e.lastCS != nil && e.lastCS.Display == "table-caption"
+}
+
 // --- mutators used by the reactive host contract ---
 
 // SetElementChildren replaces the element-child list (called by the
@@ -2659,7 +2665,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	// Table box types. A <table> builds a grid of its cells (table.go);
 	// structural row / row-group elements render no box (their cells are
 	// hoisted onto the table's grid).
-	if cs.Display == "table" {
+	if cs.Display == "table" && (!webCompat || hasTableStructure(e, cs)) {
 		e.buildTable(cs)
 		return
 	}

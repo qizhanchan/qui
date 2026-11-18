@@ -1,0 +1,18 @@
+<!doctype html><html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+/* CSS tables without rows: Wikipedia's thumbnail figure (display:table,
+   floated, a caption at the bottom that wraps to the image's width), and a
+   div table built from display:table-row / table-cell. */
+body{margin:0;width:600px;font:14px/1.6 GoRegular}
+.t{display:table;border-spacing:0}.tr{display:table-row}.td{display:table-cell;padding:2px 6px}
+figure{margin:0}
+figure[typeof~='mw:File/Thumb']{display:table;text-align:left;border-collapse:collapse;line-height:0;margin:0.5em 0 1.3em 1.4em;clear:right;float:right}
+figure[typeof~='mw:File/Thumb'] > figcaption{display:table-caption;caption-side:bottom;line-height:1.4;padding:0 6px 6px 6px;border:1px solid #c8ccd1;border-top:0;background:#f8f9fa}
+figure[typeof~='mw:File/Thumb'] > :not(figcaption){border:1px solid #c8ccd1;padding:3px;background:#f8f9fa}
+figure[typeof~='mw:File/Thumb'] > a{display:inline-block}
+img{border:0;vertical-align:middle}
+</style></head><body>
+<figure class="mw-default-size mw-halign-right" typeof="mw:File/Thumb" id="fig"><a href="x" id="fa"><img id="im" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='250' height='163'%3E%3Crect width='250' height='163' fill='%2369c'/%3E%3C/svg%3E" width="250" height="163"/></a><figcaption id="cap">A web browser (Safari) on a MacBook displaying the Wikipedia web page</figcaption></figure>
+<p id="p">A web browser, often abbreviated as browser, is an application for accessing websites. When a user requests a web page from a particular website, the browser retrieves its files from a web server and then displays the page on the user's screen. Browsers can also display content stored locally on the user's device.</p>
+<div class="t" id="dt"><div class="tr" id="dr1"><div class="td" id="dc1">one</div><div class="td" id="dc2">a longer second cell</div></div><div class="tr" id="dr2"><div class="td" id="dc3">three three three</div><div class="td" id="dc4">4</div></div></div>
+</body></html>
