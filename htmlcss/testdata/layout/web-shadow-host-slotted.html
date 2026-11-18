@@ -1,0 +1,5 @@
+<!doctype html><style>
+@font-face {font-family:GoRegular;src:url(../../../widgets/scripts/web/go-regular.ttf)}
+body{margin:0;font:16px/20px GoRegular} body div{height:80px} .theme{padding:5px}
+</style>
+<main class="theme"><x-box id="host" class="wide"><div id="light">Light</div><template shadowrootmode="open"><style>:host{display:block;width:200px;padding:10px}:host(.wide){width:250px}:host-context(.theme){margin:5px}div{height:30px}::slotted(div){padding:5px}slot{display:contents}</style><div id="inside">Inside</div><slot></slot></template></x-box></main><div id="after">After</div>

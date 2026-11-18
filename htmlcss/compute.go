@@ -404,6 +404,7 @@ func resolveStyles(root *Node, sheet *Stylesheet) map[*Node]*ComputedStyle {
 
 // matchedDecl carries a declaration with its cascade sort key.
 type matchedDecl struct {
+	context int
 	decl    Declaration
 	a, b, c int // specificity
 	order   int // source order
@@ -529,7 +530,7 @@ func pseudoDecls(n *Node, sheet *Stylesheet, which string) map[string]string {
 		}
 		if best >= 0 {
 			for _, d := range rule.Declarations {
-				decls = append(decls, matchedDecl{decl: d, a: ba, b: bb, c: bc, order: order, tier: 1, layer: rule.Layer})
+				decls = append(decls, matchedDecl{decl: d, a: ba, b: bb, c: bc, order: order, tier: 1, layer: rule.Layer, context: ruleContext(rule)})
 				order++
 			}
 		}
@@ -771,6 +772,9 @@ func mergedDeclsRest(n *Node, sheet *Stylesheet, st selectorState, rest *restMat
 	// Tier 0: user-agent defaults for this tag. Push-button input types
 	// (submit/reset/button) borrow the <button> default chrome.
 	uaTag := uaTagFor(n)
+	if n.Tag == "#shadow-root" || n.Tag == "slot" {
+		decls = append(decls, matchedDecl{decl: Declaration{Property: "display", Value: "contents"}, tier: 0})
+	}
 	// The global `hidden` attribute is a UA rule (`[hidden] { display: none }`),
 	// not an intrinsic property — so author CSS can override it, exactly as in
 	// a browser. Emitting it at tier 0 gets that for free.
@@ -803,6 +807,11 @@ func mergedDeclsRest(n *Node, sheet *Stylesheet, st selectorState, rest *restMat
 			}
 		}
 		decls = append(decls, matchedDecl{decl: d, tier: 0})
+	}
+	if n.Tag == "dialog" {
+		if _, open := n.Attr("open"); !open {
+			decls = append(decls, matchedDecl{decl: Declaration{Property: "display", Value: "none"}, tier: 0})
+		}
 	}
 	// Still tier 0: framework component defaults (RegisterFrameworkCSS).
 	decls = append(decls, frameworkDecls(n, st)...)
@@ -854,7 +863,7 @@ func mergedDeclsRest(n *Node, sheet *Stylesheet, st selectorState, rest *restMat
 		}
 		if best >= 0 {
 			for _, d := range rule.Declarations {
-				decls = append(decls, matchedDecl{decl: d, a: ba, b: bb, c: bc, order: order, tier: 1, layer: rule.Layer})
+				decls = append(decls, matchedDecl{decl: d, a: ba, b: bb, c: bc, order: order, tier: 1, layer: rule.Layer, context: ruleContext(rule)})
 				order++
 			}
 		}
@@ -863,14 +872,14 @@ func mergedDeclsRest(n *Node, sheet *Stylesheet, st selectorState, rest *restMat
 	// Tier 2: inline style attribute (highest).
 	if inline, ok := n.Attr("style"); ok {
 		for _, d := range parseDeclarations(inline) {
-			decls = append(decls, matchedDecl{decl: d, tier: 2})
+			decls = append(decls, matchedDecl{decl: d, tier: 2, context: shadowDepth(shadowScope(n))})
 		}
 	}
 
 	// Cascade sort: !important tier first, then origin tier, then
 	// specificity, then source order. Stable so equal keys keep order.
 	slices.SortStableFunc(decls, func(a, b matchedDecl) int {
-		return cmp.Compare(cascadeKey(a), cascadeKey(b))
+		return compareCascade(a, b)
 	})
 
 	// Fold in cascade order. A shorthand evicts every longhand (and
@@ -2773,4 +2782,29 @@ func parseAspectRatio(v string) float32 {
 		return 0
 	}
 	return w / h
+}
+
+func shadowDepth(r *El) int {
+	depth := 0
+	for r != nil {
+		depth++
+		r = shadowScope(r.shadowHost.node)
+	}
+	return depth
+}
+func compareCascade(a, b matchedDecl) int {
+	if a.tier > 0 && b.tier > 0 && a.decl.Important == b.decl.Important && a.context != b.context {
+		if a.decl.Important {
+			return cmp.Compare(a.context, b.context)
+		}
+		return cmp.Compare(b.context, a.context)
+	}
+	return cmp.Compare(cascadeKey(a), cascadeKey(b))
+}
+
+func ruleContext(rule *Rule) int {
+	if len(rule.Selectors) > 0 {
+		return shadowDepth(rule.Selectors[0].scope)
+	}
+	return 0
 }

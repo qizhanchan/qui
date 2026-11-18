@@ -78,7 +78,9 @@ func RenderDoc(htmlSrc, cssSrc string, opts Options) RenderResult {
 	if !opts.DocumentRoot {
 		styles = resolveStyles(dom, eng.sheet)
 	}
+	eng.allowDeclarative = true
 	root := eng.buildStaticEl(body, styles)
+	eng.allowDeclarative = false
 	if root == nil {
 		// Empty document → an empty block element so the window has a root.
 		root = eng.NewEl("body")

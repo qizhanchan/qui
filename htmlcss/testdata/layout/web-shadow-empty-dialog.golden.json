@@ -1,0 +1,9 @@
+{
+ "fixture": "web-shadow-empty-dialog",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "first": [0,0,640,30],
+  "last": [0,30,640,30]
+ }
+}

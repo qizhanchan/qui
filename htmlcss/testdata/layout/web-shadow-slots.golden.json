@@ -1,0 +1,12 @@
+{
+ "fixture": "web-shadow-slots",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "host": [0,0,300,80],
+  "section": [0,0,300,80],
+  "named": [10,10,280,30],
+  "default": [10,40,280,30],
+  "after": [0,80,640,20]
+ }
+}

@@ -28,15 +28,15 @@ const (
 // Node is a single DOM node. Elements carry a Tag, Attrs, and Children;
 // text nodes carry Text. The tree is built by ParseHTML.
 type Node struct {
-	Type     NodeType
-	Tag      string // lowercase tag name for elements ("" for text)
-	Attrs    map[string]string
+	Type  NodeType
+	Tag   string // lowercase tag name for elements ("" for text)
+	Attrs map[string]string
 	// AttrOrder lists Attrs' keys in source order (parsed markup only;
 	// nil elsewhere).
 	AttrOrder []string
 	Text      string // text content for TextNode
-	Children []*Node
-	Parent   *Node
+	Children  []*Node
+	Parent    *Node
 	// StyleOnlyParent marks a Parent link that exists for the cascade only:
 	// n is NOT among Parent.Children. A portal's content (mounted into the
 	// overlay stack, outside the tree) links to the element that declared
@@ -44,6 +44,7 @@ type Node struct {
 	// (`.app.dark .q-dialog`) through it, while having no siblings — it
 	// is the only child for :first-child / `+` / `~` purposes.
 	StyleOnlyParent bool
+	live            *El
 
 	// classSrc / classList cache the split class attribute for selector
 	// matching (hasClass runs for every class selector against every

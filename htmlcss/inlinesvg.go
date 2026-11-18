@@ -105,8 +105,22 @@ func writeSVGEl(b *strings.Builder, e *El, root bool) {
 	b.WriteByte('<')
 	b.WriteString(svgTag(e.tag))
 	for _, k := range e.AttrNames() {
+		if k == "style" && e.lastCS != nil {
+			continue
+		}
 		v, _ := e.readAttr(k)
 		writeSVGAttr(b, k, v)
+	}
+	if e.lastCS != nil {
+		style := e.attrs["style"]
+		for _, prop := range []string{"fill", "fill-rule", "fill-opacity", "stroke", "stroke-width", "stroke-opacity", "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "stroke-dashoffset", "opacity", "color"} {
+			if v, ok := e.lastCS.raw[prop]; ok {
+				style += ";" + prop + ":" + v
+			}
+		}
+		if style != "" {
+			writeSVGAttr(b, "style", style)
+		}
 	}
 	if _, ok := e.readAttr("xmlns"); root && !ok {
 		writeSVGAttr(b, "xmlns", "http://www.w3.org/2000/svg")
@@ -167,3 +181,21 @@ func writeSVGAttr(b *strings.Builder, k, v string) {
 // SVGTagName is an SVG element's name as the DOM reports it (camelCase
 // restored: clipPath, linearGradient …).
 func SVGTagName(tag string) string { return svgTag(tag) }
+
+// The SVG renderer owns geometry, while CSS ownership and custom properties
+// come from the same scoped cascade as the surrounding HTML.
+func (e *El) refreshSVGStyles() {
+	if e.inlineSVG == nil || e.lastCS == nil {
+		return
+	}
+	var b strings.Builder
+	writeSVGEl(&b, e, true)
+	markup := b.String()
+	if markup == e.inlineStyledMarkup {
+		return
+	}
+	e.inlineStyledMarkup = markup
+	e.setInlineSVGMarkup(markup)
+	e.ensureImg(e.lastCS)
+	e.syncChildren()
+}

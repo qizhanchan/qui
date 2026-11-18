@@ -216,3 +216,16 @@ func TestWebNowrapEllipsisUsesTruncatedText(t *testing.T) {
 		t.Fatalf("overflowing title was not ellipsized: %+v", layout.Lines)
 	}
 }
+
+func TestInputInitialBackgroundIsTransparent(t *testing.T) {
+	prev := webCompat
+	SetWebCompat(true)
+	defer SetWebCompat(prev)
+	win := qui.NewTestWindow(qui.Size{W: 120, H: 60})
+	res := RenderDoc(`<body style="margin:0;background:red"><input style="width:100px;height:40px;background-color:initial;border:0"></body>`, "", Options{Window: win, DocumentRoot: true})
+	res.Root.Layout(qui.Rect{W: 120, H: 60})
+	img := paintWhite(res.Root)
+	if c := img.RGBAAt(10, 10); !near(c, 255, 0, 0, 2) {
+		t.Fatalf("initial input background obscures content: %v", c)
+	}
+}

@@ -59,6 +59,7 @@ type El struct {
 	domTextSet bool
 	// inlineSVG is an inline <svg> element's drawing (inlinesvg.go).
 	inlineSVG                      *svg.Document
+	inlineStyledMarkup             string
 	inlineSVGFill, inlineSVGStroke svg.Paint
 	// attrMu guards the attrs MAP ONLY, and only against the one reader
 	// that is not on the main goroutine: the AX / DOM introspection surface
@@ -120,6 +121,15 @@ type El struct {
 	// (see StyleEngine.markDirty).
 	structRel bool
 
+	shadowRoot        *El
+	shadowHost        *El
+	shadowMode        string
+	shadowCSS         string
+	assignedSlot      *El
+	assigned          []*El
+	shadowSlots       []*El
+	shadowCSSOverride bool
+
 	elementKids []qui.Widget // element children set by the reactive layer
 	textLabel   *widgets.Label
 
@@ -138,6 +148,7 @@ type El struct {
 	// positioned element leaves in its parent's inline run: its laid-out
 	// origin is the element's static position (StaticAnchor).
 	staticMarker *staticMarker
+	inlinePseudo *inlinePseudoAnchor
 	// anim holds the running CSS transitions / animations (anim.go).
 	anim *elAnimations
 
@@ -442,6 +453,7 @@ func newEl(tag string, engine *StyleEngine) *El {
 		selectedIdx:        -1,
 		defaultSelectedIdx: -1,
 	}
+	e.node.live = e
 	e.BaseWidget = qui.NewBaseWidget()
 	e.LayoutEngine = qui.FlowLayout{}
 	e.SetSelf(e)
@@ -541,6 +553,9 @@ func (e *El) SetElementID(id string) {
 func (e *El) SetAttr(k, v string) { e.setAttr(k, v) }
 
 func (e *El) setAttr(k, v string) {
+	if e.engine != nil && (k == "slot" || k == "name") {
+		e.engine.distributionDirty = true
+	}
 	// Presence-aware equality: a missing key and an empty value must NOT
 	// compare equal, or boolean attributes (disabled, switch, checked)
 	// could never be set to their canonical "" value.
@@ -651,6 +666,9 @@ func (e *El) attrSnapshot() map[string]string {
 // RemoveAttr deletes an attribute, relinking attribute-gated CSS (and the
 // backing control's enabled state for `disabled`).
 func (e *El) RemoveAttr(k string) {
+	if e.engine != nil && (k == "slot" || k == "name") {
+		e.engine.distributionDirty = true
+	}
 	if _, ok := e.attrs[k]; !ok {
 		return
 	}
@@ -776,6 +794,16 @@ func (e *El) TextContent() string {
 // injecting a phantom text line that shifts the page it was meant to
 // inspect. Text actions reach controls through TextTarget instead.
 func (e *El) SetTextContent(s string) {
+	if e.shadowRoot != nil {
+		e.text = ""
+		e.domTextSet = false
+		var kids []qui.Widget
+		if s != "" {
+			kids = []qui.Widget{newTextEl(s, e.engine)}
+		}
+		e.SetElementChildren(kids)
+		return
+	}
 	e.domTextSet, e.domText = false, ""
 	if e.text == s {
 		return
@@ -1222,6 +1250,12 @@ func (e *El) unlinkStyleParent() {
 // inheritParent is the element this one inherits computed style from: its
 // tree parent, or for a portal root its style parent.
 func (e *El) inheritParent() *El {
+	if e.assignedSlot != nil {
+		return e.assignedSlot
+	}
+	if e.shadowHost != nil {
+		return e.shadowHost
+	}
 	if e.elParent != nil {
 		return e.elParent
 	}
@@ -2758,6 +2792,12 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	if e.domTextSet {
 		e.text = collapseFor(e.domText, cs)
 	}
+	defer func() {
+		if e.inlinePseudo != nil {
+			e.Positioned = false
+			e.SetOutOfFlow(false)
+		}
+	}()
 	prev := e.lastCS
 	e.lastCS = cs
 	if cs != nil {
@@ -2832,6 +2872,12 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	// visibility), resolve which specific elements trigger it and register
 	// them so their state boundaries repaint this element.
 	e.linkAncestorState(cs)
+
+	// Grid cell placement: when this element is a child of a display:grid box,
+	// resolve its grid-column / grid-row / grid-area into explicit placement.
+	if bp := e.boxParent(); bp != nil && bp.lastCS != nil && isGridDisplay(bp.lastCS.Display) {
+		e.applyGridItem(cs, bp.lastCS)
+	}
 
 	// Anonymous text segment (static DOM text node): pure inherited
 	// typography on the internal label, no box of its own.
@@ -2977,7 +3023,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	// Content layout from computed display.
 	var contentLayout qui.Layout
 	if isGridDisplay(cs.Display) {
-		contentLayout = gridLayout(cs, len(e.elementKids))
+		contentLayout = gridLayout(cs, len(e.renderKids()))
 	} else {
 		contentLayout = chooseLayout(cs)
 	}
@@ -3082,12 +3128,6 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		}
 	}
 
-	// Grid cell placement: when this element is a child of a display:grid box,
-	// resolve its grid-column / grid-row / grid-area into explicit placement.
-	if bp := e.boxParent(); bp != nil && bp.lastCS != nil && isGridDisplay(bp.lastCS.Display) {
-		e.applyGridItem(cs, bp.lastCS)
-	}
-
 	// ::before / ::after generated content (resolved from pseudo-element rules).
 	e.pbText, e.pbCS, e.paText, e.paCS = "", nil, "", nil
 	e.pseudoRules = false
@@ -3160,7 +3200,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		// The scrolled content box lays out the same inline runs a plain
 		// block would (a <pre style="overflow:auto"> keeps its lines).
 		e.flowKids = e.buildFlow(cs)
-		if e.flowKids == nil && webCompat && e.text != "" && len(e.elementKids) == 0 &&
+		if e.flowKids == nil && webCompat && e.text != "" && len(e.renderKids()) == 0 &&
 			e.iconSrc == nil && !e.isImg() && !e.isControl() && e.backing == nil {
 			e.flowKids = e.buildPseudoLeaf(cs)
 		}
@@ -3202,7 +3242,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		e.pseudoKids = false
 		if e.flowKids == nil && (e.pbText != "" || e.paText != "" || (isFlexDisplay(cs.Display) || isGridDisplay(cs.Display)) && (e.pbCS != nil || e.paCS != nil)) &&
 			e.iconSrc == nil && !e.isImg() {
-			if len(renderableKids(e.elementKids)) > 0 || isFlexDisplay(cs.Display) || isGridDisplay(cs.Display) {
+			if len(renderableKids(e.renderKids())) > 0 || isFlexDisplay(cs.Display) || isGridDisplay(cs.Display) {
 				// Element children: the generated content is a box beside
 				// them (a flex / grid item, or a block / inline box in the
 				// flow), never a replacement for them.
@@ -3215,7 +3255,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		// Web-compat: a text-only block flows as an inline run (not a
 		// Label), so its lines can wrap around floats.
 		textOnly := false
-		if webCompat && !e.pseudoKids && e.flowKids == nil && e.text != "" && len(e.elementKids) == 0 &&
+		if webCompat && !e.pseudoKids && e.flowKids == nil && e.text != "" && len(e.renderKids()) == 0 &&
 			e.iconSrc == nil && !e.isImg() && !e.isControl() && e.backing == nil &&
 			!strings.HasPrefix(cs.Display, "table") && !(cs.Ellipsis && cs.NoWrap) {
 			e.flowKids = e.buildPseudoLeaf(cs)
@@ -3310,7 +3350,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	// decoration; it must get a box even when there is no generated text.
 	if !e.pseudoKids && ((e.pbCS != nil && (e.pbCS.Position == "absolute" || e.pbCS.Position == "fixed" || e.pbCS.Float != "")) ||
 		(e.paCS != nil && (e.paCS.Position == "absolute" || e.paCS.Position == "fixed" || e.paCS.Float != "")) ||
-		(e.text == "" && len(e.elementKids) == 0 && ((e.pbCS != nil && e.pbCS.isVisualBox()) || (e.paCS != nil && e.paCS.isVisualBox())))) {
+		(e.text == "" && len(e.renderKids()) == 0 && ((e.pbCS != nil && e.pbCS.isVisualBox()) || (e.paCS != nil && e.paCS.isVisualBox())))) {
 		e.pseudoKids = true
 		e.buildPseudoBoxes()
 	}
@@ -3599,7 +3639,7 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 	if e.isImg() {
 		return nil
 	}
-	if e.folded || len(e.elementKids) == 0 || isFlexDisplay(cs.Display) || isGridDisplay(cs.Display) {
+	if e.folded || len(e.renderKids()) == 0 || isFlexDisplay(cs.Display) || isGridDisplay(cs.Display) {
 		return nil // a folded element's content rides in its ancestor's run
 	}
 	elementKids, kidParents := e.flatKids(cs)
@@ -3736,7 +3776,7 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 				continue
 			}
 			if ke != nil && (!ke.isTextSeg() || collapseText(ke.text) != "") {
-				if webCompat && !ke.isTextSeg() && !inlineHasContent(ke) {
+				if webCompat && !ke.isTextSeg() && !inlineHasContent(ke, styles[i]) {
 					continue // an empty inline (`<a id=top></a>`) makes no line
 				}
 				meaningfulText = true
@@ -3841,16 +3881,16 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 // the same way) take its place. parents[i] is the style each child
 // inherits from (this element's, or a contents child's).
 func (e *El) flatKids(cs *ComputedStyle) (kids []qui.Widget, parents []*ComputedStyle) {
-	if e.engine == nil || e.engine.sheet == nil || !e.engine.sheet.HasDisplayContents {
-		parents = make([]*ComputedStyle, len(e.elementKids))
+	if e.engine == nil || e.engine.sheet == nil || !e.engine.sheet.HasDisplayContents && len(e.engine.shadowRoots) == 0 {
+		parents = make([]*ComputedStyle, len(e.renderKids()))
 		for i := range parents {
 			parents[i] = cs
 		}
-		return e.elementKids, parents
+		return e.renderKids(), parents
 	}
 	var walk func(owner *El, ocs *ComputedStyle, depth int)
 	walk = func(owner *El, ocs *ComputedStyle, depth int) {
-		for _, k := range owner.elementKids {
+		for _, k := range owner.renderKids() {
 			if ke, ok := k.(*El); ok && !ke.isTextSeg() && depth < 32 {
 				if kcs := owner.childStyle(ke, ocs); kcs != nil && kcs.Display == "contents" {
 					walk(ke, kcs, depth+1)
@@ -3868,9 +3908,9 @@ func (e *El) flatKids(cs *ComputedStyle) (kids []qui.Widget, parents []*Computed
 // boxParent is the nearest ancestor that generates a box (skipping
 // display:contents ones) — the element whose layout places this one.
 func (e *El) boxParent() *El {
-	p := e.elParent
-	for p != nil && p.lastCS != nil && p.lastCS.Display == "contents" {
-		p = p.elParent
+	p := e.inheritParent()
+	for p != nil && (p.shadowHost != nil || p.lastCS != nil && p.lastCS.Display == "contents") {
+		p = p.inheritParent()
 	}
 	return p
 }
@@ -4024,7 +4064,7 @@ func foldableInline(c *El, cs *ComputedStyle) bool {
 // in-flow block-level child — directly, or through a nested inline that
 // itself does.
 func (e *El) hasBlockLevelChild(cs *ComputedStyle) bool {
-	for _, k := range e.elementKids {
+	for _, k := range e.renderKids() {
 		ke, ok := k.(*El)
 		if !ok || ke.isTextSeg() {
 			continue
@@ -4065,6 +4105,20 @@ func (e *El) childStyle(c *El, parent *ComputedStyle) *ComputedStyle {
 // source), an atomic box otherwise. Block-level descendants are
 // break-wrapped onto their own lines (anonymous-block approximation).
 func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *ComputedStyle, href string, link *El) {
+	if kcs != nil && kcs.Display == "contents" {
+		for _, w := range ke.renderKids() {
+			if child, ok := w.(*El); ok {
+				ccs := e.childStyle(child, kcs)
+				if ccs != nil && ccs.Display != "none" {
+					e.appendInlineChild(ib, child, ccs, kcs, href, link)
+				}
+			} else {
+				ib.AddBox(w, qui.InlineBaseline)
+			}
+		}
+		return
+	}
+
 	// Text decorations propagate through inline descendants, including ones
 	// with text-decoration:none; they are painted by the decorating ancestor.
 	if webCompat && kcs != nil && parent != nil && kcs != parent && foldableInline(ke, kcs) {
@@ -4143,7 +4197,7 @@ func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *Compu
 		tagAdded(ib, n0, ke, tagText)
 		ib.ShadowLastText(kcs.TextShadows)
 	}
-	for _, k := range ke.elementKids {
+	for _, k := range ke.renderKids() {
 		if kke, ok := k.(*El); ok {
 			kkcs := e.childStyle(kke, kcs)
 			if webCompat && kkcs != nil && (kkcs.Display == "none" || kkcs.Position == "absolute" || kkcs.Position == "fixed") {
@@ -4164,11 +4218,11 @@ func (e *El) appendInlinePseudo(ib *widgets.InlineBox, owner *El, parent *Comput
 		return
 	}
 	cs, content, has := pseudoStyleContent(owner.node, e.engine.sheet, which, parent)
-	if !has || cs == nil || cs.Display == "none" || content == "none" || content == "normal" || cs.Position == "absolute" || cs.Position == "fixed" {
+	if !has || cs == nil || cs.Display == "none" || content == "none" || content == "normal" || cs.Position == "fixed" {
 		return
 	}
 	txt := unquoteContentWith(content, owner.node, func(fn cssFunction) string { return owner.counterContent(fn, which, parent, cs) })
-	if cs.Display == "inline" && !cs.isVisualBox() && !cs.HasBackground &&
+	if cs.Position != "absolute" && cs.Display == "inline" && !cs.isVisualBox() && !cs.HasBackground &&
 		cs.Padding.Horizontal() == 0 && cs.Margin.Horizontal() == 0 {
 		ib.AddLinkText(transformText(txt, cs.TextTransform), fontFrom(cs), cs.Color, cs.decoration(), cs.decorationPaint(), href, linkSource(link))
 		return
@@ -4185,6 +4239,27 @@ func (e *El) appendInlinePseudo(ib *widgets.InlineBox, owner *El, parent *Comput
 	pe := *slot
 	pe.text = txt
 	pe.applyComputed(cs)
+	if cs.Position == "absolute" {
+		// Auto insets use the static position immediately after this text. The
+		// zero-width anchor paints inside the inline's existing trailing padding.
+		if cs.HasLeft || cs.HasRight || cs.HasTop || cs.HasBottom {
+			return
+		}
+		if pe.inlinePseudo == nil {
+			a := &inlinePseudoAnchor{Box: *widgets.NewBox(nil)}
+			a.SetSelf(a)
+			pe.inlinePseudo = a
+		}
+		pe.Positioned = false
+		pe.SetOutOfFlow(false)
+		a := pe.inlinePseudo
+		a.child = pe
+		a.SetChildren(pe)
+		a.size = qui.MeasureConstrained(pe, qui.Size{})
+		a.margin = cs.Margin.Left
+		ib.AddBox(a, qui.InlineBaseline)
+		return
+	}
 	ib.AddBox(pe, inlineVAlignOf(cs))
 }
 
@@ -4203,17 +4278,28 @@ func spanLineHeight(cs *ComputedStyle) float32 {
 // anything to a line: text, a forced break, an atomic box, or a
 // horizontal edge (CSS 2.1 § 9.4.2: a line box with none of these is
 // treated as zero-height).
-func inlineHasContent(e *El) bool {
+func inlineHasContent(e *El, styles ...*ComputedStyle) bool {
+	cs := e.lastCS
+	if len(styles) > 0 {
+		cs = styles[0]
+	}
+	if e.IsComment() || cs != nil && cs.Display == "none" {
+		return false
+	}
 	if collapseText(e.text) != "" || e.tag == "br" {
 		return true
 	}
-	if cs := e.lastCS; cs != nil && cs.Padding.Left+cs.Padding.Right+cs.Margin.Left+cs.Margin.Right+cs.BorderWidth > 0 {
+	if cs != nil && cs.Padding.Left+cs.Padding.Right+cs.Margin.Left+cs.Margin.Right+cs.BorderWidth > 0 {
 		return true
 	}
-	for _, k := range e.elementKids {
-		ke, ok := k.(*El)
+	for _, w := range e.renderKids() {
+		ke, ok := w.(*El)
 		if !ok {
 			return true
+		}
+		kcs := e.childStyle(ke, cs)
+		if ke.IsComment() || kcs != nil && kcs.Display == "none" {
+			continue
 		}
 		if ke.isTextSeg() {
 			if collapseText(ke.text) != "" {
@@ -4221,7 +4307,7 @@ func inlineHasContent(e *El) bool {
 			}
 			continue
 		}
-		if !foldableTag(ke.tag) || inlineHasContent(ke) {
+		if !foldableTag(ke.tag) || inlineHasContent(ke, kcs) {
 			return true
 		}
 	}
@@ -4368,7 +4454,7 @@ func (e *El) unfold() {
 		return
 	}
 	e.folded = false
-	for _, k := range e.elementKids {
+	for _, k := range e.renderKids() {
 		if ke, ok := k.(*El); ok {
 			ke.unfold()
 		}
@@ -4799,7 +4885,7 @@ func (e *El) syncChildren() {
 		kids = []qui.Widget{e.imgWidget}
 	case e.lastCS != nil && e.lastCS.Display == "contents":
 		// No box: the children belong to the nearest box ancestor's layout.
-	case len(e.elementKids) > 0:
+	case len(e.renderKids()) > 0:
 		// Outside an inline run (flex / grid / block stacking), anonymous
 		// whitespace-only text segments render nothing — but they'd still
 		// consume flex gaps as phantom items. Drop them.
@@ -4971,6 +5057,9 @@ func clipsContent(w qui.Widget) bool {
 // Measure reports zero size for a display:none element so it neither
 // paints nor reserves flow space; everything else measures as a Box.
 func (e *El) Measure(available qui.Size) qui.Size {
+	if g := e.rootScrollbarGutter(); g > 0 {
+		available.W = max(0, available.W-g)
+	}
 	if e.displayNone {
 		return qui.Size{}
 	}
@@ -5654,6 +5743,12 @@ func (e *El) applyStateText(av *ancestorVariant) {
 // updateScrollContent only calls SetContent when the natural size actually
 // differs, so the resulting InvalidateLayout can't loop.
 func (e *El) Layout(rect qui.Rect) {
+	if g := e.rootScrollbarGutter(); g > 0 {
+		rect.W = max(0, rect.W-g)
+		if strings.Contains(e.lastCS.raw["scrollbar-gutter"], "both-edges") {
+			rect.X += g / 2
+		}
+	}
 	if h, ok := e.zeroHeight(); ok {
 		rect.H = h
 	}
@@ -7150,3 +7245,33 @@ func firstLetterEnd(text string) int {
 	}
 	return end
 }
+
+func (e *El) rootScrollbarGutter() float32 {
+	if e.engine == nil || !e.engine.opts.DocumentRoot || e != e.engine.root || e.lastCS == nil {
+		return 0
+	}
+	if !strings.Contains(e.lastCS.raw["scrollbar-gutter"], "stable") || e.lastCS.raw["overflow"] == "clip" {
+		return 0
+	}
+	g := e.engine.opts.ClassicScrollbarWidth
+	if strings.Contains(e.lastCS.raw["scrollbar-gutter"], "both-edges") {
+		g *= 2
+	}
+	return g
+}
+
+// inlinePseudoAnchor retains an absolutely positioned generated box at its
+// static inline position without consuming the text's advance width.
+type inlinePseudoAnchor struct {
+	widgets.Box
+	child  *El
+	size   qui.Size
+	margin float32
+}
+
+func (a *inlinePseudoAnchor) Measure(qui.Size) qui.Size { return qui.Size{} }
+func (a *inlinePseudoAnchor) Layout(r qui.Rect) {
+	a.BaseWidget.Layout(r)
+	a.child.Layout(qui.Rect{X: r.X + a.margin, Y: r.Y - a.size.H, W: a.size.W, H: a.size.H})
+}
+func (a *inlinePseudoAnchor) PaintBounds() qui.Rect { return qui.PaintBoundsOf(a.child) }

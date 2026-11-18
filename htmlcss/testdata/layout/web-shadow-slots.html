@@ -1,0 +1,5 @@
+<!doctype html><style>
+@font-face {font-family:GoRegular;src:url(../../../widgets/scripts/web/go-regular.ttf)}
+body{margin:0;font:16px/20px GoRegular} x-box{display:block;width:300px} .item{display:block;height:30px}
+</style>
+<x-box id="host"><div id="named" slot="title" class="item">Named</div><div id="default" class="item">Default</div><template shadowrootmode="open"><style>section{padding:10px}slot{display:contents}</style><section id="section"><slot name="title"></slot><slot></slot></section></template></x-box><div id="after">After</div>

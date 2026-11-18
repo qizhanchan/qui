@@ -1,0 +1,12 @@
+{
+ "fixture": "web-shadow-grid-area",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "host": [0,0,240,36],
+  "icon": [7.5,8,20,20],
+  "input": [0,0,240,36],
+  "button": [210,5.5,25,25],
+  "after": [0,36,640,20]
+ }
+}

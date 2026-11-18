@@ -230,14 +230,14 @@ func (e *El) ComputedStyleForState(hover, focus *El) *ComputedStyle {
 			return el.lastCS
 		}
 		var parent *ComputedStyle
-		if el.elParent != nil {
-			parent = resolve(el.elParent)
+		if p := el.inheritParent(); p != nil {
+			parent = resolve(p)
 		}
 		var st selectorState
-		for p := hover; p != nil; p = p.elParent {
+		for p := hover; p != nil; p = p.inheritParent() {
 			st.hoverNodes = append(st.hoverNodes, p.node)
 		}
-		for p := focus; p != nil; p = p.elParent {
+		for p := focus; p != nil; p = p.inheritParent() {
 			st.focusNodes = append(st.focusNodes, p.node)
 		}
 		addState := func(p *El) {
@@ -251,7 +251,7 @@ func (e *El) ComputedStyleForState(hover, focus *El) *ComputedStyle {
 				st.activeNodes = append(st.activeNodes, p.node)
 			}
 		}
-		for p := el; p != nil; p = p.elParent {
+		for p := el; p != nil; p = p.inheritParent() {
 			addState(p)
 		}
 		for _, trigger := range el.stateTriggers {
@@ -412,6 +412,7 @@ var builtinInitial = map[string]string{
 	"letter-spacing": "normal", "word-spacing": "normal", "text-indent": "0",
 	"white-space": "normal", "text-transform": "none", "visibility": "visible",
 	"list-style-type": "disc", "display": "inline",
+	"background": "transparent", "background-color": "transparent",
 	"font-variant-ligatures": "normal", "font-feature-settings": "normal",
 }
 

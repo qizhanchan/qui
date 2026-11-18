@@ -42,6 +42,9 @@ type Options struct {
 	// ViewportHeight is what vh units resolve against (0 keeps the last
 	// value; vw follows ViewportWidth).
 	ViewportHeight float32
+	// ClassicScrollbarWidth is the width reserved by scrollbar-gutter:stable.
+	// Zero models overlay scrollbars, which consume no layout space.
+	ClassicScrollbarWidth float32
 	// DocumentRoot builds the tree from the <html> element instead of
 	// <body>, the way a browser lays out a whole document: body is an
 	// ordinary block inside it (its UA 8px margin applies) and the root

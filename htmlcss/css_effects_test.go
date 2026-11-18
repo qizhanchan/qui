@@ -506,3 +506,23 @@ func TestSelectAppearanceNonePaintsCSSImage(t *testing.T) {
 		t.Fatalf("CSS select image missing: %v", c)
 	}
 }
+
+func TestGradientHardStopLengthAndPremultipliedAlpha(t *testing.T) {
+	g, ok := parseLinearGradient("linear-gradient(to bottom, white 0 calc(100% - 2rem), transparent 100%)")
+	if !ok {
+		t.Fatal("gradient did not parse")
+	}
+	shader := g.shaderFor(qui.Rect{W: 100, H: 100})
+	for _, y := range []float32{10, 65, 85} {
+		c := shader.ColorAt(50, y)
+		if c.R < .99 || c.G < .99 || c.B < .99 {
+			t.Fatalf("gradient darkened at %v: %v", y, c)
+		}
+	}
+	if c := shader.ColorAt(50, 65); c.A < .99 {
+		t.Fatalf("hard stop ended early: %v", c)
+	}
+	if c := shader.ColorAt(50, 85); c.A <= .2 || c.A >= .8 {
+		t.Fatalf("fade alpha: %v", c)
+	}
+}

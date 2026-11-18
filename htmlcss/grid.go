@@ -71,6 +71,8 @@ func gridAreaDims(v string) (rows, cols int) {
 func (e *El) applyGridItem(cs, parentCS *ComputedStyle) {
 	colStart, colSpan := -1, 1
 	rowStart, rowSpan := -1, 1
+	colNames := gridLineNames(parentCS.raw["grid-template-columns"], parentCS.raw["grid-template-areas"], false)
+	rowNames := gridLineNames(parentCS.raw["grid-template-rows"], parentCS.raw["grid-template-areas"], true)
 
 	// grid-area: a named area (from parent grid-template-areas) or line numbers
 	// row-start / col-start / row-end / col-end.
@@ -83,13 +85,18 @@ func (e *El) applyGridItem(cs, parentCS *ComputedStyle) {
 		} else {
 			parts := splitTopLevel(ga, '/')
 			if len(parts) >= 2 {
-				rowStart, rowSpan = gridLineStartSpan(parts[0], parts, 2)
-				colStart, colSpan = gridLineStartSpan(parts[1], parts, 3)
+				rowEnd, colEnd := "auto", "auto"
+				if len(parts) > 2 {
+					rowEnd = parts[2]
+				}
+				if len(parts) > 3 {
+					colEnd = parts[3]
+				}
+				rowStart, rowSpan = parseGridPlacementNamed(parts[0]+"/"+rowEnd, rowNames)
+				colStart, colSpan = parseGridPlacementNamed(parts[1]+"/"+colEnd, colNames)
 			}
 		}
 	}
-	colNames := gridLineNames(parentCS.raw["grid-template-columns"], parentCS.raw["grid-template-areas"], false)
-	rowNames := gridLineNames(parentCS.raw["grid-template-rows"], parentCS.raw["grid-template-areas"], true)
 	if v := strings.TrimSpace(cs.raw["grid-column"]); v != "" {
 		colStart, colSpan = parseGridPlacementNamed(v, colNames)
 	}

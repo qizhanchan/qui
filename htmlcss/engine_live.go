@@ -43,7 +43,12 @@ type StyleEngine struct {
 	// tooltipStyled: the stylesheet set the window's tooltip colors.
 	tooltipStyled bool
 
-	sheet *Stylesheet
+	distributionDirty bool
+	slotChange        func(*El)
+	allowDeclarative  bool
+	shadowRoots       []*El
+	shadowSheetDirty  bool
+	sheet             *Stylesheet
 	// scoped is set while flush restyles dirty scopes (vs. a full Restyle).
 	scoped    bool
 	viewportW float32 // @media evaluation width (0 = default), kept for SetCSS
@@ -193,6 +198,7 @@ func (eng *StyleEngine) SetViewport(w, h float32) {
 	eng.viewportW = w
 	eng.sheet = ParseCSSViewport(eng.cssSrc, w)
 	eng.sheet.FontFamilies = eng.opts.FontFamilies
+	eng.shadowSheetDirty = true
 	eng.Restyle()
 }
 
@@ -210,6 +216,7 @@ func (eng *StyleEngine) SetCSS(css string) {
 		eng.sheet = ParseCSS(css)
 	}
 	eng.sheet.FontFamilies = eng.opts.FontFamilies
+	eng.shadowSheetDirty = true
 	eng.Restyle()
 }
 
@@ -333,6 +340,7 @@ func (eng *StyleEngine) AdoptRoot(root qui.Widget) {
 	eng.dirty = nil
 	eng.pending = false
 	eng.sheet.FontFamilies = eng.opts.FontFamilies
+	eng.shadowSheetDirty = true
 	eng.Restyle()
 }
 
@@ -512,6 +520,10 @@ func (eng *StyleEngine) addReflow(e *El) {
 // need a style (removals and reorders change nothing); with them, e's
 // subtree is restyled (positions changed for every child).
 func (eng *StyleEngine) childrenChanged(e *El) {
+	eng.distributionDirty = true
+	if e.tag == "slot" && len(e.assigned) == 0 && shadowScope(e.node) != nil && eng.slotChange != nil {
+		eng.slotChange(e)
+	}
 	eng.reflowRunOwner(e)
 	has, _, structural := eng.sheetFlags()
 	if structural {
@@ -616,6 +628,10 @@ func (eng *StyleEngine) FlushPendingStyles() {
 // is seamless. Falls back to a full Restyle when a scope's inherited
 // style isn't known yet (first style pass still pending).
 func (eng *StyleEngine) flush() {
+	if len(eng.shadowRoots) > 0 {
+		eng.Restyle()
+		return
+	}
 	defer eng.useViewport()()
 	dirty := eng.dirty
 	eng.dirty = nil
@@ -746,7 +762,7 @@ func (eng *StyleEngine) restyleAttrScope(e *El, parent *ComputedStyle) {
 	if prev != nil && reflect.DeepEqual(inheritView(prev), inheritView(cs)) {
 		return
 	}
-	for _, kid := range e.elementKids {
+	for _, kid := range e.renderKids() {
 		if ke, ok := kid.(*El); ok {
 			eng.restyleWalk(ke, cs)
 		}
@@ -822,7 +838,7 @@ func (eng *StyleEngine) restyleWalk(e *El, parent *ComputedStyle) {
 		// resolved declaration here. Keep that table for descendants and
 		// future mutations, while preserving this element's measured widgets.
 		e.lastCS = cs
-		for _, kid := range e.elementKids {
+		for _, kid := range e.renderKids() {
 			if ke, ok := kid.(*El); ok {
 				eng.restyleWalk(ke, cs)
 			}
@@ -846,11 +862,12 @@ func (eng *StyleEngine) restyleWalk(e *El, parent *ComputedStyle) {
 	if eng.scoped && prev != nil && prev != cs && !reflect.DeepEqual(layoutView(prev), layoutView(cs)) {
 		e.invalidateStyledLayout()
 	}
-	for _, kid := range e.elementKids {
+	for _, kid := range e.renderKids() {
 		if ke, ok := kid.(*El); ok {
 			eng.restyleWalk(ke, cs)
 		}
 	}
+	e.refreshSVGStyles()
 	// Portal content declared under this element inherits from it.
 	for k := range e.styleKids {
 		eng.restyleWalk(k, cs)
@@ -980,6 +997,7 @@ func widgetStyleView(cs *ComputedStyle) *ComputedStyle {
 // the scoped flush instead.
 func (eng *StyleEngine) Restyle() {
 	defer eng.useViewport()()
+	eng.prepareShadowTrees()
 	eng.dirty = nil // a full pass satisfies any pending scoped work
 	eng.reflow = nil
 	eng.pass++

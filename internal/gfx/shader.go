@@ -183,7 +183,12 @@ func sampleGradientStops(stops []GradientStop, t float32) Color {
 				return hi.Color
 			}
 			u := (t - lo.Offset) / span
-			return LerpColor(lo.Color, hi.Color, u)
+			a, b := lo.Color, hi.Color
+			alpha := a.A + (b.A-a.A)*u
+			if alpha <= 0 {
+				return Color{}
+			}
+			return Color{R: (a.R*a.A*(1-u) + b.R*b.A*u) / alpha, G: (a.G*a.A*(1-u) + b.G*b.A*u) / alpha, B: (a.B*a.A*(1-u) + b.B*b.A*u) / alpha, A: alpha}
 		}
 	}
 	return last.Color

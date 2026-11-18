@@ -88,6 +88,7 @@ func lengthOrPct(tok string, fs float32) (px, pct float32, ok bool) {
 type gradientSpec struct {
 	angleDeg         float32
 	stops            []qui.GradientStop
+	stopTokens       []string
 	radial           bool // radial-gradient (angleDeg unused)
 	conic            bool // conic-gradient (angleDeg = start angle)
 	centerX, centerY lenPct
@@ -108,7 +109,11 @@ func (g *gradientSpec) shaderFor(bounds qui.Rect) qui.Shader {
 		cy := bounds.Y + bounds.H/2
 		// Default radial size ≈ farthest-corner: half the box diagonal.
 		r := float32(math.Hypot(float64(bounds.W/2), float64(bounds.H/2)))
-		return qui.RadialGradient{Center: qui.Point{X: cx, Y: cy}, Radius: r, Stops: g.stops}
+		stops := g.stops
+		if len(g.stopTokens) > 0 {
+			stops = gradientStopsAt(g.stopTokens, r)
+		}
+		return qui.RadialGradient{Center: qui.Point{X: cx, Y: cy}, Radius: r, Stops: stops}
 	}
 	if g.conic {
 		cx := bounds.X + bounds.W/2
@@ -129,10 +134,14 @@ func (g *gradientSpec) shaderFor(bounds qui.Rect) qui.Shader {
 	cx := bounds.X + bounds.W/2
 	cy := bounds.Y + bounds.H/2
 	half := (absf(dx)*bounds.W + absf(dy)*bounds.H) / 2
+	stops := g.stops
+	if len(g.stopTokens) > 0 {
+		stops = gradientStopsAt(g.stopTokens, 2*half)
+	}
 	return qui.LinearGradient{
 		Start: qui.Point{X: cx - dx*half, Y: cy - dy*half},
 		End:   qui.Point{X: cx + dx*half, Y: cy + dy*half},
-		Stops: g.stops,
+		Stops: stops,
 	}
 }
 
@@ -451,6 +460,7 @@ func parseLinearGradient(v string) (*gradientSpec, bool) {
 		g.angleDeg = dir
 		idx = 1
 	}
+	g.stopTokens = parts[idx:]
 	g.stops = parseGradientStops(parts[idx:])
 	if len(g.stops) < 2 {
 		return nil, false
@@ -542,6 +552,7 @@ func parseRadialGradient(v string) (*gradientSpec, bool) {
 		}
 	}
 	g := &gradientSpec{radial: true}
+	g.stopTokens = parts[idx:]
 	g.stops = parseGradientStops(parts[idx:])
 	if len(g.stops) < 2 {
 		return nil, false
@@ -737,4 +748,60 @@ func splitFunctions(s string) []cssFunction {
 		}
 	}
 	return out
+}
+
+// Resolve length-percentage stop positions against the actual gradient line,
+// including double-position hard stops. Missing positions interpolate between
+// their specified neighbors (CSS Images 3 color stop fixup).
+func gradientStopsAt(tokens []string, ref float32) []qui.GradientStop {
+	var stops []qui.GradientStop
+	var specified []bool
+	for _, tok := range tokens {
+		fields := fieldsTopLevel(tok)
+		if len(fields) == 0 {
+			continue
+		}
+		c, ok := parseColor(fields[0])
+		if !ok {
+			continue
+		}
+		positions := fields[1:]
+		if len(positions) == 0 {
+			stops = append(stops, qui.GradientStop{Color: c})
+			specified = append(specified, false)
+			continue
+		}
+		for _, p := range positions[:min(2, len(positions))] {
+			v, ok := parseLength(p, 16, ref)
+			if !ok {
+				continue
+			}
+			stops = append(stops, qui.GradientStop{Color: c, Offset: v / max(ref, 0.001)})
+			specified = append(specified, true)
+		}
+	}
+	if len(stops) < 2 {
+		return stops
+	}
+	last := len(stops) - 1
+	if !specified[0] {
+		specified[0] = true
+		stops[0].Offset = 0
+	}
+	if !specified[last] {
+		specified[last] = true
+		stops[last].Offset = 1
+	}
+	prev := 0
+	for i := 1; i < len(stops); i++ {
+		if !specified[i] {
+			continue
+		}
+		stops[i].Offset = max(stops[i].Offset, stops[prev].Offset)
+		for j := prev + 1; j < i; j++ {
+			stops[j].Offset = stops[prev].Offset + (stops[i].Offset-stops[prev].Offset)*float32(j-prev)/float32(i-prev)
+		}
+		prev = i
+	}
+	return stops
 }

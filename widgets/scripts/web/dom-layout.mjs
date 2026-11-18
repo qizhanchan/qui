@@ -35,7 +35,8 @@ const VIEWPORT = {width: 640, height: 480, deviceScaleFactor: 1};
 function measure() {
   const r2 = (v) => Math.round(v * 100) / 100;
   const boxes = {};
-  for (const el of document.querySelectorAll('[id]')) {
+  const elements = []; const visit = root => {for (const el of root.querySelectorAll('*')) {if (el.id) elements.push(el); if (el.shadowRoot) visit(el.shadowRoot);}}; visit(document);
+  for (const el of elements) {
     const b = el.getBoundingClientRect();
     boxes[el.id] = [r2(b.left + scrollX), r2(b.top + scrollY), r2(b.width), r2(b.height)];
   }

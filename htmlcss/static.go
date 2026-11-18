@@ -168,6 +168,27 @@ func (eng *StyleEngine) buildStaticEl(n *Node, styles map[*Node]*ComputedStyle) 
 			}
 			kids = append(kids, newTextEl(c.Text, eng))
 		case ElementNode:
+			if eng.allowDeclarative && c.Tag == "template" && (c.AttrOr("shadowrootmode", "") == "open" || c.AttrOr("shadowrootmode", "") == "closed") && e.shadowRoot == nil {
+				r := e.AttachShadow(c.AttrOr("shadowrootmode", ""))
+				var sk []qui.Widget
+				script := eng.opts.ScriptDOM
+				eng.opts.ScriptDOM = true
+				for _, sc := range c.Children {
+					if sc.Type == ElementNode {
+						if k := eng.buildStaticEl(sc, nil); k != nil {
+							sk = append(sk, k)
+						}
+					} else if sc.Type == TextNode {
+						sk = append(sk, newTextEl(sc.Text, eng))
+					} else if sc.Type == CommentNode && script {
+						sk = append(sk, newCommentEl(sc.Text, eng))
+					}
+				}
+				eng.opts.ScriptDOM = script
+				r.SetElementChildren(sk)
+				r.shadowCSS = collectShadowStyles(r)
+				continue
+			}
 			if k := eng.buildStaticEl(c, styles); k != nil {
 				kids = append(kids, k)
 			}
@@ -197,6 +218,9 @@ func collectStaticIndexes(e *El, byID map[string]qui.Widget, byClass map[string]
 	}
 	for _, c := range strings.Fields(e.attrs["class"]) {
 		byClass[c] = append(byClass[c], e)
+	}
+	if e.shadowRoot != nil {
+		collectStaticIndexes(e.shadowRoot, byID, byClass)
 	}
 	for _, k := range e.elementKids {
 		if ke, ok := k.(*El); ok {

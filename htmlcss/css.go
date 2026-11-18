@@ -80,7 +80,9 @@ const (
 	pseudoPlaceholderShown                   // :placeholder-shown
 	pseudoLang                               // :lang(xx) — uses raw arg (lang)
 	pseudoAlways                             // pseudo-classes that always hold here (:defined, :valid, :dir(ltr))
-	pseudoUnsupported                        // parsed but not evaluable → never matches
+	pseudoHost
+	pseudoHostContext
+	pseudoUnsupported // parsed but not evaluable → never matches
 )
 
 // pseudoSelector is a parsed pseudo-class. Structural pseudos evaluate at
@@ -105,6 +107,8 @@ type simpleSelector struct {
 	classes    []string
 	attrs      []attrSelector
 	pseudos    []pseudoSelector
+	slotArgs   []Selector
+	partName   string
 	pseudoElem string // "before" / "after" (empty = none); targets a pseudo-element
 }
 
@@ -119,7 +123,9 @@ type compound struct {
 // Selector is a combinator chain of compound parts. "nav > ul li" parses to
 // three compounds; matching walks right-to-left honoring each combinator.
 type Selector struct {
-	parts []compound
+	treeScoped bool
+	scope      *El
+	parts      []compound
 }
 
 // Rule is a group of selectors sharing a declaration block.
@@ -149,6 +155,7 @@ type Rule struct {
 //     answering "does exactly this set of hovered/focused/pressed elements
 //     activate the rule?" — the per-trigger variants (El.ancestorStateVariant).
 type selectorState struct {
+	scope  *El
 	hover  bool
 	focus  bool
 	active bool
@@ -938,7 +945,11 @@ func parseSimple(tok string) simpleSelector {
 				i++
 			}
 			name, arg, next := readPseudo(tok, i)
-			if isPseudoElement(name) {
+			if name == "slotted" {
+				ss.slotArgs = parseSelectorList(arg)
+			} else if name == "part" {
+				ss.partName = strings.TrimSpace(arg)
+			} else if isPseudoElement(name) {
 				ss.pseudoElem = strings.ToLower(name)
 			} else {
 				ss.pseudos = append(ss.pseudos, classifyPseudo(name, arg))
@@ -1115,6 +1126,12 @@ func unquote(s string) string {
 func classifyPseudo(name, arg string) pseudoSelector {
 	ps := pseudoSelector{raw: name}
 	switch name {
+	case "host", "host-context":
+		ps.kind = pseudoHost
+		if name == "host-context" {
+			ps.kind = pseudoHostContext
+		}
+		ps.args = parseSelectorList(arg)
 	case "hover":
 		ps.kind = pseudoHover
 	case "focus", "focus-within":
@@ -1345,6 +1362,18 @@ func (s Selector) specificity() (int, int, int) {
 }
 
 func (ss simpleSelector) specificity() (ids, classes, types int) {
+	if len(ss.slotArgs) > 0 {
+		types++
+		for _, a := range ss.slotArgs {
+			i, c, t := a.specificity()
+			ids += i
+			classes += c
+			types += t
+		}
+	}
+	if ss.partName != "" {
+		types++
+	}
 	if ss.id != "" {
 		ids++
 	}
@@ -1356,7 +1385,10 @@ func (ss simpleSelector) specificity() (ids, classes, types int) {
 		if ps.kind == pseudoWhere {
 			continue // :where() contributes no specificity
 		}
-		if (ps.kind == pseudoNot || ps.kind == pseudoHas || ps.kind == pseudoIs) && len(ps.args) > 0 {
+		if ps.kind == pseudoHost || ps.kind == pseudoHostContext {
+			classes++
+		}
+		if (ps.kind == pseudoNot || ps.kind == pseudoHas || ps.kind == pseudoIs || ps.kind == pseudoHost || ps.kind == pseudoHostContext) && len(ps.args) > 0 {
 			// Selectors 4: the specificity of its most specific argument.
 			var bi, bc, bt int
 			for _, a := range ps.args {
@@ -1370,7 +1402,9 @@ func (ss simpleSelector) specificity() (ids, classes, types int) {
 			types += bt
 			continue
 		}
-		classes++ // structural / state pseudos count as a class
+		if ps.kind != pseudoHost && ps.kind != pseudoHostContext {
+			classes++
+		} // structural / state pseudos count as a class
 	}
 	return ids, classes, types
 }
@@ -1403,10 +1437,56 @@ func (s Selector) matchesElement(n *Node, st selectorState) bool {
 // non-nil (a :has() argument): the leftmost compound must also stand in
 // parts[0].comb's relation to anchor.
 func (s Selector) matchesAnchored(n *Node, st selectorState, anchor *Node) bool {
-	if len(s.parts) == 0 {
+	if len(s.parts) == 0 || n.Tag == "#shadow-root" {
 		return false
 	}
 	last := len(s.parts) - 1
+	st.scope = s.scope
+	subject := s.parts[last].sel
+	if s.treeScoped {
+		own := shadowScope(n)
+		switch {
+		case len(subject.slotArgs) > 0:
+			if n.live == nil || n.live.assignedSlot == nil || shadowScope(n.live.assignedSlot.node) != s.scope {
+				return false
+			}
+			match := false
+			for _, arg := range subject.slotArgs {
+				if arg.matchesElement(n, st) {
+					match = true
+					break
+				}
+			}
+			if !match {
+				return false
+			}
+			n = n.live.assignedSlot.node
+		case subject.partName != "":
+			if own == nil || shadowScope(own.shadowHost.node) != s.scope {
+				return false
+			}
+			found := false
+			for _, part := range strings.Fields(n.AttrOr("part", "")) {
+				if part == subject.partName {
+					found = true
+				}
+			}
+			if !found {
+				return false
+			}
+			n = own.shadowHost.node
+		case own != s.scope:
+			host := false
+			for _, ps := range subject.pseudos {
+				if ps.kind == pseudoHost || ps.kind == pseudoHostContext {
+					host = true
+				}
+			}
+			if !host || s.scope == nil || n.live != s.scope.shadowHost {
+				return false
+			}
+		}
+	}
 	// The subject compound (rightmost) matches n under the element's OWN
 	// interactive state (st.hover/focus/active). Non-subject compounds are
 	// gated per candidate node by compState:
@@ -1450,6 +1530,9 @@ func (s Selector) matchesAnchored(n *Node, st selectorState, anchor *Node) bool 
 		switch s.parts[i].comb { // combinator joining parts[i] to parts[i-1]
 		case combChild:
 			p := cur.Parent
+			if p != nil && p.Tag == "#shadow-root" && p.live == s.scope && s.scope != nil && prev.isHost() {
+				p = s.scope.shadowHost.node
+			}
 			return p != nil && prev.matches(p, compState(st, p, true)) && matchLeft(i-1, p)
 		case combAdjacent:
 			sib := prevElementSibling(cur)
@@ -1463,6 +1546,13 @@ func (s Selector) matchesAnchored(n *Node, st selectorState, anchor *Node) bool 
 			return false
 		default: // combDescendant
 			for p := cur.Parent; p != nil; p = p.Parent {
+				if p.Tag == "#shadow-root" {
+					if s.scope != nil && p.live == s.scope && prev.isHost() {
+						host := s.scope.shadowHost.node
+						return prev.matches(host, compState(st, host, true)) && matchLeft(i-1, host)
+					}
+					return false
+				}
 				if prev.matches(p, compState(st, p, true)) && matchLeft(i-1, p) {
 					return true
 				}
@@ -1609,6 +1699,24 @@ func (a attrSelector) matches(n *Node) bool {
 
 func (ps pseudoSelector) matches(n *Node, st selectorState) bool {
 	switch ps.kind {
+	case pseudoHost, pseudoHostContext:
+		if st.scope == nil || n.live != st.scope.shadowHost {
+			return false
+		}
+		if len(ps.args) == 0 {
+			return ps.kind == pseudoHost
+		}
+		for p := n; p != nil; p = p.Parent {
+			for _, arg := range ps.args {
+				if arg.matchesElement(p, st) {
+					return true
+				}
+			}
+			if ps.kind == pseudoHost {
+				break
+			}
+		}
+		return false
 	case pseudoHover:
 		return st.hover
 	case pseudoFocus:
@@ -1902,6 +2010,9 @@ func buildRuleIndex(rules []Rule) *ruleIndex {
 				}
 			}
 			sub := sel.parts[len(sel.parts)-1].sel
+			if len(sub.slotArgs) > 0 || sub.partName != "" {
+				sub = simpleSelector{}
+			}
 			switch {
 			case len(sub.classes) > 0:
 				add(ix.byClass, sub.classes[0], i)
@@ -2036,4 +2147,13 @@ func elementIndexOfTypeFromEnd(n *Node) int {
 		return 0
 	}
 	return idx
+}
+
+func (ss simpleSelector) isHost() bool {
+	for _, ps := range ss.pseudos {
+		if ps.kind == pseudoHost || ps.kind == pseudoHostContext {
+			return true
+		}
+	}
+	return false
 }

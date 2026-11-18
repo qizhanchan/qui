@@ -1,0 +1,8 @@
+{
+ "fixture": "web-scrollbar-gutter",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "content": [0,0,640,1220]
+ }
+}

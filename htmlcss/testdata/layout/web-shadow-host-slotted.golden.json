@@ -1,0 +1,11 @@
+{
+ "fixture": "web-shadow-host-slotted",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "host": [10,10,270,140],
+  "inside": [20,20,250,30],
+  "light": [20,50,250,90],
+  "after": [0,160,640,80]
+ }
+}
