@@ -175,6 +175,7 @@ func (eng *StyleEngine) SetViewport(w, h float32) {
 	}
 	eng.viewportW = w
 	eng.sheet = ParseCSSViewport(eng.cssSrc, w)
+	eng.sheet.FontFamilies = eng.opts.FontFamilies
 	eng.Restyle()
 }
 
@@ -190,6 +191,7 @@ func (eng *StyleEngine) SetCSS(css string) {
 	} else {
 		eng.sheet = ParseCSS(css)
 	}
+	eng.sheet.FontFamilies = eng.opts.FontFamilies
 	eng.Restyle()
 }
 
@@ -312,6 +314,7 @@ func (eng *StyleEngine) AdoptRoot(root qui.Widget) {
 	eng.SetRoot(el)
 	eng.dirty = nil
 	eng.pending = false
+	eng.sheet.FontFamilies = eng.opts.FontFamilies
 	eng.Restyle()
 }
 

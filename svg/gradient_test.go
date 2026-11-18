@@ -34,3 +34,21 @@ func TestObjectBoundingBoxGradientTransform(t *testing.T) {
 		t.Fatalf("gradient coordinates/opacity: %v", img.At(12, 10))
 	}
 }
+
+func TestRadialGradientPaintServerTransform(t *testing.T) {
+	for _, units := range []string{`cx=".5" cy=".5" r=".5"`, `cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(20 10) scale(20 10)"`} {
+		d, err := ParseBytes([]byte(`<svg viewBox="0 0 40 20"><rect width="40" height="20" fill="url(#g)"/><defs><radialGradient id="g" ` + units + `><stop stop-color="red"/><stop offset="1" stop-color="blue"/></radialGradient></defs></svg>`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		img := d.Rasterize(40, 20, qui.Color{})
+		r, _, b, a := img.At(20, 10).RGBA()
+		if a < 65000 || r < b {
+			t.Fatalf("radial center: %v", img.At(20, 10))
+		}
+		r, _, b, a = img.At(1, 10).RGBA()
+		if a < 65000 || b < r {
+			t.Fatalf("radial edge: %v", img.At(1, 10))
+		}
+	}
+}

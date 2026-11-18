@@ -36,7 +36,7 @@ type Paint struct {
 	Kind      PaintKind
 	Color     qui.Color
 	reference string
-	gradient  *linearGradient
+	gradient  *paintGradient
 }
 
 // SolidPaint is a convenience constructor for the common case.

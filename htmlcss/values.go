@@ -224,6 +224,14 @@ func parseHexColor(s string) (qui.Color, bool) {
 		if ok1 && ok2 && ok3 {
 			return qui.Color{R: float32(r*17) / 255, G: float32(g*17) / 255, B: float32(b*17) / 255, A: 1}, true
 		}
+	case 4: // #rgba
+		r, ok1 := hexByte(h[0:1])
+		g, ok2 := hexByte(h[1:2])
+		b, ok3 := hexByte(h[2:3])
+		a, ok4 := hexByte(h[3:4])
+		if ok1 && ok2 && ok3 && ok4 {
+			return qui.Color{R: float32(r) / 15, G: float32(g) / 15, B: float32(b) / 15, A: float32(a) / 15}, true
+		}
 	case 6: // #rrggbb
 		r, ok1 := hexByte(h[0:2])
 		g, ok2 := hexByte(h[2:4])

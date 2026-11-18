@@ -1,0 +1,9 @@
+{
+ "fixture": "web-svg-title",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "button": [0,0,95.86,34],
+  "icon": [15,8,24,30]
+ }
+}

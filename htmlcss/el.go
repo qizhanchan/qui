@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/qizhanchan/qui"
@@ -3451,17 +3452,24 @@ func (e *El) buildPseudoLeaf(cs *ComputedStyle) []qui.Widget {
 	st.Padding = qui.Insets{}
 	st.Background = qui.Color{}
 	if e.pbText != "" {
-		ib.AddTextPaint(e.pbText, fontFrom(e.pbCS), e.pbCS.Color, e.pbCS.decoration(), e.pbCS.decorationPaint(), "")
+		ib.AddTextPaint(transformText(e.pbText, e.pbCS.TextTransform), fontFrom(e.pbCS), e.pbCS.Color, e.pbCS.decoration(), e.pbCS.decorationPaint(), "")
 		ib.ShadowLastText(e.pbCS.TextShadows)
 	}
 	if collapseText(e.text) != "" {
 		n0 := ib.PartCount()
-		ib.AddTextPaint(e.text, fontFrom(cs), cs.Color, cs.decoration(), cs.decorationPaint(), "")
+		text := transformText(e.text, cs.TextTransform)
+		if pcs, _, _ := pseudoStyleContent(e.node, e.engine.sheet, "first-letter", cs); pcs != nil {
+			if end := firstLetterEnd(text); end > 0 {
+				ib.AddTextPaint(text[:end], fontFrom(pcs), pcs.Color, pcs.decoration(), pcs.decorationPaint(), "")
+				text = text[end:]
+			}
+		}
+		ib.AddTextPaint(text, fontFrom(cs), cs.Color, cs.decoration(), cs.decorationPaint(), "")
 		tagAdded(ib, n0, e, tagText)
 		ib.ShadowLastText(cs.TextShadows)
 	}
 	if e.paText != "" {
-		ib.AddTextPaint(e.paText, fontFrom(e.paCS), e.paCS.Color, e.paCS.decoration(), e.paCS.decorationPaint(), "")
+		ib.AddTextPaint(transformText(e.paText, e.paCS.TextTransform), fontFrom(e.paCS), e.paCS.Color, e.paCS.decoration(), e.paCS.decorationPaint(), "")
 		ib.ShadowLastText(e.paCS.TextShadows)
 	}
 	return []qui.Widget{ib}
@@ -3510,6 +3518,11 @@ func (e *El) ensureLabel() {
 // common all-block container: the tag pre-filter rejects it without
 // computing any child style.
 func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
+	// Replaced SVG content is drawn as one image. Its title/desc text stays
+	// in the DOM for accessibility, without creating inline formatting runs.
+	if e.isImg() {
+		return nil
+	}
 	if e.folded || len(e.elementKids) == 0 || isFlexDisplay(cs.Display) || isGridDisplay(cs.Display) {
 		return nil // a folded element's content rides in its ancestor's run
 	}
@@ -3680,7 +3693,7 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 		st.Background = qui.Color{}
 		if leading {
 			n0 := ib.PartCount()
-			ib.AddTextPaint(e.text, fontFrom(cs), cs.Color, cs.decoration(), cs.decorationPaint(), "")
+			ib.AddTextPaint(transformText(e.text, cs.TextTransform), fontFrom(cs), cs.Color, cs.decoration(), cs.decorationPaint(), "")
 			tagAdded(ib, n0, e, tagText)
 			ib.ShadowLastText(cs.TextShadows)
 		}
@@ -3986,7 +3999,7 @@ func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *Compu
 		}
 		if t != "" {
 			n0 := ib.PartCount()
-			ib.AddLinkText(t, fontFrom(kcs), kcs.Color, kcs.decoration(), kcs.decorationPaint(), href, linkSource(link))
+			ib.AddLinkText(transformText(t, kcs.TextTransform), fontFrom(kcs), kcs.Color, kcs.decoration(), kcs.decorationPaint(), href, linkSource(link))
 			tagAdded(ib, n0, ke, tagText)
 			ib.ShadowLastText(kcs.TextShadows)
 		}
@@ -4029,7 +4042,7 @@ func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *Compu
 	}
 	if text != "" {
 		n0 := ib.PartCount()
-		ib.AddLinkText(text, fontFrom(kcs), kcs.Color, kcs.decoration(), kcs.decorationPaint(), href, linkSource(link))
+		ib.AddLinkText(transformText(text, kcs.TextTransform), fontFrom(kcs), kcs.Color, kcs.decoration(), kcs.decorationPaint(), href, linkSource(link))
 		tagAdded(ib, n0, ke, tagText)
 		ib.ShadowLastText(kcs.TextShadows)
 	}
@@ -4123,7 +4136,7 @@ func inlineHasContent(e *El) bool {
 // filters and box-changing :hover variants still need a widget of their
 // own. Width / height do not apply to inline boxes at all.
 func spanFoldable(cs *ComputedStyle) bool {
-	if cs.HasShadow || cs.Gradient != nil || cs.HasOpacity || cs.Transform != nil ||
+	if cs.HasShadow || cs.Gradient != nil || textBackgroundClip(cs) || cs.HasOpacity || cs.Transform != nil ||
 		cs.Filter != nil || cs.ClipPath != nil || cs.Mask != nil || cs.BackdropFilter != nil {
 		return false
 	}
@@ -4476,6 +4489,7 @@ func (e *El) ensureImg(cs *ComputedStyle) {
 	}
 	if e.imgWidget != nil && e.imgSrc == src {
 		if si, ok := e.imgWidget.(*svgImage); ok {
+			si.setObjectStyle(cs)
 			// Keep the tint tracking the computed color.
 			si.tint = cs.Color
 			if cs.HasWidth {
@@ -4508,6 +4522,7 @@ func (e *El) ensureImg(cs *ComputedStyle) {
 			}
 			si := newSVGImage(res.Vector, w, h, cs.Color)
 			si.untinted = true
+			si.setObjectStyle(cs)
 			e.imgWidget = si
 			return
 		case res.Raster != nil:
@@ -4534,7 +4549,9 @@ func (e *El) ensureImg(cs *ComputedStyle) {
 			if cs.HasHeight {
 				h = cs.Height
 			}
-			e.imgWidget = newSVGImage(doc, w, h, cs.Color)
+			si := newSVGImage(doc, w, h, cs.Color)
+			si.setObjectStyle(cs)
+			e.imgWidget = si
 			return
 		}
 	}
@@ -5364,7 +5381,23 @@ func (e *El) Draw(canvas qui.Canvas) {
 	if e.textStateActive {
 		e.applyStateText(v)
 	}
-	e.Box.Draw(canvas)
+	if cs := e.lastCS; cs != nil && cs.Gradient != nil && textBackgroundClip(cs) {
+		// Paint the gradient into a layer, then retain only glyph coverage.
+		b := e.Bounds()
+		layer := canvas.SaveLayer(b, qui.Paint{})
+		canvas.DrawShape(qui.ShapeRect(b), qui.Paint{Shader: cs.Gradient.shaderFor(b)})
+		mask := canvas.SaveLayer(b, qui.Paint{BlendMode: qui.BlendDstIn})
+		shader, bg := e.Box.BackgroundShader, e.Style().Background
+		e.Box.BackgroundShader = nil
+		e.Style().Background = qui.Color{}
+		e.Box.Draw(canvas)
+		e.Box.BackgroundShader = shader
+		e.Style().Background = bg
+		canvas.RestoreTo(mask)
+		canvas.RestoreTo(layer)
+	} else {
+		e.Box.Draw(canvas)
+	}
 	// Outline: a ring just outside the border box (no layout effect).
 	if e.lastCS != nil && e.lastCS.HasOutline && e.lastCS.OutlineWidth > 0 {
 		b := e.Bounds()
@@ -6920,4 +6953,27 @@ func (e *El) InlineMargin() qui.Insets {
 		m.Top, m.Bottom = 0, 0
 	}
 	return m
+}
+
+func textBackgroundClip(cs *ComputedStyle) bool {
+	return cs.raw["background-clip"] == "text" || cs.raw["-webkit-background-clip"] == "text"
+}
+
+// Leading whitespace is excluded; punctuation adjoining the first letter
+// belongs to ::first-letter as in CSS Pseudo-Elements.
+func firstLetterEnd(text string) int {
+	end, letter := 0, false
+	for i, r := range text {
+		if unicode.IsSpace(r) && !letter {
+			continue
+		}
+		if letter && !unicode.IsPunct(r) {
+			break
+		}
+		end = i + utf8.RuneLen(r)
+		if !unicode.IsPunct(r) {
+			letter = true
+		}
+	}
+	return end
 }

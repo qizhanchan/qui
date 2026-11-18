@@ -13,6 +13,7 @@ import (
 	_ "golang.org/x/image/webp"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/qizhanchan/qui"
@@ -55,6 +56,8 @@ type Options struct {
 	// Resources, when set, loads the document's external images (remote
 	// URLs and anything else the host resolves). See ResourceLoader.
 	Resources ResourceLoader
+	// FontFamilies maps authored family names (lowercase) to host-scoped registrations.
+	FontFamilies map[string]string
 	// ScriptDOM builds the elements that never render — <head>, <script>,
 	// <style>, <meta>, <link>, <title> — as hidden (display:none) elements
 	// too, so a script engine sees the whole document: document.head,
@@ -200,6 +203,13 @@ func chooseLayout(cs *ComputedStyle) qui.Layout {
 			Wrap:         wrap,
 			AlignContent: cs.AlignContent,
 		}
+	}
+	if n, w := columnDimensions(cs); n > 1 || w > 0 {
+		gap := cs.FontSize
+		if v, ok := cs.raw["column-gap"]; ok && v != "normal" {
+			gap = cs.ColumnGap
+		}
+		return qui.ColumnsLayout{Count: n, Width: w, Gap: gap}
 	}
 	return qui.FlowLayout{Align: cs.TextAlign}
 }
@@ -1064,4 +1074,23 @@ func applyStacking(box *widgets.Box, cs *ComputedStyle) {
 		(op > 0 && op < 1) || cs.Transform != nil || cs.Filter != nil ||
 		cs.ClipPath != nil || cs.Mask != nil || cs.BackdropFilter != nil ||
 		strings.EqualFold(strings.TrimSpace(cs.raw["isolation"]), "isolate")
+}
+
+func columnDimensions(cs *ComputedStyle) (int, float32) {
+	count, width := cs.raw["column-count"], cs.raw["column-width"]
+	for _, t := range strings.Fields(cs.raw["columns"]) {
+		if _, err := strconv.Atoi(t); err == nil {
+			if count == "" {
+				count = t
+			}
+		} else if t != "auto" && width == "" {
+			width = t
+		}
+	}
+	n, err := strconv.Atoi(count)
+	if err != nil || n < 1 || n > 1000 {
+		n = 0
+	}
+	w, _ := parseLength(width, cs.FontSize, 0)
+	return n, max(w, 0)
 }

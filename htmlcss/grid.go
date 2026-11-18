@@ -353,6 +353,9 @@ func parseGridTrack(tok string, fs float32) (qui.GridTrack, bool) {
 		maxT.MinMax = maxT.Kind == qui.GridFixed
 		if px, ok := parseLength(lo, fs, 0); ok {
 			maxT.Min = px
+			if maxT.Kind == qui.GridAuto {
+				maxT.MinMax = true
+			}
 		} else if maxT.Kind == qui.GridFraction {
 			// minmax(auto | min-content | max-content, Nfr)
 			maxT.AutoMin = true

@@ -11,7 +11,8 @@ import (
 	"strings"
 )
 
-type linearGradient struct {
+type paintGradient struct {
+	radial    bool
 	points    [4]float32
 	stops     []qui.GradientStop
 	userSpace bool
@@ -19,7 +20,7 @@ type linearGradient struct {
 }
 
 type gradientShader struct {
-	gradient qui.LinearGradient
+	gradient qui.Shader
 	inverse  rasterx.Matrix2D
 }
 
@@ -27,7 +28,7 @@ func (g gradientShader) ColorAt(x, y float32) qui.Color {
 	px, py := g.inverse.Transform(float64(x), float64(y))
 	return g.gradient.ColorAt(float32(px), float32(py))
 }
-func (g *linearGradient) shader(bounds ViewBox, m rasterx.Matrix2D, opacity float32) qui.Shader {
+func (g *paintGradient) shader(bounds ViewBox, m rasterx.Matrix2D, opacity float32) qui.Shader {
 	local := rasterx.Identity
 	if !g.userSpace {
 		local = local.Translate(float64(bounds.X), float64(bounds.Y)).Scale(float64(bounds.W), float64(bounds.H))
@@ -37,12 +38,16 @@ func (g *linearGradient) shader(bounds ViewBox, m rasterx.Matrix2D, opacity floa
 	for i := range stops {
 		stops[i].Color.A *= opacity
 	}
-	return gradientShader{gradient: qui.LinearGradient{Start: qui.Point{X: g.points[0], Y: g.points[1]}, End: qui.Point{X: g.points[2], Y: g.points[3]}, Stops: stops}, inverse: m.Mult(local).Invert()}
+	var shader qui.Shader = qui.LinearGradient{Start: qui.Point{X: g.points[0], Y: g.points[1]}, End: qui.Point{X: g.points[2], Y: g.points[3]}, Stops: stops}
+	if g.radial {
+		shader = qui.RadialGradient{Center: qui.Point{X: g.points[0], Y: g.points[1]}, Radius: g.points[2], Stops: stops}
+	}
+	return gradientShader{gradient: shader, inverse: m.Mult(local).Invert()}
 }
 
 // Read paint servers separately so a reference may precede its definition.
-func collectLinearGradients(data []byte) map[string]*linearGradient {
-	out := map[string]*linearGradient{}
+func collectGradients(data []byte) map[string]*paintGradient {
+	out := map[string]*paintGradient{}
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	for {
 		tok, err := dec.Token()
@@ -50,10 +55,14 @@ func collectLinearGradients(data []byte) map[string]*linearGradient {
 			break
 		}
 		start, ok := tok.(xml.StartElement)
-		if !ok || start.Name.Local != "linearGradient" {
+		if !ok || (start.Name.Local != "linearGradient" && start.Name.Local != "radialGradient") {
 			continue
 		}
-		g := &linearGradient{points: [4]float32{0, 0, 1, 0}}
+		g := &paintGradient{points: [4]float32{0, 0, 1, 0}}
+		if start.Name.Local == "radialGradient" {
+			g.radial = true
+			g.points = [4]float32{.5, .5, .5, 0}
+		}
 		id := ""
 		for _, a := range start.Attr {
 			switch a.Name.Local {
@@ -68,11 +77,11 @@ func collectLinearGradients(data []byte) map[string]*linearGradient {
 		for _, a := range start.Attr {
 			i := -1
 			switch a.Name.Local {
-			case "x1":
+			case "x1", "cx":
 				i = 0
-			case "y1":
+			case "y1", "cy":
 				i = 1
-			case "x2":
+			case "x2", "r":
 				i = 2
 			case "y2":
 				i = 3
@@ -93,7 +102,7 @@ func collectLinearGradients(data []byte) map[string]*linearGradient {
 			if err != nil {
 				break
 			}
-			if end, ok := tok.(xml.EndElement); ok && end.Name.Local == "linearGradient" {
+			if end, ok := tok.(xml.EndElement); ok && end.Name.Local == start.Name.Local {
 				break
 			}
 			s, ok := tok.(xml.StartElement)
@@ -139,7 +148,7 @@ func collectLinearGradients(data []byte) map[string]*linearGradient {
 	}
 	return out
 }
-func resolveGradientPaints(root *Group, gradients map[string]*linearGradient) {
+func resolveGradientPaints(root *Group, gradients map[string]*paintGradient) {
 	var walk func(Element)
 	walk = func(e Element) {
 		s := &e.base().Style

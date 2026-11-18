@@ -57,6 +57,7 @@ func RenderDoc(htmlSrc, cssSrc string, opts Options) RenderResult {
 	SetViewportUnits(vw, opts.ViewportHeight)
 	eng := NewStyleEngineViewport(css, vw)
 	eng.opts = opts
+	eng.sheet.FontFamilies = opts.FontFamilies
 
 	body := findTag(dom, "body")
 	if opts.DocumentRoot {

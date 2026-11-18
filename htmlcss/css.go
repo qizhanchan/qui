@@ -187,7 +187,8 @@ type stateSel struct {
 // Stylesheet is an ordered list of rules (source order is preserved and
 // used as the final cascade tie-breaker).
 type Stylesheet struct {
-	Rules []Rule
+	FontFamilies map[string]string
+	Rules        []Rule
 	// FontFaces holds each @font-face rule's descriptors (font-family,
 	// src, font-weight, font-style, unicode-range, …) for the host to load.
 	FontFaces [][]Declaration

@@ -210,7 +210,7 @@ type domLayoutBox struct {
 func domLayoutBoxes(html string, document bool) map[string]domLayoutBox {
 	win := qui.NewTestWindow(domLayoutViewport)
 	res := RenderDoc(html, "", Options{ViewportWidth: domLayoutViewport.W, ViewportHeight: domLayoutViewport.H,
-		Window: win, DocumentRoot: document})
+		Window: win, DocumentRoot: document, ScriptDOM: strings.Contains(html, "<!-- ScriptDOM -->")})
 	win.SetRoot(res.Root)
 	sz := res.Root.Measure(qui.Size{W: domLayoutViewport.W, H: 0})
 	res.Root.Layout(qui.Rect{W: domLayoutViewport.W, H: max(sz.H, domLayoutViewport.H)})

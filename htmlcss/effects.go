@@ -457,6 +457,13 @@ func parseLinearGradient(v string) (*gradientSpec, bool) {
 // parseGradient dispatches to the linear or radial parser (background-image).
 func parseGradient(v string) (*gradientSpec, bool) {
 	low := strings.ToLower(strings.TrimSpace(v))
+	if strings.HasPrefix(low, "-webkit-linear-gradient(") {
+		g, ok := parseLinearGradient(strings.TrimSpace(v)[8:])
+		if ok {
+			g.angleDeg = 90 - g.angleDeg
+		}
+		return g, ok
+	}
 	switch {
 	case strings.HasPrefix(low, "linear-gradient("):
 		return parseLinearGradient(v)

@@ -25,7 +25,8 @@ type GridTrack struct {
 	// size on its axis (CSS `25%`); where that size is indefinite the
 	// track sizes as Auto.
 	Pct float32
-	// MinMax marks a Fixed track declared minmax(Min, Size): it grows from
+	// MinMax marks a track with an explicit minimum. An Auto track shrinks
+	// to Min instead of its items' min-content floor. A Fixed track grows from
 	// Min only as far as the free space allows, so tracks that overflow the
 	// grid shrink back toward Min (repeat(4, minmax(0, 25%)) with a gap).
 	MinMax bool
@@ -686,6 +687,9 @@ func (l GridLayout) shrinkAutoColumns(tracks []GridTrack, sizes []float32, overf
 			continue
 		}
 		floors[i] = min(l.itemFloor(i, true, children, placements, nil, 0), sizes[i])
+		if tr.MinMax {
+			floors[i] = min(tr.Min, sizes[i])
+		}
 		slack += sizes[i] - floors[i]
 	}
 	if slack <= 0 {

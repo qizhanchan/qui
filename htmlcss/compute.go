@@ -411,7 +411,7 @@ type matchedDecl struct {
 
 func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedStyle {
 	rest := &restMatches{}
-	base := interpret(n, mergedDeclsRest(n, sheet, selectorState{}, rest, true, parent), parent)
+	base := interpret(n, mergedDeclsRest(n, sheet, selectorState{}, rest, true, parent), parent, sheet.FontFamilies)
 	// When the sheet has interactive-state rules, compute the matching
 	// variant(s) too — the built widget swaps to them while the element is
 	// hovered / focused / pressed. Each variant inherits from the parent's
@@ -439,7 +439,7 @@ func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedSty
 			cp := resting
 			return &cp
 		}
-		return interpret(n, mergedDeclsRest(n, sheet, st, rest, false, parent), parent)
+		return interpret(n, mergedDeclsRest(n, sheet, st, rest, false, parent), parent, sheet.FontFamilies)
 	}
 	hover, focus := mask&stateHover != 0, mask&stateFocus != 0
 	if sheet.HasHover || fwHover {
@@ -550,7 +550,7 @@ func pseudoStyle(n *Node, sheet *Stylesheet, which string, parent *ComputedStyle
 	if !ok {
 		return nil, "" // no content → no generated box
 	}
-	return interpret(n, merged, parent), unquoteContent(content, n)
+	return interpret(n, merged, parent, sheet.FontFamilies), unquoteContent(content, n)
 }
 
 // pseudoStyleContent is pseudoStyle returning the raw `content` value
@@ -568,7 +568,7 @@ func pseudoStyleContent(n *Node, sheet *Stylesheet, which string, parent *Comput
 	if _, ok := merged["display"]; !ok {
 		merged["display"] = "inline"
 	}
-	return interpret(n, merged, parent), content, has
+	return interpret(n, merged, parent, sheet.FontFamilies), content, has
 }
 
 // UnescapeCSS resolves CSS escapes in an identifier or string body: a
@@ -910,7 +910,7 @@ func cascadeKey(m matchedDecl) int {
 
 // interpret turns the merged declaration map into a ComputedStyle,
 // inheriting text/font properties from parent.
-func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedStyle {
+func interpret(n *Node, m map[string]string, parent *ComputedStyle, aliases ...map[string]string) *ComputedStyle {
 	rootFS := float32(16)
 	if parent != nil && parent.RootFontSize > 0 {
 		rootFS = parent.RootFontSize
@@ -950,6 +950,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		cs.LineHeight = parent.LineHeight
 		cs.LineHeightPx = parent.LineHeightPx
 		cs.TextAlign = parent.TextAlign
+		cs.TextTransform = parent.TextTransform
 		cs.CenterBlocks = parent.CenterBlocks
 		cs.LetterSpacing = parent.LetterSpacing
 		cs.WordSpacing = parent.WordSpacing
@@ -1160,7 +1161,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		cs.Italic = strings.Contains(strings.ToLower(v), "italic")
 	}
 	if v, ok := m["font-family"]; ok {
-		cs.FontFamily = firstFontFamily(v)
+		cs.FontFamily = firstFontFamily(v, aliases...)
 	}
 	cs.LineHeightOwn = lineHeightInherited
 	if cs.LineHeightPx > 0 && fs > 0 {
@@ -2387,7 +2388,7 @@ func fontSizeForKeyword(k int8, mono bool) float32 {
 	return sans[k-1]
 }
 
-func firstFontFamily(v string) string {
+func firstFontFamily(v string, aliases ...map[string]string) string {
 	parts := strings.Split(v, ",")
 	first := ""
 	for i, p := range parts {
@@ -2397,6 +2398,14 @@ func firstFontFamily(v string) string {
 		}
 		if name == "" {
 			continue
+		}
+		if len(aliases) > 0 {
+			if scoped := aliases[0][strings.ToLower(name)]; scoped != "" {
+				if qui.FontFamilyRegistered(scoped) {
+					return scoped
+				}
+				continue
+			}
 		}
 		if qui.FontFamilyRegistered(name) {
 			return name

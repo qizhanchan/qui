@@ -9,6 +9,19 @@ import (
 // applyBackgroundImage loads the first URL layer, including SVG, and resolves
 // its tile in the CSS positioning area rather than stretching the border box.
 func (e *El) applyBackgroundImage(cs *ComputedStyle) {
+	if layers := backgroundGradients(cs); len(layers) > 0 {
+		border, padding, margin := boxEdges(cs)
+		e.Box.BackgroundShader = func(b qui.Rect) qui.Shader {
+			out := gradientLayersShader{}
+			for _, l := range layers {
+				area := referenceBox(b, l.box, border, padding, margin)
+				radius := max(cs.Radius-(area.X-b.X), 0)
+				out.layers = append(out.layers, gradientLayerShader{l.gradient.shaderFor(area), area, radius})
+			}
+			return out
+		}
+		return
+	}
 	if cs.Gradient != nil || cs.BackgroundImageURL == "" {
 		e.bgImg, e.bgImgSrc = nil, ""
 		return
@@ -76,4 +89,71 @@ func (s backgroundTileShader) ColorAt(x, y float32) qui.Color {
 		return qui.Color{}
 	}
 	return s.shader.ColorAt(x, y)
+}
+
+// Each gradient layer has its own painting/positioning box. The first
+// authored layer is composited on top, as with background-image.
+type backgroundGradient struct {
+	gradient *gradientSpec
+	box      string
+}
+
+func backgroundGradients(cs *ComputedStyle) []backgroundGradient {
+	v := cs.raw["background"]
+	if v == "" {
+		return nil
+	}
+	parts := splitTopLevel(v, ',')
+	var out []backgroundGradient
+	for _, part := range parts {
+		fields := fieldsTopLevel(part)
+		if len(fields) == 0 {
+			continue
+		}
+		g, ok := parseGradient(fields[0])
+		if !ok {
+			return nil
+		}
+		box := "border-box"
+		for _, f := range fields[1:] {
+			if f == "border-box" || f == "padding-box" || f == "content-box" {
+				box = f
+			}
+		}
+		out = append(out, backgroundGradient{g, box})
+	}
+	if len(out) < 2 {
+		return nil
+	}
+	return out
+}
+
+type gradientLayerShader struct {
+	shader qui.Shader
+	area   qui.Rect
+	radius float32
+}
+type gradientLayersShader struct{ layers []gradientLayerShader }
+
+func (s gradientLayersShader) ColorAt(x, y float32) qui.Color {
+	var out qui.Color
+	for i := len(s.layers) - 1; i >= 0; i-- {
+		l := s.layers[i]
+		a := l.area
+		if x < a.X || x >= a.X+a.W || y < a.Y || y >= a.Y+a.H {
+			continue
+		}
+		r := min(l.radius, min(a.W, a.H)/2)
+		cx := max(a.X+r, min(x, a.X+a.W-r))
+		cy := max(a.Y+r, min(y, a.Y+a.H-r))
+		if (x-cx)*(x-cx)+(y-cy)*(y-cy) > r*r {
+			continue
+		}
+		c := l.shader.ColorAt(x, y)
+		alpha := c.A + out.A*(1-c.A)
+		if alpha > 0 {
+			out = qui.Color{R: (c.R*c.A + out.R*out.A*(1-c.A)) / alpha, G: (c.G*c.A + out.G*out.A*(1-c.A)) / alpha, B: (c.B*c.A + out.B*out.A*(1-c.A)) / alpha, A: alpha}
+		}
+	}
+	return out
 }
