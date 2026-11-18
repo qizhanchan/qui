@@ -457,3 +457,31 @@ func TestInlineLeadingBelow(t *testing.T) {
 		t.Errorf("line pitch %.2f, want the line height %.2f", pitch, wp.Lines[0].Height)
 	}
 }
+
+func TestInlineRoundedNormalMetricsPreserveZeroLineHeight(t *testing.T) {
+	f := gfx.Font{Size: 18}
+	for _, tc := range []struct {
+		name      string
+		scale, lh float32
+	}{
+		{"inherited zero", -2, 0},
+		{"run override zero", 1.5, -2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tok := inlineTok{font: f, lh: tc.lh}
+			a, d := tok.aboveBelow(tc.scale, 0, 0, false, true)
+			if h := a + d; h < -0.001 || h > 0.001 {
+				t.Fatalf("explicit zero text contributes %vpx", h)
+			}
+		})
+	}
+	items := []InlineItem{{Box: true, Size: gfx.Size{W: 100, H: 40}}}
+	opts := InlineLayoutOptions{BaseFont: f, Strut: true, RoundNormalMetrics: true, LineHeightScale: -2}
+	if h := BuildInlineLayout(items, opts).Height; h != 40 {
+		t.Fatalf("zero-height strut adds descent below atomic box: height=%v", h)
+	}
+	opts.LineHeightScale = 0
+	if h := BuildInlineLayout(items, opts).Height; h <= 40 {
+		t.Fatalf("normal strut lost its descent: height=%v", h)
+	}
+}

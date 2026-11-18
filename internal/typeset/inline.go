@@ -69,7 +69,7 @@ type InlineItem struct {
 	BaselineShift float32
 	// LineHeightScale overrides the layout's LineHeightScale for this run
 	// (CSS: each inline box contributes its own line-height); 0 = the
-	// layout's, < 0 = normal (the face's own height).
+	// layout's, -1 = normal (the face's own height), -2 = explicit zero.
 	LineHeightScale float32
 	// Span is the host's id of the innermost inline element (CSS inline
 	// box) the run or box belongs to; 0 = none. It is echoed into the
@@ -122,8 +122,8 @@ type InlineLayoutOptions struct {
 	// first strong directional rune.
 	Direction TextDirection
 	// LineHeightScale is a CSS `line-height`: a multiple of the FONT SIZE.
-	// That is what htmlcss's computed property means. <=0 is CSS
-	// `line-height: normal` — the face's own height.
+	// That is what htmlcss's computed property means. 0 is CSS
+	// `line-height: normal` (the face's own height); -2 is explicit zero.
 	LineHeightScale float32
 	// RoundNormalMetrics uses whole CSS-pixel font metrics for normal line
 	// heights, matching browser font metrics rather than document typography.
@@ -732,7 +732,7 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 	baseDesc := inlineDescent(opts.BaseFont)
 	leadBelow := opts.LeadingBelow
 	baseLA, baseLB := inlineLeading(opts.BaseFont, scale, spacing, leadBelow)
-	if opts.RoundNormalMetrics && scale <= 0 && spacing <= 0 {
+	if opts.RoundNormalMetrics && scale == 0 && spacing <= 0 {
 		baseAsc, baseDesc = roundedNormalMetrics(opts.BaseFont)
 		baseLA, baseLB = 0, 0
 	}
@@ -1211,7 +1211,7 @@ func (t inlineTok) aboveBelow(scale, spacing, mid float32, leadBelow, roundNorma
 	}
 	la, lb := inlineLeading(t.font, scale, spacing, leadBelow)
 	above, below = fa+la, fd+lb
-	if roundNormal && scale <= 0 && spacing <= 0 {
+	if roundNormal && scale == 0 && spacing <= 0 {
 		above, below = roundedNormalMetrics(t.font)
 	}
 	if t.shift > 0 {

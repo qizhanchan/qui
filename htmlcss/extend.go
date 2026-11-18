@@ -216,75 +216,54 @@ func (e *El) UserData(key string) any { return e.userData[key] }
 // first restyle).
 func (e *El) ComputedStyle() *ComputedStyle { return e.lastCS }
 
-// ComputedStyleForState resolves the current CSS cascade, including the
-// host's DOM pointer/focus targets (which may be folded inline elements).
-// Resting styles remain available through ComputedStyle for layout.
+// ComputedStyleForState resolves the current CSS cascade, combining the host's
+// DOM hover/focus targets (including folded inline elements) with retained
+// widget and ancestor/sibling trigger state. Pass nil targets for native-only
+// state. ComputedStyle keeps the resting retained style used by layout.
 func (e *El) ComputedStyleForState(hover, focus *El) *ComputedStyle {
-	if e.engine == nil || e.engine.sheet == nil {
+	if e.lastCS == nil || e.engine == nil || e.engine.sheet == nil || e.node == nil {
 		return e.lastCS
-	}
-	var st selectorState
-	for p := hover; p != nil; p = p.elParent {
-		st.hoverNodes = append(st.hoverNodes, p.node)
-	}
-	for p := focus; p != nil; p = p.elParent {
-		st.focusNodes = append(st.focusNodes, p.node)
 	}
 	var resolve func(*El) *ComputedStyle
 	resolve = func(el *El) *ComputedStyle {
+		if el.engine == nil || el.engine.sheet == nil || el.node == nil {
+			return el.lastCS
+		}
 		var parent *ComputedStyle
 		if el.elParent != nil {
 			parent = resolve(el.elParent)
 		}
-		s := st
-		s.hover = el.Hovering() || nodeIn(st.hoverNodes, el.node)
-		s.focus = el.Focused() || nodeIn(st.focusNodes, el.node)
-		s.focusVisible = el.FocusVisibleNow()
-		s.active = el.Pressed()
-		return interpret(el.node, mergedDecls(el.node, el.engine.sheet, s), parent)
+		var st selectorState
+		for p := hover; p != nil; p = p.elParent {
+			st.hoverNodes = append(st.hoverNodes, p.node)
+		}
+		for p := focus; p != nil; p = p.elParent {
+			st.focusNodes = append(st.focusNodes, p.node)
+		}
+		addState := func(p *El) {
+			if p.Hovering() {
+				st.hoverNodes = append(st.hoverNodes, p.node)
+			}
+			if p.focusWithin() {
+				st.focusNodes = append(st.focusNodes, p.node)
+			}
+			if p.Pressed() {
+				st.activeNodes = append(st.activeNodes, p.node)
+			}
+		}
+		for p := el; p != nil; p = p.elParent {
+			addState(p)
+		}
+		for _, trigger := range el.stateTriggers {
+			addState(trigger.el)
+		}
+		st.hover = nodeIn(st.hoverNodes, el.node)
+		st.focus = nodeIn(st.focusNodes, el.node)
+		st.active = nodeIn(st.activeNodes, el.node)
+		st.focusVisible = el.FocusVisibleNow()
+		return interpret(el.node, mergedDeclsRest(el.node, el.engine.sheet, st, nil, false, parent), parent)
 	}
 	return resolve(e)
-}
-
-// CurrentComputedStyle includes the current interactive state. Paint-only
-// hover/focus rules do not restyle the retained tree, but CSSOM readers must
-// see them just as painting does.
-func (e *El) CurrentComputedStyle() *ComputedStyle {
-	if e.lastCS == nil || e.engine == nil || e.node == nil {
-		return e.lastCS
-	}
-	st := selectorState{hover: e.Hovering(), focus: e.Focused(), active: e.Pressed(), focusVisible: e.FocusVisibleNow()}
-	for p := e.elParent; p != nil; p = p.elParent {
-		if p.Hovering() {
-			st.hoverNodes = append(st.hoverNodes, p.node)
-		}
-		if p.Focused() {
-			st.focusNodes = append(st.focusNodes, p.node)
-		}
-		if p.Pressed() {
-			st.activeNodes = append(st.activeNodes, p.node)
-		}
-	}
-	for _, trigger := range e.stateTriggers {
-		p := trigger.el
-		if p.Hovering() {
-			st.hoverNodes = append(st.hoverNodes, p.node)
-		}
-		if p.Focused() {
-			st.focusNodes = append(st.focusNodes, p.node)
-		}
-		if p.Pressed() {
-			st.activeNodes = append(st.activeNodes, p.node)
-		}
-	}
-	if !st.hover && !st.focus && !st.active && len(st.hoverNodes)+len(st.focusNodes)+len(st.activeNodes) == 0 {
-		return e.lastCS
-	}
-	var parent *ComputedStyle
-	if e.elParent != nil {
-		parent = e.elParent.CurrentComputedStyle()
-	}
-	return interpret(e.node, mergedDeclsRest(e.node, e.engine.sheet, st, nil, false, parent), parent)
 }
 
 // SetOnStyle registers fn to run after every restyle of the element with
