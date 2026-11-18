@@ -2623,6 +2623,9 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 			// backing then fills the El's width as a flow block. Without this
 			// a form control ignores flex-grow (staying at its intrinsic width).
 			e.hoistControlLayout(cs)
+			// position: absolute / relative applies to the control's El
+			// (it is what sits in the parent's flow).
+			applyPositioning(&e.Box, cs, false)
 		} else if e.tag == "select" {
 			// No window yet (static render without opts.Window): show the
 			// option list as a plain placeholder label.

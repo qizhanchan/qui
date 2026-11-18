@@ -213,6 +213,23 @@ func ParseFirstFontFromFile(path string, system bool) (*opentype.Font, io.Closer
 // (single fonts, collections it cannot rewrite, rewrites that did not come
 // out smaller). GIDs are preserved — the tables are copied verbatim — so
 // the result measures and rasterizes identically to face 0 of the original.
+// ExtractFace rewrites face index of a .ttc/.otc collection into a
+// standalone font (nil when it cannot); a single font is returned as is
+// for index 0.
+func ExtractFace(data []byte, index int) []byte {
+	if len(data) < 4 || string(data[0:4]) != "ttcf" {
+		if index == 0 {
+			return data
+		}
+		return nil
+	}
+	version, tables, err := ParseSFNTTablesFace(data, index)
+	if err != nil {
+		return nil
+	}
+	return writeSFNT(version, tables)
+}
+
 func ExtractFace0(data []byte) []byte {
 	if len(data) < 4 || string(data[0:4]) != "ttcf" {
 		return data

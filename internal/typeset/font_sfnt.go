@@ -66,6 +66,12 @@ func SubsetFontProgram(f *opentype.Font, raw []byte, used map[sfnt.GlyphIndex]st
 // face 0 of a .ttc/.otc collection, returning the sfnt version and a map of
 // table tag -> bytes (copied out of raw).
 func ParseSFNTTables(raw []byte) (uint32, map[string][]byte, error) {
+	return ParseSFNTTablesFace(raw, 0)
+}
+
+// ParseSFNTTablesFace is ParseSFNTTables for face index of a collection
+// (ignored for a single font).
+func ParseSFNTTablesFace(raw []byte, face int) (uint32, map[string][]byte, error) {
 	if len(raw) < 12 {
 		return 0, nil, errShortFont
 	}
@@ -74,11 +80,11 @@ func ParseSFNTTables(raw []byte) (uint32, map[string][]byte, error) {
 		if len(raw) < 16 {
 			return 0, nil, errShortFont
 		}
-		numFonts := be32(raw, 8)
-		if numFonts == 0 {
+		numFonts := int(be32(raw, 8))
+		if numFonts == 0 || face < 0 || face >= numFonts || 12+4*face+4 > len(raw) {
 			return 0, nil, errShortFont
 		}
-		dirOff = int(be32(raw, 12)) // offset to face 0's table directory
+		dirOff = int(be32(raw, 12+4*face)) // offset to the face's table directory
 		if dirOff+12 > len(raw) {
 			return 0, nil, errShortFont
 		}

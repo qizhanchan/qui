@@ -125,15 +125,32 @@ func ensureSystemFamilyUnlocked(family string) bool {
 	return true
 }
 
-// loadSystemFace parses face index of a system font file (mapped, like the
-// automatic fallback probes).
+// loadSystemFace loads face index of a system font file. A face of a
+// collection is rewritten into a standalone font first: the shaper parses
+// a font's raw bytes as one font, so it needs the face's own program.
 func loadSystemFace(path string, index int) *opentype.Font {
-	if data, ok := mapFontFile(path); ok {
-		if f := parseFace(data, index); f != nil {
-			return f
-		}
-		unmapFontFile(data)
+	data, ok := mapFontFile(path)
+	if !ok {
+		return nil
 	}
+	if len(data) >= 4 && string(data[0:4]) == "ttcf" {
+		face := ExtractFace(data, index)
+		unmapFontFile(data)
+		if len(face) == 0 {
+			return nil
+		}
+		f, err := opentype.Parse(face)
+		if err != nil {
+			return nil
+		}
+		rememberRawFontBytes(f, face)
+		return f
+	}
+	if f := parseFace(data, index); f != nil {
+		rememberRawFontBytes(f, data)
+		return f
+	}
+	unmapFontFile(data)
 	return nil
 }
 

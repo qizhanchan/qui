@@ -70,6 +70,16 @@ const (
 	pseudoEmpty                          // :empty (no element/text children)
 	pseudoHas                            // :has(rel, …) — relative selectors in args
 	pseudoNot                            // :not(sel, …)  — uses args
+	pseudoIs                             // :is() / :matches() / :-webkit-any() — uses args
+	pseudoWhere                          // :where() — like :is, zero specificity
+	pseudoLink                           // :link / :any-link (a / area with href)
+	pseudoFirstOfType                    // :first-of-type
+	pseudoLastOfType                     // :last-of-type
+	pseudoOnlyOfType                     // :only-of-type
+	pseudoNthLastOfType                  // :nth-last-of-type(An+B)
+	pseudoPlaceholderShown               // :placeholder-shown
+	pseudoLang                           // :lang(xx) — uses raw arg (lang)
+	pseudoAlways                         // pseudo-classes that always hold here (:defined, :valid, :dir(ltr))
 	pseudoUnsupported                    // parsed but not evaluable → never matches
 )
 
@@ -1095,7 +1105,43 @@ func classifyPseudo(name, arg string) pseudoSelector {
 		if len(ps.args) == 0 {
 			ps.kind = pseudoUnsupported
 		}
+	case "is", "matches", "-webkit-any", "-moz-any", "where":
+		// Forgiving selector list: unparseable arguments drop out.
+		ps.kind, ps.args = pseudoIs, parseSelectorList(arg)
+		if name == "where" {
+			ps.kind = pseudoWhere
+		}
+		if len(ps.args) == 0 {
+			ps.kind = pseudoUnsupported
+		}
+	case "link", "any-link", "-webkit-any-link":
+		ps.kind = pseudoLink
+	case "first-of-type":
+		ps.kind = pseudoFirstOfType
+	case "last-of-type":
+		ps.kind = pseudoLastOfType
+	case "only-of-type":
+		ps.kind = pseudoOnlyOfType
+	case "nth-last-of-type":
+		if a, b, ok := parseAnB(arg); ok {
+			ps.kind, ps.a, ps.b = pseudoNthLastOfType, a, b
+		} else {
+			ps.kind = pseudoUnsupported
+		}
+	case "placeholder-shown":
+		ps.kind = pseudoPlaceholderShown
+	case "lang":
+		ps.kind, ps.raw = pseudoLang, strings.ToLower(strings.Trim(strings.TrimSpace(arg), `"'`))
+	case "defined", "valid", "in-range", "user-valid", "scope":
+		ps.kind = pseudoAlways
+	case "dir":
+		ps.kind = pseudoUnsupported
+		if strings.EqualFold(strings.TrimSpace(arg), "ltr") {
+			ps.kind = pseudoAlways
+		}
 	default:
+		// :visited (no history), :target, :invalid, :fullscreen, :modal,
+		// :popover-open, vendor pseudos… never match.
 		ps.kind = pseudoUnsupported
 	}
 	return ps
@@ -1237,7 +1283,10 @@ func (ss simpleSelector) specificity() (ids, classes, types int) {
 		types++
 	}
 	for _, ps := range ss.pseudos {
-		if (ps.kind == pseudoNot || ps.kind == pseudoHas) && len(ps.args) > 0 {
+		if ps.kind == pseudoWhere {
+			continue // :where() contributes no specificity
+		}
+		if (ps.kind == pseudoNot || ps.kind == pseudoHas || ps.kind == pseudoIs) && len(ps.args) > 0 {
 			// Selectors 4: the specificity of its most specific argument.
 			var bi, bc, bt int
 			for _, a := range ps.args {
@@ -1558,6 +1607,44 @@ func (ps pseudoSelector) matches(n *Node, st selectorState) bool {
 			}
 		}
 		return true
+	case pseudoIs, pseudoWhere:
+		for _, a := range ps.args {
+			if a.matchesElement(n, st) {
+				return true
+			}
+		}
+		return false
+	case pseudoLink:
+		if n.Tag != "a" && n.Tag != "area" {
+			return false
+		}
+		_, ok := n.Attr("href")
+		return ok
+	case pseudoFirstOfType:
+		return elementIndexOfType(n) == 0
+	case pseudoLastOfType:
+		return elementIndexOfTypeFromEnd(n) == 0
+	case pseudoOnlyOfType:
+		return elementIndexOfType(n) == 0 && elementIndexOfTypeFromEnd(n) == 0
+	case pseudoNthLastOfType:
+		return nthMatches(elementIndexOfTypeFromEnd(n)+1, ps.a, ps.b)
+	case pseudoPlaceholderShown:
+		if n.Tag != "input" && n.Tag != "textarea" {
+			return false
+		}
+		_, has := n.Attr("placeholder")
+		v, _ := n.Attr("value")
+		return has && v == ""
+	case pseudoLang:
+		for a := n; a != nil; a = a.Parent {
+			if l, ok := a.Attr("lang"); ok {
+				l = strings.ToLower(l)
+				return l == ps.raw || strings.HasPrefix(l, ps.raw+"-")
+			}
+		}
+		return false
+	case pseudoAlways:
+		return true
 	default: // pseudoUnsupported
 		return false
 	}
@@ -1833,4 +1920,28 @@ func (ix *ruleIndex) collectCandidates(n *Node, id string) []int {
 	}
 	slices.Sort(out)
 	return slices.Compact(out)
+}
+
+// elementIndexOfTypeFromEnd is n's 0-based position among its same-tag
+// element siblings, counted from the last.
+func elementIndexOfTypeFromEnd(n *Node) int {
+	p := siblingParent(n)
+	if p == nil {
+		return 0
+	}
+	idx, seen := 0, false
+	for i := len(p.Children) - 1; i >= 0; i-- {
+		c := p.Children[i]
+		if c == n {
+			seen = true
+			break
+		}
+		if c.Type == ElementNode && c.Tag == n.Tag {
+			idx++
+		}
+	}
+	if !seen {
+		return 0
+	}
+	return idx
 }

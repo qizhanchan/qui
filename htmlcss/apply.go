@@ -259,6 +259,26 @@ func applyBox(box *widgets.Box, cs *ComputedStyle, forceContainingBlock bool) {
 	// Reset first (reused El): a dropped `overflow` must stop clipping.
 	box.ClipChildren = cs.OverflowClip
 	box.Filter = cs.Filter // CSS filter: blur()/drop-shadow() (nil clears)
+	applyPositioning(box, cs, forceContainingBlock)
+	// A focusable box (:focus styling) is an interactive control — make its
+	// text content non-selectable so a click focuses the box itself rather
+	// than being captured by a selectable child Label.
+	if box.Focus != nil || box.FocusVisible != nil {
+		disableTextSelection(box)
+	}
+}
+
+// positionedBox is what applyPositioning needs from a widget.
+type positionedBox interface {
+	SetPositionOffset(qui.Point)
+	SetOutOfFlow(bool)
+	SetEstablishesAbsContainingBlock(bool)
+	SetAbsolutePosition(qui.AbsolutePosition)
+}
+
+// applyPositioning maps CSS position + insets onto the box: a relative
+// offset, or out-of-flow placement for absolute / fixed.
+func applyPositioning(box positionedBox, cs *ComputedStyle, forceContainingBlock bool) {
 	// Positioning. Compute the final state first, then commit each controlled
 	// property once. Clearing and re-setting an unchanged absolute position
 	// would otherwise create spurious layout invalidations on every restyle.
@@ -309,12 +329,6 @@ func applyBox(box *widgets.Box, cs *ComputedStyle, forceContainingBlock bool) {
 	box.SetOutOfFlow(outOfFlow)
 	box.SetEstablishesAbsContainingBlock(establishesContainingBlock)
 	box.SetAbsolutePosition(absolutePosition)
-	// A focusable box (:focus styling) is an interactive control — make its
-	// text content non-selectable so a click focuses the box itself rather
-	// than being captured by a selectable child Label.
-	if box.Focus != nil || box.FocusVisible != nil {
-		disableTextSelection(box)
-	}
 }
 
 // relOffset resolves a relative-position axis offset: the start side

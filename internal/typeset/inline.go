@@ -1157,7 +1157,12 @@ func placeInlineLine(toks []inlineTok, idxs []int, baseline, asc, desc, mid, jus
 	var x float32
 	for pos, ti := range idxs {
 		t := toks[ti]
-		if pos > 0 && !t.spaceBefore {
+		// Bidi reordering can move a token away from the space that preceded
+		// it logically; the visual neighbor's space then sits before it.
+		// Only then — in logical order a token's own spaceBefore is the
+		// truth, and a token that has none (",", ")" right after a styled
+		// run) must not borrow its predecessor's.
+		if reordered && pos > 0 && !t.spaceBefore {
 			prev := toks[idxs[pos-1]]
 			if prev.spaceBefore {
 				t.spaceBefore = true
