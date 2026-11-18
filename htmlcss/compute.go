@@ -50,6 +50,9 @@ type ComputedStyle struct {
 	// `font-family: monospace` alone resolves against 13px, not 16px.
 	FontSizeKeyword int8
 	FontMonoOnly    bool
+	// RootFontSize is the document root's font size — what rem resolves
+	// against (16px, the initial size, when the root is not <html>).
+	RootFontSize float32
 	LineHeight float32 // multiplier over font size
 	// LineHeightPx is the computed line height in px when it was declared
 	// with a length or percentage (0 for a unitless number). CSS inherits
@@ -746,6 +749,11 @@ func cascadeKey(m matchedDecl) int {
 // interpret turns the merged declaration map into a ComputedStyle,
 // inheriting text/font properties from parent.
 func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedStyle {
+	rootFS := float32(16)
+	if parent != nil && parent.RootFontSize > 0 {
+		rootFS = parent.RootFontSize
+	}
+	remPx = rootFS
 	// Resolve CSS custom properties + var() before reading any property:
 	// build this node's inherited custom-prop table, then substitute var()
 	// throughout the normal declarations.
@@ -905,6 +913,13 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	if cs.FontSizeKeyword > 0 {
 		cs.FontSize = fontSizeForKeyword(cs.FontSizeKeyword, webCompat && cs.FontMonoOnly)
 	}
+	if parent == nil && n.Tag == "html" {
+		// The root's own font size (its rem is the initial 16px) is
+		// every rem below it — and in its other properties.
+		rootFS = cs.FontSize
+		remPx = rootFS
+	}
+	cs.RootFontSize = rootFS
 	fs := cs.FontSize
 
 	// --- color ---

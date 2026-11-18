@@ -295,7 +295,10 @@ func flipOp(op string) string {
 // cmpLen compares v with a CSS length (em/rem against 16px, as media
 // queries do).
 func cmpLen(v float32, op, length string) bool {
+	saved := remPx
+	remPx = 16
 	l, ok := parseLength(length, 16, 0)
+	remPx = saved
 	if !ok {
 		return false
 	}

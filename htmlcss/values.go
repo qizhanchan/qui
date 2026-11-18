@@ -300,8 +300,14 @@ func clamp01(v float32) float32 {
 	return v
 }
 
+// remPx is what 1rem is while a style is being resolved: the document
+// root's font size (interpret and applyComputed set it from the style at
+// hand; media queries use the initial 16px). Styles resolve on the UI
+// thread, one element at a time.
+var remPx float32 = 16
+
 // parseLength converts a CSS length to logical pixels. em is relative to
-// the supplied font size; rem uses 16px; % returns a fraction of pct
+// the supplied font size; rem to remPx; % returns a fraction of pct
 // (caller passes the reference). Returns ok=false for unparseable/auto.
 func parseLength(s string, fontSize, pctRef float32) (float32, bool) {
 	s = strings.TrimSpace(strings.ToLower(s))
@@ -324,7 +330,7 @@ func parseLength(s string, fontSize, pctRef float32) (float32, bool) {
 		return parseFloat(strings.TrimSuffix(s, "px"))
 	case strings.HasSuffix(s, "rem"):
 		if v, ok := parseFloat(strings.TrimSuffix(s, "rem")); ok {
-			return v * 16, true
+			return v * remPx, true
 		}
 	case strings.HasSuffix(s, "em"):
 		if v, ok := parseFloat(strings.TrimSuffix(s, "em")); ok {

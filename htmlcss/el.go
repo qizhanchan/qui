@@ -2505,6 +2505,9 @@ func (e *El) viewportPropagated(cs *ComputedStyle) *ComputedStyle {
 // the one-shot builder's appliers. Called top-down by StyleEngine.restyle.
 func (e *El) applyComputed(cs *ComputedStyle) {
 	e.lastCS = cs
+	if cs != nil && cs.RootFontSize > 0 {
+		remPx = cs.RootFontSize // rem in lengths resolved while applying
+	}
 	if cs == nil {
 		return
 	}

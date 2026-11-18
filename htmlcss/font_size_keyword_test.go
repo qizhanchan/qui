@@ -43,3 +43,21 @@ func TestFontSizeKeywords(t *testing.T) {
 		t.Errorf("back to sans-serif under a keyword-sized monospace parent: %.1fpx, want 16", got)
 	}
 }
+
+// rem is the root element's font size (html { font-size: 62.5% } → 10px),
+// and the root's own font-size rem is the initial 16px.
+func TestRemFollowsRootFontSize(t *testing.T) {
+	sheet := ParseCSS(`html { font-size: 62.5%; padding: 1rem } body { font-size: 1.6rem; margin: 2rem }`)
+	html := computeNode(&Node{Type: ElementNode, Tag: "html"}, sheet, nil)
+	if html.FontSize != 10 || html.Padding.Top != 10 {
+		t.Fatalf("html: font %.1f padding %.1f, want 10 / 10", html.FontSize, html.Padding.Top)
+	}
+	body := computeNode(&Node{Type: ElementNode, Tag: "body"}, sheet, html)
+	if body.FontSize != 16 || body.Margin.Top != 20 {
+		t.Fatalf("body: font %.1f margin %.1f, want 16 / 20", body.FontSize, body.Margin.Top)
+	}
+	sheet2 := ParseCSS(`html { font-size: 2rem }`)
+	if h := computeNode(&Node{Type: ElementNode, Tag: "html"}, sheet2, nil); h.FontSize != 32 {
+		t.Fatalf("the root's own rem is the initial 16px: %.1f", h.FontSize)
+	}
+}
