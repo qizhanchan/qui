@@ -162,8 +162,8 @@ var TextShapingState struct {
 	sources map[*gtfont.Font]*opentype.Font
 	// variable records which parsed fonts have a 'wght' axis.
 	variable map[*gtfont.Font]bool
-	faces   map[shapingFaceKey]*gtfont.Face
-	sfntBuf sfnt.Buffer
+	faces    map[shapingFaceKey]*gtfont.Face
+	sfntBuf  sfnt.Buffer
 }
 
 func init() {
@@ -579,6 +579,11 @@ func wrapShapedParagraph(paragraph shapedParagraph, maxWidth, firstIndent float3
 		Direction:     paragraph.Direction,
 		BreakPolicy:   policy,
 		TextContinues: false,
+		// Trailing whitespace hangs only at a soft wrap. An unwrapped line
+		// keeps its spaces' advance (CSS white-space:pre / nowrap): trimmed,
+		// a span of only spaces measured narrower than it draws, and text
+		// after it shifted (git diff word highlights of alignment padding).
+		DisableTrailingWhitespaceTrim: maxWidth <= 0,
 	}
 	var wrapper shaping.LineWrapper
 	wrapper.Prepare(config, paragraph.Text, shaping.NewSliceIterator(paragraph.Runs))

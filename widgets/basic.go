@@ -60,7 +60,7 @@ type Button struct {
 	// AlignStart puts the label (or icon + label) at the content's left
 	// edge instead of centering it — list rows, not push buttons.
 	AlignStart bool
-	OnClick func()
+	OnClick    func()
 
 	// States carries the layered Base / Hover / Pressed / Focused /
 	// Disabled styles. Draw resolves these against currentState() every
