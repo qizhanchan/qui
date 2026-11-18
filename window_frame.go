@@ -546,6 +546,26 @@ func (w *Window) layoutPass() {
 	}
 }
 
+// FlushLayout lays the main tree out now if it is layout-dirty — a
+// forced synchronous layout, for code that must read fresh geometry
+// between frames (a script engine's getBoundingClientRect after a DOM
+// change). AfterLayout callbacks still wait for the frame. A no-op inside
+// a layout pass.
+func (w *Window) FlushLayout() {
+	if w == nil || w.inLayoutPass || w.root == nil || !w.root.IsLayoutDirty() {
+		return
+	}
+	w.assertUIThread("Window.FlushLayout")
+	w.inLayoutPass = true
+	w.boundsChanged = false
+	MeasureChild(w.root, w.lastSize)
+	w.root.Layout(Rect{X: 0, Y: 0, W: w.lastSize.W, H: w.lastSize.H})
+	w.root.ClearLayoutDirty()
+	w.inLayoutPass = false
+	// Paint what moved on the next frame.
+	w.Invalidate()
+}
+
 // AfterLayout schedules fn to run once, right after the next layout pass
 // and before that frame paints: every widget's Bounds() is final, so fn can
 // measure, scroll a new row into view, or place a popover against its
