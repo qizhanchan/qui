@@ -75,7 +75,9 @@ type El struct {
 	// is laid out as a block in its parent's flow — the anonymous line
 	// boxes around a lone block hold nothing and take no height.
 	blockInInline bool
-	node          *Node // mirror used for selector matching / cascade
+	// floats is the float bookkeeping of this element's flow layout.
+	floats *qui.FloatState
+	node   *Node // mirror used for selector matching / cascade
 
 	// elParent is the adopting parent element (set by the parent's
 	// SetElementChildren, cleared on Unmount). It is the ELEMENT-tree
@@ -2435,6 +2437,24 @@ func (e *El) isStyleRoot() bool {
 
 // --- styling ---
 
+// floatState returns the element's flow float state, refreshed for cs:
+// whether the element contains its floats (a new formatting context, the
+// document root, or a clearfix ::after).
+func (e *El) floatState(cs *ComputedStyle) *qui.FloatState {
+	if e.floats == nil {
+		e.floats = &qui.FloatState{}
+	}
+	contains := cs.newFormattingContext() || e.elParent == nil
+	if !contains && e.engine != nil && e.engine.sheet != nil && e.node != nil {
+		contains = pseudoAfterClears(e.node, e.engine.sheet)
+	}
+	e.floats.ContainsFloats = contains
+	if contains {
+		e.floats.Inherited = nil
+	}
+	return e.floats
+}
+
 // isDetailsSummary reports whether e is the summary of a <details>: its
 // first <summary> child, the one that toggles it.
 func (e *El) isDetailsSummary() bool {
@@ -2654,6 +2674,10 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	} else {
 		contentLayout = chooseLayout(cs)
 	}
+	if fl, ok := contentLayout.(qui.FlowLayout); ok {
+		fl.Floats = e.floatState(cs)
+		contentLayout = fl
+	}
 
 	// Box decorations (background / border / radius / shadow / gradient /
 	// transform / overflow-clip / relative offset / hover-focus-active).
@@ -2849,11 +2873,18 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 			e.iconSrc == nil && e.tag != "img" {
 			e.flowKids = e.buildPseudoLeaf(cs)
 		}
+		// Web-compat: a text-only block flows as an inline run (not a
+		// Label), so its lines can wrap around floats.
+		if webCompat && e.flowKids == nil && e.text != "" && len(e.elementKids) == 0 &&
+			e.iconSrc == nil && e.tag != "img" && !e.isControl() && e.backing == nil &&
+			!strings.HasPrefix(cs.Display, "table") {
+			e.flowKids = e.buildPseudoLeaf(cs)
+		}
 		switch {
 		case e.flowKids != nil:
 			// Mixed inline content: anonymous inline runs (InlineBoxes)
 			// interleaved with block children (see syncChildren).
-			e.LayoutEngine = qui.FlowLayout{}
+			e.LayoutEngine = qui.FlowLayout{Floats: e.floatState(cs)}
 		case e.tag == "img" && e.iconSrc == nil:
 			e.ensureImg(cs)
 			if e.imgWidget != nil {

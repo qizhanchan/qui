@@ -53,6 +53,10 @@ type ComputedStyle struct {
 	// sheet resets theirs to normal.
 	LineHeightOwn bool
 	TextAlign     qui.TextAlign
+	// Float / Clear are CSS float and clear ("" = none). A float's display
+	// is blockified.
+	Float string
+	Clear string
 	// CenterBlocks is text-align: -webkit-center (<center>, align=center):
 	// besides centering inline content, block children with auto side
 	// margins are centered. Inherited along with text-align.
@@ -127,6 +131,10 @@ type ComputedStyle struct {
 	HasWidth  bool
 	Height    float32
 	HasHeight bool
+	// HeightDefinite: the element's height does not depend on its content
+	// (CSS 2.1 § 10.5) — its children's percentage heights resolve against
+	// it. Only tracked in web-compat mode.
+	HeightDefinite bool
 	// WidthPct/HeightPct hold `width: 50%`-style declarations as 0–1
 	// fractions; the root layout engines resolve them against the
 	// containing block at layout time (qui.Style.WidthPct/HeightPct).
@@ -671,7 +679,7 @@ func cascadeKey(m matchedDecl) int {
 		layer = m.layer
 	}
 	spec := min(m.a, 99)*10000 + min(m.b, 99)*100 + min(m.c, 99)
-	return tier*1_000_000_000 + layer*1_000_000 + spec // order handled by stable sort
+	return tier*10_000_000_000 + layer*1_000_000 + spec // order handled by stable sort
 }
 
 // interpret turns the merged declaration map into a ComputedStyle,
@@ -740,6 +748,21 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	cs.Display = strings.ToLower(strings.TrimSpace(m["display"]))
 	if cs.Display == "" {
 		cs.Display = defaultDisplay(n.Tag)
+	}
+	// float (CSS 2.1 § 9.7): an absolutely positioned box does not float;
+	// a float's display is blockified.
+	cs.Float, cs.Clear = "", ""
+	if v := strings.ToLower(strings.TrimSpace(m["float"])); v == "left" || v == "right" ||
+		v == "inline-start" || v == "inline-end" {
+		pos := strings.ToLower(strings.TrimSpace(m["position"]))
+		if pos != "absolute" && pos != "fixed" && cs.Display != "none" {
+			cs.Float = map[string]string{"left": "left", "inline-start": "left", "right": "right", "inline-end": "right"}[v]
+			cs.Display = blockify(cs.Display)
+		}
+	}
+	if v := strings.ToLower(strings.TrimSpace(m["clear"])); v == "left" || v == "right" || v == "both" ||
+		v == "inline-start" || v == "inline-end" {
+		cs.Clear = map[string]string{"left": "left", "inline-start": "left", "right": "right", "inline-end": "right", "both": "both"}[v]
 	}
 	// app-region: drag / no-drag. Inherited (Electron's rule): declaring
 	// drag on a title-bar strip makes everything in it move the window, and
@@ -1208,7 +1231,40 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		}
 	}
 
+	if webCompat {
+		resolveHeightDefiniteness(n, cs, parent)
+	}
 	return cs
+}
+
+// resolveHeightDefiniteness decides whether cs's height is definite and
+// drops a percentage height that has nothing definite to resolve against:
+// CSS computes it to `auto` then (CSS 2.1 § 10.5) — otherwise a
+// `height: 100%` inside an auto-height box would grow with whatever the
+// layout last gave it.
+func resolveHeightDefiniteness(n *Node, cs, parent *ComputedStyle) {
+	root := parent == nil || n.Tag == "html"
+	outOfFlow := cs.Position == "absolute" || cs.Position == "fixed"
+	parentDefinite := root || (parent != nil && parent.HeightDefinite)
+	// A stretched item of a row flex container takes the container's
+	// (definite) cross size.
+	stretched := parent != nil && parent.Display == "flex" && parent.FlexDirection == qui.Horizontal &&
+		parent.HeightDefinite && !cs.HasHeight && cs.HeightPct == 0 &&
+		(cs.AlignSelf == qui.AlignDefault && (parent.AlignItems == qui.AlignStretch || parent.AlignItems == qui.AlignDefault) ||
+			cs.AlignSelf == qui.AlignStretch)
+	if cs.HeightPct > 0 && !parentDefinite && !outOfFlow {
+		cs.HeightPct = 0
+	}
+	if cs.MinHeightPct > 0 && !parentDefinite && !outOfFlow {
+		cs.MinHeightPct = 0
+	}
+	if cs.MaxHeightPct > 0 && !parentDefinite && !outOfFlow {
+		cs.MaxHeightPct = 0
+	}
+	// The root's percentages resolve against the viewport (the initial
+	// containing block); its own height is definite only when set.
+	cs.HeightDefinite = cs.HasHeight || (cs.HeightPct > 0 && (parentDefinite || outOfFlow)) ||
+		stretched || (outOfFlow && cs.HasTop && cs.HasBottom)
 }
 
 // parseOutline resolves the `outline` shorthand plus outline-width/-color.
@@ -1854,6 +1910,74 @@ func firstSummary(details *Node) *Node {
 		}
 	}
 	return nil
+}
+
+// blockify maps a display value to its block-level equivalent (CSS
+// Display 3 § 2.7): what floats, absolutely positioned boxes and flex / grid
+// items get.
+func blockify(d string) string {
+	switch d {
+	case "inline", "inline-block", "contents", "":
+		return "block"
+	case "inline-flex":
+		return "flex"
+	case "inline-grid":
+		return "grid"
+	case "inline-table":
+		return "table"
+	}
+	return d
+}
+
+// newFormattingContext reports whether a box with this style establishes
+// a new block formatting context (CSS 2.1 § 9.4.1, CSS Display 3): such a
+// box is placed beside floats instead of under them, and contains its own.
+func (cs *ComputedStyle) newFormattingContext() bool {
+	if cs == nil {
+		return false
+	}
+	if cs.Float != "" || cs.OverflowScroll || cs.OverflowClip {
+		return true
+	}
+	switch cs.Position {
+	case "absolute", "fixed":
+		return true
+	}
+	switch cs.Display {
+	case "flow-root", "flex", "inline-flex", "grid", "inline-grid", "table", "inline-table",
+		"inline-block", "table-cell", "table-caption", "list-item-flow-root":
+		return true
+	}
+	if v := strings.TrimSpace(cs.raw["contain"]); v == "layout" || v == "content" || v == "strict" || v == "paint" {
+		return true
+	}
+	return false
+}
+
+// pseudoAfterClears reports a clearfix: an ::after rule that clears floats
+// (`.clearfix::after { content: ""; display: table; clear: both }`). The
+// generated box ends the element below its floats, so the element contains
+// them — which is what htmlcss models it as.
+func pseudoAfterClears(n *Node, sheet *Stylesheet) bool {
+	for _, ri := range sheet.candidateRules(n) {
+		rule := &sheet.Rules[ri]
+		clears := false
+		for _, d := range rule.Declarations {
+			if d.Property == "clear" {
+				v := strings.ToLower(strings.TrimSpace(d.Value))
+				clears = v == "both" || v == "left" || v == "right"
+			}
+		}
+		if !clears {
+			continue
+		}
+		for _, sel := range rule.Selectors {
+			if sel.pseudoElement() == "after" && selectorMatchesIgnoringPseudoElem(sel, n) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isInlineLevelDisplay reports display values that are inline-level

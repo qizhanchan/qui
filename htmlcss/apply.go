@@ -487,6 +487,22 @@ func applyCommonStyle(st *qui.Style, cs *ComputedStyle) {
 	st.MarginRightAuto = cs.MarginRightAuto
 	st.MarginTopAuto = cs.MarginTopAuto
 	st.MarginBottomAuto = cs.MarginBottomAuto
+	st.Float, st.Clear = qui.FloatNone, qui.ClearNone
+	switch cs.Float {
+	case "left":
+		st.Float = qui.FloatLeft
+	case "right":
+		st.Float = qui.FloatRight
+	}
+	switch cs.Clear {
+	case "left":
+		st.Clear = qui.ClearLeft
+	case "right":
+		st.Clear = qui.ClearRight
+	case "both":
+		st.Clear = qui.ClearBoth
+	}
+	st.NewFormattingContext = cs.newFormattingContext()
 	// Web-compat: a flex item's min-width/min-height of `auto` is its
 	// content size (scroll containers' is 0).
 	st.FlexAutoMinWidth, st.FlexAutoMinHeight = false, false

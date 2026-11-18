@@ -33,6 +33,10 @@ type FlowLayout struct {
 	// (CSS text-align on the container): start, center or end. Block
 	// children are unaffected.
 	Align TextAlign
+	// Floats, when set, is the host's float state: floats among the
+	// children are placed and flowed around (layout_float.go). Nil: no
+	// child floats, and none from outside reach this flow.
+	Floats *FloatState
 }
 
 // FlowLevel selects how a child participates in a FlowLayout.
@@ -328,8 +332,63 @@ func (f FlowLayout) run(children []Widget, bounds Rect, apply bool) (contentH, m
 		}
 	}
 
+	// Floats: this flow's own plus those inherited from an ancestor flow,
+	// in this run's coordinates.
+	var band *floatBand
+	if f.Floats != nil {
+		band = &floatBand{x0: bounds.X, x1: bounds.X + bounds.W}
+		if !f.Floats.ContainsFloats {
+			for _, e := range f.Floats.Inherited {
+				r := e.Rect
+				r.X += bounds.X
+				r.Y += bounds.Y
+				band.floats = append(band.floats, floatBox{r: r, side: e.Side})
+			}
+		}
+	}
+	inheritedN := 0
+	if band != nil {
+		inheritedN = len(band.floats)
+	}
+
 	for i, child := range children {
 		m := child.Style().Margin
+		fside, clear, newFC := floatStyle(child)
+		if band != nil && fside != FloatNone {
+			// A float: out of flow, against the edge at the current position.
+			flushLine()
+			mw := bounds.W - m.Left - m.Right
+			pref := flowPreferredSize(child, cb)
+			w := pref.W
+			if w == 0 {
+				w = ShrinkToFit(child, mw)
+			}
+			minS, maxS := resolvedMinSize(child, cb), resolvedMaxSize(child, cb)
+			w = clampAxis(w, minS.W, maxS.W)
+			h := pref.H
+			if h == 0 {
+				h = MeasureChild(child, Size{W: w, H: cb.H}).H
+			}
+			h = clampAxis(h, minS.H, maxS.H)
+			if clear != ClearNone {
+				y = max(y, band.clearY(clear))
+			}
+			r := band.place(fside, m.Left+w+m.Right, m.Top+h+m.Bottom, y+pending.value())
+			if apply {
+				child.Layout(Rect{X: r.X + m.Left, Y: r.Y + m.Top, W: w, H: h})
+			}
+			if r.X+r.W-bounds.X > maxW {
+				maxW = r.X + r.W - bounds.X
+			}
+			continue
+		}
+		if band != nil && clear != ClearNone && flowLevelOf(child) == FlowBlock {
+			flushLine()
+			if cy := band.clearY(clear); cy > y+pending.value() {
+				y = cy
+				pending = marginRun{}
+			}
+		}
 		switch flowLevelOf(child) {
 		case FlowInline:
 			sz := resolveFlowInlineSize(child, cb, bounds.W-m.Left-m.Right)
@@ -357,9 +416,40 @@ func (f FlowLayout) run(children []Widget, bounds Rect, apply bool) (contentH, m
 
 		default: // FlowBlock
 			flushLine()
+			left := bounds.X
 			w := bounds.W - m.Left - m.Right
 			if w < 0 {
 				w = 0
+			}
+			if band != nil && len(band.floats) > 0 {
+				top := y + pending.value()
+				if newFC {
+					// A new formatting context sits beside the floats: in
+					// the free band at its top, lower down if it can't fit
+					// its content there.
+					need := MinContentWidth(child)
+					for range 100 {
+						l, r := band.edges(top, top+1)
+						if r-l-m.Left-m.Right >= need || (l == band.x0 && r == band.x1) {
+							left, w = l, max(r-l-m.Left-m.Right, 0)
+							break
+						}
+						next := band.nextBottom(top)
+						if next < 0 {
+							break
+						}
+						top = next
+						y, pending = next, marginRun{}
+					}
+				} else if rcv, ok := child.(FloatExclusionReceiver); ok {
+					// A normal block spans the floats; its content flows
+					// around them.
+					rcv.SetFloatExclusions(band.exclusionsFor(top, bounds.X+m.Left, top))
+				}
+			} else if band != nil {
+				if rcv, ok := child.(FloatExclusionReceiver); ok {
+					rcv.SetFloatExclusions(nil)
+				}
 			}
 			// A block fills the content width unless it declares an explicit
 			// width (then it's that wide, left-aligned); height is explicit or
@@ -382,7 +472,7 @@ func (f FlowLayout) run(children []Widget, bounds Rect, apply bool) (contentH, m
 			// CSS auto margins absorb the leftover band space: both auto
 			// centers the block (`margin: 0 auto`), left-only pushes it to
 			// the right edge. Auto sides carry no numeric margin.
-			cx := bounds.X + m.Left
+			cx := left + m.Left
 			if free := w - bw; free > 0 {
 				s := child.Style()
 				switch {
@@ -404,6 +494,10 @@ func (f FlowLayout) run(children []Widget, bounds Rect, apply bool) (contentH, m
 	flushLine()
 	if !bottom {
 		y += pending.value()
+	}
+	if band != nil && f.Floats.ContainsFloats && len(band.floats) > inheritedN {
+		// A formatting-context root grows to contain its floats.
+		y = max(y, band.bottom())
 	}
 	return max(y-bounds.Y, 0), maxW
 }

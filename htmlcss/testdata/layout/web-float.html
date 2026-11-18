@@ -1,0 +1,33 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+body { margin: 0; padding: 0; font: 14px/18px GoRegular; }
+/* Floats: left/right placement, text wrapping beside them, clear, a
+   formatting-context root placed beside a float and containing its own,
+   and the clearfix ::after pattern. */
+.case { width: 400px; margin-bottom: 10px; }
+.l { float: left; width: 80px; height: 50px; background: #ccc; }
+.r { float: right; width: 60px; height: 30px; background: #aaa; }
+.ml { margin-right: 10px; }
+.clr { clear: both; height: 10px; background: #eee; }
+.bfc { overflow: hidden; background: #ddd; }
+.cf::after { content: ""; display: table; clear: both; }
+.inner { float: left; width: 100px; height: 40px; }
+</style></head><body>
+<div class="case" id="c1">
+  <div class="l ml" id="f1"></div>
+  <div class="r" id="f2"></div>
+  <p id="p1" style="margin:0">Text flows beside the floats on both sides of this paragraph until it passes them and then uses the full width of the case box again below.</p>
+</div>
+<div class="case" id="c2">
+  <div class="l" id="f3"></div>
+  <div class="clr" id="clr"></div>
+</div>
+<div class="case" id="c3">
+  <div class="l" id="f4"></div>
+  <div class="bfc" id="bfc">Beside the float.</div>
+</div>
+<div class="bfc case" id="c4"><div class="inner" id="f5"></div></div>
+<div class="cf case" id="c5"><div class="inner" id="f6"></div></div>
+<div class="case" id="after">After.</div>
+</body></html>

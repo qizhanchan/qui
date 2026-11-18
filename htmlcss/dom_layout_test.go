@@ -66,6 +66,12 @@ var domLayoutAllowlist = []domLayoutAllow{
 	{"controls", "d5", "h", "the native <select> box is 22px tall, Chrome's 19px — its line grows by 2px"},
 	{"controls", "d6", "h", "a <textarea>'s baseline sits on its last line in Chrome, at its bottom edge here"},
 
+	// Floats propagate down and into later siblings, not out of the block
+	// that contains them (layout_float.go): Chrome places #c4, a new
+	// formatting context, beside #c3's float, which overhangs #c3.
+	{"web-float", "c4", "x", "a float does not escape its containing block (c3's float would push c4 right)"},
+	{"web-float", "f5", "x", "a float does not escape its containing block (c3's float would push c4 right)"},
+
 	// Undocumented differences — each a fix candidate.
 	{"pre-wrap", "flex-short", "h", "flex items have no content-based automatic minimum (min-height: auto): qui shrinks text below its content in a too-short column"},
 	{"pre-wrap", "trailing", "h", "a pre-wrap text's final newline adds an empty line in qui; Chrome ends the text there"},
@@ -126,6 +132,11 @@ func runDOMLayoutFixture(t *testing.T, dir, name string, used []bool) {
 		t.Fatalf("golden viewport %v, test viewport %v — regenerate with REFRESH_REF=1", golden.Viewport, domLayoutViewport)
 	}
 
+	// web-* fixtures are pages as a browser lays them out (SetWebCompat).
+	if strings.HasPrefix(name, "web-") {
+		SetWebCompat(true)
+		defer SetWebCompat(false)
+	}
 	got := domLayoutBoxes(string(html))
 
 	ids := make([]string, 0, len(golden.Boxes))

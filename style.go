@@ -115,6 +115,14 @@ type Style struct {
 	FlexAutoMinWidth  bool
 	FlexAutoMinHeight bool
 
+	// Float / Clear are CSS float and clear for a child of a FlowLayout;
+	// NewFormattingContext marks a box that establishes a new block
+	// formatting context (it is placed beside floats rather than under
+	// them, and contains its own). See layout_float.go.
+	Float                FloatSide
+	Clear                ClearSide
+	NewFormattingContext bool
+
 	// Min*Pct/Max*Pct express min/max sizes as a FRACTION (0–1] of the
 	// containing block on that axis (CSS `max-width: 100%`). Like
 	// Width/HeightPct they resolve at layout time in the engine that knows
@@ -366,6 +374,7 @@ func styleLayoutEqual(a, b Style) bool {
 		a.MarginTopAuto == b.MarginTopAuto &&
 		a.MarginBottomAuto == b.MarginBottomAuto &&
 		a.FlexAutoMinWidth == b.FlexAutoMinWidth && a.FlexAutoMinHeight == b.FlexAutoMinHeight &&
+		a.Float == b.Float && a.Clear == b.Clear && a.NewFormattingContext == b.NewFormattingContext &&
 		a.MinWidthPct == b.MinWidthPct && a.MinHeightPct == b.MinHeightPct &&
 		a.MaxWidthPct == b.MaxWidthPct && a.MaxHeightPct == b.MaxHeightPct &&
 		a.Grow == b.Grow && a.Shrink == b.Shrink && a.Basis == b.Basis &&

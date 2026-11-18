@@ -70,6 +70,16 @@ func TestConditionalAtRules(t *testing.T) {
 	}
 }
 
+// A layered author rule still beats the UA sheet (origin before layer).
+func TestLayeredAuthorBeatsUA(t *testing.T) {
+	doc := ParseHTML(`<body id="b"></body>`)
+	b := findByID(doc, "b")
+	m := mergedDecls(b, ParseCSS(`@layer base{body{margin:0}}`), selectorState{})
+	if m["margin"] != "0" {
+		t.Errorf("body margin = %q, want 0 from the layered author rule", m["margin"])
+	}
+}
+
 // A descendant step must try farther ancestors when a nearer match fails a
 // later child step.
 func TestSelectorBacktracksThroughDescendant(t *testing.T) {

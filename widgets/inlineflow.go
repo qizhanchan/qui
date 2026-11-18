@@ -42,6 +42,11 @@ type InlineBox struct {
 	// overflows. See qui.InlineLayoutOptions.BreakLongWords.
 	BreakLongWords bool
 
+	// floatEx are the floats this run flows around (SetFloatExclusions),
+	// in its own coordinates; floatGen changes whenever they do.
+	floatEx  []FloatExclusion
+	floatGen uint64
+
 	parts   []inlinePart
 	layout  InlineLayout
 	layoutW float32
@@ -214,7 +219,7 @@ func (b *InlineBox) buildItems(maxW float32) []InlineItem {
 }
 
 func (b *InlineBox) options(maxW float32) InlineLayoutOptions {
-	return InlineLayoutOptions{
+	o := InlineLayoutOptions{
 		MaxWidth:           maxW,
 		Wrap:               b.Wrap,
 		Align:              b.Align,
@@ -223,6 +228,36 @@ func (b *InlineBox) options(maxW float32) InlineLayoutOptions {
 		PreserveWhitespace: b.PreserveWhitespace,
 		BreakLongWords:     b.BreakLongWords,
 	}
+	if maxW > 0 && len(b.floatEx) > 0 {
+		in := b.Style().ContentInsets()
+		for _, e := range b.floatEx {
+			r := e.Rect
+			r.X -= in.Left
+			r.Y -= in.Top
+			o.Exclusions = append(o.Exclusions, r)
+		}
+	}
+	return o
+}
+
+// SetFloatExclusions implements qui.FloatExclusionReceiver: the run's
+// lines narrow beside the floats (rects in the box's own coordinates).
+func (b *InlineBox) SetFloatExclusions(ex []FloatExclusion) {
+	if len(ex) == len(b.floatEx) {
+		same := true
+		for i := range ex {
+			if ex[i] != b.floatEx[i] {
+				same = false
+				break
+			}
+		}
+		if same {
+			return
+		}
+	}
+	b.floatEx = append(b.floatEx[:0], ex...)
+	b.floatGen++
+	b.InvalidateLayout()
 }
 
 // inlineLayoutKey fingerprints everything that changes the shaped result.
@@ -231,7 +266,8 @@ func (b *InlineBox) options(maxW float32) InlineLayoutOptions {
 // — mutating them in place already bypasses widget invalidation everywhere
 // else in the framework (see Style.Clone's note).
 type inlineLayoutKey struct {
-	maxW float32
+	maxW     float32
+	floatGen uint64
 	// fontGen invalidates the cache when the font REGISTRY changes (see
 	// qui.FontRegistryGeneration): same font spec, different faces behind it.
 	fontGen   uint64
@@ -258,7 +294,7 @@ type inlineLayoutKey struct {
 func (b *InlineBox) layoutKeyFor(maxW float32) inlineLayoutKey {
 	f := b.Style().Font
 	return inlineLayoutKey{
-		maxW: maxW, fontGen: FontRegistryGeneration(),
+		maxW: maxW, fontGen: FontRegistryGeneration(), floatGen: b.floatGen,
 		localeGen: LocaleGeneration(), childSig: b.childLayoutSig(maxW),
 		wrap: b.Wrap, align: b.Align,
 		lineHeightScale:    b.LineHeightScale,
@@ -358,7 +394,7 @@ func (b *InlineBox) Measure(available Size) Size {
 // atomic box may size itself from the width: a run holding boxes keys the
 // memo on their sizes at w.
 func (b *InlineBox) measureFit(w float32) (Size, bool) {
-	if w <= 0 {
+	if w <= 0 || len(b.floatEx) > 0 {
 		return Size{}, false
 	}
 	hasBox := false
