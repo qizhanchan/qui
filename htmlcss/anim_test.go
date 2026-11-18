@@ -129,3 +129,39 @@ body { margin: 0 }
 		t.Fatalf("element should sit near y=100 on screen after scrolling 200px, at %+v", want)
 	}
 }
+
+// Toggling only animation-play-state (react.dev's marquee starts paused
+// and a script sets it running when the section scrolls into view) must
+// resume the animation, and pausing must hold the current frame.
+func TestAnimationPlayStateToggle(t *testing.T) {
+	_, res := renderWeb(t, `<!doctype html><html><head><style>
+@keyframes fade { from { opacity: 0 } to { opacity: 1 } }
+#a { animation: fade 1000ms linear infinite; width: 10px; height: 10px; }
+</style></head><body><div id=a style="animation-play-state:paused"></div></body></html>`)
+	a := res.ByID["a"].(*El)
+	if a.anim == nil || len(a.anim.anims) != 1 {
+		t.Fatalf("animation not created: %+v", a.anim)
+	}
+	run := a.anim.anims[0]
+	a.tickAnimations(time.Now().Add(400 * time.Millisecond))
+	if o := a.Style().Opacity; o > 0.05 {
+		t.Fatalf("paused animation advanced: opacity %v", o)
+	}
+	a.SetAttr("style", "animation-play-state: running;")
+	res.Engine.FlushPendingStyles()
+	if run.spec.paused {
+		t.Fatal("play-state change did not reach the running animation")
+	}
+	resumed := time.Now()
+	a.tickAnimations(resumed.Add(500 * time.Millisecond))
+	if o := a.Style().Opacity; math.Abs(float64(o)-0.5) > 0.1 {
+		t.Fatalf("opacity 500ms after resume = %v, want ~0.5", o)
+	}
+	a.SetAttr("style", "animation-play-state: paused;")
+	res.Engine.FlushPendingStyles()
+	held := a.Style().Opacity
+	a.tickAnimations(time.Now().Add(300 * time.Millisecond))
+	if o := a.Style().Opacity; math.Abs(float64(o-held)) > 0.02 {
+		t.Fatalf("paused again but opacity moved %v -> %v", held, o)
+	}
+}

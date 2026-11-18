@@ -464,9 +464,23 @@ type runAnimation struct {
 	spec      animSpec
 	frames    []keyframe
 	start     time.Time
+	pausedAt  time.Time // when animation-play-state became paused (spec.paused)
 	iterSent  int
 	startSent bool
 	ended     bool
+}
+
+// setSpec takes a restyled spec for a running animation. A play-state
+// change keeps the animation where it is: pausing freezes its elapsed
+// time, resuming continues from there (CSS Animations 1 §3.2).
+func (a *runAnimation) setSpec(sp animSpec, now time.Time) {
+	switch {
+	case sp.paused && !a.spec.paused:
+		a.pausedAt = now
+	case !sp.paused && a.spec.paused:
+		a.start = a.start.Add(now.Sub(a.pausedAt))
+	}
+	a.spec = sp
 }
 
 type elAnimations struct {
@@ -475,6 +489,13 @@ type elAnimations struct {
 	registered bool
 	cur        map[string]animVal // what is on screen for animated props
 	quiet      bool               // sampling without events or state changes
+}
+
+func (st *elAnimations) animsOrNil() []*runAnimation {
+	if st == nil {
+		return nil
+	}
+	return st.anims
 }
 
 // AnimationEventHandler receives the element's animation and transition
@@ -551,7 +572,13 @@ func (e *El) updateAnimations(prev, cs *ComputedStyle) {
 			have = append(have, a.spec.name)
 		}
 	}
-	if strings.Join(names, ",") != strings.Join(have, ",") {
+	if strings.Join(names, ",") == strings.Join(have, ",") {
+		// Same animations: a longhand such as animation-play-state may
+		// still have changed.
+		for i, a := range st.animsOrNil() {
+			a.setSpec(specs[i], now)
+		}
+	} else {
 		if st == nil {
 			st = &elAnimations{trans: map[string]*runTransition{}, cur: map[string]animVal{}}
 			e.anim = st
@@ -563,7 +590,7 @@ func (e *El) updateAnimations(prev, cs *ComputedStyle) {
 		st.anims = nil
 		for _, sp := range specs {
 			if a := old[sp.name]; a != nil {
-				a.spec = sp
+				a.setSpec(sp, now)
 				st.anims = append(st.anims, a)
 				delete(old, sp.name)
 				continue
@@ -572,7 +599,7 @@ func (e *El) updateAnimations(prev, cs *ComputedStyle) {
 			if len(frames) == 0 {
 				continue
 			}
-			st.anims = append(st.anims, &runAnimation{spec: sp, frames: frames, start: now})
+			st.anims = append(st.anims, &runAnimation{spec: sp, frames: frames, start: now, pausedAt: now})
 		}
 		for name := range old {
 			e.animEvent("animationcancel", name, 0)
@@ -702,7 +729,7 @@ func (e *El) sampleAnimation(a *runAnimation, now time.Time, fs float32) (map[st
 	sp := a.spec
 	el := now.Sub(a.start) - sp.delay
 	if sp.paused {
-		el = 0
+		el = a.pausedAt.Sub(a.start) - sp.delay
 	}
 	if el < 0 {
 		if sp.fill == "backwards" || sp.fill == "both" {
