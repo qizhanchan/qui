@@ -67,6 +67,11 @@ type StyleEngine struct {
 	// pass counts restyle walks; El.styledPass records the last one that
 	// reached an element.
 	pass int
+	// memo caches computeNode results within one style pass: a parent's
+	// buildFlow styles its children (childStyle) before the walk reaches
+	// them with the very same parent style. Reset whenever pass changes.
+	memo     map[cascadeMemoKey]*ComputedStyle
+	memoPass int
 
 	// stateDeps maps a TRIGGER element to the elements whose ancestor-state
 	// styling (`.row:hover .del`, `.a:active ~ .b`) its interactive state
@@ -620,6 +625,26 @@ func (eng *StyleEngine) flush() {
 	}
 }
 
+type cascadeMemoKey struct {
+	n      *Node
+	parent *ComputedStyle
+}
+
+// computeMemo is computeNode through the per-pass memo.
+func (eng *StyleEngine) computeMemo(n *Node, parent *ComputedStyle) *ComputedStyle {
+	if eng.memoPass != eng.pass || eng.memo == nil {
+		eng.memo = map[cascadeMemoKey]*ComputedStyle{}
+		eng.memoPass = eng.pass
+	}
+	k := cascadeMemoKey{n, parent}
+	if cs, ok := eng.memo[k]; ok {
+		return cs
+	}
+	cs := computeNode(n, eng.sheet, parent)
+	eng.memo[k] = cs
+	return cs
+}
+
 // restyleAttrScope restyles e after a change to its style attribute alone,
 // and walks its subtree only when the change reaches what the subtree
 // inherits: resizing an element leaves everything inside it as it was.
@@ -689,7 +714,7 @@ func (eng *StyleEngine) restyleWalk(e *El, parent *ComputedStyle) {
 	if e.isTextSeg() {
 		cs = parent // text segments match no selectors; pure inheritance
 	} else {
-		cs = computeNode(e.node, eng.sheet, parent)
+		cs = eng.computeMemo(e.node, parent)
 	}
 	eng.styled++
 	e.styledPass = eng.pass

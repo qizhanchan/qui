@@ -1696,6 +1696,10 @@ type ruleIndex struct {
 	// states[i] is the interactive-state pseudos rule i uses anywhere in
 	// any selector (stateHover | …), for stateMask.
 	states []uint8
+	// cand memoizes candidateRules by element signature (tag, id, class
+	// attribute): pages repeat the same few signatures thousands of times.
+	candMu sync.Mutex
+	cand   map[string][]int
 }
 
 const (
@@ -1778,6 +1782,28 @@ func (s *Stylesheet) stateMask(n *Node) uint8 {
 // its tag, plus the rules keyed off nothing.
 func (s *Stylesheet) candidateRules(n *Node) []int {
 	ix := s.ruleIndex()
+	id, _ := n.Attr("id")
+	cls, _ := n.Attr("class")
+	key := n.Tag + "\x00" + id + "\x00" + cls
+	ix.candMu.Lock()
+	if l, ok := ix.cand[key]; ok {
+		ix.candMu.Unlock()
+		return l
+	}
+	ix.candMu.Unlock()
+	out := ix.collectCandidates(n, id)
+	ix.candMu.Lock()
+	if ix.cand == nil {
+		ix.cand = map[string][]int{}
+	}
+	if len(ix.cand) < 1<<16 {
+		ix.cand[key] = out
+	}
+	ix.candMu.Unlock()
+	return out
+}
+
+func (ix *ruleIndex) collectCandidates(n *Node, id string) []int {
 	lists := make([][]int, 0, 4)
 	if len(ix.any) > 0 {
 		lists = append(lists, ix.any)
@@ -1785,7 +1811,7 @@ func (s *Stylesheet) candidateRules(n *Node) []int {
 	if l := ix.byTag[strings.ToLower(n.Tag)]; len(l) > 0 {
 		lists = append(lists, l)
 	}
-	if id, ok := n.Attr("id"); ok && id != "" {
+	if id != "" {
 		if l := ix.byID[id]; len(l) > 0 {
 			lists = append(lists, l)
 		}

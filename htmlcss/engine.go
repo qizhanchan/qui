@@ -64,7 +64,14 @@ func RenderDoc(htmlSrc, cssSrc string, opts Options) RenderResult {
 	if body == nil {
 		body = dom
 	}
-	styles := resolveStyles(dom, eng.sheet)
+	// The static build prunes display:none subtrees using a first cascade
+	// of the DOM. A browser document skips that pass — its Restyle below
+	// is the one cascade, and hidden subtrees cost little next to running
+	// every selector against every element twice.
+	var styles map[*Node]*ComputedStyle
+	if !opts.DocumentRoot {
+		styles = resolveStyles(dom, eng.sheet)
+	}
 	root := eng.buildStaticEl(body, styles)
 	if root == nil {
 		// Empty document → an empty block element so the window has a root.

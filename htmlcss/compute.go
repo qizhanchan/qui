@@ -353,7 +353,8 @@ type matchedDecl struct {
 }
 
 func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedStyle {
-	base := interpret(n, mergedDecls(n, sheet, selectorState{}), parent)
+	rest := &restMatches{}
+	base := interpret(n, mergedDeclsRest(n, sheet, selectorState{}, rest, true), parent)
 	// When the sheet has interactive-state rules, compute the matching
 	// variant(s) too — the built widget swaps to them while the element is
 	// hovered / focused / pressed. Each variant inherits from the parent's
@@ -377,7 +378,7 @@ func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedSty
 			cp := resting
 			return &cp
 		}
-		return interpret(n, mergedDecls(n, sheet, st), parent)
+		return interpret(n, mergedDeclsRest(n, sheet, st, rest, false), parent)
 	}
 	hover, focus := mask&stateHover != 0, mask&stateFocus != 0
 	if sheet.HasHover || fwHover {
@@ -540,6 +541,16 @@ func unquoteContent(v string, n *Node) string {
 // mergedDecls runs the cascade for node n and returns the winning
 // property→value map. st selects which interactive-state pseudos apply.
 func mergedDecls(n *Node, sheet *Stylesheet, st selectorState) map[string]string {
+	return mergedDeclsRest(n, sheet, st, nil, false)
+}
+
+// restMatches records, per candidate rule of a node, the best matching
+// specificity at rest (-1 = no match), so the node's state variants can
+// skip re-matching rules that use no state pseudo.
+type restMatches struct{ spec []int32 }
+
+// mergedDeclsRest is mergedDecls recording (record) or reusing rest.
+func mergedDeclsRest(n *Node, sheet *Stylesheet, st selectorState, rest *restMatches, record bool) map[string]string {
 	var decls []matchedDecl
 
 	// Tier 0: user-agent defaults for this tag. Push-button input types
@@ -576,23 +587,45 @@ func mergedDecls(n *Node, sheet *Stylesheet, st selectorState) map[string]string
 	}
 
 	// Tier 1: author rules that match (only the candidates for n can).
+	// A state variant re-matches only the rules that use a state pseudo:
+	// any other rule matches exactly as it did at rest (rest, recorded by
+	// the resting cascade of the same node).
 	order := 0
-	for _, ri := range sheet.candidateRules(n) {
+	cands := sheet.candidateRules(n)
+	var states []uint8
+	reuse := rest != nil && !record && len(rest.spec) == len(cands)
+	if reuse {
+		states = sheet.ruleIndex().states
+	}
+	if record && rest != nil {
+		rest.spec = make([]int32, len(cands))
+	}
+	for k, ri := range cands {
 		rule := &sheet.Rules[ri]
 		best := -1
 		var ba, bb, bc int
-		for _, sel := range rule.Selectors {
-			if sel.matches(n, st) {
-				a, b, c := sel.specificity()
-				score := a*10000 + b*100 + c
-				if score > best {
-					best, ba, bb, bc = score, a, b, c
+		if reuse && states[ri] == 0 {
+			if sp := rest.spec[k]; sp >= 0 {
+				best = int(sp)
+				ba, bb, bc = best/10000, best/100%100, best%100
+			}
+		} else {
+			for _, sel := range rule.Selectors {
+				if sel.matches(n, st) {
+					a, b, c := sel.specificity()
+					score := min(a, 99)*10000 + min(b, 99)*100 + min(c, 99)
+					if score > best {
+						best, ba, bb, bc = score, a, b, c
+					}
 				}
+			}
+			if record && rest != nil {
+				rest.spec[k] = int32(best)
 			}
 		}
 		if best >= 0 {
 			for _, d := range rule.Declarations {
-				decls = append(decls, matchedDecl{decl: d, a: ba, b: bb, c: bc, order: order, tier: 1})
+				decls = append(decls, matchedDecl{decl: d, a: ba, b: bb, c: bc, order: order, tier: 1, layer: rule.Layer})
 				order++
 			}
 		}

@@ -3402,7 +3402,7 @@ func (e *El) childStyle(c *El, parent *ComputedStyle) *ComputedStyle {
 	if e.engine == nil || e.engine.sheet == nil {
 		return parent
 	}
-	return computeNode(c.node, e.engine.sheet, parent)
+	return e.engine.computeMemo(c.node, parent)
 }
 
 // appendInlineChild folds one child into the inline box: spans for a
