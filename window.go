@@ -220,6 +220,13 @@ type Window struct {
 	// dirtyRects / dirtyRectsOverflow / pixelScrolls: see window_dirty.go.
 	dirtyRects         []Rect
 	dirtyRectsOverflow bool
+	// contentDirty is the part of this frame's damage that came from a
+	// content change, as opposed to InvalidateCompositeRect's "repaint the
+	// same content here" (a sticky header moving over a scrolled view).
+	// Retained layers (ScrollView's content cache) re-render only it.
+	contentDirty     []Rect
+	contentDirtyAll  bool
+	compositeOnlyInv int
 	pixelScrolls       []pixelScroll
 	// inLayoutPass + boundsChanged implement repaint scoping for layout
 	// changes: Step sets inLayoutPass around the frame's Measure+Layout;
@@ -398,6 +405,7 @@ func newWindowFromConfig(plat platformApp, cfg platformWindowConfig) (*Window, e
 	}
 	// Force a full paint on the first frame.
 	w.dirtyRegion = Rect{W: float32(width), H: float32(height)}
+	w.contentDirtyAll = true
 	// One handler for every input and lifecycle event — see
 	// window_handler.go.
 	pw.setHandler(w)

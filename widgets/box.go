@@ -399,6 +399,9 @@ func (b *Box) computePaintBounds() Rect {
 }
 
 func (b *Box) Draw(canvas Canvas) {
+	if DrawSuppressed(b.Self()) {
+		return
+	}
 	bounds := b.Bounds()
 	// CSS opacity (< 1) composites the whole subtree through an offscreen
 	// layer; CSS transform applies an affine about the box center. Both are

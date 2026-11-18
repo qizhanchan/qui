@@ -25,6 +25,7 @@ func (w *Window) Invalidate() {
 	}
 	w.assertUIThread("Window.Invalidate")
 	w.dirtyRegion = Rect{W: w.lastSize.W, H: w.lastSize.H}
+	w.contentDirtyAll = true
 }
 
 // resizeTo records a logical window-size change and wakes both layout

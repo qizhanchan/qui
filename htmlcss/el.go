@@ -5519,7 +5519,7 @@ func (e *El) layoutStateVariant(cs, parent *ComputedStyle) *ComputedStyle {
 // text appearance changes under :hover/:focus/:active — swaps the child
 // label/marker/icon color+decoration to the current state before painting.
 func (e *El) Draw(canvas qui.Canvas) {
-	if e.displayNone {
+	if e.displayNone || qui.DrawSuppressed(e) {
 		return
 	}
 	// Style's zero opacity is the native-widget "unspecified" sentinel.

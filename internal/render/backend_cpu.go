@@ -528,6 +528,14 @@ func (b *CPUBackend) DrawImage(img image.Image, dst gfx.Rect, clip gfx.Rect) {
 	if src.Empty() {
 		return
 	}
+	// An image that lands pixel for pixel (a retained layer composited at
+	// device scale) is a plain source-over copy, not a resample.
+	if ix, iy, ok := wholePixelOrigin(dst); ok && src.Dx() == int(math.Round(float64(dst.W))) &&
+		src.Dy() == int(math.Round(float64(dst.H))) && near1(float64(dst.W), float64(src.Dx())) && near1(float64(dst.H), float64(src.Dy())) {
+		sp := image.Point{X: src.Min.X + clipped.Min.X - ix, Y: src.Min.Y + clipped.Min.Y - iy}
+		stddraw.Draw(target, clipped, img, sp, stddraw.Over)
+		return
+	}
 	sx := float64(dst.W) / float64(src.Dx())
 	sy := float64(dst.H) / float64(src.Dy())
 	s2d := f64.Aff3{
@@ -1050,3 +1058,11 @@ func drawInsetShadowRaw(img *image.RGBA, rect gfx.Rect, radius float32, spec gfx
 		}
 	}
 }
+
+// wholePixelOrigin reports r's origin when it sits on whole device pixels.
+func wholePixelOrigin(r gfx.Rect) (int, int, bool) {
+	x, y := math.Round(float64(r.X)), math.Round(float64(r.Y))
+	return int(x), int(y), near1(float64(r.X), x) && near1(float64(r.Y), y)
+}
+
+func near1(a, b float64) bool { return math.Abs(a-b) < 0.01 }

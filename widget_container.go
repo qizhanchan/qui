@@ -612,7 +612,7 @@ func (c *Container) Draw(canvas Canvas) {
 	if c.Self() != nil {
 		self = c.Self()
 	}
-	if isWidgetEffectivelyHidden(self) {
+	if isWidgetEffectivelyHidden(self) || DrawSuppressed(self) {
 		return
 	}
 	// Ask the canvas for its clip bounds. If we're in a dirty-region paint

@@ -33,6 +33,9 @@ func (w *Window) unionDirty(r Rect) {
 		return
 	}
 	w.dirtyRegion = w.dirtyRegion.Union(r)
+	if w.compositeOnlyInv == 0 {
+		w.noteContentDirty(r)
+	}
 	if w.dirtyRectsOverflow {
 		return
 	}
@@ -57,6 +60,72 @@ func (w *Window) resetDirty() {
 	w.dirtyRegion = Rect{}
 	w.dirtyRects = w.dirtyRects[:0]
 	w.dirtyRectsOverflow = false
+	w.contentDirty = w.contentDirty[:0]
+	w.contentDirtyAll = false
+}
+
+// maxContentDirty bounds the content-damage list; past it all of the
+// frame's damage counts as content.
+const maxContentDirty = 16
+
+func (w *Window) noteContentDirty(r Rect) {
+	if w.contentDirtyAll {
+		return
+	}
+	if len(w.contentDirty) >= maxContentDirty {
+		w.contentDirty = w.contentDirty[:0]
+		w.contentDirtyAll = true
+		return
+	}
+	w.contentDirty = append(w.contentDirty, r)
+}
+
+// InvalidateCompositeRect marks r for repainting without marking its
+// content changed: what is drawn there is the same, only its composition
+// differs (a sticky header's old and new place while the view under it
+// scrolls). Retained layers may reuse their pixels there; everything else
+// repaints r as for InvalidateRect.
+func (w *Window) InvalidateCompositeRect(r Rect) {
+	if w == nil {
+		return
+	}
+	w.compositeOnlyInv++
+	w.InvalidateRect(r)
+	w.compositeOnlyInv--
+}
+
+// CompositeOnly runs fn with every invalidation it makes counted as
+// composite-only (see InvalidateCompositeRect): re-placing fixed / sticky
+// boxes for a new scroll offset moves them without changing any content.
+func (w *Window) CompositeOnly(fn func()) {
+	if w == nil {
+		fn()
+		return
+	}
+	w.compositeOnlyInv++
+	defer func() { w.compositeOnlyInv-- }()
+	fn()
+}
+
+// PaintSeq is the number of frames painted so far: constant while a frame
+// paints, so a widget drawn once per clip rectangle can tell the calls of
+// one frame apart from the next frame's.
+func (w *Window) PaintSeq() uint64 {
+	if w == nil {
+		return 0
+	}
+	return w.frameSeq
+}
+
+// ContentDirty reports the current frame's content damage in window
+// coordinates (see InvalidateCompositeRect); all is true when all of the
+// frame's damage counts as content (a full repaint, an overflowing list).
+// Valid while the frame paints; the slice must not be retained.
+func (w *Window) ContentDirty() (rects []Rect, all bool) {
+	if w == nil {
+		return nil, true
+	}
+	return w.contentDirty, w.contentDirtyAll
 }
 
 func rectContains(outer, inner Rect) bool {
@@ -163,9 +232,22 @@ func (w *Window) ScrollPixels(r Rect, dx, dy float32) bool {
 	if w.dirtyRectsOverflow || len(pending) == 0 {
 		pending = []Rect{w.dirtyRegion}
 	}
+	// Shifted damage keeps its kind: what was composite-only moves as
+	// composite-only (the content cache moves with the pixels too), the
+	// content damage among it moves as content damage.
+	content := append([]Rect(nil), w.contentDirty...)
+	w.compositeOnlyInv++
 	for _, d := range pending {
 		if m := d.Intersect(inner); !m.IsEmpty() {
 			w.unionDirty(Rect{X: m.X + dx, Y: m.Y + dy, W: m.W, H: m.H}.Intersect(inner))
+		}
+	}
+	w.compositeOnlyInv--
+	for _, d := range content {
+		if m := d.Intersect(inner); !m.IsEmpty() {
+			if sh := (Rect{X: m.X + dx, Y: m.Y + dy, W: m.W, H: m.H}).Intersect(inner); !sh.IsEmpty() {
+				w.noteContentDirty(sh)
+			}
 		}
 	}
 	// The partly covered pixels at r's edges did not move but hold part

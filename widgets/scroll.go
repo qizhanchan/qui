@@ -75,6 +75,7 @@ type ScrollView struct {
 	// view showing the page.
 	FixedViewport bool
 	vpBoxes       []Widget        // fixed / sticky boxes of the content
+	cache         *scrollCache    // content cache, see scroll_cache.go
 	stickyBase    map[Widget]Rect // sticky boxes' in-flow rects
 	stickyPlaced  map[Widget]Rect // where placeViewportBoxes last put them
 	// Orientation selects the scroll axis. Zero value = ScrollVertical.
@@ -560,7 +561,7 @@ func (s *ScrollView) Draw(canvas Canvas) {
 		} else {
 			effectiveClip = viewportClip
 		}
-		if !effectiveClip.IsEmpty() {
+		if !effectiveClip.IsEmpty() && !s.drawCached(canvas, effectiveClip, viewportClip) {
 			depth := canvas.Save()
 			canvas.ClipRect(effectiveClip)
 			// After this, ClipBoundsLogical() reports the clip in CONTENT
