@@ -121,6 +121,7 @@ func (l FlexLayout) MaxContentWidth(children []Widget) float32 {
 // MaxContentWidth: fixed columns count as their size; other columns as
 // their widest single-span item.
 func (l GridLayout) MaxContentWidth(children []Widget) float32 {
+	l = l.expandRepeat(children, 0)
 	n := len(l.Columns)
 	if n == 0 {
 		var widest float32

@@ -49,38 +49,38 @@ type attrSelector struct {
 type pseudoKind uint8
 
 const (
-	pseudoHover        pseudoKind = iota // :hover        (state variant)
-	pseudoFocus                          // :focus        (state variant)
-	pseudoActive                         // :active       (state variant)
-	pseudoFocusVisible                   // :focus-visible (keyboard focus only)
-	pseudoRoot                           // :root (document root element)
-	pseudoFirstChild                     // :first-child
-	pseudoLastChild                      // :last-child
-	pseudoOnlyChild                      // :only-child
-	pseudoNthChild                       // :nth-child(An+B) — uses a, b
-	pseudoNthOfType                      // :nth-of-type(An+B) — uses a, b (per-tag)
-	pseudoChecked                        // :checked  (attribute-driven)
-	pseudoDisabled                       // :disabled (attribute-driven)
-	pseudoEnabled                        // :enabled   (a control without `disabled`)
-	pseudoRequired                       // :required  (control with `required`)
-	pseudoOptional                       // :optional  (control without `required`)
-	pseudoReadOnly                       // :read-only (not user-alterable)
-	pseudoReadWrite                      // :read-write (editable control)
-	pseudoNthLastChild                   // :nth-last-child(An+B) — from the end
-	pseudoEmpty                          // :empty (no element/text children)
-	pseudoHas                            // :has(rel, …) — relative selectors in args
-	pseudoNot                            // :not(sel, …)  — uses args
-	pseudoIs                             // :is() / :matches() / :-webkit-any() — uses args
-	pseudoWhere                          // :where() — like :is, zero specificity
-	pseudoLink                           // :link / :any-link (a / area with href)
-	pseudoFirstOfType                    // :first-of-type
-	pseudoLastOfType                     // :last-of-type
-	pseudoOnlyOfType                     // :only-of-type
-	pseudoNthLastOfType                  // :nth-last-of-type(An+B)
-	pseudoPlaceholderShown               // :placeholder-shown
-	pseudoLang                           // :lang(xx) — uses raw arg (lang)
-	pseudoAlways                         // pseudo-classes that always hold here (:defined, :valid, :dir(ltr))
-	pseudoUnsupported                    // parsed but not evaluable → never matches
+	pseudoHover            pseudoKind = iota // :hover        (state variant)
+	pseudoFocus                              // :focus        (state variant)
+	pseudoActive                             // :active       (state variant)
+	pseudoFocusVisible                       // :focus-visible (keyboard focus only)
+	pseudoRoot                               // :root (document root element)
+	pseudoFirstChild                         // :first-child
+	pseudoLastChild                          // :last-child
+	pseudoOnlyChild                          // :only-child
+	pseudoNthChild                           // :nth-child(An+B) — uses a, b
+	pseudoNthOfType                          // :nth-of-type(An+B) — uses a, b (per-tag)
+	pseudoChecked                            // :checked  (attribute-driven)
+	pseudoDisabled                           // :disabled (attribute-driven)
+	pseudoEnabled                            // :enabled   (a control without `disabled`)
+	pseudoRequired                           // :required  (control with `required`)
+	pseudoOptional                           // :optional  (control without `required`)
+	pseudoReadOnly                           // :read-only (not user-alterable)
+	pseudoReadWrite                          // :read-write (editable control)
+	pseudoNthLastChild                       // :nth-last-child(An+B) — from the end
+	pseudoEmpty                              // :empty (no element/text children)
+	pseudoHas                                // :has(rel, …) — relative selectors in args
+	pseudoNot                                // :not(sel, …)  — uses args
+	pseudoIs                                 // :is() / :matches() / :-webkit-any() — uses args
+	pseudoWhere                              // :where() — like :is, zero specificity
+	pseudoLink                               // :link / :any-link (a / area with href)
+	pseudoFirstOfType                        // :first-of-type
+	pseudoLastOfType                         // :last-of-type
+	pseudoOnlyOfType                         // :only-of-type
+	pseudoNthLastOfType                      // :nth-last-of-type(An+B)
+	pseudoPlaceholderShown                   // :placeholder-shown
+	pseudoLang                               // :lang(xx) — uses raw arg (lang)
+	pseudoAlways                             // pseudo-classes that always hold here (:defined, :valid, :dir(ltr))
+	pseudoUnsupported                        // parsed but not evaluable → never matches
 )
 
 // pseudoSelector is a parsed pseudo-class. Structural pseudos evaluate at

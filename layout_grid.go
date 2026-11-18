@@ -15,6 +15,22 @@ type GridTrack struct {
 	Kind GridTrackKind
 	Size float32 // pixels for Fixed, weight for Fraction, unused for Auto
 	Min  float32 // optional floor after fraction / auto resolution
+	// Max caps an Auto track (CSS fit-content(L), minmax(auto, L)); 0 = none.
+	Max float32
+	// AutoMin gives a Fraction track CSS's automatic minimum: it never
+	// shrinks below its items' min-content size (a bare `1fr` is
+	// minmax(auto, 1fr); minmax(0, 1fr) has no such floor).
+	AutoMin bool
+}
+
+// GridRepeat is CSS repeat(auto-fill | auto-fit, tracks): Tracks repeat,
+// starting at column At of GridLayout.Columns, as many times as fit the
+// available width (at least once). Fit (auto-fit) collapses repetitions no
+// item occupies.
+type GridRepeat struct {
+	At     int
+	Tracks []GridTrack
+	Fit    bool
 }
 
 // Convenience constructors.
@@ -58,6 +74,65 @@ type GridLayout struct {
 	AutoRows    []GridTrack
 	ColGap      float32
 	RowGap      float32
+	// AutoRepeat, when set, inserts repeat(auto-fill/auto-fit) columns.
+	AutoRepeat *GridRepeat
+}
+
+// expandRepeat resolves AutoRepeat against the available width.
+func (l GridLayout) expandRepeat(children []Widget, availW float32) GridLayout {
+	r := l.AutoRepeat
+	if r == nil || len(r.Tracks) == 0 {
+		return l
+	}
+	at := min(max(r.At, 0), len(l.Columns))
+	var fixed float32
+	for _, t := range l.Columns {
+		fixed += gridTrackBase(t) + l.ColGap
+	}
+	var unit float32
+	for _, t := range r.Tracks {
+		unit += gridTrackBase(t) + l.ColGap
+	}
+	n := 1
+	if unit > 0 && availW > 0 {
+		n = max(1, int((availW-fixed+l.ColGap)/unit))
+	}
+	if r.Fit {
+		// auto-fit: repetitions without items collapse; with every item
+		// auto-placed in single cells that is simply the item count.
+		items := 0
+		for _, c := range children {
+			gi := GridItemOf(c)
+			if gi.Explicit || gi.ColSpan > 1 {
+				items = -1
+				break
+			}
+			items++
+		}
+		if items >= 0 {
+			per := len(r.Tracks)
+			n = max(1, min(n, (items+per-1)/per))
+		}
+	}
+	n = min(n, gridMaxTracks/len(r.Tracks))
+	cols := make([]GridTrack, 0, len(l.Columns)+n*len(r.Tracks))
+	cols = append(cols, l.Columns[:at]...)
+	for range n {
+		cols = append(cols, r.Tracks...)
+	}
+	cols = append(cols, l.Columns[at:]...)
+	g := l
+	g.Columns = cols
+	g.AutoRepeat = nil
+	return g
+}
+
+// gridTrackBase is the size a track needs at least, for auto-repeat counts.
+func gridTrackBase(t GridTrack) float32 {
+	if t.Kind == GridFixed {
+		return max(t.Size, t.Min)
+	}
+	return t.Min
 }
 
 // gridMaxTracks caps each axis of the implicit grid (CSS lets a UA clamp
@@ -126,6 +201,7 @@ func (l GridLayout) Apply(children []Widget, bounds Rect) {
 		return
 	}
 	// Place every child (auto-placing the rest), growing implicit tracks.
+	l = l.expandRepeat(children, bounds.W)
 	l, placements := l.withImplicit(children)
 	if len(l.Columns) == 0 || len(l.Rows) == 0 {
 		return
@@ -169,7 +245,7 @@ func (l GridLayout) Measure(children []Widget, avail Size) Size {
 	if len(children) == 0 {
 		return Size{}
 	}
-	gl, placements := l.withImplicit(children)
+	gl, placements := l.expandRepeat(children, avail.W).withImplicit(children)
 	if len(gl.Columns) == 0 || len(gl.Rows) == 0 {
 		return Size{}
 	}
@@ -309,9 +385,11 @@ func (l GridLayout) resolveTracks(tracks []GridTrack, avail, gap float32,
 					continue
 				}
 				if columnAxis {
-					nat := measureWithConstraints(ch, Size{W: avail, H: avail})
-					if nat.W > max {
-						max = nat.W
+					// An auto column is as wide as its widest item's
+					// max-content size (shrunk below when space runs out).
+					m := ch.Style().Margin
+					if w := MaxContentWidth(ch) + m.Left + m.Right; w > max {
+						max = w
 					}
 				} else {
 					// Measure at the cell's resolved column-span width so
@@ -323,6 +401,9 @@ func (l GridLayout) resolveTracks(tracks []GridTrack, avail, gap float32,
 					}
 				}
 			}
+			if tr.Max > 0 && max > tr.Max {
+				max = tr.Max
+			}
 			sizes[i] = max
 			used += max
 		case GridFraction:
@@ -330,14 +411,55 @@ func (l GridLayout) resolveTracks(tracks []GridTrack, avail, gap float32,
 		}
 	}
 
-	// Pass 2: Fraction.
+	// Auto columns that overflow the available width shrink toward their
+	// items' min-content widths (CSS: auto tracks only grow to max-content
+	// with free space left over).
+	if columnAxis && avail > 0 && used > avail {
+		l.shrinkAutoColumns(tracks, sizes, used-avail, children, placements)
+		used = gap * float32(len(tracks)-1)
+		for i, tr := range tracks {
+			if tr.Kind != GridFraction {
+				used += sizes[i]
+			}
+		}
+	}
+
+	// Pass 2: Fraction. A track whose floor exceeds its share is frozen
+	// at the floor and the rest is shared again (CSS "find the size of
+	// an fr").
 	if fractionSum > 0 {
-		remaining := avail - used
-		if remaining < 0 {
-			remaining = 0
+		floors := make([]float32, len(tracks))
+		for i, tr := range tracks {
+			if tr.Kind != GridFraction {
+				continue
+			}
+			floors[i] = tr.Min
+			if tr.AutoMin {
+				floors[i] = max(floors[i], l.itemFloor(i, columnAxis, children, placements, crossSizes, crossGap))
+			}
+		}
+		remaining := max(avail-used, 0)
+		frozen := make([]bool, len(tracks))
+		for range len(tracks) + 1 {
+			if fractionSum <= 0 {
+				break
+			}
+			per := remaining / fractionSum
+			changed := false
+			for i, tr := range tracks {
+				if tr.Kind == GridFraction && !frozen[i] && floors[i] > per*tr.Size {
+					frozen[i], changed = true, true
+					sizes[i] = floors[i]
+					remaining = max(remaining-floors[i], 0)
+					fractionSum -= tr.Size
+				}
+			}
+			if !changed {
+				break
+			}
 		}
 		for i, tr := range tracks {
-			if tr.Kind == GridFraction {
+			if tr.Kind == GridFraction && !frozen[i] && fractionSum > 0 {
 				sizes[i] = remaining * tr.Size / fractionSum
 			}
 		}
@@ -350,6 +472,54 @@ func (l GridLayout) resolveTracks(tracks []GridTrack, avail, gap float32,
 		}
 	}
 	return sizes
+}
+
+// itemFloor is the automatic minimum of track i: the largest min-content
+// width (columns) or content height (rows) of its single-span items.
+func (l GridLayout) itemFloor(i int, columnAxis bool, children []Widget, placements []GridItem,
+	crossSizes []float32, crossGap float32) float32 {
+	var floor float32
+	for ci, ch := range children {
+		p := placements[ci]
+		if columnAxis {
+			if p.Col != i || p.ColSpan != 1 {
+				continue
+			}
+			m := ch.Style().Margin
+			floor = max(floor, MinContentWidth(ch)+m.Left+m.Right)
+		} else {
+			if p.Row != i || p.RowSpan != 1 {
+				continue
+			}
+			cw := trackSpan(crossSizes, crossGap, p.Col, p.ColSpan)
+			floor = max(floor, measureWithConstraints(ch, Size{W: cw, H: 0}).H)
+		}
+	}
+	return floor
+}
+
+// shrinkAutoColumns takes overflow back from auto columns, proportionally
+// to how far each sits above its items' min-content floor.
+func (l GridLayout) shrinkAutoColumns(tracks []GridTrack, sizes []float32, overflow float32,
+	children []Widget, placements []GridItem) {
+	floors := make([]float32, len(tracks))
+	var slack float32
+	for i, tr := range tracks {
+		if tr.Kind != GridAuto {
+			continue
+		}
+		floors[i] = min(l.itemFloor(i, true, children, placements, nil, 0), sizes[i])
+		slack += sizes[i] - floors[i]
+	}
+	if slack <= 0 {
+		return
+	}
+	take := min(overflow, slack)
+	for i, tr := range tracks {
+		if tr.Kind == GridAuto {
+			sizes[i] -= take * (sizes[i] - floors[i]) / slack
+		}
+	}
 }
 
 // growAutoRowsForRowSpans grows Auto rows so a multi-row-spanning child fits

@@ -17,8 +17,8 @@ func gridLayout(cs *ComputedStyle, itemCount int) qui.Layout {
 	// are omitted (each area row is a grid row; area columns are grid columns).
 	areaRows, areaCols := gridAreaDims(cs.raw["grid-template-areas"])
 
-	cols := parseGridTracks(cs.raw["grid-template-columns"], cs.FontSize)
-	if len(cols) == 0 {
+	cols, autoRepeat := parseGridTrackList(cs.raw["grid-template-columns"], cs.FontSize)
+	if len(cols) == 0 && autoRepeat == nil {
 		n := areaCols
 		if n < 1 {
 			n = 1 // single implicit column
@@ -41,6 +41,7 @@ func gridLayout(cs *ComputedStyle, itemCount int) qui.Layout {
 		AutoColumns: parseGridTracks(cs.raw["grid-auto-columns"], cs.FontSize),
 		AutoRows:    parseGridTracks(cs.raw["grid-auto-rows"], cs.FontSize),
 		ColGap:      colGap, RowGap: rowGap,
+		AutoRepeat: autoRepeat,
 	}
 }
 
@@ -218,58 +219,133 @@ func atoiOr(s string, def int) int {
 }
 
 // parseGridTracks parses a grid-template-columns/rows value into tracks,
-// expanding repeat(n, <track-list>).
+// expanding repeat(n, <track-list>). Line names ([a b]) are skipped.
 func parseGridTracks(v string, fs float32) []qui.GridTrack {
-	v = strings.TrimSpace(v)
+	tracks, _ := parseGridTrackList(v, fs)
+	return tracks
+}
+
+// parseGridTrackList is parseGridTracks that also returns a
+// repeat(auto-fill | auto-fit, …) as a qui.GridRepeat positioned among the
+// other tracks.
+func parseGridTrackList(v string, fs float32) ([]qui.GridTrack, *qui.GridRepeat) {
+	v = stripLineNames(strings.TrimSpace(v))
 	if v == "" || strings.EqualFold(v, "none") {
-		return nil
+		return nil, nil
 	}
 	var tracks []qui.GridTrack
+	var auto *qui.GridRepeat
 	for _, tok := range fieldsTopLevel(v) {
 		low := strings.ToLower(tok)
 		if strings.HasPrefix(low, "repeat(") && strings.HasSuffix(tok, ")") {
-			tracks = append(tracks, expandRepeat(tok[len("repeat("):len(tok)-1], fs)...)
+			unit, n, fit, ok := parseRepeat(tok[len("repeat("):len(tok)-1], fs)
+			if !ok {
+				continue
+			}
+			if n < 0 {
+				if auto == nil {
+					auto = &qui.GridRepeat{At: len(tracks), Tracks: unit, Fit: fit}
+				}
+				continue
+			}
+			for range n {
+				tracks = append(tracks, unit...)
+			}
 			continue
 		}
 		if tr, ok := parseGridTrack(tok, fs); ok {
 			tracks = append(tracks, tr)
 		}
 	}
-	return tracks
+	return tracks, auto
 }
 
-// expandRepeat parses the inside of `repeat(count, track-list)`.
-func expandRepeat(inner string, fs float32) []qui.GridTrack {
+// stripLineNames drops [line-name] groups from a track list.
+func stripLineNames(v string) string {
+	if !strings.Contains(v, "[") {
+		return v
+	}
+	var b strings.Builder
+	depth := 0
+	for _, r := range v {
+		switch {
+		case r == '[':
+			depth++
+			b.WriteByte(' ')
+		case r == ']':
+			if depth > 0 {
+				depth--
+			}
+		case depth == 0:
+			b.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// parseRepeat parses the inside of repeat(count, track-list). n is -1 for
+// auto-fill / auto-fit (fit reports auto-fit).
+func parseRepeat(inner string, fs float32) (unit []qui.GridTrack, n int, fit, ok bool) {
 	parts := splitTopLevel(inner, ',')
 	if len(parts) < 2 {
-		return nil
+		return nil, 0, false, false
 	}
-	count, ok := parseFloat(strings.TrimSpace(parts[0]))
-	if !ok || count < 1 {
-		return nil
+	switch c := strings.ToLower(strings.TrimSpace(parts[0])); c {
+	case "auto-fill":
+		n = -1
+	case "auto-fit":
+		n, fit = -1, true
+	default:
+		count, okc := parseFloat(c)
+		if !okc || count < 1 {
+			return nil, 0, false, false
+		}
+		n = min(int(count), 10000)
 	}
-	var unit []qui.GridTrack
-	for _, tok := range fieldsTopLevel(strings.Join(parts[1:], " ")) {
-		if tr, ok := parseGridTrack(tok, fs); ok {
+	for _, tok := range fieldsTopLevel(stripLineNames(strings.Join(parts[1:], ","))) {
+		if tr, okt := parseGridTrack(tok, fs); okt {
 			unit = append(unit, tr)
 		}
 	}
-	var out []qui.GridTrack
-	for i := 0; i < int(count); i++ {
-		out = append(out, unit...)
-	}
-	return out
+	return unit, n, fit, len(unit) > 0
 }
 
-// parseGridTrack parses one track token: `<n>fr`, `auto`, or a length.
+// parseGridTrack parses one track token: `<n>fr`, `auto`, min-/max-content,
+// a length, minmax(min, max) or fit-content(length).
 func parseGridTrack(tok string, fs float32) (qui.GridTrack, bool) {
 	low := strings.ToLower(strings.TrimSpace(tok))
 	switch {
 	case low == "auto" || low == "min-content" || low == "max-content":
 		return qui.GridAutoTrack(), true
+	case strings.HasPrefix(low, "minmax(") && strings.HasSuffix(low, ")"):
+		args := splitTopLevel(low[len("minmax("):len(low)-1], ',')
+		if len(args) != 2 {
+			return qui.GridTrack{}, false
+		}
+		lo, hi := strings.TrimSpace(args[0]), strings.TrimSpace(args[1])
+		maxT, ok := parseGridTrack(hi, fs)
+		if !ok {
+			return qui.GridTrack{}, false
+		}
+		maxT.AutoMin = false
+		if px, ok := parseLength(lo, fs, 0); ok {
+			maxT.Min = px
+		} else if maxT.Kind == qui.GridFraction {
+			// minmax(auto | min-content | max-content, Nfr)
+			maxT.AutoMin = true
+		}
+		return maxT, true
+	case strings.HasPrefix(low, "fit-content(") && strings.HasSuffix(low, ")"):
+		t := qui.GridAutoTrack()
+		if px, ok := parseLength(strings.TrimSpace(low[len("fit-content("):len(low)-1]), fs, 0); ok {
+			t.Max = px
+		}
+		return t, true
 	case strings.HasSuffix(low, "fr"):
 		if w, ok := parseFloat(strings.TrimSuffix(low, "fr")); ok {
-			return qui.GridFractionTrack(w), true
+			t := qui.GridFractionTrack(w)
+			t.AutoMin = webCompat
+			return t, true
 		}
 	default:
 		if px, ok := parseLength(low, fs, 0); ok {

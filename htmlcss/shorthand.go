@@ -17,6 +17,68 @@ func expandShorthands(m map[string]string) {
 	if v, ok := m["inset"]; ok {
 		expandInset(v, m)
 	}
+	if v, ok := m["grid-template"]; ok {
+		expandGridTemplate(v, m)
+	}
+	if v, ok := m["grid"]; ok && !strings.Contains(strings.ToLower(v), "auto-flow") {
+		expandGridTemplate(v, m)
+	}
+}
+
+// expandGridTemplate expands `grid-template` (and the template form of
+// `grid`): `none`, `<rows> / <columns>`, or area strings each optionally
+// followed by a row size — `"a a" 40px "b c" / auto 1fr`.
+func expandGridTemplate(v string, m map[string]string) {
+	v = strings.TrimSpace(v)
+	if strings.EqualFold(v, "none") {
+		setIfAbsent(m, "grid-template-rows", "none")
+		setIfAbsent(m, "grid-template-columns", "none")
+		setIfAbsent(m, "grid-template-areas", "none")
+		return
+	}
+	rowsPart, colsPart := v, ""
+	if parts := splitTopLevel(v, '/'); len(parts) >= 2 {
+		rowsPart, colsPart = parts[0], strings.Join(parts[1:], "/")
+	}
+	if !strings.ContainsAny(rowsPart, `"'`) {
+		setIfAbsent(m, "grid-template-rows", strings.TrimSpace(rowsPart))
+		setIfAbsent(m, "grid-template-columns", strings.TrimSpace(colsPart))
+		return
+	}
+	// Area strings, each followed by an optional row size.
+	var areas, rows []string
+	rest := rowsPart
+	for {
+		i := strings.IndexAny(rest, `"'`)
+		if i < 0 {
+			break
+		}
+		if len(areas) > 0 {
+			rows = append(rows, gridRowSize(rest[:i]))
+		}
+		q := rest[i]
+		j := strings.IndexByte(rest[i+1:], q)
+		if j < 0 {
+			break
+		}
+		areas = append(areas, rest[i:i+2+j])
+		rest = rest[i+2+j:]
+	}
+	if len(areas) > 0 {
+		rows = append(rows, gridRowSize(rest))
+	}
+	setIfAbsent(m, "grid-template-areas", strings.Join(areas, " "))
+	setIfAbsent(m, "grid-template-rows", strings.Join(rows, " "))
+	setIfAbsent(m, "grid-template-columns", strings.TrimSpace(colsPart))
+}
+
+// gridRowSize is the row size between two area strings (auto when none).
+func gridRowSize(s string) string {
+	s = strings.TrimSpace(stripLineNames(s))
+	if s == "" {
+		return "auto"
+	}
+	return s
 }
 
 // shorthandLonghands lists, per shorthand, every property it resets —
@@ -34,6 +96,8 @@ var shorthandLonghands = func() map[string][]string {
 		"flex":            {"flex-grow", "flex-shrink", "flex-basis"},
 		"flex-flow":       {"flex-direction", "flex-wrap"},
 		"inset":           {"top", "right", "bottom", "left"},
+		"grid-template":   {"grid-template-rows", "grid-template-columns", "grid-template-areas"},
+		"grid":            {"grid-template-rows", "grid-template-columns", "grid-template-areas"},
 		"outline":         {"outline-width", "outline-style", "outline-color"},
 		"overflow":        {"overflow-x", "overflow-y"},
 		"gap":             {"row-gap", "column-gap"},

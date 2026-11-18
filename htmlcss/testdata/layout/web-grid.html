@@ -1,0 +1,54 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+body { margin: 0; padding: 0; font: 14px/18px GoRegular; }
+/* Grid: the grid-template shorthand with areas (Wikipedia's page shell),
+   minmax(), fit-content(), repeat(auto-fill / auto-fit), auto columns at
+   max-content, and a bare 1fr's automatic minimum. */
+.case { width: 600px; margin-bottom: 10px; }
+.shell { display: grid; column-gap: 24px;
+  grid-template: min-content 1fr min-content / 200px minmax(0, 1fr);
+  grid-template-areas: 'notice notice' 'side main' 'foot foot'; }
+.notice { grid-area: notice; height: 20px; background: #eee; }
+.side { grid-area: side; background: #ddd; }
+.main { grid-area: main; background: #ccc; }
+.foot { grid-area: foot; height: 16px; background: #bbb; }
+.areas { display: grid; grid-template: "a b" 30px "c c" auto / 100px 1fr; gap: 4px; }
+.fill { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.fit { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.cell { height: 24px; background: #ccc; }
+.autos { display: grid; grid-template-columns: auto 1fr auto; column-gap: 8px; }
+.fitc { display: grid; grid-template-columns: fit-content(120px) 1fr; }
+.frmin { display: grid; grid-template-columns: 1fr 1fr; width: 200px; }
+.wide { width: 150px; height: 10px; background: #999; }
+</style></head><body>
+<div class="case shell" id="shell">
+  <div class="notice" id="notice"></div>
+  <div class="side" id="side">Contents sidebar text that wraps inside the narrow column.</div>
+  <div class="main" id="main">The main article column takes the remaining width beside the sidebar and wraps its text.</div>
+  <div class="foot" id="foot"></div>
+</div>
+<div class="case areas" id="areas">
+  <div id="a1" style="background:#ddd">a</div>
+  <div id="a2" style="background:#ccc">b</div>
+  <div id="a3" style="grid-column: 1 / 3; background:#bbb">c spans both</div>
+</div>
+<div class="case fill" id="fill">
+  <div class="cell" id="fi1"></div><div class="cell" id="fi2"></div>
+</div>
+<div class="case fit" id="fit">
+  <div class="cell" id="ft1"></div><div class="cell" id="ft2"></div>
+</div>
+<div class="case autos" id="autos">
+  <span id="au1">Left</span><div id="au2" style="background:#ddd">middle</div><span id="au3">Right side</span>
+</div>
+<div class="case fitc" id="fitc">
+  <div id="fc1" style="background:#ddd">short</div><div id="fc2" style="background:#ccc">x</div>
+</div>
+<div class="case fitc" id="fitc2">
+  <div id="fc3" style="background:#ddd">a much longer text that has to wrap</div><div id="fc4" style="background:#ccc">x</div>
+</div>
+<div class="frmin" id="frmin">
+  <div id="fm1"><div class="wide"></div></div><div id="fm2" style="background:#ccc">y</div>
+</div>
+</body></html>
