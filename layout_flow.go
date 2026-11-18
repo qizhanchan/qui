@@ -389,13 +389,6 @@ func (f FlowLayout) run(children []Widget, bounds Rect, apply bool) (contentH, m
 			}
 			continue
 		}
-		if band != nil && clear != ClearNone && flowLevelOf(child) == FlowBlock {
-			flushLine()
-			if cy := band.clearY(clear); cy > y+pending.value() {
-				y = cy
-				pending = marginRun{}
-			}
-		}
 		switch flowLevelOf(child) {
 		case FlowInline:
 			if im, ok := child.(interface{ InlineMargin() Insets }); ok {
@@ -427,6 +420,18 @@ func (f FlowLayout) run(children []Widget, bounds Rect, apply bool) (contentH, m
 
 		default: // FlowBlock
 			flushLine()
+			// Clearance moves the border edge below the float. The block's
+			// top margin already participates in that hypothetical position;
+			// it must not be added a second time after clearing the float.
+			clearing := band != nil && clear != ClearNone
+			if clearing {
+				if !(top && !seenFlow) {
+					pending.merge(edgeMargin(child, false))
+				}
+				if cy := band.clearY(clear); cy > y+pending.value() {
+					y = cy - pending.value()
+				}
+			}
 			left := bounds.X
 			w := bounds.W - m.Left - m.Right
 			if w < 0 {
@@ -469,7 +474,7 @@ func (f FlowLayout) run(children []Widget, bounds Rect, apply bool) (contentH, m
 			if bwm := m.Left + intrinsicW + m.Right; bwm > maxW {
 				maxW = bwm
 			}
-			if !(top && !seenFlow) {
+			if !clearing && !(top && !seenFlow) {
 				// The first child's top margin of a collapsing-through
 				// container belongs to the container's own top margin.
 				pending.merge(edgeMargin(child, false))

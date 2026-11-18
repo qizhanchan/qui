@@ -1,0 +1,8 @@
+<!doctype html><html><head><style>
+@font-face{font-family:GoRegular;src:url("../../../widgets/scripts/web/go-regular.ttf")}
+body{margin:0;font:16px/24px GoRegular}
+#caption{width:150px}
+#caption::before{content:"";float:right;width:18px;height:14px;background:red}
+#positioned{display:inline-block;position:relative}
+#positioned::after{content:"";position:absolute;top:100%;left:50%;width:10px;height:10px;background:blue}
+</style></head><body><div id="caption">A caption with an icon floating beside the caption text.</div><div id="after">After</div><span id="positioned">Button</span></body></html>

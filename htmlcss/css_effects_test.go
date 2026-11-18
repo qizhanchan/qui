@@ -374,3 +374,124 @@ func TestBackdropFilterBlur(t *testing.T) {
 		t.Errorf("pixel outside the backdrop = %v, want pure red", out)
 	}
 }
+
+// Explicit CSS opacity zero must hide a whole subtree, including controls,
+// without removing the element from hit testing.
+func TestZeroOpacityHidesControlAndSubtree(t *testing.T) {
+	_, res := renderWeb(t, `<!doctype html><body style="margin:0"><div id="a" style="width:80px;height:30px;background:red;opacity:0"><input type="checkbox" checked></div><input id="b" type="radio" style="opacity:0"></body>`)
+	img := paintWhite(res.Root)
+	for y := 0; y < 50; y++ {
+		for x := 0; x < 80; x++ {
+			if c := img.RGBAAt(x, y); !near(c, 255, 255, 255, 0) {
+				t.Fatalf("transparent subtree painted %v at %d,%d", c, x, y)
+			}
+		}
+	}
+	if hit := res.Root.HitTest(qui.Point{X: 60, Y: 15}); hit == nil {
+		t.Fatalf("transparent box must retain hit region: %T", hit)
+	}
+}
+
+func TestPercentageRadiusAndTransparentOutsetShadow(t *testing.T) {
+	_, res := renderWeb(t, `<!doctype html><body style="margin:0"><div style="width:80px;height:30px;box-shadow:0 2px red"></div><div id="circle" style="width:20px;height:20px;box-sizing:border-box;border:5px solid blue;border-radius:50%"></div><div id="ellipse" style="width:80px;height:40px;background:red;border-radius:50%"></div></body>`)
+	img := paintWhite(res.Root)
+	for _, p := range [][2]int{{10, 10}, {10, 40}, {0, 50}} {
+		if c := img.RGBAAt(p[0], p[1]); !near(c, 255, 255, 255, 15) {
+			t.Errorf("interior/corner %v = %v, want white", p, c)
+		}
+	}
+	if c := img.RGBAAt(40, 31); !near(c, 255, 0, 0, 15) {
+		t.Errorf("shadow edge = %v", c)
+	}
+	if c := img.RGBAAt(10, 32); !near(c, 0, 0, 255, 30) {
+		t.Errorf("circle ring = %v", c)
+	}
+	if c := img.RGBAAt(40, 70); !near(c, 255, 0, 0, 15) {
+		t.Errorf("ellipse center = %v", c)
+	}
+}
+
+func TestMaskSizeNestedMath(t *testing.T) {
+	ms, ok := parseMask(map[string]string{"mask-image": "url(icon.svg)", "mask-size": "calc(max(calc(1rem + 4px),10px))"}, 16)
+	if !ok || ms.sizeW == nil || ms.sizeW.px != 20 || ms.sizeH != nil {
+		t.Fatalf("nested mask size: %+v", ms)
+	}
+}
+
+func TestFloatLinkReceivesHitAboveFollowingBlock(t *testing.T) {
+	_, res := renderWeb(t, `<!doctype html><body style="margin:0"><div style="width:300px"><a id="float" href="#destination" style="float:left;width:80px;height:80px;background:red"></a><p style="margin:0">Following text wraps around the floated link. The paragraph's background box extends beneath it but must not steal the click.</p></div></body>`)
+	hit := res.Root.HitTest(qui.Point{X: 40, Y: 40})
+	if hit != res.ByID["float"] {
+		t.Fatalf("float hit %T, want link", hit)
+	}
+}
+
+func TestMaskSVGWithCSSQuotedEscapes(t *testing.T) {
+	_, res := renderWeb(t, `<!doctype html><body style="margin:0"><span style='display:block;width:20px;height:20px;background:blue;mask-image:url("data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 20 20\"><path d=\"M0 0h10v20H0z\"/></svg>");mask-size:20px'></span></body>`)
+	img := paintWhite(res.Root)
+	if c := img.RGBAAt(5, 10); !near(c, 0, 0, 255, 10) {
+		t.Errorf("escaped SVG mask = %v", c)
+	}
+	if c := img.RGBAAt(15, 10); !near(c, 255, 255, 255, 10) {
+		t.Errorf("unmasked half = %v", c)
+	}
+}
+
+func TestEmptyGeneratedBoxPaints(t *testing.T) {
+	_, res := renderWeb(t, `<!doctype html><style>#icon::before{content:"";display:block;width:20px;height:20px;background:red}</style><body style="margin:0"><span id="icon" style="display:block"></span></body>`)
+	if c := paintWhite(res.Root).RGBAAt(10, 10); !near(c, 255, 0, 0, 10) {
+		t.Errorf("empty generated box = %v", c)
+	}
+}
+
+func TestTransparentBackgroundImagePreservesColor(t *testing.T) {
+	uri := "data:image/svg+xml," + url.PathEscape(`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect x="8" y="8" width="4" height="4" fill="white"/></svg>`)
+	_, res := renderWeb(t, `<!doctype html><body style="margin:0"><div style="width:50px;height:50px;border-radius:50%;background:blue url('`+uri+`') center no-repeat"></div></body>`)
+	img := paintWhite(res.Root)
+	if c := img.RGBAAt(25, 10); !near(c, 0, 0, 255, 10) {
+		t.Errorf("background behind transparent tile=%v", c)
+	}
+	if c := img.RGBAAt(25, 25); !near(c, 255, 255, 255, 10) {
+		t.Errorf("opaque tile center=%v", c)
+	}
+}
+
+func TestWrappingInlineBackgroundIsSliced(t *testing.T) {
+	uri := "data:image/svg+xml," + url.PathEscape(`<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><path fill="red" d="M0 0h8v8H0z"/></svg>`)
+	_, res := renderWeb(t, `<!doctype html><body style="margin:0;font:16px/24px sans-serif"><div id="text" style="width:180px">Prefix <a style="padding-right:12px;background:url('`+uri+`') right center/8px 8px no-repeat">Long external link title that must wrap onto several lines</a> end.</div></body>`)
+	img := paintWhite(res.Root)
+	red, minY := 0, img.Bounds().Max.Y
+	for y := 0; y < 150; y++ {
+		for x := 0; x < 180; x++ {
+			if c := img.RGBAAt(x, y); near(c, 255, 0, 0, 10) {
+				red++
+				minY = min(minY, y)
+			}
+		}
+	}
+	// The no-repeat icon belongs to the end of the virtual inline strip,
+	// rather than being repeated on every line fragment.
+	if red < 36 || red > 81 || minY < 24 {
+		t.Fatalf("sliced inline icon: red pixels=%d, first row=%d", red, minY)
+	}
+}
+
+func TestWebDiscMarkerGeometry(t *testing.T) {
+	_, res := renderWeb(t, `<!doctype html><style>body{margin:0;font:16px/24px Arial}ul{margin:0;padding-left:40px}li::marker{color:red}</style><ul><li>Arial</li></ul>`)
+	img := paintWhite(res.Root)
+	x0, y0, x1, y1 := 40, 100, 0, 0
+	for y := 0; y < 24; y++ {
+		for x := 0; x < 40; x++ {
+			if c := img.RGBAAt(x, y); c.R > 180 && c.G < 180 && c.B < 180 {
+				x0 = min(x0, x)
+				y0 = min(y0, y)
+				x1 = max(x1, x)
+				y1 = max(y1, y)
+			}
+		}
+	}
+	// Chrome's Arial 16px marker occupies x=24..28, y=10..14.
+	if x0 < 23 || x0 > 25 || x1 < 27 || x1 > 29 || y0 < 9 || y0 > 11 || y1 < 13 || y1 > 15 {
+		t.Fatalf("disc bounds=(%d,%d)-(%d,%d)", x0, y0, x1, y1)
+	}
+}

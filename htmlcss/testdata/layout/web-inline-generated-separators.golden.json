@@ -1,0 +1,9 @@
+{
+ "fixture": "web-inline-generated-separators",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "outer": [0,0,250,72],
+  "after": [0,72,640,24]
+ }
+}

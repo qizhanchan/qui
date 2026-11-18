@@ -1,0 +1,10 @@
+{
+ "fixture": "web-generated-float-caption",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "caption": [0,0,150,72],
+  "after": [0,72,640,24],
+  "positioned": [0,96,46.42,24]
+ }
+}

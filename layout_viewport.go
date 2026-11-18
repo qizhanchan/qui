@@ -81,6 +81,9 @@ func PlaceFixed(w Widget, vp Rect, scroll Point) {
 	if sp, ok := staticPositionOf(w); ok {
 		sx, sy = sp.X+scroll.X, sp.Y+scroll.Y
 	}
+	m := absoluteMargin(w, vp)
+	sx += m.Left
+	sy += m.Top
 	x, ww := resolveAnchorAxisStatic(pos.Anchor, AnchorLeft, AnchorRight,
 		pos.Left, pos.Right, pos.Width, vp.X, vp.W, w, true, sx, 0)
 	y, h := resolveAnchorAxisStatic(pos.Anchor, AnchorTop, AnchorBottom,

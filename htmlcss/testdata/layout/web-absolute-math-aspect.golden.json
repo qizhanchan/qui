@@ -1,0 +1,11 @@
+{
+ "fixture": "web-absolute-math-aspect",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "small": [89.5,4.5,21,21],
+  "large": [75,105,50,50],
+  "margin": [94,244,12,12],
+  "fixed-margin": [320,64,12,12]
+ }
+}

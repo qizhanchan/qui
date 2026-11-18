@@ -45,6 +45,7 @@ const (
 // InlineItem is one participant in an inline formatting context: either a run
 // of styled text or an atomic box.
 type InlineItem struct {
+	NoWrapGroup int32 // nonzero consecutive items suppress soft breaks within the group
 	// Text — when non-empty this is a text item. Whitespace collapses: runs
 	// of spaces/tabs are single break opportunities, a trailing space at a
 	// soft wrap is dropped, and '\n' forces a line break (used for <br>).
@@ -709,6 +710,32 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 	// resolves them the same way (see lineBox).
 	scale, spacing := opts.LineHeightScale, opts.LineSpacing
 	toks := tokenizeInline(items, opts.PreserveWhitespace)
+	// A style boundary is not a Unicode line-break opportunity. Preserve
+	// words and NBSP sequences split by markup, as well as nowrap spans.
+	joined := make([]bool, len(toks))
+	for i := 1; i < len(toks); i++ {
+		a, b := toks[i-1], toks[i]
+		if a.forceBreak || b.forceBreak {
+			continue
+		}
+		ga, gb := items[a.srcItem].NoWrapGroup, items[b.srcItem].NoWrapGroup
+		if ga != 0 && ga == gb {
+			joined[i] = true
+			continue
+		}
+		if a.box || b.box || b.spaceBefore || a.srcItem == b.srcItem || a.text == "" || b.text == "" {
+			continue
+		}
+		runes := []rune(a.text + b.text)
+		boundary := len([]rune(a.text))
+		joined[i] = true
+		for _, br := range LineBreakBoundaries(runes) {
+			if br.Offset == boundary {
+				joined[i] = false
+				break
+			}
+		}
+	}
 	paragraphRunes := make([]rune, 0, 64)
 	for _, item := range items {
 		if item.Box {
@@ -929,9 +956,28 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 		if t.box {
 			contentW = t.size.W
 		}
+		// Probe the whole nowrap span before placing its first token, while
+		// keeping the individual text fragments addressable for painting and
+		// selection. Later tokens in the group cannot start a soft line.
+		group := items[t.srcItem].NoWrapGroup
+		insideGroup := joined[ti]
+		probeW := contentW
+		if !insideGroup {
+			for j := ti + 1; j < len(joined) && joined[j]; j++ {
+				n := toks[j]
+				w := n.width
+				if n.box {
+					w = n.size.W
+				}
+				if n.spaceBefore {
+					w += n.spaceWidth
+				}
+				probeW += w
+			}
+		}
 		if len(cur) == 0 {
 			ab, bb := t.aboveBelow(scale, spacing, mid, leadBelow, opts.RoundNormalMetrics)
-			startLine(contentW, ab+bb)
+			startLine(probeW, ab+bb)
 		} else if growProbe(t) {
 			endLine(false)
 			ab, bb := t.aboveBelow(scale, spacing, mid, leadBelow, opts.RoundNormalMetrics)
@@ -960,7 +1006,7 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 		// fits, filling the current slot first (break as late as possible),
 		// and let the surviving tail fall through to the word-level path.
 		// Runs narrower than a slot are never touched: those still move whole.
-		if wrap && opts.BreakLongWords && !t.box && !t.space && contentW > segAvail() {
+		if wrap && group == 0 && opts.BreakLongWords && !t.box && !t.space && contentW > segAvail() {
 			rem, remW := t, contentW
 			for {
 				avail := segAvail() - segW[seg]
@@ -1020,7 +1066,7 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 		}
 		// Preserved whitespace never wraps by itself: at the boundary it
 		// hangs past the slot's edge at the end of the current one.
-		if wrap && len(cur) > 0 && !t.space && segW[seg]+gap+contentW > segAvail()+1e-3 {
+		if wrap && !insideGroup && len(cur) > 0 && !t.space && segW[seg]+gap+probeW > segAvail()+1e-3 {
 			// Round the float first: the rest of this line continues in the
 			// next slot that can hold the token, and only when there is none
 			// does the line end. A space at a slot boundary is dropped, the
@@ -1028,14 +1074,14 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 			for seg+1 < len(segs) {
 				seg++
 				gap = 0
-				if contentW <= segAvail() {
+				if probeW <= segAvail() {
 					break
 				}
 			}
-			if segW[seg]+gap+contentW > segAvail() {
+			if segW[seg]+gap+probeW > segAvail() {
 				endLine(false)
 				ab, bb := t.aboveBelow(scale, spacing, mid, leadBelow, opts.RoundNormalMetrics)
-				startLine(contentW, ab+bb)
+				startLine(probeW, ab+bb)
 				gap = 0
 				lineStart = SourcePos{Item: t.srcItem, Off: t.srcStart}
 			}

@@ -1,0 +1,10 @@
+{
+ "fixture": "web-float-clear-margin",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "clear": [0,84,300,20],
+  "large": [0,224,300,20],
+  "after": [0,244,640,24]
+ }
+}

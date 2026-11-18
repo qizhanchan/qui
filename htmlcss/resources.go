@@ -75,6 +75,14 @@ func (e *El) resourceReady() {
 	e.applyComputed(e.lastCS)
 	e.syncChildren()
 	e.InvalidateLayout()
+	if e.folded {
+		for p := e.elParent; p != nil; p = p.elParent {
+			if !p.folded {
+				p.markDirty()
+				break
+			}
+		}
+	}
 }
 
 // LoadLazyImages starts deferred images near a document-coordinate viewport.

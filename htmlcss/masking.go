@@ -19,6 +19,90 @@ import (
 // lenPct is a <length-percentage>: px + pct × the reference length.
 type lenPct struct{ px, pct float32 }
 
+// Percentage corner radii use width for x and height for y; overlap scales
+// all corners together (CSS Backgrounds 3, corner shaping).
+type borderRadiiSpec struct{ x, y [4]lenPct }
+
+func parseRelativeBorderRadii(m map[string]string, fs float32) *borderRadiiSpec {
+	var r borderRadiiSpec
+	relative := false
+	quad := func(s string) [4]lenPct {
+		f := fieldsTopLevel(s)
+		var v [4]lenPct
+		for i := 0; i < len(f) && i < 4; i++ {
+			v[i], _ = parseLenPct(f[i], fs)
+		}
+		switch len(f) {
+		case 1:
+			v[1], v[2], v[3] = v[0], v[0], v[0]
+		case 2:
+			v[2], v[3] = v[0], v[1]
+		case 3:
+			v[3] = v[1]
+		}
+		return v
+	}
+	if v, ok := m["border-radius"]; ok {
+		parts := splitTopLevel(v, '/')
+		r.x = quad(parts[0])
+		r.y = r.x
+		if len(parts) > 1 {
+			r.y = quad(parts[1])
+		}
+		relative = strings.ContainsAny(v, "%/")
+	}
+	for i, name := range []string{"top-left", "top-right", "bottom-right", "bottom-left"} {
+		if v, ok := m["border-"+name+"-radius"]; ok {
+			f := fieldsTopLevel(v)
+			if len(f) == 0 {
+				continue
+			}
+			r.x[i], _ = parseLenPct(f[0], fs)
+			r.y[i] = r.x[i]
+			if len(f) > 1 {
+				r.y[i], _ = parseLenPct(f[1], fs)
+			}
+			relative = relative || strings.Contains(v, "%") || len(f) > 1
+		}
+	}
+	if !relative {
+		return nil
+	}
+	return &r
+}
+
+func (r *borderRadiiSpec) path(b qui.Rect, inset float32) *qui.Path {
+	var x, y [4]float32
+	scale := float32(1)
+	for i := range x {
+		x[i] = max(0, r.x[i].resolve(b.W))
+		y[i] = max(0, r.y[i].resolve(b.H))
+	}
+	for _, pair := range [][3]float32{{b.W, x[0], x[1]}, {b.W, x[3], x[2]}, {b.H, y[0], y[3]}, {b.H, y[1], y[2]}} {
+		if sum := pair[1] + pair[2]; sum > 0 {
+			scale = min(scale, pair[0]/sum)
+		}
+	}
+	for i := range x {
+		x[i] = max(0, x[i]*scale-inset)
+		y[i] = max(0, y[i]*scale-inset)
+	}
+	l, t, rr, bb := b.X+inset, b.Y+inset, b.X+b.W-inset, b.Y+b.H-inset
+	const k = float32(0.55228475)
+	p := qui.NewPath()
+	p.MoveTo(l+x[0], t)
+	p.LineTo(rr-x[1], t)
+	p.CubicTo(rr-x[1]*(1-k), t, rr, t+y[1]*(1-k), rr, t+y[1])
+	p.LineTo(rr, bb-y[2])
+	p.CubicTo(rr, bb-y[2]*(1-k), rr-x[2]*(1-k), bb, rr-x[2], bb)
+	p.LineTo(l+x[3], bb)
+	p.CubicTo(l+x[3]*(1-k), bb, l, bb-y[3]*(1-k), l, bb-y[3])
+	p.LineTo(l, t+y[0])
+	p.CubicTo(l, t+y[0]*(1-k), l+x[0]*(1-k), t, l+x[0], t)
+	p.Close()
+	return p
+}
+
 func (l lenPct) resolve(ref float32) float32 { return l.px + l.pct*ref }
 
 // parseLenPct parses a length or percentage token.
@@ -569,6 +653,10 @@ func parseMask(m map[string]string, fs float32) (*maskSpec, bool) {
 		var posToks []string
 		afterSlash := false
 		var sizeToks []string
+		isColor := func(v string) bool { _, ok := parseColor(v); return ok }
+		// A slash separates position and size even without whitespace;
+		// splitting only at top level preserves URLs and math functions.
+		layer = strings.Join(splitTopLevel(layer, '/'), " / ")
 		for _, tok := range fieldsTopLevel(layer) {
 			lt := strings.ToLower(tok)
 			switch {
@@ -588,6 +676,9 @@ func parseMask(m map[string]string, fs float32) (*maskSpec, bool) {
 					ms.origin = lt
 				}
 			case lt == "add" || lt == "subtract" || lt == "intersect" || lt == "exclude" || lt == "no-clip" || lt == "none":
+			case isColor(tok):
+				// The background shorthand shares this geometry parser; its
+				// color is a separate paint layer, never a position token.
 			default:
 				if afterSlash {
 					sizeToks = append(sizeToks, lt)
@@ -662,7 +753,7 @@ func (ms *maskSpec) setSize(v string, fs float32) {
 		ms.size = v
 		return
 	}
-	f := strings.Fields(v)
+	f := fieldsTopLevel(v)
 	one := func(t string) *lenPct {
 		if t == "auto" {
 			return nil
@@ -907,6 +998,10 @@ func (e *El) loadMaskSource(src string) maskSource {
 
 // applyMasking wires clip-path and mask-image onto the element's box.
 func (e *El) applyMasking(cs *ComputedStyle) {
+	e.Box.BorderPath = nil
+	if r := cs.borderRadii; r != nil {
+		e.Box.BorderPath = r.path
+	}
 	border, padding, margin := boxEdges(cs)
 	if c := cs.ClipPath; c != nil {
 		e.Box.ClipPath = func(b qui.Rect) *qui.Path { return c.build(b, border, padding, margin) }

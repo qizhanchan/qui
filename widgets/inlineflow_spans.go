@@ -13,12 +13,16 @@ import . "github.com/qizhanchan/qui"
 
 // InlineSpanStyle is an inline element's box decoration.
 type InlineSpanStyle struct {
-	Background  Color
-	Border      Insets // widths
-	BorderColor Color
-	Radius      float32
-	Padding     Insets
-	Margin      Insets // only Left / Right take effect
+	NoWrap bool // white-space: nowrap; descendants share one unbreakable group
+	// BackgroundImage paints the sliced background of a wrapping inline.
+	// Its positioning area is the unbroken strip of all line fragments.
+	BackgroundImage func(Rect) Shader
+	Background      Color
+	Border          Insets // widths
+	BorderColor     Color
+	Radius          float32
+	Padding         Insets
+	Margin          Insets // only Left / Right take effect
 	// LineHeightScale is the span's CSS line-height (a multiple of the
 	// font size) for its runs; 0 inherits the enclosing one, < 0 is
 	// normal.
@@ -281,7 +285,7 @@ func (b *InlineBox) drawSpans(canvas Canvas, origin Rect) {
 	decorated := false
 	for i := range b.spans {
 		st := &b.spans[i].style
-		if st.Background.A > 0 || (st.BorderColor.A > 0 && st.Border != (Insets{})) ||
+		if st.BackgroundImage != nil || st.Background.A > 0 || (st.BorderColor.A > 0 && st.Border != (Insets{})) ||
 			(st.Hover != nil && st.Hover.Background.A > 0) {
 			decorated = true
 			break
@@ -291,6 +295,22 @@ func (b *InlineBox) drawSpans(canvas Canvas, origin Rect) {
 		return
 	}
 	lines := b.spanLineRects()
+	images := map[int32]Shader{}
+	imageOffset := map[int32]float32{}
+	for i, span := range b.spans {
+		if span.style.BackgroundImage == nil {
+			continue
+		}
+		id := int32(i + 1)
+		var strip Rect
+		for _, line := range lines {
+			if r, ok := line[id]; ok {
+				strip.W += r.W
+				strip.H = max(strip.H, r.H)
+			}
+		}
+		images[id] = span.style.BackgroundImage(strip)
+	}
 	for li, m := range lines {
 		for id := int32(1); id <= int32(len(b.spans)); id++ {
 			r, ok := m[id]
@@ -311,6 +331,14 @@ func (b *InlineBox) drawSpans(canvas Canvas, origin Rect) {
 					canvas.FillRect(r, bg)
 				}
 			}
+			if image := images[id]; image != nil {
+				var shape Shape = ShapeRect(r)
+				if st.Radius > 0 {
+					shape = ShapeRRect{Rect: r, Radius: st.Radius}
+				}
+				canvas.DrawShape(shape, Paint{Shader: inlineImageSlice{image, r.X - imageOffset[id], r.Y}, AntiAlias: true})
+				imageOffset[id] += r.W
+			}
 			if st.BorderColor.A == 0 || st.Border == (Insets{}) {
 				continue
 			}
@@ -330,6 +358,13 @@ func (b *InlineBox) drawSpans(canvas Canvas, origin Rect) {
 		}
 	}
 }
+
+type inlineImageSlice struct {
+	image Shader
+	x, y  float32
+}
+
+func (s inlineImageSlice) ColorAt(x, y float32) Color { return s.image.ColorAt(x-s.x, y-s.y) }
 
 // hoverLayout returns the layout with the hovered span's text restyled.
 func (b *InlineBox) hoverLayout() InlineLayout {

@@ -662,7 +662,29 @@ func parseCSSURL(v string) (string, bool) {
 		return "", false
 	}
 	rest := v[i+len("url("):]
-	j := strings.IndexByte(rest, ')')
+	j := -1
+	var quote byte
+	for k := 0; k < len(rest); k++ {
+		c := rest[k]
+		if c == '\\' {
+			k++
+			continue
+		}
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		if c == '\'' || c == '"' {
+			quote = c
+			continue
+		}
+		if c == ')' {
+			j = k
+			break
+		}
+	}
 	if j < 0 {
 		return "", false
 	}
@@ -671,7 +693,7 @@ func parseCSSURL(v string) (string, bool) {
 	if u == "" {
 		return "", false
 	}
-	return u, true
+	return UnescapeCSS(u), true
 }
 
 // parseFloatOr parses s as a float, returning def when empty/unparseable.

@@ -29,6 +29,28 @@ type AbsolutePosition struct {
 	InlineStatic bool
 }
 
+// RelativeSizeResolver defers percentage-dependent math until the containing
+// block dimensions are available. Flags distinguish auto from explicit zero.
+type RelativeSizeResolver interface {
+	ResolveRelativeSize(Size) (size Size, width, height bool)
+}
+
+// RelativeMarginResolver resolves CSS margins against the containing block's
+// width, including vertical percentage margins.
+type RelativeMarginResolver interface {
+	ResolveRelativeMargin(Size) Insets
+}
+
+func absoluteMargin(w Widget, cb Rect) Insets {
+	if r, ok := w.(RelativeMarginResolver); ok {
+		return r.ResolveRelativeMargin(Size{W: cb.W, H: cb.H})
+	}
+	if s := w.Style(); s != nil {
+		return s.Margin
+	}
+	return Insets{}
+}
+
 // resolvedIn returns pos with its percentages resolved against the
 // containing block cb, for child w.
 func (pos AbsolutePosition) resolvedIn(cb Rect, w Widget) AbsolutePosition {
@@ -51,6 +73,33 @@ func (pos AbsolutePosition) resolvedIn(cb Rect, w Widget) AbsolutePosition {
 	if pos.HeightPct != 0 {
 		pos.Height = pos.HeightPct*cb.H + extra.H
 	}
+	if r, ok := w.(RelativeSizeResolver); ok {
+		s, hasW, hasH := r.ResolveRelativeSize(Size{W: cb.W, H: cb.H})
+		if hasW {
+			pos.Width = s.W
+		}
+		if hasH {
+			pos.Height = s.H
+		}
+	}
+	if s := w.Style(); s != nil && s.AspectRatio > 0 {
+		in := s.ContentInsets()
+		h, v := in.Horizontal(), in.Vertical()
+		if s.AspectBorderBox {
+			h, v = 0, 0
+		}
+		if pos.Width <= 0 && pos.Height > 0 && pos.Anchor&(AnchorLeft|AnchorRight) != (AnchorLeft|AnchorRight) {
+			pos.Width = max(0, pos.Height-v)*s.AspectRatio + h
+		}
+		if pos.Height <= 0 && pos.Width > 0 && pos.Anchor&(AnchorTop|AnchorBottom) != (AnchorTop|AnchorBottom) {
+			pos.Height = max(0, pos.Width-h)/s.AspectRatio + v
+		}
+	}
+	m := absoluteMargin(w, cb)
+	pos.Left += m.Left
+	pos.Right += m.Right
+	pos.Top += m.Top
+	pos.Bottom += m.Bottom
 	return pos
 }
 
@@ -75,6 +124,9 @@ func placeAbsolute(ch Widget, cb Rect) {
 	if sp, ok := staticPositionOf(ch); ok {
 		sx, sy = sp.X, sp.Y
 	}
+	m := absoluteMargin(ch, cb)
+	sx += m.Left
+	sy += m.Top
 	x, w := resolveAnchorAxisStatic(pos.Anchor, AnchorLeft, AnchorRight,
 		pos.Left, pos.Right, pos.Width, cb.X, cb.W, ch, true, sx, 0)
 	y, h := resolveAnchorAxisStatic(pos.Anchor, AnchorTop, AnchorBottom,

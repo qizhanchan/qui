@@ -1,0 +1,9 @@
+{
+ "fixture": "web-url-delimiters",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "case": [0,0,200,72],
+  "after": [0,72,640,24]
+ }
+}

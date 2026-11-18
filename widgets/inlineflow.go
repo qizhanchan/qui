@@ -228,6 +228,13 @@ func (b *InlineBox) buildItems(maxW float32) []InlineItem {
 	items := make([]InlineItem, 0, len(b.parts))
 	boxN := 0
 	for _, p := range b.parts {
+		group := int32(0)
+		for id := p.span; id > 0; id = b.spans[id-1].parent {
+			if !b.spans[id-1].style.NoWrap {
+				break
+			}
+			group = id
+		}
 		if p.inset > 0 {
 			items = append(items, InlineItem{Inset: p.inset, InsetEnd: p.insetEnd, Span: p.span})
 			continue
@@ -238,11 +245,12 @@ func (b *InlineBox) buildItems(maxW float32) []InlineItem {
 			m := boxMargin(p.child)
 			sz := inlineChildSize(p.child, Size{W: maxW - m.Horizontal()})
 			it := InlineItem{
-				Box:      true,
-				Size:     Size{W: sz.W + m.Horizontal(), H: sz.H + m.Vertical()},
-				VAlign:   p.valign,
-				BoxIndex: boxN,
-				Span:     p.span,
+				NoWrapGroup: group,
+				Box:         true,
+				Size:        Size{W: sz.W + m.Horizontal(), H: sz.H + m.Vertical()},
+				VAlign:      p.valign,
+				BoxIndex:    boxN,
+				Span:        p.span,
 			}
 			// A text-carrying atomic box (e.g. a styled link kept as its own
 			// box) reports its baseline so the IFC aligns it with the run.
@@ -256,6 +264,7 @@ func (b *InlineBox) buildItems(maxW float32) []InlineItem {
 			continue
 		}
 		items = append(items, InlineItem{
+			NoWrapGroup:     group,
 			Text:            p.text,
 			Font:            p.font,
 			Color:           p.color,

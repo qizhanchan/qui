@@ -102,7 +102,8 @@ type StyleEngine struct {
 	// radioGroups coordinates <input type=radio> single-selection: all
 	// radios sharing a `name` attribute join one RadioGroup, so selecting
 	// one clears its peers even when they were built by separate elements.
-	radioGroups map[string]*radioGroupState
+	radioGroups    map[string]*radioGroupState
+	suppressToggle int // programmatic checked assignments do not activate controls
 }
 
 // radioGroupState is one named radio group plus its member elements, so the
@@ -128,11 +129,12 @@ func (eng *StyleEngine) radioGroup(name string, member *El) *widgets.RadioGroup 
 			for _, m := range st.members {
 				rb, _ := m.backing.(*widgets.RadioButton)
 				on := rb != nil && rb == sel
+				changed := m.checked != on
 				// Sync the checked flag + `checked` attribute and relink
 				// :checked (scoped restyle) for every member; the selected
 				// one gains it, the rest lose it.
 				m.setCheckedState(on)
-				if m.onToggle != nil {
+				if changed && on && eng.suppressToggle == 0 && m.onToggle != nil {
 					m.onToggle(on)
 				}
 			}

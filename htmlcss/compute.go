@@ -123,10 +123,12 @@ type ComputedStyle struct {
 	// Per-side borders. HasSideBorders is set when any border-<side>*
 	// property is seen; SideWidths / SideColors are then seeded from the
 	// uniform border and overridden per side.
-	HasSideBorders bool
-	SideWidths     qui.Insets
-	SideColors     qui.SideColors
-	Radius         float32
+	HasSideBorders        bool
+	SideWidths            qui.Insets
+	SideColors            qui.SideColors
+	Radius                float32
+	borderRadii           *borderRadiiSpec
+	widthExpr, heightExpr string // nonlinear percentage math, resolved by the containing block
 	// Corners holds per-corner radii (border-*-radius or a multi-value
 	// border-radius). Zero means "uniform Radius applies to all corners".
 	Corners qui.CornerRadii
@@ -556,6 +558,11 @@ func pseudoStyleContent(n *Node, sheet *Stylesheet, which string, parent *Comput
 		return nil, "", false
 	}
 	content, has = merged["content"]
+	// A pseudo-element starts as an inline box, regardless of its
+	// originating element's UA display (li must not generate another marker).
+	if _, ok := merged["display"]; !ok {
+		merged["display"] = "inline"
+	}
 	return interpret(n, merged, parent), content, has
 }
 
@@ -1448,7 +1455,9 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	// --- sizing ---
 	cs.BoxSizing = strings.ToLower(strings.TrimSpace(m["box-sizing"]))
 	if v, ok := m["width"]; ok {
-		if pct, ok := parsePercentFraction(v); ok {
+		if strings.Contains(v, "%") && (strings.Contains(v, "min(") || strings.Contains(v, "max(") || strings.Contains(v, "clamp(")) {
+			cs.widthExpr = v
+		} else if pct, ok := parsePercentFraction(v); ok {
 			cs.WidthPct = pct
 		} else if px, frac, hasPct, ok := parseLengthPct(v, fs); ok && hasPct && frac > 0 {
 			cs.WidthPct, cs.WidthPctOffset = frac, px // calc(100% - 2rem)
@@ -1457,7 +1466,9 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		}
 	}
 	if v, ok := m["height"]; ok {
-		if pct, ok := parsePercentFraction(v); ok {
+		if strings.Contains(v, "%") && (strings.Contains(v, "min(") || strings.Contains(v, "max(") || strings.Contains(v, "clamp(")) {
+			cs.heightExpr = v
+		} else if pct, ok := parsePercentFraction(v); ok {
 			cs.HeightPct = pct
 		} else if px, frac, hasPct, ok := parseLengthPct(v, fs); ok && hasPct && frac > 0 {
 			cs.HeightPct, cs.HeightPctOffset = frac, px
@@ -1891,6 +1902,7 @@ func parseBorder(m map[string]string, cs *ComputedStyle, fs float32) {
 // longhands. When every corner ends up equal it collapses back to the uniform
 // Radius fast path; otherwise Corners is set and box painting goes per-corner.
 func parseBorderRadius(m map[string]string, cs *ComputedStyle, fs float32) {
+	cs.borderRadii = parseRelativeBorderRadii(m, fs)
 	var uniform float32
 	var c qui.CornerRadii
 	hasCorners := false
@@ -2051,13 +2063,17 @@ func marginAutoFlags(m map[string]string) (top, right, bottom, left bool) {
 }
 
 func parseBox(m map[string]string, prop string, fs float32) qui.Insets {
+	return parseBoxRelative(m, prop, fs, 0)
+}
+
+func parseBoxRelative(m map[string]string, prop string, fs, ref float32) qui.Insets {
 	var ins qui.Insets
 	if v, ok := m[prop]; ok {
 		// Top-level split: `calc(1rem + 4px) 8px` is two values, not four.
 		fields := fieldsTopLevel(v)
 		vals := make([]float32, 0, 4)
 		for _, f := range fields {
-			px, _ := parseLength(f, fs, 0)
+			px, _ := parseLength(f, fs, ref)
 			vals = append(vals, px)
 		}
 		switch len(vals) {
@@ -2072,22 +2088,22 @@ func parseBox(m map[string]string, prop string, fs float32) qui.Insets {
 		}
 	}
 	if v, ok := m[prop+"-top"]; ok {
-		if px, ok := parseLength(v, fs, 0); ok {
+		if px, ok := parseLength(v, fs, ref); ok {
 			ins.Top = px
 		}
 	}
 	if v, ok := m[prop+"-right"]; ok {
-		if px, ok := parseLength(v, fs, 0); ok {
+		if px, ok := parseLength(v, fs, ref); ok {
 			ins.Right = px
 		}
 	}
 	if v, ok := m[prop+"-bottom"]; ok {
-		if px, ok := parseLength(v, fs, 0); ok {
+		if px, ok := parseLength(v, fs, ref); ok {
 			ins.Bottom = px
 		}
 	}
 	if v, ok := m[prop+"-left"]; ok {
-		if px, ok := parseLength(v, fs, 0); ok {
+		if px, ok := parseLength(v, fs, ref); ok {
 			ins.Left = px
 		}
 	}
@@ -2297,6 +2313,12 @@ func blockify(d string) string {
 func (cs *ComputedStyle) newFormattingContext() bool {
 	if cs == nil {
 		return false
+	}
+	// Flex and grid items establish independent formatting contexts, even
+	// when their own computed display is block. Their auto height contains
+	// descendant floats.
+	if cs.ZIndexItem {
+		return true
 	}
 	if cs.Float != "" || cs.OverflowScroll || cs.OverflowClip {
 		return true

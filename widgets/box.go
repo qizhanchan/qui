@@ -22,6 +22,9 @@ import (
 // border — the common <div> case paints nothing of its own.
 type Box struct {
 	Container
+	// BorderPath resolves CSS percentage / elliptical corner radii against
+	// the final border box. inset is the border stroke's half width.
+	BorderPath func(bounds Rect, inset float32) *Path
 
 	// paintBounds memoizes untransformedPaintBounds for one paint pass
 	// (qui.PaintPass); pbGen 0 = none.
@@ -285,6 +288,9 @@ func (b *Box) HitTest(p Point) Widget {
 		}
 	}
 	if !b.stackRoot() {
+		if b.inInheritedFloat(p) {
+			return nil
+		}
 		return b.Container.HitTest(p)
 	}
 	// Layers paint over the in-flow content, so they are hit first —
@@ -307,7 +313,7 @@ func (b *Box) HitTest(p Point) Widget {
 			return hit
 		}
 	}
-	if hit := b.Container.HitTest(p); hit != nil && hit != Widget(b) && hit != b.Self() {
+	if hit := b.Container.HitTest(p); !b.inInheritedFloat(p) && hit != nil && hit != Widget(b) && hit != b.Self() {
 		return hit
 	}
 	for i := split - 1; i >= 0; i-- {
@@ -318,7 +324,29 @@ func (b *Box) HitTest(p Point) Widget {
 			return hit
 		}
 	}
+	if b.inInheritedFloat(p) {
+		return nil
+	}
 	return b.Container.HitTest(p)
+}
+
+// Normal blocks span the full containing width underneath a float, while
+// their inline content excludes it. Those block rectangles must not steal
+// pointer input from the float painted above their backgrounds.
+func (b *Box) inInheritedFloat(p Point) bool {
+	fl, ok := b.LayoutEngine.(FlowLayout)
+	if !ok || fl.Floats == nil || fl.Floats.ContainsFloats {
+		return false
+	}
+	in := b.Style().ContentInsets()
+	p.X -= b.Bounds().X + in.Left
+	p.Y -= b.Bounds().Y + in.Top
+	for _, f := range fl.Floats.Inherited {
+		if f.Rect.Contains(p) {
+			return true
+		}
+	}
+	return false
 }
 
 // InteractionTransform is the CSS transform exposed to root-level AX/action
@@ -508,7 +536,9 @@ func (b *Box) drawContent(canvas Canvas, bounds Rect) {
 	if b.ClipChildren {
 		depth := canvas.Save()
 		defer canvas.RestoreTo(depth)
-		if st := b.Style(); !st.Corners.IsZero() {
+		if b.BorderPath != nil {
+			canvas.ClipPath(b.BorderPath(bounds, 0))
+		} else if st := b.Style(); !st.Corners.IsZero() {
 			canvas.ClipPath(cornerPath(bounds, st.Corners.Resolved(st.Radius)))
 		} else if st.Radius > 0 {
 			canvas.ClipPath(NewPath().AddRRect(bounds, st.Radius))
@@ -676,6 +706,10 @@ func (b *Box) paintDecorations(canvas Canvas, bounds Rect) {
 	}
 	// Drop shadow paints behind everything (CSS box-shadow, outset only).
 	// Extra layers (CSS comma-separated shadows) paint first (farthest back).
+	shadowDepth := -1
+	if !st.Shadow.IsZero() || len(st.ExtraShadows) > 0 {
+		shadowDepth = canvas.SaveLayer(b.untransformedPaintBounds(), Paint{})
+	}
 	for i := len(st.ExtraShadows) - 1; i >= 0; i-- {
 		if sh := st.ExtraShadows[i]; !sh.IsZero() && !sh.Inset {
 			canvas.DrawShadow(bounds, radius, ElevationSpec{
@@ -688,13 +722,33 @@ func (b *Box) paintDecorations(canvas Canvas, bounds Rect) {
 			X: sh.X, Y: sh.Y, Blur: sh.Blur, Spread: sh.Spread, Opacity: 1, Knockout: true,
 		}, sh.Color)
 	}
+	if shadowDepth >= 0 {
+		// An outset shadow is clipped outside the original border box even
+		// when the box has a transparent background.
+		var shape Shape = ShapeRRect{Rect: bounds, Radius: radius}
+		if b.BorderPath != nil {
+			shape = ShapePath{Path: b.BorderPath(bounds, 0)}
+		} else if !st.Corners.IsZero() {
+			shape = ShapePath{Path: cornerPath(bounds, st.Corners.Resolved(radius))}
+		}
+		cut := canvas.SaveLayer(bounds, Paint{BlendMode: BlendDstOut})
+		canvas.DrawShape(shape, Paint{Color: Color{A: 1}, AntiAlias: true})
+		canvas.RestoreTo(cut)
+		canvas.RestoreTo(shadowDepth)
+	}
 	// Per-corner radii (CSS border-*-radius) route background + solid border
 	// through the path rasterizer; the uniform fast path stays otherwise.
 	perCorner := !st.Corners.IsZero()
+	var borderPath *Path
+	if b.BorderPath != nil {
+		borderPath = b.BorderPath(bounds, 0)
+	}
 	// CSS background-color is below the background image, including its
 	// transparent pixels and the area outside a non-repeated image.
 	if bg.A > 0 {
-		if perCorner {
+		if borderPath != nil {
+			canvas.DrawShape(ShapePath{Path: borderPath}, Paint{Style: PaintFill, Color: bg, AntiAlias: true})
+		} else if perCorner {
 			canvas.DrawShape(ShapePath{Path: cornerPath(bounds, st.Corners.Resolved(radius))}, Paint{Color: bg, AntiAlias: true})
 		} else if radius > 0 {
 			canvas.FillRoundedRect(bounds, radius, bg)
@@ -705,7 +759,9 @@ func (b *Box) paintDecorations(canvas Canvas, bounds Rect) {
 	if b.BackgroundShader != nil {
 		if shader := b.BackgroundShader(bounds); shader != nil {
 			var shape Shape = ShapeRect(bounds)
-			if perCorner {
+			if borderPath != nil {
+				shape = ShapePath{Path: borderPath}
+			} else if perCorner {
 				shape = ShapePath{Path: cornerPath(bounds, st.Corners.Resolved(radius))}
 			} else if radius > 0 {
 				shape = ShapeRRect{Rect: bounds, Radius: radius}
@@ -735,6 +791,14 @@ func (b *Box) paintDecorations(canvas Canvas, bounds Rect) {
 			paintBorderEdge(canvas, Rect{X: bounds.X, Y: bounds.Y + bounds.H - borderSize, W: bounds.W, H: borderSize}, true, borderSize, border, st.BorderStyle)
 			paintBorderEdge(canvas, Rect{X: bounds.X, Y: bounds.Y, W: borderSize, H: bounds.H}, false, borderSize, border, st.BorderStyle)
 			paintBorderEdge(canvas, Rect{X: bounds.X + bounds.W - borderSize, Y: bounds.Y, W: borderSize, H: bounds.H}, false, borderSize, border, st.BorderStyle)
+		} else if borderPath != nil {
+			d := canvas.SaveLayer(bounds, Paint{})
+			canvas.DrawShape(ShapePath{Path: borderPath}, Paint{Color: border, AntiAlias: true})
+			cut := canvas.SaveLayer(bounds, Paint{BlendMode: BlendDstOut})
+			canvas.DrawShape(ShapePath{Path: b.BorderPath(bounds, borderSize)},
+				Paint{Color: Color{A: 1}, AntiAlias: true})
+			canvas.RestoreTo(cut)
+			canvas.RestoreTo(d)
 		} else if perCorner {
 			// Inset by half the stroke width so the outline sits inside the box
 			// (matches StrokeRoundedRect, which centers on the rect edge).

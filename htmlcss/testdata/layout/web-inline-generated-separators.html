@@ -1,0 +1,10 @@
+<!doctype html><html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+body { margin:0; font:16px/24px GoRegular; }
+#outer { width:250px; }
+ul,li { display:inline; margin:0; padding:0; }
+li::after { content:" · "; font-weight:bold; }
+li:last-child::after { content:none; }
+li ul::before { content:" ("; }
+li ul::after { content:") "; }
+</style></head><body><div id="outer">Topics: <ul><li>Browser engines</li><li>Rendering<ul><li>layout</li></ul></li><li>Typography</li><li>Network protocols</li></ul></div><div id="after">After</div></body></html>

@@ -234,6 +234,13 @@ func LineBreakBoundaries(text []rune) []textBreak {
 	breaks := make([]textBreak, 0, len(text)/4+1)
 	for iter.Next() {
 		line := iter.Line()
+		end := line.Offset + len(line.Text)
+		// Blink's Latin line breaking keeps a doubled solidus attached to
+		// the following word (notably the scheme and host in an address).
+		if end > 1 && end < len(text) && text[end-1] == '/' && text[end-2] == '/' &&
+			(text[end] >= 'a' && text[end] <= 'z' || text[end] >= 'A' && text[end] <= 'Z' || text[end] >= '0' && text[end] <= '9') {
+			continue
+		}
 		breaks = append(breaks, textBreak{
 			Offset:    line.Offset + len(line.Text),
 			Mandatory: line.IsMandatoryBreak,

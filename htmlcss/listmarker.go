@@ -55,9 +55,11 @@ func markerShapeFor(marker string) (listMarkerShape, bool) {
 
 type listMarkerWidget struct {
 	qui.BaseWidget
-	shape listMarkerShape
-	font  qui.Font
-	color qui.Color
+	shape      listMarkerShape
+	font       qui.Font
+	color      qui.Color
+	lineHeight float32 // CSS first-line height; zero uses the native text box.
+	web        bool
 }
 
 func newListMarker(shape listMarkerShape, font qui.Font, color qui.Color) *listMarkerWidget {
@@ -90,6 +92,9 @@ func (m *listMarkerWidget) Measure(available qui.Size) qui.Size {
 	if lineH <= 0 {
 		lineH = m.fontSize()
 	}
+	if m.lineHeight > 0 {
+		lineH = m.lineHeight
+	}
 	// Width is the shape itself — the [marker | content] row's Gap supplies
 	// the spacing to the item text.
 	return qui.Size{W: m.size(), H: lineH}
@@ -104,6 +109,15 @@ func (m *listMarkerWidget) Draw(canvas qui.Canvas) {
 	// Line up with the lowercase mass of the item's text, exactly as the
 	// text renderer would place it in this same box.
 	cy := qui.TextXHeightCenterY(b, m.font)
+	if m.web {
+		// Browser bullets use a compact symbol above the baseline, in the
+		// first CSS line box (which can be taller than the font's own box).
+		asc, desc := qui.FontVerticalMetrics(m.font)
+		cy = b.Y + (b.H+asc-desc)/2 - m.fontSize()*.3
+		if m.shape == markerDisc {
+			size = m.fontSize() / 3
+		}
+	}
 	rect := qui.Rect{X: b.X, Y: cy - size/2, W: size, H: size}
 	switch m.shape {
 	case markerSquare:
@@ -144,7 +158,11 @@ func (outsideMarkerLayout) Measure(children []qui.Widget, avail qui.Size) qui.Si
 func (outsideMarkerLayout) Apply(children []qui.Widget, bounds qui.Rect) {
 	for _, c := range children {
 		sz := qui.MeasureChild(c, qui.Size{W: outsideMarkerMeasureW, H: bounds.H})
-		c.Layout(qui.Rect{X: bounds.X - outsideMarkerGap - sz.W, Y: bounds.Y, W: sz.W, H: sz.H})
+		gap := float32(outsideMarkerGap)
+		if m, ok := c.(*listMarkerWidget); ok && m.web {
+			gap = m.fontSize() * .65
+		}
+		c.Layout(qui.Rect{X: bounds.X - gap - sz.W, Y: bounds.Y, W: sz.W, H: sz.H})
 	}
 }
 

@@ -2125,6 +2125,10 @@ func (e *El) SetChecked(v bool) {
 			return
 		}
 		if v && e.radioGrp != nil {
+			if e.engine != nil {
+				e.engine.suppressToggle++
+				defer func() { e.engine.suppressToggle-- }()
+			}
 			e.radioGrp.Select(w) // group OnChange relinks every member
 		} else {
 			w.Checked = v
@@ -2616,6 +2620,48 @@ func (e *El) floatState(cs *ComputedStyle) *qui.FloatState {
 		e.floats.Inherited = nil
 	}
 	return e.floats
+}
+
+// ResolveRelativeSize evaluates nonlinear percentage math when layout knows
+// the containing block. Evaluating min(50px,70%) against zero loses its size.
+func (e *El) ResolveRelativeSize(cb qui.Size) (size qui.Size, width, height bool) {
+	if cs := e.lastCS; cs != nil {
+		x, y := cs.boxSizingExtra()
+		if cs.widthExpr != "" {
+			size.W, width = parseLength(cs.widthExpr, cs.FontSize, cb.W)
+			size.W += x
+		}
+		if cs.heightExpr != "" {
+			size.H, height = parseLength(cs.heightExpr, cs.FontSize, cb.H)
+			size.H += y
+		}
+	}
+	return
+}
+
+func (e *El) ResolveRelativeMargin(cb qui.Size) qui.Insets {
+	if cs := e.lastCS; cs != nil {
+		return parseBoxRelative(cs.raw, "margin", cs.FontSize, cb.W)
+	}
+	return e.Style().Margin
+}
+
+// SetFloatExclusions passes ancestor floats through a list item's anonymous
+// content host. Its marker row is an implementation detail, not a CSS flex
+// formatting context that isolates the item from surrounding floats.
+func (e *El) SetFloatExclusions(ex []qui.FloatExclusion) {
+	if e.marker != "" && e.liContent != nil {
+		in := e.Style().ContentInsets()
+		moved := make([]qui.FloatExclusion, len(ex))
+		for i, f := range ex {
+			f.Rect.X -= in.Left
+			f.Rect.Y -= in.Top
+			moved[i] = f
+		}
+		e.liContent.SetFloatExclusions(moved)
+		return
+	}
+	e.Container.SetFloatExclusions(ex)
 }
 
 // isDetailsSummary reports whether e is the summary of a <details>: its
@@ -3187,6 +3233,15 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		ib.Selectable = selectable
 	}
 
+	// Empty generated content may still paint an icon or an absolute
+	// decoration; it must get a box even when there is no generated text.
+	if !e.pseudoKids && ((e.pbCS != nil && (e.pbCS.Position == "absolute" || e.pbCS.Position == "fixed" || e.pbCS.Float != "")) ||
+		(e.paCS != nil && (e.paCS.Position == "absolute" || e.paCS.Position == "fixed" || e.paCS.Float != "")) ||
+		(e.text == "" && len(e.elementKids) == 0 && ((e.pbCS != nil && e.pbCS.isVisualBox()) || (e.paCS != nil && e.paCS.isVisualBox())))) {
+		e.pseudoKids = true
+		e.buildPseudoBoxes()
+	}
+
 	// List-item marker: an li directly inside a ul/ol renders as a
 	// [marker | content] row (hanging indent) unless list-style-type says
 	// none. The row engine goes on the element; the real content layout
@@ -3213,6 +3268,8 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 				} else {
 					e.markerShape.set(shape, fontFrom(mcs), mcs.Color)
 				}
+				e.markerShape.web = webCompat
+				e.markerShape.lineHeight = mcs.LineHeight * mcs.FontSize
 			} else {
 				if e.markerLabel == nil {
 					e.markerLabel = widgets.NewLabel(m)
@@ -3914,6 +3971,7 @@ func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *Compu
 		ib.OpenSpan(inlineSpanStyle(ke, kcs, parent))
 		defer ib.CloseSpan()
 	}
+	e.appendInlinePseudo(ib, ke, kcs, "before", href, link)
 	if ke.text != "" {
 		n0 := ib.PartCount()
 		ib.AddLinkText(ke.text, fontFrom(kcs), kcs.Color, kcs.decoration(), kcs.decorationPaint(), href, linkSource(link))
@@ -3931,6 +3989,37 @@ func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *Compu
 			ib.AddBox(k, qui.InlineBaseline)
 		}
 	}
+	e.appendInlinePseudo(ib, ke, kcs, "after", href, link)
+}
+
+// Generated content belongs inside the inline box even when that element
+// was folded into an ancestor's text run rather than materialized as a widget.
+func (e *El) appendInlinePseudo(ib *widgets.InlineBox, owner *El, parent *ComputedStyle, which, href string, link *El) {
+	if !webCompat || e.engine == nil || e.engine.sheet == nil {
+		return
+	}
+	cs, content, has := pseudoStyleContent(owner.node, e.engine.sheet, which, parent)
+	if !has || cs == nil || cs.Display == "none" || content == "none" || content == "normal" || cs.Position == "absolute" || cs.Position == "fixed" {
+		return
+	}
+	txt := unquoteContentWith(content, owner.node, func(fn cssFunction) string { return owner.counterContent(fn, which, parent, cs) })
+	if cs.Display == "inline" && !cs.isVisualBox() {
+		ib.AddLinkText(txt, fontFrom(cs), cs.Color, cs.decoration(), cs.decorationPaint(), href, linkSource(link))
+		return
+	}
+	slot := &owner.pseudoBefore
+	if which == "after" {
+		slot = &owner.pseudoAfter
+	}
+	if *slot == nil {
+		*slot = newEl("::"+which, e.engine)
+		(*slot).elParent = owner
+		e.engine.unregister(*slot)
+	}
+	pe := *slot
+	pe.text = txt
+	pe.applyComputed(cs)
+	ib.AddBox(pe, inlineVAlignOf(cs))
 }
 
 // spanLineHeight is a span's line-height scale: < 0 for normal.
@@ -3975,23 +4064,33 @@ func inlineHasContent(e *El) bool {
 
 // spanFoldable reports whether an inline element's style can be painted
 // as an InlineBox span (web-compat): backgrounds, borders, padding, radius
-// and text-only :hover changes can; shadows, gradients, images, opacity,
+// and text-only :hover changes can; shadows, gradients, opacity,
 // filters and box-changing :hover variants still need a widget of their
 // own. Width / height do not apply to inline boxes at all.
 func spanFoldable(cs *ComputedStyle) bool {
 	return !cs.HasShadow && cs.Gradient == nil && !cs.HasOpacity && cs.Transform == nil &&
-		cs.Filter == nil && cs.BackgroundImageURL == "" && cs.ClipPath == nil && cs.Mask == nil && cs.BackdropFilter == nil &&
+		cs.Filter == nil && cs.ClipPath == nil && cs.Mask == nil && cs.BackdropFilter == nil &&
 		!cs.hasStateBoxVariant()
 }
 
 // inlineSpanStyle is a folded inline element's span decoration.
 func inlineSpanStyle(e *El, cs, parent *ComputedStyle) widgets.InlineSpanStyle {
 	st := widgets.InlineSpanStyle{
+		NoWrap:          cs.NoWrap,
 		LineHeightScale: spanLineHeight(cs),
 		Padding:         cs.Padding,
 		Margin:          qui.Insets{Left: cs.Margin.Left, Right: cs.Margin.Right},
 		Radius:          cs.Radius,
 		Source:          e,
+	}
+	if cs.BackgroundImageURL != "" {
+		e.applyBackgroundImage(cs)
+		st.BackgroundImage = func(r qui.Rect) qui.Shader {
+			if e.Box.BackgroundShader != nil {
+				return e.Box.BackgroundShader(r)
+			}
+			return nil
+		}
 	}
 	if cs.HasBackground {
 		st.Background = cs.Background
@@ -4470,19 +4569,19 @@ func (e *El) syncChildren() {
 			e.ensureLabel()
 			kids = append([]qui.Widget{e.textLabel}, kids...)
 		}
-		if e.pseudoKids {
-			if e.pbCS != nil && e.pseudoBefore != nil {
-				kids = append([]qui.Widget{e.pseudoBefore}, kids...)
-			}
-			if e.paCS != nil && e.pseudoAfter != nil {
-				kids = append(append([]qui.Widget(nil), kids...), e.pseudoAfter)
-			}
-		}
 	case e.iconSrc != nil && e.iconImg != nil:
 		kids = []qui.Widget{e.iconImg}
 	case e.text != "":
 		e.ensureLabel()
 		kids = []qui.Widget{e.textLabel}
+	}
+	if e.pseudoKids {
+		if e.pbCS != nil && e.pseudoBefore != nil {
+			kids = append([]qui.Widget{e.pseudoBefore}, kids...)
+		}
+		if e.paCS != nil && e.pseudoAfter != nil {
+			kids = append(append([]qui.Widget(nil), kids...), e.pseudoAfter)
+		}
 	}
 	// List-item marker: content moves into the liContent host so the
 	// bullet/number column hangs to the left of (possibly wrapping) content.
@@ -5117,6 +5216,12 @@ func (e *El) layoutStateVariant(cs, parent *ComputedStyle) *ComputedStyle {
 // label/marker/icon color+decoration to the current state before painting.
 func (e *El) Draw(canvas qui.Canvas) {
 	if e.displayNone {
+		return
+	}
+	// Style's zero opacity is the native-widget "unspecified" sentinel.
+	// CSS zero is explicit: skip the entire painted subtree while retaining
+	// its layout and hit region (transparent form controls remain clickable).
+	if e.lastCS != nil && e.lastCS.HasOpacity && e.lastCS.Opacity == 0 && e.Style().Opacity <= 0 {
 		return
 	}
 	// Resolve the ancestor-state variant for the current trigger set once
