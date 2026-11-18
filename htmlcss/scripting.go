@@ -23,8 +23,14 @@ func (e *El) Kids() []qui.Widget { return append([]qui.Widget(nil), e.elementKid
 // IsText reports whether e is an anonymous text segment (a DOM text node).
 func (e *El) IsText() bool { return e.isTextSeg() }
 
-// AttrNames lists the element's attribute names, sorted.
+// AttrNames lists the element's attribute names in DOM order (source
+// order for parsed markup, then insertion order).
 func (e *El) AttrNames() []string {
+	e.attrMu.RLock()
+	defer e.attrMu.RUnlock()
+	if len(e.attrOrder) == len(e.attrs) {
+		return append([]string(nil), e.attrOrder...)
+	}
 	out := make([]string, 0, len(e.attrs))
 	for k := range e.attrs {
 		out = append(out, k)
@@ -52,7 +58,7 @@ type SelectorList []Selector
 // Matches reports whether e (an element, not a text segment) matches any
 // selector of the list, with its current interactive state.
 func (l SelectorList) Matches(e *El) bool {
-	if e == nil || e.isTextSeg() || e.node == nil {
+	if e == nil || e.isTextSeg() || e.tag == "#comment" || e.node == nil {
 		return false
 	}
 	st := selectorState{hover: e.Hovering(), focus: e.Focused(), active: e.Pressed()}
@@ -97,7 +103,7 @@ func (l SelectorList) QueryAll(root *El, limit int) []*El {
 // elements and text segments of this engine, not yet attached anywhere.
 // Scripts are not built (a script inserted through innerHTML never runs).
 func (eng *StyleEngine) ParseFragment(src string) []qui.Widget {
-	doc := ParseHTML("<body>" + src + "</body>")
+	doc := parseHTML("<body>"+src+"</body>", eng.opts.ScriptDOM)
 	body := findTag(doc, "body")
 	if body == nil {
 		return nil
@@ -111,10 +117,18 @@ func (eng *StyleEngine) ParseFragment(src string) []qui.Widget {
 			if k := eng.buildStaticEl(c, nil); k != nil {
 				out = append(out, k)
 			}
+		case CommentNode:
+			out = append(out, newCommentEl(c.Text, eng))
 		}
 	}
 	return out
 }
+
+// NewCommentEl creates a detached comment node (document.createComment).
+func (eng *StyleEngine) NewCommentEl(text string) *El { return newCommentEl(text, eng) }
+
+// IsComment reports whether e is a comment node.
+func (e *El) IsComment() bool { return e.tag == "#comment" }
 
 // MediaMatches evaluates a media query list against the current viewport
 // (window.matchMedia).

@@ -41,6 +41,21 @@ type El struct {
 
 	tag   string
 	attrs map[string]string // id, class, style, href, type, placeholder, value…
+	// attrOrder is attrs' keys in insertion order (the DOM's attribute
+	// order: getAttributeNames, outerHTML).
+	attrOrder []string
+	// mergeLead / mergedText / mergedAway: a text segment heading (or
+	// merged into) a run of adjacent text outside an inline run
+	// (renderableKids).
+	mergeLead  bool
+	mergedText string
+	mergedAway bool
+	// domText is a text-leaf's source text when it differs from the
+	// collapsed text it renders (ScriptDOM: scripts see the source).
+	domText    string
+	domTextSet bool
+	// inlineSVG is an inline <svg> element's drawing (inlinesvg.go).
+	inlineSVG *svg.Document
 	// attrMu guards the attrs MAP ONLY, and only against the one reader
 	// that is not on the main goroutine: the AX / DOM introspection surface
 	// (Role, AccessibleName, inspect.go), which an agent HTTP handler walks
@@ -412,6 +427,16 @@ func newTextEl(text string, engine *StyleEngine) *El {
 	return e
 }
 
+// newCommentEl creates a comment node (ScriptDOM): an element-shaped
+// leaf that never renders and that selectors never see.
+func newCommentEl(text string, engine *StyleEngine) *El {
+	e := newEl("#comment", engine)
+	e.text = text
+	e.node.Type = CommentNode
+	e.node.Text = text
+	return e
+}
+
 // isTextSeg reports whether this element is an anonymous text segment.
 func (e *El) isTextSeg() bool { return e.tag == "#text" }
 
@@ -422,7 +447,7 @@ func (e *El) Tag() string { return e.tag }
 // content (CSS table shrink-to-fit) rather than filling its flow band like a
 // normal block. A table with a declared width fills/uses that width instead.
 func (e *El) ShrinkToFitWidth() bool {
-	if e.lastCS != nil && webCompat && e.tag == "img" && e.iconSrc == nil {
+	if e.lastCS != nil && webCompat && e.isImg() && e.iconSrc == nil {
 		return true // a replaced element is its own size, never the line's
 	}
 	return e.lastCS != nil && e.lastCS.Display == "table" && !e.lastCS.HasWidth
@@ -539,12 +564,23 @@ func (e *El) Attr(k string) (string, bool) { return e.readAttr(k) }
 
 func (e *El) storeAttr(k, v string) {
 	e.attrMu.Lock()
+	if _, ok := e.attrs[k]; !ok {
+		e.attrOrder = append(e.attrOrder, k)
+	}
 	e.attrs[k] = v
 	e.attrMu.Unlock()
 }
 
 func (e *El) dropAttr(k string) {
 	e.attrMu.Lock()
+	if _, ok := e.attrs[k]; ok {
+		for i, n := range e.attrOrder {
+			if n == k {
+				e.attrOrder = append(e.attrOrder[:i:i], e.attrOrder[i+1:]...)
+				break
+			}
+		}
+	}
 	delete(e.attrs, k)
 	e.attrMu.Unlock()
 }
@@ -675,8 +711,14 @@ func (e *El) applyDisabledState(ensure bool) {
 }
 
 // TextContent returns the element's own text content (DOM textContent for
-// a text-leaf element), excluding descendants' text.
-func (e *El) TextContent() string { return e.text }
+// a text-leaf element), excluding descendants' text. In a ScriptDOM
+// document that is the source text, before white-space collapsing.
+func (e *El) TextContent() string {
+	if e.domTextSet {
+		return e.domText
+	}
+	return e.text
+}
 
 // SetTextContent sets the element's text content (for text-leaf elements),
 // the DOM `textContent` setter. The label updates immediately for
@@ -689,6 +731,7 @@ func (e *El) TextContent() string { return e.text }
 // injecting a phantom text line that shifts the page it was meant to
 // inspect. Text actions reach controls through TextTarget instead.
 func (e *El) SetTextContent(s string) {
+	e.domTextSet, e.domText = false, ""
 	if e.text == s {
 		return
 	}
@@ -922,7 +965,7 @@ func (e *El) SetIconUntinted(src qui.VectorSource) {
 // takes precedence over src; nil goes back to src. A no-op when the image
 // is unchanged, and on a non-<img> element.
 func (e *El) SetImage(img image.Image) {
-	if e.tag != "img" || e.imgData == img {
+	if !e.isImg() || e.imgData == img {
 		return
 	}
 	e.imgData = img
@@ -2200,6 +2243,78 @@ func (e *El) selectValueAt(i int) string {
 	return e.selectItems[i]
 }
 
+// SelectedIndex is a <select>'s current selection (an index into its
+// option rows, -1 for none).
+func (e *El) SelectedIndex() int {
+	if sel, ok := e.backing.(*widgets.Select); ok {
+		return sel.SelectedIdx
+	}
+	return e.selectedIdx
+}
+
+// SyncOptions rebuilds a <select>'s rows from its <option> / <optgroup>
+// child elements (after a script changed them), keeping the selected
+// option when it is still there (else the last `selected` option, else
+// the first enabled one). It returns the option element behind
+// each row (nil for an optgroup's heading row).
+func (e *El) SyncOptions(selected *El) []*El {
+	var items, values []string
+	var disabled []bool
+	var rows []*El
+	sel, attrSel := -1, -1
+	var collect func(p *El, groupOff bool)
+	collect = func(p *El, groupOff bool) {
+		for _, k := range p.elementKids {
+			c, ok := k.(*El)
+			if !ok || c.isTextSeg() {
+				continue
+			}
+			switch c.tag {
+			case "option":
+				label := collapseText(c.TextContent())
+				value := label
+				if v, ok := c.attrs["value"]; ok {
+					value = v
+				}
+				_, off := c.attrs["disabled"]
+				if c == selected {
+					sel = len(items)
+				}
+				if _, ok := c.attrs["selected"]; ok {
+					attrSel = len(items)
+				}
+				items, values, disabled = append(items, label), append(values, value), append(disabled, off || groupOff)
+				rows = append(rows, c)
+			case "optgroup":
+				_, off := c.attrs["disabled"]
+				if label := strings.TrimSpace(c.attrs["label"]); label != "" {
+					items, values, disabled = append(items, label), append(values, ""), append(disabled, true)
+					rows = append(rows, nil)
+				}
+				collect(c, groupOff || off)
+			}
+		}
+	}
+	collect(e, false)
+	if sel < 0 {
+		sel = attrSel // the previous selection is gone: the `selected` option
+	}
+	e.selectItems, e.selectValues, e.selectDisabled = items, values, disabled
+	if w, ok := e.backing.(*widgets.Select); ok {
+		w.SetItems(items)
+		w.SetItemDisabled(disabled)
+		w.SelectedIdx = -1
+	}
+	e.selectedSet = false
+	e.selectedIdx = -1
+	if sel >= 0 {
+		e.SetSelectedIndex(sel)
+	} else {
+		e.defaultSelection()
+	}
+	return rows
+}
+
 // SetSelectedIndex sets a <select>'s current selection.
 func (e *El) SetSelectedIndex(i int) {
 	e.selectedIdx = i
@@ -2573,8 +2688,11 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	// typography on the internal label, no box of its own.
 	if e.isTextSeg() {
 		e.flowKids = nil
+		// An anonymous box: no padding, border or background of its own
+		// (the widget default would pad a text flex item by 4×6).
+		e.SetStyle(qui.Style{})
 		e.ensureLabel()
-		applyTextStyle(e.textLabel, collapseText(e.text), cs, textLabelOpts{boxless: true})
+		applyTextStyle(e.textLabel, collapseText(e.segText()), cs, textLabelOpts{boxless: true})
 		e.syncChildren()
 		return
 	}
@@ -2862,7 +2980,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		// block would (a <pre style="overflow:auto"> keeps its lines).
 		e.flowKids = e.buildFlow(cs)
 		if e.flowKids == nil && webCompat && e.text != "" && len(e.elementKids) == 0 &&
-			e.iconSrc == nil && e.tag != "img" && !e.isControl() && e.backing == nil {
+			e.iconSrc == nil && !e.isImg() && !e.isControl() && e.backing == nil {
 			e.flowKids = e.buildPseudoLeaf(cs)
 		}
 		if e.flowKids != nil {
@@ -2909,7 +3027,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		// generated content when buildFlow already produced inline runs.)
 		e.pseudoKids = false
 		if e.flowKids == nil && (e.pbText != "" || e.paText != "") &&
-			e.iconSrc == nil && e.tag != "img" {
+			e.iconSrc == nil && !e.isImg() {
 			if len(renderableKids(e.elementKids)) > 0 {
 				// Element children: the generated content is a box beside
 				// them (a flex / grid item, or a block / inline box in the
@@ -2923,7 +3041,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		// Web-compat: a text-only block flows as an inline run (not a
 		// Label), so its lines can wrap around floats.
 		if webCompat && e.flowKids == nil && e.text != "" && len(e.elementKids) == 0 &&
-			e.iconSrc == nil && e.tag != "img" && !e.isControl() && e.backing == nil &&
+			e.iconSrc == nil && !e.isImg() && !e.isControl() && e.backing == nil &&
 			!strings.HasPrefix(cs.Display, "table") {
 			e.flowKids = e.buildPseudoLeaf(cs)
 		}
@@ -2932,7 +3050,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 			// Mixed inline content: anonymous inline runs (InlineBoxes)
 			// interleaved with block children (see syncChildren).
 			e.LayoutEngine = qui.FlowLayout{Floats: e.floatState(cs)}
-		case e.tag == "img" && e.iconSrc == nil:
+		case e.isImg() && e.iconSrc == nil:
 			e.ensureImg(cs)
 			if e.imgWidget != nil {
 				applyCommon(e.imgWidget, cs)
@@ -3456,23 +3574,83 @@ func (e *El) boxParent() *El {
 // meaningful only as word gaps inside an inline run, never as standalone
 // children.
 func renderableKids(kids []qui.Widget) []qui.Widget {
-	drop := 0
-	for _, k := range kids {
-		if ke, ok := k.(*El); ok && ke.isTextSeg() && collapseText(ke.text) == "" {
-			drop++
+	// Contiguous text — adjacent text nodes, also across comments and
+	// display:none elements, which generate no box — is ONE anonymous item
+	// (CSS Flexbox § 4, CSS 2.1 § 9.2.2.1): the first segment renders the
+	// run's text and the rest render nothing. Scripts split text into
+	// separate nodes all the time (`v{version}`).
+	var lead *El
+	var run strings.Builder
+	finish := func() {
+		if lead == nil {
+			return
 		}
+		if t := run.String(); t != lead.text {
+			lead.mergedText, lead.mergeLead = t, true
+		}
+		lead.refreshSegLabel()
+		lead = nil
 	}
-	if drop == 0 {
-		return kids
-	}
-	out := make([]qui.Widget, 0, len(kids)-drop)
+	out := make([]qui.Widget, 0, len(kids))
 	for _, k := range kids {
-		if ke, ok := k.(*El); ok && ke.isTextSeg() && collapseText(ke.text) == "" {
+		ke, ok := k.(*El)
+		if !ok {
+			finish()
+			out = append(out, k)
 			continue
 		}
-		out = append(out, k)
+		switch {
+		case ke.isTextSeg():
+			wasLead := ke.mergeLead
+			ke.mergeLead, ke.mergedText = false, ""
+			if lead != nil {
+				run.WriteString(ke.text)
+				ke.mergedAway = true
+				continue
+			}
+			ke.mergedAway = false
+			lead = ke
+			run.Reset()
+			run.WriteString(ke.text)
+			if wasLead {
+				lead.refreshSegLabel()
+			}
+			out = append(out, k)
+		case ke.tag == "#comment" || ke.displayNone:
+			out = append(out, k) // no box: the text run goes on
+		default:
+			finish()
+			out = append(out, k)
+		}
 	}
-	return out
+	finish()
+	// Whitespace-only runs render nothing — but they'd still consume flex
+	// gaps as phantom items. Drop them.
+	kept := out[:0]
+	for _, k := range out {
+		if ke, ok := k.(*El); ok && ke.isTextSeg() && collapseText(ke.segText()) == "" {
+			continue
+		}
+		kept = append(kept, k)
+	}
+	return kept
+}
+
+// segText is what a text segment renders: its own text, or the whole
+// run of adjacent text it heads (renderableKids).
+func (e *El) segText() string {
+	if e.mergeLead {
+		return e.mergedText
+	}
+	return e.text
+}
+
+// refreshSegLabel re-applies a text segment's label after its run changed.
+func (e *El) refreshSegLabel() {
+	if e.textLabel == nil || e.lastCS == nil {
+		return
+	}
+	applyTextStyle(e.textLabel, collapseText(e.segText()), e.lastCS, textLabelOpts{boxless: true})
 }
 
 // foldableInline reports whether a child element can fold into the parent's
@@ -3841,6 +4019,57 @@ func (e *El) ensureImg(cs *ComputedStyle) {
 		iw.Fit = objectFit(cs)
 		return
 	}
+	if e.inlineSVG != nil {
+		// Intrinsic size: numeric width / height attributes; ratio: the
+		// viewBox (else that size); CSS sizes win (an <svg> with neither
+		// is 300×150, the replaced-element default).
+		attrPx := func(k string) float32 {
+			if l := svgLength(e.attrs[k]); strings.HasSuffix(l, "px") {
+				if f, err := strconv.ParseFloat(strings.TrimSuffix(l, "px"), 32); err == nil {
+					return float32(f)
+				}
+			}
+			return 0
+		}
+		w, h := attrPx("width"), attrPx("height")
+		ratio := float32(0)
+		if vb := e.inlineSVG.ViewBox; vb.W > 0 && vb.H > 0 {
+			ratio = float32(vb.W / vb.H)
+		} else if w > 0 && h > 0 {
+			ratio = w / h
+		}
+		switch {
+		case w == 0 && h == 0 && ratio > 0:
+			w, h = 300, 300/ratio
+		case w == 0 && h == 0:
+			w, h = 300, 150
+		case w == 0:
+			w = h * max(ratio, 1)
+		case h == 0:
+			h = w / max(ratio, 1e-6)
+		}
+		if cs.HasWidth {
+			if !cs.HasHeight && ratio > 0 {
+				h = cs.Width / ratio
+			}
+			w = cs.Width
+		}
+		if cs.HasHeight {
+			if !cs.HasWidth && ratio > 0 {
+				w = cs.Height * ratio
+			}
+			h = cs.Height
+		}
+		if si, ok := e.imgWidget.(*svgImage); ok && e.imgSrc == "\x00svg" && si.src == qui.VectorSource(e.inlineSVG) {
+			si.w, si.h, si.tint = w, h, cs.Color
+			return
+		}
+		si := newSVGImage(e.inlineSVG, w, h, cs.Color)
+		si.untinted = true
+		e.imgWidget = si
+		e.imgSrc = "\x00svg"
+		return
+	}
 	src := e.attrs["src"]
 	if iw, ok := e.imgWidget.(*widgets.Image); ok && e.imgSrc == src && iw.Image != nil && src != "" {
 		iw.Fit = objectFit(cs)
@@ -4054,7 +4283,7 @@ func (e *El) syncChildren() {
 		kids = e.flowKids
 	case e.isCanvas() && e.canvasWidget != nil:
 		kids = []qui.Widget{e.canvasWidget}
-	case (e.tag == "hr" || e.tag == "img") && e.imgWidget != nil && e.iconSrc == nil:
+	case (e.tag == "hr" || e.isImg()) && e.imgWidget != nil && e.iconSrc == nil:
 		kids = []qui.Widget{e.imgWidget}
 	case e.lastCS != nil && e.lastCS.Display == "contents":
 		// No box: the children belong to the nearest box ancestor's layout.
@@ -4230,7 +4459,7 @@ func (e *El) Measure(available qui.Size) qui.Size {
 	if e.displayNone {
 		return qui.Size{}
 	}
-	if webCompat && e.tag == "img" && e.iconSrc == nil {
+	if webCompat && e.isImg() && e.iconSrc == nil {
 		if sz, ok := e.replacedSize(available); ok {
 			return sz
 		}
@@ -5621,7 +5850,7 @@ func (e *El) ClipboardBlockTag() string {
 // atomic inline box (inline-block badge, inline <img>). Implements
 // widgets.InlineAtomContent. Elements with no copyable content return "".
 func (e *El) InlineAtom() (plain string, spans []qui.TextSpan) {
-	if e.tag == "img" {
+	if e.isImg() {
 		src := e.attrs["src"]
 		if src == "" {
 			return "", nil
@@ -5984,7 +6213,7 @@ func (e *El) MarginsCollapseWithChildren() bool {
 	if cs == nil || cs.Display != "block" || cs.OverflowClip || e.overflowScroll {
 		return false
 	}
-	if e.backing != nil || e.tag == "img" || e.tag == "button" || e.isButtonInput() {
+	if e.backing != nil || e.isImg() || e.tag == "button" || e.isButtonInput() {
 		return false
 	}
 	return true

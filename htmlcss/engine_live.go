@@ -45,6 +45,7 @@ type StyleEngine struct {
 	// scoped is set while flush restyles dirty scopes (vs. a full Restyle).
 	scoped    bool
 	viewportW float32           // @media evaluation width (0 = default), kept for SetCSS
+	cssSrc    string            // the stylesheet source, kept for SetViewport
 	opts      Options           // BaseDir (img resolution) + Window (select backing)
 	root      *El               // main-tree root (holds the window for invalidation)
 	roots     map[*El]bool      // every top-level element: main root + portal/dialog roots
@@ -143,12 +144,30 @@ func (eng *StyleEngine) radioGroup(name string, member *El) *widgets.RadioGroup 
 
 // NewStyleEngine parses css once into a reusable engine (default viewport).
 func NewStyleEngine(css string) *StyleEngine {
-	return &StyleEngine{sheet: ParseCSS(css), roots: map[*El]bool{}}
+	return &StyleEngine{sheet: ParseCSS(css), cssSrc: css, roots: map[*El]bool{}}
 }
 
 // NewStyleEngineViewport parses css evaluating @media against viewportW.
 func NewStyleEngineViewport(css string, viewportW float32) *StyleEngine {
-	return &StyleEngine{sheet: ParseCSSViewport(css, viewportW), viewportW: viewportW, roots: map[*El]bool{}}
+	return &StyleEngine{sheet: ParseCSSViewport(css, viewportW), viewportW: viewportW, cssSrc: css, roots: map[*El]bool{}}
+}
+
+// CSS returns the stylesheet source the engine was built with (or last
+// given to SetCSS).
+func (eng *StyleEngine) CSS() string { return eng.cssSrc }
+
+// SetViewport re-evaluates the stylesheet's @media queries and the
+// viewport units for a new viewport size and restyles every mounted root
+// in place — a browser window resized without rebuilding its document.
+func (eng *StyleEngine) SetViewport(w, h float32) {
+	SetViewportUnits(w, h)
+	if w == eng.viewportW {
+		eng.Restyle()
+		return
+	}
+	eng.viewportW = w
+	eng.sheet = ParseCSSViewport(eng.cssSrc, w)
+	eng.Restyle()
 }
 
 // SetCSS replaces the engine's stylesheet (re-parsed with the same @media
@@ -157,6 +176,7 @@ func NewStyleEngineViewport(css string, viewportW float32) *StyleEngine {
 // palette's :root variables — and swap it in place without remounting
 // the element tree.
 func (eng *StyleEngine) SetCSS(css string) {
+	eng.cssSrc = css
 	if eng.viewportW > 0 {
 		eng.sheet = ParseCSSViewport(css, eng.viewportW)
 	} else {

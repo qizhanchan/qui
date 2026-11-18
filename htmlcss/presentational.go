@@ -14,6 +14,7 @@ import (
 var dimensionTags = map[string]bool{
 	"img": true, "canvas": true, "video": true, "iframe": true, "embed": true,
 	"object": true, "table": true, "td": true, "th": true, "col": true, "input": true,
+	"svg": true,
 }
 
 func presentationalHints(n *Node) []Declaration {
@@ -32,7 +33,13 @@ func presentationalHints(n *Node) []Declaration {
 				continue
 			}
 			if v, ok := n.Attrs[k]; ok {
-				if l := htmlLength(v, true); l != "" {
+				if n.Tag == "svg" {
+					// SVG width/height are presentation attributes: any
+					// CSS length (1.33em, 100%), a bare number is px.
+					if l := svgLength(v); l != "" {
+						add(k, l)
+					}
+				} else if l := htmlLength(v, true); l != "" {
 					add(k, l)
 				}
 			}
@@ -198,4 +205,28 @@ func fontSizeAttr(v string) string {
 	}
 	n = max(1, min(7, n))
 	return [...]string{"", "10px", "13px", "16px", "18px", "24px", "32px", "48px"}[n]
+}
+
+// svgLength reads an SVG width / height attribute as a CSS length ("" for
+// auto or an invalid value).
+func svgLength(v string) string {
+	s := strings.ToLower(strings.TrimSpace(v))
+	if s == "" || s == "auto" {
+		return ""
+	}
+	end := 0
+	for end < len(s) && (s[end] >= '0' && s[end] <= '9' || s[end] == '.' || end == 0 && (s[end] == '+' || s[end] == '-')) {
+		end++
+	}
+	f, err := strconv.ParseFloat(s[:end], 64)
+	if err != nil || f < 0 {
+		return ""
+	}
+	switch unit := s[end:]; unit {
+	case "":
+		return strconv.FormatFloat(f, 'f', -1, 64) + "px"
+	case "px", "em", "rem", "ex", "ch", "%", "pt", "pc", "cm", "mm", "in", "vw", "vh", "vmin", "vmax":
+		return strconv.FormatFloat(f, 'f', -1, 64) + unit
+	}
+	return ""
 }

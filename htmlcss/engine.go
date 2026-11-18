@@ -40,7 +40,7 @@ func Render(htmlSrc, cssSrc string, opts Options) qui.Widget {
 // RenderResult). Use it when you need to locate specific HTML elements'
 // widgets — e.g. to drive them in tests or wire extra behavior.
 func RenderDoc(htmlSrc, cssSrc string, opts Options) RenderResult {
-	dom := ParseHTML(htmlSrc)
+	dom := parseHTML(htmlSrc, opts.ScriptDOM)
 	css := cssSrc
 	if embedded := collectStyleText(dom); embedded != "" {
 		css = css + "\n" + embedded
@@ -119,6 +119,9 @@ func collectStyleText(root *Node) string {
 			sb.WriteString(textContent(n))
 			sb.WriteByte('\n')
 			return
+		}
+		if n.isElement("template") {
+			return // inert content: its styles apply only once a script clones it in
 		}
 		for _, c := range n.Children {
 			walk(c)

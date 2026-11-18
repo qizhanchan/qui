@@ -12,7 +12,10 @@ import (
 // with. x/net handles the messy parts for us — implicit <html>/<head>/
 // <body> insertion, optional-tag closing, entity decoding, malformed
 // markup recovery — so the rest of the engine sees a clean tree.
-func ParseHTML(src string) *Node {
+func ParseHTML(src string) *Node { return parseHTML(src, false) }
+
+// parseHTML is ParseHTML, optionally keeping comments (as CommentNode).
+func parseHTML(src string, comments bool) *Node {
 	doc, err := xhtml.Parse(strings.NewReader(src))
 	if err != nil {
 		// x/net's Parse is extremely tolerant and effectively never errors
@@ -21,7 +24,7 @@ func ParseHTML(src string) *Node {
 	}
 	root := &Node{Type: ElementNode, Tag: "#document", Attrs: map[string]string{}}
 	for c := doc.FirstChild; c != nil; c = c.NextSibling {
-		if n := adaptNode(c); n != nil {
+		if n := adaptNode(c, comments); n != nil {
 			root.appendChild(n)
 		}
 	}
@@ -30,17 +33,23 @@ func ParseHTML(src string) *Node {
 
 // adaptNode converts an x/net html.Node subtree into our Node, dropping
 // comment / doctype nodes.
-func adaptNode(x *xhtml.Node) *Node {
+func adaptNode(x *xhtml.Node, comments bool) *Node {
 	switch x.Type {
 	case xhtml.ElementNode:
 		attrs := make(map[string]string, len(x.Attr))
+		order := make([]string, 0, len(x.Attr))
 		for _, a := range x.Attr {
-			// x/net lowercases HTML attribute keys already; last wins.
+			// x/net lowercases HTML attribute keys already; a repeated
+			// attribute is dropped (the first one wins, as in a browser).
+			if _, dup := attrs[a.Key]; dup {
+				continue
+			}
 			attrs[a.Key] = a.Val
+			order = append(order, a.Key)
 		}
-		n := &Node{Type: ElementNode, Tag: strings.ToLower(x.Data), Attrs: attrs}
+		n := &Node{Type: ElementNode, Tag: strings.ToLower(x.Data), Attrs: attrs, AttrOrder: order}
 		for c := x.FirstChild; c != nil; c = c.NextSibling {
-			if child := adaptNode(c); child != nil {
+			if child := adaptNode(c, comments); child != nil {
 				n.appendChild(child)
 			}
 		}
@@ -50,6 +59,11 @@ func adaptNode(x *xhtml.Node) *Node {
 			return nil
 		}
 		return &Node{Type: TextNode, Text: x.Data}
+	case xhtml.CommentNode:
+		if comments {
+			return &Node{Type: CommentNode, Text: x.Data}
+		}
+		return nil
 	default:
 		// DoctypeNode, CommentNode, DocumentNode-as-child: skip.
 		return nil

@@ -16,7 +16,7 @@ import (
 // nonRenderedTags never produce a widget.
 var nonRenderedTags = map[string]bool{
 	"script": true, "style": true, "head": true, "meta": true,
-	"link": true, "title": true,
+	"link": true, "title": true, "#comment": true,
 }
 
 // buildStaticEl compiles element node n (and its subtree) into an El
@@ -24,7 +24,7 @@ var nonRenderedTags = map[string]bool{
 // only to skip display:none subtrees at compile time (the Els carry
 // their own node mirrors for live restyling afterwards).
 func (eng *StyleEngine) buildStaticEl(n *Node, styles map[*Node]*ComputedStyle) *El {
-	if n.Type != ElementNode || nonRenderedTags[n.Tag] {
+	if n.Type != ElementNode || (nonRenderedTags[n.Tag] && !eng.opts.ScriptDOM) {
 		return nil
 	}
 	// display:none subtrees are skipped at compile time — except <colgroup>/
@@ -37,9 +37,17 @@ func (eng *StyleEngine) buildStaticEl(n *Node, styles map[*Node]*ComputedStyle) 
 	}
 
 	e := newEl(n.Tag, eng)
-	for k, v := range n.Attrs {
-		e.storeAttr(k, v)
-		e.node.Attrs[k] = v
+	if len(n.AttrOrder) == len(n.Attrs) {
+		for _, k := range n.AttrOrder {
+			v := n.Attrs[k]
+			e.storeAttr(k, v)
+			e.node.Attrs[k] = v
+		}
+	} else {
+		for k, v := range n.Attrs {
+			e.storeAttr(k, v)
+			e.node.Attrs[k] = v
+		}
 	}
 	if id := n.ID(); id != "" {
 		e.SetID(id)
@@ -54,6 +62,19 @@ func (eng *StyleEngine) buildStaticEl(n *Node, styles map[*Node]*ComputedStyle) 
 		return e
 	case "select":
 		e.readOptions(n)
+		if eng.opts.ScriptDOM {
+			// The options are DOM for scripts (select.options); the
+			// control renders through its backing widget, not these.
+			var kids []qui.Widget
+			for _, c := range n.Children {
+				if c.Type == ElementNode {
+					if k := eng.buildStaticEl(c, styles); k != nil {
+						kids = append(kids, k)
+					}
+				}
+			}
+			e.SetElementChildren(kids)
+		}
 		return e
 	case "input":
 		if _, ok := n.Attr("checked"); ok {
@@ -66,17 +87,45 @@ func (eng *StyleEngine) buildStaticEl(n *Node, styles map[*Node]*ComputedStyle) 
 		return e
 	case "img", "br", "hr":
 		return e
+	case "svg":
+		if eng.opts.ScriptDOM {
+			// A replaced box drawn from its own subtree; the subtree is
+			// DOM for scripts (never laid out itself).
+			e.buildInlineSVG(n)
+			var kids []qui.Widget
+			for _, c := range n.Children {
+				switch c.Type {
+				case ElementNode:
+					k := newEl(c.Tag, eng)
+					buildSVGSubtree(k, c, eng)
+					kids = append(kids, k)
+				case TextNode:
+					kids = append(kids, newTextEl(c.Text, eng))
+				}
+			}
+			e.SetElementChildren(kids)
+			return e
+		}
+	case "script", "style":
+		// Raw text elements (ScriptDOM only): the source stays verbatim —
+		// a JSON data block must still parse.
+		e.text = textContent(n)
+		return e
 	}
 
 	// Pure-text container → the cheap Label leaf path.
 	elemKids := 0
 	for _, c := range n.Children {
-		if c.Type == ElementNode && !nonRenderedTags[c.Tag] {
+		if c.Type == ElementNode && (!nonRenderedTags[c.Tag] || eng.opts.ScriptDOM) || c.Type == CommentNode && eng.opts.ScriptDOM {
 			elemKids++
 		}
 	}
 	if elemKids == 0 {
-		e.text = collapseFor(textContent(n), styles[n])
+		raw := textContent(n)
+		e.text = collapseFor(raw, styles[n])
+		if eng.opts.ScriptDOM && raw != e.text {
+			e.domText, e.domTextSet = raw, true
+		}
 		return e
 	}
 
@@ -104,13 +153,19 @@ func (eng *StyleEngine) buildStaticEl(n *Node, styles map[*Node]*ComputedStyle) 
 	for _, c := range n.Children {
 		switch c.Type {
 		case TextNode:
-			if !hasInlineish && collapseText(c.Text) == "" {
+			// Scripts see every text node (React hydrates against them);
+			// otherwise inter-block whitespace is dropped up front.
+			if !hasInlineish && collapseText(c.Text) == "" && !eng.opts.ScriptDOM {
 				continue
 			}
 			kids = append(kids, newTextEl(c.Text, eng))
 		case ElementNode:
 			if k := eng.buildStaticEl(c, styles); k != nil {
 				kids = append(kids, k)
+			}
+		case CommentNode:
+			if eng.opts.ScriptDOM {
+				kids = append(kids, newCommentEl(c.Text, eng))
 			}
 		}
 	}
@@ -162,3 +217,33 @@ func IsInlineTag(tag string) bool { return textLikeInline[tag] }
 // IsNonRenderedTag reports whether tag never produces a widget (script,
 // style, head, meta, link, title).
 func IsNonRenderedTag(tag string) bool { return nonRenderedTags[tag] }
+
+// buildSVGSubtree mirrors an SVG node's subtree as plain elements (DOM
+// only: the <svg> draws itself from them).
+func buildSVGSubtree(e *El, n *Node, eng *StyleEngine) {
+	keys := n.AttrOrder
+	if len(keys) != len(n.Attrs) {
+		keys = nil
+		for k := range n.Attrs {
+			keys = append(keys, k)
+		}
+	}
+	for _, k := range keys {
+		e.storeAttr(k, n.Attrs[k])
+		e.node.Attrs[k] = n.Attrs[k]
+	}
+	var kids []qui.Widget
+	for _, c := range n.Children {
+		switch c.Type {
+		case ElementNode:
+			k := newEl(c.Tag, eng)
+			buildSVGSubtree(k, c, eng)
+			kids = append(kids, k)
+		case TextNode:
+			kids = append(kids, newTextEl(c.Text, eng))
+		}
+	}
+	if len(kids) > 0 {
+		e.SetElementChildren(kids)
+	}
+}

@@ -20,6 +20,9 @@ type NodeType uint8
 const (
 	ElementNode NodeType = iota
 	TextNode
+	// CommentNode is a comment, kept only for script engines
+	// (Options.ScriptDOM); it never renders or matches a selector.
+	CommentNode
 )
 
 // Node is a single DOM node. Elements carry a Tag, Attrs, and Children;
@@ -28,7 +31,10 @@ type Node struct {
 	Type     NodeType
 	Tag      string // lowercase tag name for elements ("" for text)
 	Attrs    map[string]string
-	Text     string // text content for TextNode
+	// AttrOrder lists Attrs' keys in source order (parsed markup only;
+	// nil elsewhere).
+	AttrOrder []string
+	Text      string // text content for TextNode
 	Children []*Node
 	Parent   *Node
 	// StyleOnlyParent marks a Parent link that exists for the cascade only:

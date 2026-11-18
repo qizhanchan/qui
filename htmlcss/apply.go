@@ -55,6 +55,12 @@ type Options struct {
 	// Resources, when set, loads the document's external images (remote
 	// URLs and anything else the host resolves). See ResourceLoader.
 	Resources ResourceLoader
+	// ScriptDOM builds the elements that never render — <head>, <script>,
+	// <style>, <meta>, <link>, <title> — as hidden (display:none) elements
+	// too, so a script engine sees the whole document: document.head,
+	// meta tags, JSON data blocks, the running script's own element.
+	// Script and style text is kept verbatim.
+	ScriptDOM bool
 }
 
 // minIsAuto reports a min-width / min-height value of `auto` (the
@@ -935,7 +941,9 @@ func textContent(n *Node) string {
 
 // collapseText collapses runs of whitespace to single spaces and trims.
 func collapseText(s string) string {
-	return strings.TrimSpace(strings.Join(strings.Fields(s), " "))
+	// Only HTML's ASCII white space collapses: a no-break space (U+00A0)
+	// or an ideographic space is content (CSS Text § 4.1.1).
+	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return r < 0x80 && isSpace(byte(r)) }), " ")
 }
 
 // collapseFor applies the element's white-space rule to its text content:

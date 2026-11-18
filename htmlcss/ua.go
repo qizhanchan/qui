@@ -117,7 +117,7 @@ var inlineTags = map[string]bool{
 	"abbr": true, "mark": true, "sub": true, "sup": true, "img": true,
 	"input": true, "button": true, "select": true, "textarea": true, "br": true,
 	"s": true, "del": true, "strike": true, "ins": true,
-	"canvas": true,
+	"canvas": true, "svg": true,
 	// Phrasing elements with no UA styling of their own beyond inline.
 	"time": true, "cite": true, "q": true, "dfn": true, "kbd": true,
 	"samp": true, "var": true, "bdi": true, "bdo": true, "data": true,
@@ -171,7 +171,7 @@ func foldableTag(tag string) bool {
 // defaultDisplay returns the initial CSS display for a tag.
 func defaultDisplay(tag string) string {
 	switch tag {
-	case "none", "head", "title", "meta", "link", "script", "style":
+	case "none", "head", "title", "meta", "link", "script", "style", "#comment":
 		return "none"
 	// <datalist> is a data holder, not a box: its options feed the linked
 	// input's autocomplete (see htmlcss/datalist.go).
