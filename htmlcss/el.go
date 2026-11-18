@@ -330,6 +330,11 @@ type El struct {
 	// each restyle from the stylesheet's pseudo-element rules.
 	pbText, paText string
 	pbCS, paCS     *ComputedStyle
+	// pseudoBefore / pseudoAfter are ::before / ::after as boxes of their
+	// own, used when the element has element children (generated content
+	// then sits beside them instead of folding into a text leaf).
+	pseudoBefore, pseudoAfter *El
+	pseudoKids                bool
 	// hidden is set when computed visibility is hidden — the element keeps its
 	// layout box (unlike display:none) but paints nothing (self + subtree).
 	// This is the RESTING value; Draw resolves the effective visibility per
@@ -2878,9 +2883,18 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		// ::before/::after on a leaf/inline element: fold [before][text][after]
 		// into one inline run. (Elements with block children only get the
 		// generated content when buildFlow already produced inline runs.)
+		e.pseudoKids = false
 		if e.flowKids == nil && (e.pbText != "" || e.paText != "") &&
 			e.iconSrc == nil && e.tag != "img" {
-			e.flowKids = e.buildPseudoLeaf(cs)
+			if len(renderableKids(e.elementKids)) > 0 {
+				// Element children: the generated content is a box beside
+				// them (a flex / grid item, or a block / inline box in the
+				// flow), never a replacement for them.
+				e.pseudoKids = true
+				e.buildPseudoBoxes()
+			} else {
+				e.flowKids = e.buildPseudoLeaf(cs)
+			}
 		}
 		// Web-compat: a text-only block flows as an inline run (not a
 		// Label), so its lines can wrap around floats.
@@ -3148,6 +3162,28 @@ func (e *El) buildPseudoLeaf(cs *ComputedStyle) []qui.Widget {
 		ib.AddTextPaint(e.paText, fontFrom(e.paCS), e.paCS.Color, e.paCS.decoration(), e.paCS.decorationPaint(), "")
 	}
 	return []qui.Widget{ib}
+}
+
+// buildPseudoBoxes styles the ::before / ::after boxes from their computed
+// styles (pbCS / paCS); syncChildren places them around the children.
+func (e *El) buildPseudoBoxes() {
+	mk := func(slot **El, tag, text string, pcs *ComputedStyle) {
+		if text == "" || pcs == nil {
+			return
+		}
+		if *slot == nil {
+			*slot = newEl(tag, e.engine)
+			(*slot).elParent = e
+			// Styled by its element's pass, never restyled on its own.
+			e.engine.unregister(*slot)
+		}
+		pe := *slot
+		pe.text = text
+		pe.node.Text = ""
+		pe.applyComputed(pcs)
+	}
+	mk(&e.pseudoBefore, "::before", e.pbText, e.pbCS)
+	mk(&e.pseudoAfter, "::after", e.paText, e.paCS)
 }
 
 func (e *El) ensureLabel() {
@@ -3954,6 +3990,14 @@ func (e *El) syncChildren() {
 		if e.text != "" {
 			e.ensureLabel()
 			kids = append([]qui.Widget{e.textLabel}, kids...)
+		}
+		if e.pseudoKids {
+			if e.pbText != "" && e.pseudoBefore != nil {
+				kids = append([]qui.Widget{e.pseudoBefore}, kids...)
+			}
+			if e.paText != "" && e.pseudoAfter != nil {
+				kids = append(append([]qui.Widget(nil), kids...), e.pseudoAfter)
+			}
 		}
 	case e.iconSrc != nil && e.iconImg != nil:
 		kids = []qui.Widget{e.iconImg}
