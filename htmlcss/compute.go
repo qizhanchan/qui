@@ -567,6 +567,12 @@ func mergedDeclsRest(n *Node, sheet *Stylesheet, st selectorState, rest *restMat
 	// The global `hidden` attribute is a UA rule (`[hidden] { display: none }`),
 	// not an intrinsic property — so author CSS can override it, exactly as in
 	// a browser. Emitting it at tier 0 gets that for free.
+	// So is `input[type=hidden i] { display: none !important }`.
+	if t, ok := n.Attr("type"); ok && n.Tag == "input" && strings.EqualFold(strings.TrimSpace(t), "hidden") {
+		decls = append(decls, matchedDecl{
+			decl: Declaration{Property: "display", Value: "none", Important: true}, tier: 0,
+		})
+	}
 	if _, hidden := n.Attr("hidden"); hidden {
 		decls = append(decls, matchedDecl{
 			decl: Declaration{Property: "display", Value: "none"}, tier: 0,

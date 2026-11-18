@@ -346,6 +346,7 @@ func setDefaultWeightFontUnlocked(weight gfx.FontWeight, f *opentype.Font) {
 // any file-backed sources. Used by tests that swap out the symbol-font
 // probe; production code never calls this.
 func ClearAutoFallbacksUnlocked() {
+	fallbackFaceMemo.Clear()
 	for _, src := range autoFallbackSources {
 		CloseCloser(src)
 	}

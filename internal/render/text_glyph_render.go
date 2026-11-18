@@ -43,18 +43,33 @@ func (c imageCanvas) drawShapedLineAtBaseline(line *typeset.ShapedLine, x, basel
 			c.Translate(1, 0)
 			c.drawShapedLineMasks(bl, mode, line, visual, x, baseline, color, fontSpec)
 			c.RestoreTo(depth)
+		} else if bold := syntheticBoldLine(line, fontSpec); bold != nil {
+			// Bold text whose glyphs came from a regular fallback face:
+			// the same second pass over just those runs.
+			depth := c.Save()
+			c.Translate(1, 0)
+			c.drawShapedLineMasks(bl, mode, bold, visual, x, baseline, color, fontSpec)
+			c.RestoreTo(depth)
 		}
 		return
 	}
 	path := gfx.NewPath()
+	var boldPath *gfx.Path // glyphs of fallback runs needing synthetic bold
 	penX := x
 	for _, runIndex := range visual {
 		run := &line.Runs[runIndex]
+		synth := typeset.RunNeedsSyntheticBold(run.Face, fontSpec)
+		if synth && boldPath == nil {
+			boldPath = gfx.NewPath()
+		}
 		for _, glyph := range run.Glyphs {
 			if glyph.GlyphID == gtfont.EmptyGlyph {
 				drawAtomicGlyph(c, line, glyph, penX, baseline, capHeight, fontSpec, color)
 			} else {
 				typeset.AppendGlyphOutline(path, run, glyph, penX, baseline, fontSpec)
+				if synth {
+					typeset.AppendGlyphOutline(boldPath, run, glyph, penX, baseline, fontSpec)
+				}
 			}
 			penX += typeset.FixedToPx(glyph.Advance)
 		}
@@ -69,7 +84,44 @@ func (c imageCanvas) drawShapedLineAtBaseline(line *typeset.ShapedLine, x, basel
 		c.Translate(1, 0)
 		c.DrawShape(gfx.ShapePath{Path: path}, paint)
 		c.RestoreTo(depth)
+	} else if boldPath != nil && !boldPath.IsEmpty() {
+		depth := c.Save()
+		c.Translate(1, 0)
+		c.DrawShape(gfx.ShapePath{Path: boldPath}, paint)
+		c.RestoreTo(depth)
 	}
+}
+
+// syntheticBoldLine returns a copy of line in which only the glyphs of runs
+// needing synthetic bold (typeset.RunNeedsSyntheticBold) remain drawable —
+// the others become empty glyphs that keep their advance — or nil when no
+// run needs it.
+func syntheticBoldLine(line *typeset.ShapedLine, fontSpec gfx.Font) *typeset.ShapedLine {
+	need := false
+	for i := range line.Runs {
+		if typeset.RunNeedsSyntheticBold(line.Runs[i].Face, fontSpec) {
+			need = true
+			break
+		}
+	}
+	if !need {
+		return nil
+	}
+	cp := *line
+	cp.Runs = make([]shaping.Output, len(line.Runs))
+	for i := range line.Runs {
+		cp.Runs[i] = line.Runs[i]
+		if typeset.RunNeedsSyntheticBold(line.Runs[i].Face, fontSpec) {
+			continue
+		}
+		gs := make([]shaping.Glyph, len(line.Runs[i].Glyphs))
+		copy(gs, line.Runs[i].Glyphs)
+		for j := range gs {
+			gs[j].GlyphID = gtfont.EmptyGlyph
+		}
+		cp.Runs[i].Glyphs = gs
+	}
+	return &cp
 }
 
 // drawEmojiGlyph blits one emoji cluster at display resolution.
