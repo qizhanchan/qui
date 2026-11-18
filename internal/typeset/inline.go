@@ -675,6 +675,19 @@ type inlineTok struct {
 	spaceSrcEnd   int
 }
 
+// spaceStyledLike reports whether the token's joining space draws exactly
+// like the token itself (so it can be prefixed to the word's fragment).
+func (t *inlineTok) spaceStyledLike() bool {
+	return gfx.FontStyleEqual(t.spaceFont, t.font) &&
+		t.spaceColor == t.color &&
+		t.spaceDeco == t.deco &&
+		t.spaceDecoPaint == t.decoPaint &&
+		t.spaceHref == t.href &&
+		t.spaceLinkSrc == t.linkSrc &&
+		t.spaceBg == t.background &&
+		t.spaceSpan == t.span
+}
+
 // BuildInlineLayout lays out a mix of text runs and atomic boxes into lines.
 func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayout {
 	// The two line-height units travel together so every metric below
@@ -1355,10 +1368,11 @@ func placeInlineLine(toks []inlineTok, idxs []int, baseline, asc, desc, mid, jus
 			x += gap
 			gap = 0
 		}
-		if gap > 0 && !gfx.FontStyleEqual(t.spaceFont, t.font) {
-			// A space from a run in another font (the plain space before
-			// a <code>): its own fragment in its own font — prefixed to
-			// the word it would be drawn, and advance, in the word's font.
+		if gap > 0 && !t.spaceStyledLike() {
+			// A space from a differently styled run (the plain space
+			// before a <code> or a link after an inline-block): its own
+			// fragment in its own style — prefixed to the word it would
+			// be drawn in the word's font, underline and background.
 			frags = append(frags, InlineFrag{
 				Text:            " ",
 				Font:            t.spaceFont,

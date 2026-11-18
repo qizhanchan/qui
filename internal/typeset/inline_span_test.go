@@ -56,3 +56,30 @@ func TestInlineSpanInsets(t *testing.T) {
 		t.Fatalf("the end inset follows the glyphs: glyphs end %.2f, width %.2f", end, l.Width)
 	}
 }
+
+// A joining space between a box (or another span) and a link keeps the
+// plain run's style: it is not underlined with the link.
+func TestJoiningSpaceNotUnderlinedWithLink(t *testing.T) {
+	f := gfx.Font{Size: 16}
+	bold := gfx.Font{Size: 16, Weight: 700}
+	link := DecorationUnderline
+	for name, items := range map[string][]InlineItem{
+		"after box": {
+			{Box: true, Size: gfx.Size{W: 30, H: 16}},
+			{Text: " ", Font: f},
+			{Text: "link", Font: f, Decoration: link, Href: "#", Span: 1},
+		},
+		"after span": {
+			{Text: "bold", Font: bold, Span: 1},
+			{Text: " ", Font: f},
+			{Text: "link", Font: f, Decoration: link, Href: "#", Span: 2},
+		},
+	} {
+		l := BuildInlineLayout(items, InlineLayoutOptions{MaxWidth: 500, Wrap: true, BaseFont: f})
+		for _, fr := range l.Lines[0].Frags {
+			if fr.Href != "" && len(fr.Text) > 0 && fr.Text[0] == ' ' {
+				t.Fatalf("%s: the link fragment %q swallowed the plain space", name, fr.Text)
+			}
+		}
+	}
+}
