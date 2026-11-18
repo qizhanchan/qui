@@ -92,7 +92,7 @@ func (e *El) buildTable(cs *ComputedStyle) {
 	// record the <col> widths. Rows are always auto (tallest cell).
 	tl := &tableLayout{
 		cols:  make([]colWidth, nCols),
-		fill:  cs.HasWidth,
+		fill:  cs.HasWidth || cs.WidthPct > 0,
 		fixed: strings.EqualFold(strings.TrimSpace(cs.raw["table-layout"]), "fixed"),
 	}
 	copy(tl.cols, gatherColWidths(e, cs))
@@ -108,6 +108,14 @@ func (e *El) buildTable(cs *ComputedStyle) {
 	rowTracks := make([]qui.GridTrack, nRows)
 	for i := range rowTracks {
 		rowTracks[i] = qui.GridAutoTrack()
+	}
+	// A <tr>'s height (CSS or the height attribute) is its row's minimum —
+	// rows have no box of their own, so it lands on the row track. An empty
+	// spacer row (`<tr style="height:10px">`) keeps its height this way.
+	for r, tr := range rows {
+		if h := rowMinHeight(e, tr, cs); h > 0 && r+dataOffset < len(rowTracks) {
+			rowTracks[r+dataOffset].Min = h
+		}
 	}
 
 	// border-collapse:collapse merges adjacent cell borders into single lines:
@@ -160,6 +168,23 @@ func (e *El) buildTable(cs *ComputedStyle) {
 	e.setContainerChildren(cells)
 }
 
+// rowMinHeight is a <tr>'s specified height in px (0 when auto or a
+// percentage).
+func rowMinHeight(table, tr *El, tableCS *ComputedStyle) float32 {
+	if table.engine == nil || table.engine.sheet == nil || tr.node == nil {
+		return 0
+	}
+	parentCS := tableCS
+	if g := tr.elParent; g != nil && g != table && g.node != nil {
+		parentCS = computeNode(g.node, table.engine.sheet, tableCS)
+	}
+	rcs := computeNode(tr.node, table.engine.sheet, parentCS)
+	if rcs != nil && rcs.HasHeight {
+		return rcs.Height
+	}
+	return 0
+}
+
 // tableLayout lays a table's cells out on its grid after resolving the
 // column widths from the cells themselves (CSS 2.1 §17.5.2):
 //
@@ -183,6 +208,33 @@ type tableLayout struct {
 	// measured width is one border wider than its column's share.
 	collapse bool
 	caption  qui.Widget // spans all columns; plays no part in column widths
+}
+
+// MaxContentWidth implements qui.MaxContentLayout: the columns at their
+// max-content widths, plus the gaps.
+func (t *tableLayout) MaxContentWidth(children []qui.Widget) float32 {
+	g := t.resolved(children, tableMaxContent)
+	var sum float32
+	for _, c := range g.Columns {
+		sum += c.Size
+	}
+	if t.fill {
+		// resolved() spread the unbounded width over the columns; undo
+		// that by resolving against the content's own total.
+		g = t.resolvedNoFill(children)
+		sum = 0
+		for _, c := range g.Columns {
+			sum += c.Size
+		}
+	}
+	return sum + g.ColGap*float32(max(len(g.Columns)-1, 0))
+}
+
+func (t *tableLayout) resolvedNoFill(children []qui.Widget) qui.GridLayout {
+	saved := t.fill
+	t.fill = false
+	defer func() { t.fill = saved }()
+	return t.resolved(children, tableMaxContent)
 }
 
 // MinContentWidth implements qui.MinContentLayout: the columns at their
@@ -253,8 +305,9 @@ func (t *tableLayout) resolved(children []qui.Widget, availW float32) qui.GridLa
 		}
 		mx, mn := w, w
 		if w == 0 {
-			mx = qui.MeasureChild(ch, qui.Size{W: tableMaxContent}).W
+			mx = qui.MaxContentWidth(ch)
 			mn = qui.MinContentWidth(ch)
+			mx = max(mx, mn)
 			if t.collapse {
 				r := ch.Style().BorderWidths.Right
 				mx, mn = mx-r, mn-r
@@ -268,7 +321,11 @@ func (t *tableLayout) resolved(children []qui.Widget, availW float32) qui.GridLa
 			continue // a <col> or cell width already fixed this column
 		}
 		if w > 0 && !explicit[gi.Col] {
-			maxc[gi.Col], minc[gi.Col], explicit[gi.Col] = w, w, true
+			// A specified width is the column's width — unless the content
+			// cannot fit in it (CSS 2.1 § 17.5.2.2: the column's minimum is
+			// the larger of the two).
+			cw := max(w, qui.ContentMinWidth(ch))
+			maxc[gi.Col], minc[gi.Col], explicit[gi.Col] = cw, cw, true
 			continue
 		}
 		maxc[gi.Col] = max(maxc[gi.Col], mx)

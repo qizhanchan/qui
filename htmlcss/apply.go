@@ -29,6 +29,18 @@ type Options struct {
 	// ViewportWidth overrides the width used to evaluate @media queries
 	// (one-shot at parse). 0 → use the Window width, else a desktop default.
 	ViewportWidth float32
+	// ViewportHeight is what vh units resolve against (0 keeps the last
+	// value; vw follows ViewportWidth).
+	ViewportHeight float32
+	// DocumentRoot builds the tree from the <html> element instead of
+	// <body>, the way a browser lays out a whole document: body is an
+	// ordinary block inside it (its UA 8px margin applies) and the root
+	// carries html's own styles. Apps leave it off and treat body as the
+	// window's root.
+	DocumentRoot bool
+	// Resources, when set, loads the document's external images (remote
+	// URLs and anything else the host resolves). See ResourceLoader.
+	Resources ResourceLoader
 }
 
 // textLikeInline are inline elements whose content folds into the parent

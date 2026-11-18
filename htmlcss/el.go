@@ -70,7 +70,12 @@ type El struct {
 	// a <label>'s checkbox are boxes in that run, so this element must not
 	// adopt them into a run of its own.
 	folded bool
-	node   *Node // mirror used for selector matching / cascade
+	// blockInInline: this display:inline element contains block-level
+	// children, so (CSS 2.1 § 9.2.1.1) it splits its line around them. It
+	// is laid out as a block in its parent's flow — the anonymous line
+	// boxes around a lone block hold nothing and take no height.
+	blockInInline bool
+	node          *Node // mirror used for selector matching / cascade
 
 	// elParent is the adopting parent element (set by the parent's
 	// SetElementChildren, cleared on Unmount). It is the ELEMENT-tree
@@ -2620,6 +2625,9 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	// Box decorations (background / border / radius / shadow / gradient /
 	// transform / overflow-clip / relative offset / hover-focus-active).
 	applyBox(&e.Box, cs, e.isStyleRoot())
+	if e.blockInInline {
+		e.Box.Display = qui.FlowBlock
+	}
 	e.focusWithinOnly = cs.Focus != nil && !cs.FocusOptIn
 
 	// A text-only state change (e.g. `a:hover{color}`) carries no box
@@ -3133,7 +3141,11 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 			if collapseText(ke.text) != "" {
 				anyFold = true
 			}
+		case kcs != nil && kcs.Display == "inline" && ke.hasBlockLevelChild(kcs):
+			ke.blockInInline = true
+			kinds[i] = kindBlock
 		case kcs != nil && strings.HasPrefix(kcs.Display, "inline"):
+			ke.blockInInline = false
 			if foldableInline(ke, kcs) {
 				kinds[i] = kindFold
 				anyFold = true
@@ -3327,6 +3339,29 @@ func foldableInline(c *El, cs *ComputedStyle) bool {
 // The engine walk recomputes the same values when it descends into the
 // child — deterministic, slightly redundant; subtree-scoped restyle can
 // remove the recompute later.
+// hasBlockLevelChild reports whether an inline element (styled cs) has an
+// in-flow block-level child — directly, or through a nested inline that
+// itself does.
+func (e *El) hasBlockLevelChild(cs *ComputedStyle) bool {
+	for _, k := range e.elementKids {
+		ke, ok := k.(*El)
+		if !ok || ke.isTextSeg() {
+			continue
+		}
+		kcs := e.childStyle(ke, cs)
+		if kcs == nil || kcs.Display == "none" || kcs.Position == "absolute" || kcs.Position == "fixed" {
+			continue
+		}
+		if !strings.HasPrefix(kcs.Display, "inline") && kcs.Display != "contents" {
+			return true
+		}
+		if kcs.Display == "inline" && ke.hasBlockLevelChild(kcs) {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *El) childStyle(c *El, parent *ComputedStyle) *ComputedStyle {
 	if c.isTextSeg() {
 		return parent // text segments match no selectors; pure inheritance
@@ -3523,6 +3558,34 @@ func (e *El) ensureImg(cs *ComputedStyle) {
 	baseDir := ""
 	if e.engine != nil {
 		baseDir = e.engine.opts.BaseDir
+	}
+	if res, ok := e.loadExternal(src); ok {
+		switch {
+		case res.Vector != nil:
+			w, h := float32(20), float32(20)
+			if vw, vh := res.Vector.Width, res.Vector.Height; vw > 0 && vh > 0 {
+				w, h = float32(vw), float32(vh)
+			}
+			if cs.HasWidth {
+				w = cs.Width
+			}
+			if cs.HasHeight {
+				h = cs.Height
+			}
+			si := newSVGImage(res.Vector, w, h, cs.Color)
+			si.untinted = true
+			e.imgWidget = si
+			return
+		case res.Raster != nil:
+			iw := widgets.NewImage(res.Raster)
+			iw.Fit = objectFit(cs)
+			e.imgWidget = iw
+			return
+		case res.Pending:
+			// Nothing to show yet: an empty box that keeps the CSS size.
+			e.imgWidget = widgets.NewBox(qui.FlowLayout{})
+			return
+		}
 	}
 	if strings.HasSuffix(strings.ToLower(src), ".svg") {
 		path := src
@@ -4854,7 +4917,18 @@ func (e *El) applyBackgroundImage(cs *ComputedStyle) {
 		if e.engine != nil {
 			baseDir = e.engine.opts.BaseDir
 		}
-		e.bgImg = loadRasterImage(cs.BackgroundImageURL, baseDir)
+		e.bgImg = nil
+		if res, ok := e.loadExternal(cs.BackgroundImageURL); ok {
+			switch {
+			case res.Raster != nil:
+				e.bgImg = res.Raster
+			case res.Vector != nil:
+				e.bgImg = rasterizeBackgroundSVG(res.Vector)
+			}
+		}
+		if e.bgImg == nil {
+			e.bgImg = loadRasterImage(cs.BackgroundImageURL, baseDir)
+		}
 		e.bgImgSrc = cs.BackgroundImageURL
 	}
 	if e.bgImg != nil {

@@ -261,6 +261,20 @@ func (l *Label) MinContentWidth() float32 {
 	return width + padding.Horizontal()
 }
 
+// MaxContentWidth implements qui.MaxContentWidther: the text on lines
+// broken only at hard breaks, whatever its alignment.
+func (l *Label) MaxContentWidth() float32 {
+	padding := l.scaledPadding()
+	opts := l.Paragraph.LayoutOptions(0)
+	var width float32
+	if len(l.spans) > 0 {
+		width = l.richTextLayout(opts, l.resolveForeground()).Width
+	} else {
+		width = BuildTextLayout(l.Text(), l.Style().Font, opts).Width
+	}
+	return width + padding.Horizontal()
+}
+
 func (l *Label) Draw(canvas Canvas) {
 	rect := l.Bounds()
 	if l.Style().Background.A > 0 {

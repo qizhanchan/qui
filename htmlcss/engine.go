@@ -51,10 +51,16 @@ func RenderDoc(htmlSrc, cssSrc string, opts Options) RenderResult {
 	} else if opts.Window != nil {
 		vw = opts.Window.Size().W
 	}
+	SetViewportUnits(vw, opts.ViewportHeight)
 	eng := NewStyleEngineViewport(css, vw)
 	eng.opts = opts
 
 	body := findTag(dom, "body")
+	if opts.DocumentRoot {
+		// A browser document: <html> is the root box (it carries the page
+		// background and owns body's margins), <head> is skipped.
+		body = findTag(dom, "html")
+	}
 	if body == nil {
 		body = dom
 	}

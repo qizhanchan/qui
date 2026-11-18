@@ -1,0 +1,22 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+body { margin: 0; padding: 0; font: 13px GoRegular; }
+/* Hacker News' front-page skeleton: a centered percentage-width table,
+   a header row whose middle cell gets the width its long inline nav
+   needs, and story rows of narrow + wide cells. */
+.pagetop { line-height: 12px; }
+</style></head><body>
+<center id="center"><table id="main" border="0" cellpadding="0" cellspacing="0" width="85%" style="background:#f6f6ef">
+<tr><td id="hdr" style="background:#ff6600"><table id="bar" border="0" cellpadding="0" cellspacing="0" width="100%" style="padding:2px"><tr>
+<td id="logo" style="width:18px;padding-right:4px"><a href="#"><span id="img" style="display:block;width:18px;height:18px;border:1px solid white"></span></a></td>
+<td id="nav" style="line-height:12pt; height:10px;"><span class="pagetop"><b>Hacker News</b> <a href="#">new</a> | <a href="#">past</a> | <a href="#">comments</a> | <a href="#">ask</a> | <a href="#">show</a></span></td>
+<td id="login" style="text-align:right;padding-right:4px;"><span class="pagetop"><a href="#">login</a></span></td>
+</tr></table></td></tr>
+<tr style="height:10px"></tr>
+<tr><td id="body"><table id="items" border="0" cellpadding="0" cellspacing="0">
+<tr><td id="rank" align="right" valign="top" class="title">1.</td><td id="vote" valign="top"><span style="display:block;width:10px;height:10px"></span></td><td id="title" class="title">A story title that is reasonably long</td></tr>
+<tr><td colspan="2"></td><td id="sub" class="subtext">100 points by someone 3 hours ago | hide | 42 comments</td></tr>
+</table></td></tr>
+</table></center>
+</body></html>

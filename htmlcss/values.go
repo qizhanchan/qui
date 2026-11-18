@@ -97,7 +97,7 @@ func parseColor(s string) (qui.Color, bool) {
 	if strings.HasPrefix(s, "hsl") {
 		return parseHSLColor(s)
 	}
-	return qui.Color{}, false
+	return parseColor4(s)
 }
 
 // parseHSLColor parses hsl()/hsla() — `hsl(h, s%, l%)` or the space form

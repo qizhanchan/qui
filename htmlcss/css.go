@@ -1080,6 +1080,10 @@ func parseDeclarations(body string) []Declaration {
 			}
 		}
 		if prop != "" && val != "" {
+			val = resolveViewportUnits(val)
+			if strings.Contains(val, "light-dark(") || strings.Contains(val, "LIGHT-DARK(") {
+				val = resolveLightDark(val)
+			}
 			out = append(out, Declaration{Property: prop, Value: val, Important: important})
 		}
 	}

@@ -324,6 +324,23 @@ func (b *InlineBox) MinContentWidth() float32 {
 	return BuildInlineLayout(b.buildItems(0.01), opts).Width
 }
 
+// MaxContentWidth implements qui.MaxContentWidther: the run laid out on
+// lines broken only where it must (hard breaks), atomic boxes at their own
+// max-content widths.
+func (b *InlineBox) MaxContentWidth() float32 {
+	items := b.buildItems(0)
+	for i, p := range b.parts {
+		if !p.isBox || i >= len(items) {
+			continue
+		}
+		m := boxMargin(p.child)
+		w := MaxContentWidth(p.child)
+		sz := inlineChildSize(p.child, Size{W: w})
+		items[i].Size = Size{W: w + m.Horizontal(), H: sz.H + m.Vertical()}
+	}
+	return BuildInlineLayout(items, b.options(0)).Width
+}
+
 // MeasuresByWidthOnly implements qui.WidthOnlyMeasurer: the run's size
 // follows from the width its lines break at (buildLayout).
 func (b *InlineBox) MeasuresByWidthOnly() bool { return true }

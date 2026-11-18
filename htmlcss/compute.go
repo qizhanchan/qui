@@ -53,6 +53,10 @@ type ComputedStyle struct {
 	// sheet resets theirs to normal.
 	LineHeightOwn bool
 	TextAlign     qui.TextAlign
+	// CenterBlocks is text-align: -webkit-center (<center>, align=center):
+	// besides centering inline content, block children with auto side
+	// margins are centered. Inherited along with text-align.
+	CenterBlocks bool
 	// LetterSpacing / WordSpacing (px) are CSS tracking, inherited; they flow
 	// into qui.Font so the root text engine measures + paints them.
 	LetterSpacing float32
@@ -561,6 +565,10 @@ func mergedDecls(n *Node, sheet *Stylesheet, st selectorState) map[string]string
 	}
 	// Still tier 0: framework component defaults (RegisterFrameworkCSS).
 	decls = append(decls, frameworkDecls(n, st)...)
+	// Presentational hints (legacy HTML attributes) follow the UA sheet.
+	for _, d := range presentationalHints(n) {
+		decls = append(decls, matchedDecl{decl: d, tier: 0})
+	}
 
 	// Tier 1: author rules that match (only the candidates for n can).
 	order := 0
@@ -645,6 +653,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		cs.LineHeight = parent.LineHeight
 		cs.LineHeightPx = parent.LineHeightPx
 		cs.TextAlign = parent.TextAlign
+		cs.CenterBlocks = parent.CenterBlocks
 		cs.LetterSpacing = parent.LetterSpacing
 		cs.WordSpacing = parent.WordSpacing
 		cs.TextIndent = parent.TextIndent
@@ -816,6 +825,12 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	}
 	if v, ok := m["text-align"]; ok {
 		cs.TextAlign = parseTextAlign(v)
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "-webkit-center", "-moz-center", "-khtml-center":
+			cs.CenterBlocks = true
+		default:
+			cs.CenterBlocks = false
+		}
 	}
 	// letter-spacing / word-spacing: `normal` resets to 0, else a length.
 	if v, ok := m["letter-spacing"]; ok {
@@ -1032,6 +1047,26 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	cs.Padding = parseBox(m, "padding", fs)
 	cs.Margin = parseBox(m, "margin", fs)
 	cs.MarginTopAuto, cs.MarginRightAuto, cs.MarginBottomAuto, cs.MarginLeftAuto = marginAutoFlags(m)
+	// Blink's StyleAdjuster: a table never keeps an inherited -webkit-*
+	// alignment — it resets to start (its own margins still follow the
+	// parent's -webkit-center below).
+	if n.Tag == "table" && cs.CenterBlocks {
+		if _, own := m["text-align"]; !own {
+			cs.CenterBlocks = false
+			cs.TextAlign = qui.TextAlignStart
+		}
+	}
+	// -webkit-center on the parent centers a block child whose side
+	// margins the author left alone.
+	if parent != nil && parent.CenterBlocks && !isInlineLevelDisplay(cs.Display) {
+		if _, l := m["margin-left"]; !l {
+			if _, r := m["margin-right"]; !r {
+				if _, sh := m["margin"]; !sh {
+					cs.MarginLeftAuto, cs.MarginRightAuto = true, true
+				}
+			}
+		}
+	}
 
 	// --- sizing ---
 	cs.BoxSizing = strings.ToLower(strings.TrimSpace(m["box-sizing"]))
@@ -1750,6 +1785,16 @@ func firstFontFamily(v string) string {
 	return first
 }
 
+// isInlineLevelDisplay reports display values that are inline-level
+// (-webkit-center leaves those to text alignment).
+func isInlineLevelDisplay(d string) bool {
+	switch d {
+	case "inline", "inline-block", "inline-flex", "inline-grid", "inline-table", "contents", "none":
+		return true
+	}
+	return false
+}
+
 // isGenericFontFamily reports CSS generic family keywords.
 func isGenericFontFamily(name string) bool {
 	switch strings.ToLower(name) {
@@ -1763,9 +1808,9 @@ func isGenericFontFamily(name string) bool {
 
 func parseTextAlign(v string) qui.TextAlign {
 	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "center":
+	case "center", "-webkit-center", "-moz-center", "-khtml-center":
 		return qui.TextAlignCenter
-	case "right", "end":
+	case "right", "end", "-webkit-right", "-moz-right":
 		return qui.TextAlignEnd
 	case "justify":
 		return qui.TextAlignJustify

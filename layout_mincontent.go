@@ -30,10 +30,20 @@ func (c *Container) layoutEngine() Layout { return c.LayoutEngine }
 // layout engine (MinContentLayout) reports, else its max-content width —
 // never narrower than it can really get. Min / max widths clamp it.
 func MinContentWidth(w Widget) float32 {
-	s := w.Style()
 	if p := widgetPreferredSize(w); p.W > 0 {
 		return p.W
 	}
+	return contentMinWidth(w)
+}
+
+// ContentMinWidth is w's min-content width from its CONTENT, ignoring an
+// explicit width (table cells: a column is as wide as the larger of a
+// cell's specified width and what its content needs). Min / max widths
+// still clamp it.
+func ContentMinWidth(w Widget) float32 { return contentMinWidth(w) }
+
+func contentMinWidth(w Widget) float32 {
+	s := w.Style()
 	var v float32
 	switch {
 	case func() bool { _, ok := w.(MinContentWidther); return ok }():

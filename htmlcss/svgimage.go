@@ -13,6 +13,9 @@ type svgImage struct {
 	src  qui.VectorSource
 	w, h float32
 	tint qui.Color
+	// untinted keeps the document's authored colors (a web page's SVG
+	// image), instead of painting it in the text color like an icon.
+	untinted bool
 }
 
 func newSVGImage(src qui.VectorSource, w, h float32, tint qui.Color) *svgImage {
@@ -27,7 +30,11 @@ func (s *svgImage) Measure(available qui.Size) qui.Size {
 }
 
 func (s *svgImage) Draw(canvas qui.Canvas) {
-	qui.DrawVector(canvas, s.src, s.Bounds(), s.tint)
+	tint := s.tint
+	if s.untinted {
+		tint = qui.Color{}
+	}
+	qui.DrawVector(canvas, s.src, s.Bounds(), tint)
 }
 
 func (s *svgImage) HitTest(p qui.Point) qui.Widget {
