@@ -19,12 +19,28 @@ import (
 // of qualified names so SVG documents that declare xmlns:xlink etc.
 // parse the same as plain ones.
 func parseSVG(r io.Reader, into *Document) error {
-	dec := xml.NewDecoder(r)
-	dec.CharsetReader = func(charset string, input io.Reader) (io.Reader, error) {
-		// Most SVG files declare UTF-8; treat any other charset as
-		// pass-through. We don't pull in golang.org/x/text just for
-		// the rare windows-1252 SVG.
-		return input, nil
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return fmt.Errorf("svg: %w", err)
+	}
+	newDec := func() *xml.Decoder {
+		dec := xml.NewDecoder(bytes.NewReader(data))
+		dec.CharsetReader = func(charset string, input io.Reader) (io.Reader, error) {
+			// Most SVG files declare UTF-8; treat any other charset as
+			// pass-through. We don't pull in golang.org/x/text just for
+			// the rare windows-1252 SVG.
+			return input, nil
+		}
+		return dec
+	}
+	dec := newDec()
+	// <style> sheets (class / id / type selectors) apply through a token
+	// filter that hands each element its matching declarations as a
+	// leading style attribute (stylesheet.go).
+	if bytes.Contains(data, []byte("<style")) {
+		if rules := collectStyleRules(newDec()); len(rules) > 0 {
+			dec = xml.NewTokenDecoder(&styleInjector{in: dec, rules: rules})
+		}
 	}
 	for {
 		tok, err := dec.Token()
