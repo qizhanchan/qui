@@ -2536,6 +2536,15 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		e.LayoutEngine = qui.FlowLayout{}
 		return
 	}
+	// display:contents — no box of its own: the nearest box ancestor lays
+	// out this element's children (flatKids) in its place.
+	if cs.Display == "contents" {
+		e.flowKids = nil
+		e.SetStyle(qui.Style{})
+		e.LayoutEngine = qui.FlowLayout{}
+		e.setContainerChildren(nil)
+		return
+	}
 	// visibility:hidden — keeps the layout box but paints nothing (El.Draw
 	// resolves the effective value per frame via effectiveHidden).
 	e.hidden = cs.Hidden
@@ -2783,8 +2792,8 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 
 	// Grid cell placement: when this element is a child of a display:grid box,
 	// resolve its grid-column / grid-row / grid-area into explicit placement.
-	if e.elParent != nil && e.elParent.lastCS != nil && e.elParent.lastCS.Display == "grid" {
-		e.applyGridItem(cs, e.elParent.lastCS)
+	if bp := e.boxParent(); bp != nil && bp.lastCS != nil && bp.lastCS.Display == "grid" {
+		e.applyGridItem(cs, bp.lastCS)
 	}
 
 	// ::before / ::after generated content (resolved from pseudo-element rules).
@@ -3210,8 +3219,9 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 	if e.folded || len(e.elementKids) == 0 || cs.Display == "flex" || cs.Display == "grid" {
 		return nil // a folded element's content rides in its ancestor's run
 	}
+	elementKids, kidParents := e.flatKids(cs)
 	hasFoldCandidate := e.text != ""
-	for _, k := range e.elementKids {
+	for _, k := range elementKids {
 		if ke, ok := k.(*El); ok && (ke.isTextSeg() || foldableTag(ke.tag)) {
 			hasFoldCandidate = true
 			break
@@ -3229,21 +3239,21 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 		kindBlock
 		kindAside // display:none / out of flow: kept, but never splits a run
 	)
-	kinds := make([]int, len(e.elementKids))
-	styles := make([]*ComputedStyle, len(e.elementKids))
-	for _, k := range e.elementKids {
+	kinds := make([]int, len(elementKids))
+	styles := make([]*ComputedStyle, len(elementKids))
+	for _, k := range elementKids {
 		if ke, ok := k.(*El); ok {
 			ke.unfold() // appendInlineChild re-marks what still folds
 		}
 	}
 	anyFold := e.text != ""
-	for i, k := range e.elementKids {
+	for i, k := range elementKids {
 		ke, ok := k.(*El)
 		if !ok {
 			kinds[i] = kindAtomic // non-El widget rides on the line
 			continue
 		}
-		kcs := e.childStyle(ke, cs)
+		kcs := e.childStyle(ke, kidParents[i])
 		styles[i] = kcs
 		switch {
 		case ke.isTextSeg():
@@ -3271,12 +3281,12 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 	// Whitespace between two inline-level siblings is a word space on their
 	// line (`<button>A</button> <button>B</button>`), so even a run of only
 	// atomic boxes needs an inline run to keep it.
-	for i, k := range e.elementKids {
+	for i, k := range elementKids {
 		if anyFold {
 			break
 		}
 		ke, ok := k.(*El)
-		if !ok || !ke.isTextSeg() || i == 0 || i == len(e.elementKids)-1 {
+		if !ok || !ke.isTextSeg() || i == 0 || i == len(elementKids)-1 {
 			continue
 		}
 		if kinds[i-1] != kindBlock && kinds[i+1] != kindBlock {
@@ -3308,7 +3318,7 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 		meaningfulText := leading && collapseText(e.text) != ""
 		var atomics []int
 		for _, i := range run {
-			ke, _ := e.elementKids[i].(*El)
+			ke, _ := elementKids[i].(*El)
 			if kinds[i] == kindAtomic {
 				atomics = append(atomics, i)
 				continue
@@ -3324,7 +3334,7 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 			return
 		}
 		if !meaningfulText && len(atomics) == 1 {
-			out = append(out, e.elementKids[atomics[0]])
+			out = append(out, elementKids[atomics[0]])
 			return
 		}
 		var ib *widgets.InlineBox
@@ -3357,9 +3367,9 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 			ib.AddTextPaint(e.text, fontFrom(cs), cs.Color, cs.decoration(), cs.decorationPaint(), "")
 		}
 		for _, i := range run {
-			ke, ok := e.elementKids[i].(*El)
+			ke, ok := elementKids[i].(*El)
 			if !ok {
-				ib.AddBox(e.elementKids[i], qui.InlineBaseline)
+				ib.AddBox(elementKids[i], qui.InlineBaseline)
 				continue
 			}
 			e.appendInlineChild(ib, ke, styles[i], cs, "", nil)
@@ -3367,20 +3377,59 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 		out = append(out, ib)
 	}
 	var aside []qui.Widget
-	for i := range e.elementKids {
+	for i := range elementKids {
 		switch kinds[i] {
 		case kindBlock:
 			flushRun()
-			out = append(out, e.elementKids[i])
+			out = append(out, elementKids[i])
 			continue
 		case kindAside:
-			aside = append(aside, e.elementKids[i])
+			aside = append(aside, elementKids[i])
 			continue
 		}
 		run = append(run, i)
 	}
 	flushRun()
 	return append(out, aside...)
+}
+
+// flatKids is the element's children as its layout sees them: a
+// display:contents child generates no box, so its own children (flattened
+// the same way) take its place. parents[i] is the style each child
+// inherits from (this element's, or a contents child's).
+func (e *El) flatKids(cs *ComputedStyle) (kids []qui.Widget, parents []*ComputedStyle) {
+	if e.engine == nil || e.engine.sheet == nil || !e.engine.sheet.HasDisplayContents {
+		parents = make([]*ComputedStyle, len(e.elementKids))
+		for i := range parents {
+			parents[i] = cs
+		}
+		return e.elementKids, parents
+	}
+	var walk func(owner *El, ocs *ComputedStyle, depth int)
+	walk = func(owner *El, ocs *ComputedStyle, depth int) {
+		for _, k := range owner.elementKids {
+			if ke, ok := k.(*El); ok && !ke.isTextSeg() && depth < 32 {
+				if kcs := owner.childStyle(ke, ocs); kcs != nil && kcs.Display == "contents" {
+					walk(ke, kcs, depth+1)
+					continue
+				}
+			}
+			kids = append(kids, k)
+			parents = append(parents, ocs)
+		}
+	}
+	walk(e, cs, 0)
+	return kids, parents
+}
+
+// boxParent is the nearest ancestor that generates a box (skipping
+// display:contents ones) — the element whose layout places this one.
+func (e *El) boxParent() *El {
+	p := e.elParent
+	for p != nil && p.lastCS != nil && p.lastCS.Display == "contents" {
+		p = p.elParent
+	}
+	return p
 }
 
 // renderableKids filters out anonymous whitespace-only text segments —
@@ -3982,11 +4031,14 @@ func (e *El) syncChildren() {
 		kids = []qui.Widget{e.canvasWidget}
 	case (e.tag == "hr" || e.tag == "img") && e.imgWidget != nil && e.iconSrc == nil:
 		kids = []qui.Widget{e.imgWidget}
+	case e.lastCS != nil && e.lastCS.Display == "contents":
+		// No box: the children belong to the nearest box ancestor's layout.
 	case len(e.elementKids) > 0:
 		// Outside an inline run (flex / grid / block stacking), anonymous
 		// whitespace-only text segments render nothing — but they'd still
 		// consume flex gaps as phantom items. Drop them.
-		kids = renderableKids(e.elementKids)
+		flat, _ := e.flatKids(e.lastCS)
+		kids = renderableKids(flat)
 		if e.text != "" {
 			e.ensureLabel()
 			kids = append([]qui.Widget{e.textLabel}, kids...)

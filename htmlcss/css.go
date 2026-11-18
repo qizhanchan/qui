@@ -202,6 +202,9 @@ type Stylesheet struct {
 	// HasSiblingCombinator is true when any selector uses "+" or "~": an
 	// element's attributes then decide how its following siblings match.
 	HasSiblingCombinator bool
+	// HasDisplayContents is true when any rule declares display: contents
+	// (parents then look through such children when laying out).
+	HasDisplayContents bool
 	// HasStructural is true when any selector depends on an element's
 	// position among its siblings or on its children existing
 	// (:first-child, :last-child, :only-child, :nth-*, :empty) or uses a
@@ -510,6 +513,11 @@ func splitNestedBody(body string) (decls, nested string) {
 // matcher (state pseudo-classes, structural selectors, :has).
 func (sheet *Stylesheet) addRule(rule Rule) {
 	sheet.Rules = append(sheet.Rules, rule)
+	for _, d := range rule.Declarations {
+		if d.Property == "display" && strings.EqualFold(strings.TrimSpace(d.Value), "contents") {
+			sheet.HasDisplayContents = true
+		}
+	}
 	for _, sel := range rule.Selectors {
 		sheet.HasHas = sheet.HasHas || sel.hasPseudo(pseudoHas)
 		sib := sel.hasSiblingCombinator()
