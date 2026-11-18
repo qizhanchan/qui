@@ -246,6 +246,47 @@ func (e *El) ComputedStyleForState(hover, focus *El) *ComputedStyle {
 	return resolve(e)
 }
 
+// CurrentComputedStyle includes the current interactive state. Paint-only
+// hover/focus rules do not restyle the retained tree, but CSSOM readers must
+// see them just as painting does.
+func (e *El) CurrentComputedStyle() *ComputedStyle {
+	if e.lastCS == nil || e.engine == nil || e.node == nil {
+		return e.lastCS
+	}
+	st := selectorState{hover: e.Hovering(), focus: e.Focused(), active: e.Pressed(), focusVisible: e.FocusVisibleNow()}
+	for p := e.elParent; p != nil; p = p.elParent {
+		if p.Hovering() {
+			st.hoverNodes = append(st.hoverNodes, p.node)
+		}
+		if p.Focused() {
+			st.focusNodes = append(st.focusNodes, p.node)
+		}
+		if p.Pressed() {
+			st.activeNodes = append(st.activeNodes, p.node)
+		}
+	}
+	for _, trigger := range e.stateTriggers {
+		p := trigger.el
+		if p.Hovering() {
+			st.hoverNodes = append(st.hoverNodes, p.node)
+		}
+		if p.Focused() {
+			st.focusNodes = append(st.focusNodes, p.node)
+		}
+		if p.Pressed() {
+			st.activeNodes = append(st.activeNodes, p.node)
+		}
+	}
+	if !st.hover && !st.focus && !st.active && len(st.hoverNodes)+len(st.focusNodes)+len(st.activeNodes) == 0 {
+		return e.lastCS
+	}
+	var parent *ComputedStyle
+	if e.elParent != nil {
+		parent = e.elParent.CurrentComputedStyle()
+	}
+	return interpret(e.node, mergedDeclsRest(e.node, e.engine.sheet, st, nil, false, parent), parent)
+}
+
 // SetOnStyle registers fn to run after every restyle of the element with
 // its computed style — map CSS onto native setters, read a --var.
 func (e *El) SetOnStyle(fn func(cs *ComputedStyle)) { e.onStyle = fn }

@@ -68,15 +68,16 @@ func (f FlexItem) effectiveShrink() float32 {
 // justify math treats margin as part of the space a child occupies
 // (CSS margin-box distribution).
 type flexItem struct {
-	w        Widget
-	flex     FlexItem
-	basis    float32 // target size on main axis (pre grow/shrink)
-	size     float32 // final main-axis size
-	natural  Size    // post-constraints Measure() result (for cross axis)
-	minMain  float32
-	minCross float32
-	maxMain  float32 // 0 = unconstrained
-	maxCross float32 // 0 = unconstrained
+	w          Widget
+	flex       FlexItem
+	basis      float32 // target size on main axis (pre grow/shrink)
+	size       float32 // final main-axis size
+	shrinkBase float32
+	natural    Size // post-constraints Measure() result (for cross axis)
+	minMain    float32
+	minCross   float32
+	maxMain    float32 // 0 = unconstrained
+	maxCross   float32 // 0 = unconstrained
 
 	// explicitCross is the child's DECLARED cross-axis size (Style.Width in
 	// a column container, Style.Height in a row one, percentages resolved
@@ -147,6 +148,8 @@ func (it flexItem) innerRect(outer Rect, dir Direction) Rect {
 //	qui.NewContainer(qui.FlexLayout{Direction: qui.Vertical},
 //	    header, middle, footer)
 type FlexLayout struct {
+	// CSSSizing enables web intrinsic cross-size rules for auto-width items.
+	CSSSizing  bool
 	Direction  Direction
 	Gap        float32
 	Justify    Justify
@@ -299,6 +302,9 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 		if s := ch.Style(); s != nil && minMain == 0 &&
 			(l.Direction == Horizontal && s.FlexAutoMinWidth || l.Direction == Vertical && s.FlexAutoMinHeight) {
 			p := widgetPreferredSize(ch)
+			if p.W == 0 && s.WidthPct > 0 && widthPctDefinite() {
+				p.W = s.pctWidth(s.WidthPct, bounds.W)
+			}
 			if l.Direction == Horizontal {
 				minMain = ContentMinWidth(ch)
 				if p.W > 0 && p.W < minMain {
@@ -331,7 +337,19 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 		// child's Style().Margin so distribution reserves the space;
 		// innerRect subtracts it back out at placement time.
 		margin := ch.Style().Margin
-		it := flexItem{w: ch, flex: fx, basis: basis, natural: nat, minMain: minMain, minCross: minCross, maxMain: maxMain, maxCross: maxCross, explicitCross: explicitCross}
+		shrinkBase := basis
+		if st := ch.Style(); st != nil {
+			insets := st.ContentInsets()
+			if l.Direction == Horizontal {
+				shrinkBase -= insets.Horizontal()
+			} else {
+				shrinkBase -= insets.Vertical()
+			}
+		}
+		if shrinkBase < 0 {
+			shrinkBase = 0
+		}
+		it := flexItem{shrinkBase: shrinkBase, w: ch, flex: fx, basis: basis, natural: nat, minMain: minMain, minCross: minCross, maxMain: maxMain, maxCross: maxCross, explicitCross: explicitCross}
 		if l.Direction == Horizontal {
 			it.marginMainStart, it.marginMainSum = margin.Left, margin.Horizontal()
 			it.marginCrossStart, it.marginCrossSum = margin.Top, margin.Vertical()
@@ -599,7 +617,7 @@ func (l FlexLayout) resolveMainSizes(items []flexItem, mainAvail float32) {
 			var weightSum float32
 			for i := range items {
 				if active[i] {
-					weightSum += shrink[i] * items[i].basis
+					weightSum += shrink[i] * items[i].shrinkBase
 				}
 			}
 			if weightSum <= 0 {
@@ -615,7 +633,7 @@ func (l FlexLayout) resolveMainSizes(items []flexItem, mainAvail float32) {
 					active[i] = false
 					continue
 				}
-				reduce := needReduce * shrink[i] * items[i].basis / weightSum
+				reduce := needReduce * shrink[i] * items[i].shrinkBase / weightSum
 				if reduce >= capacity {
 					items[i].size = items[i].minMain
 					needReduce -= capacity
@@ -630,7 +648,7 @@ func (l FlexLayout) resolveMainSizes(items []flexItem, mainAvail float32) {
 				if !active[i] {
 					continue
 				}
-				reduce := needReduce * shrink[i] * items[i].basis / weightSum
+				reduce := needReduce * shrink[i] * items[i].shrinkBase / weightSum
 				items[i].size -= reduce
 			}
 			needReduce = 0
@@ -683,6 +701,12 @@ func (l FlexLayout) remeasureCross(items []flexItem, bounds Rect) {
 		if l.Direction == Horizontal {
 			it.natural.H = sz.H + it.marginCrossSum
 		} else {
+			if s := it.w.Style(); l.CSSSizing && s != nil && s.Width == 0 && s.WidthPct == 0 {
+				sz.W = ShrinkToFit(it.w, max(0, bounds.W-it.marginCrossSum))
+				if s.NewFormattingContext && !s.FlexAutoMinWidth {
+					sz.W = min(sz.W, max(0, bounds.W-it.marginCrossSum))
+				}
+			}
 			it.natural.W = sz.W + it.marginCrossSum
 		}
 	}
@@ -947,59 +971,6 @@ func (fl FlexLayout) Measure(children []Widget, padded Size) Size {
 	if len(children) == 0 {
 		return Size{}
 	}
-	// Per-child measurement, with main/cross extracted once.
-	type childMeasure struct {
-		main, cross, minMain float32
-	}
-	measures := make([]childMeasure, len(children))
-	for i, child := range children {
-		min := widgetMinSize(child)
-		size := measureWithConstraints(child, padded)
-		// Margin-box: a child's natural footprint includes its own
-		// Style().Margin, matching FlexLayout.measureFlexItems.
-		margin := child.Style().Margin
-		size.W += margin.Horizontal()
-		size.H += margin.Vertical()
-		mainSize := size.W
-		crossSize := size.H
-		minMain := min.W
-		marginMain := margin.Horizontal()
-		if fl.Direction == Vertical {
-			mainSize = size.H
-			crossSize = size.W
-			minMain = min.H
-			marginMain = margin.Vertical()
-		}
-		if s := child.Style(); s != nil && minMain == 0 &&
-			(fl.Direction == Horizontal && s.FlexAutoMinWidth || fl.Direction == Vertical && s.FlexAutoMinHeight) {
-			if fl.Direction == Vertical {
-				minMain = size.H - marginMain
-			} else {
-				minMain = ContentMinWidth(child)
-			}
-		}
-		basis := widgetFlexItem(child).Basis
-		if s := child.Style(); basis <= 0 && s != nil && s.BasisPct > 0 && widthPctDefinite() {
-			if fl.Direction == Horizontal && padded.W > 0 {
-				basis = max(s.BasisPct*padded.W+s.BasisExtra, 0)
-			} else if fl.Direction == Vertical && padded.H > 0 {
-				basis = max(s.BasisPct*padded.H+s.BasisExtraV, 0)
-			}
-		}
-		if basis > 0 {
-			mainSize = basis + marginMain
-			if mainSize < minMain+marginMain {
-				mainSize = minMain + marginMain
-			}
-			// The cross size at that main size: wrapping text, an
-			// aspect-ratio box.
-			if fl.Direction == Horizontal {
-				crossSize = measureWithConstraints(child, Size{W: mainSize - marginMain, H: padded.H}).H + margin.Vertical()
-			}
-		}
-		measures[i] = childMeasure{main: mainSize, cross: crossSize, minMain: minMain}
-	}
-
 	// Wrap path: pack into lines, sum line heights for cross axis,
 	// take the widest line for the main axis (caller may have given
 	// us less; the line that overflowed already broke).
@@ -1008,43 +979,31 @@ func (fl FlexLayout) Measure(children []Widget, padded Size) Size {
 		if fl.Direction == Vertical {
 			mainAvail = padded.H
 		}
-		var lines [][]int
-		var cur []int
-		var used float32
-		for i, m := range measures {
-			add := m.main
-			if len(cur) > 0 {
-				add += fl.Gap
-			}
-			if len(cur) > 0 && used+add > mainAvail {
-				lines = append(lines, cur)
-				cur = []int{i}
-				used = m.main
-				continue
-			}
-			cur = append(cur, i)
-			used += add
-		}
-		if len(cur) > 0 {
-			lines = append(lines, cur)
-		}
+		items := fl.measureFlexItems(children, Rect{W: padded.W, H: padded.H})
+		lines := packLines(items, mainAvail, fl.Gap)
 		var mainMax, crossSum float32
 		for li, line := range lines {
-			var lineMain, lineCross float32
+			lineItems := make([]flexItem, len(line))
 			for k, idx := range line {
-				lineMain += measures[idx].main
+				lineItems[k] = items[idx]
+			}
+			fl.resolveMainSizes(lineItems, mainAvail)
+			fl.remeasureCross(lineItems, Rect{W: padded.W, H: padded.H})
+			var lineMain, lineCross float32
+			for k, it := range lineItems {
+				lineMain += it.size
 				if k > 0 {
 					lineMain += fl.Gap
 				}
-				if measures[idx].cross > lineCross {
-					lineCross = measures[idx].cross
+				cross := it.natural.H
+				if fl.Direction == Vertical {
+					cross = it.natural.W
 				}
+				lineCross = max(lineCross, cross)
 			}
-			if lineMain > mainMax {
-				mainMax = lineMain
-			}
+			mainMax = max(mainMax, lineMain)
 			crossSum += lineCross
-			if li < len(lines)-1 {
+			if li > 0 {
 				crossSum += fl.CrossGap
 			}
 		}
@@ -1102,9 +1061,12 @@ func (fl FlexLayout) Measure(children []Widget, padded Size) Size {
 			}
 			contentSum += max(items[i].basis, items[i].natural.H)
 		}
-		if mainAvail > contentSum {
+		if padded.H <= 0 || mainAvail > contentSum {
 			mainAvail = contentSum
 		}
+	}
+	if fl.Direction == Horizontal && !widthPctDefinite() {
+		mainAvail = basisSum // intrinsic sizing cannot distribute offered free space
 	}
 	fl.resolveMainSizes(items, mainAvail)
 	fl.remeasureCross(items, paddedRect)

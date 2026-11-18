@@ -1,0 +1,17 @@
+<!doctype html>
+<style>
+@font-face {font-family: GoRegular; src: url('../../../widgets/scripts/web/go-regular.ttf')}
+body {margin:0; font:16px GoRegular}
+.after\:content-\[\'\'\]:after {content:""}
+/* Escaped quotes above must not swallow later rules or comments. */
+.hidden {display:none}
+@media (min-width:600px) {.desktop\:flex {display:flex; width:180px; height:32px}}
+.open\{brace {width:120px; height:24px}
+.close\}brace {width:140px; height:28px}
+.nested { &.quote\' {width:160px; height:36px} }
+</style>
+<div class="after:content-['']"></div>
+<div id="desktop" class="hidden desktop:flex"></div>
+<div id="open" class="open{brace"></div>
+<div id="close" class="close}brace"></div>
+<div id="nested" class="nested quote'"></div>

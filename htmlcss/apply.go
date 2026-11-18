@@ -192,7 +192,7 @@ func chooseLayout(cs *ComputedStyle) qui.Layout {
 			wrap = false
 		}
 		return qui.FlexLayout{
-			Direction:    cs.FlexDirection,
+			CSSSizing: webCompat, Direction: cs.FlexDirection,
 			Justify:      cs.Justify,
 			AlignItems:   cs.AlignItems,
 			Gap:          gap,

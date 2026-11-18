@@ -1746,6 +1746,12 @@ func stripComments(s string) string {
 	b.Grow(len(s))
 	for i := 0; i < len(s); {
 		c := s[i]
+		if c == '\\' {
+			end := skipEscape(s, i)
+			b.WriteString(s[i:end])
+			i = end
+			continue
+		}
 		if c == '"' || c == '\'' {
 			end := stringEnd(s, i)
 			b.WriteString(s[i:end])
@@ -1781,10 +1787,14 @@ func stringEnd(s string, i int) int {
 	return len(s)
 }
 
-// skipString advances past a string literal at the cursor, reporting
-// whether there was one — so block scanning never takes a quoted `}` or
-// `{` (`content:"}"`) for structure.
+// skipString advances past a string literal or escaped character at the
+// cursor. Both are opaque to block scanning: escaped quotes in identifiers
+// do not open strings, and escaped braces do not open or close blocks.
 func (p *cssParser) skipString() bool {
+	if p.src[p.pos] == '\\' {
+		p.pos = skipEscape(p.src, p.pos)
+		return true
+	}
 	if c := p.src[p.pos]; c == '"' || c == '\'' {
 		p.pos = stringEnd(p.src, p.pos)
 		return true

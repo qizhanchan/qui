@@ -1,0 +1,13 @@
+<!doctype html><style>
+@font-face {font-family:GoRegular;src:url('../../../widgets/scripts/web/go-regular.ttf')}
+body {margin:0;font:16px/24px GoRegular}
+.row {display:flex;width:400px}
+.item {padding:4px;padding-inline-start:16px;padding-inline-end:8px;margin-inline-start:6px}
+.auto {margin-inline-start:auto;padding-inline:5px 9px}
+.physical {padding-inline-start:40px;padding-left:12px}
+.logical {padding-left:40px;padding-inline-start:12px}
+.reset {padding-inline:40px;padding:3px}
+</style>
+<div class="row" id="row"><div id="ltr" class="item">A</div><div id="auto" class="auto">B</div></div>
+<div dir="rtl" style="width:400px" id="rtlrow"><div id="rtl" class="item"><div id="rtlcontent">A</div></div></div>
+<div id="physical" class="physical">Physical</div><div id="logical" class="logical">Logical</div><div id="reset" class="reset">Reset</div>

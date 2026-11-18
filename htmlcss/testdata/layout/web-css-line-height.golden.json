@@ -1,0 +1,10 @@
+{
+ "fixture": "web-css-line-height",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "short": [0,0,640,64],
+  "pre": [0,64,640,48],
+  "br": [0,112,640,24]
+ }
+}

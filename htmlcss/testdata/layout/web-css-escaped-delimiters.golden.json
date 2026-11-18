@@ -1,0 +1,11 @@
+{
+ "fixture": "web-css-escaped-delimiters",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "desktop": [0,0,180,32],
+  "open": [0,32,120,24],
+  "close": [0,56,140,28],
+  "nested": [0,84,160,36]
+ }
+}

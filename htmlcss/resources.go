@@ -76,3 +76,37 @@ func (e *El) resourceReady() {
 	e.syncChildren()
 	e.InvalidateLayout()
 }
+
+// LoadLazyImages starts deferred images near a document-coordinate viewport.
+// Native lazy loading is enabled only with scripting, as in HTML. The host
+// calls this after layout and scrolling; unloaded images retain their authored
+// dimensions but have no natural size until their resource is requested.
+func (eng *StyleEngine) LoadLazyImages(viewport qui.Rect) {
+	if eng == nil || eng.root == nil || viewport.W <= 0 || viewport.H <= 0 {
+		return
+	}
+	root := eng.root.Bounds()
+	origin := qui.LocalPointToWindow(eng.root, qui.Point{X: root.X, Y: root.Y})
+	const distance = float32(1250) // desktop preload distance ahead of the viewport
+	for e := range eng.lazyImages {
+		hidden := false
+		for p := e; p != nil; p = p.elParent {
+			if p.displayNone || p.hidden {
+				hidden = true
+				break
+			}
+		}
+		if hidden {
+			continue
+		}
+		b := e.Bounds()
+		pos := qui.LocalPointToWindow(e, qui.Point{X: b.X, Y: b.Y})
+		x, y := pos.X-origin.X, pos.Y-origin.Y
+		if y+b.H < viewport.Y-distance || y > viewport.Y+viewport.H+distance || x+b.W < viewport.X-distance || x > viewport.X+viewport.W+distance {
+			continue
+		}
+		delete(eng.lazyImages, e)
+		e.imgLazyStarted = true
+		e.resourceReady()
+	}
+}

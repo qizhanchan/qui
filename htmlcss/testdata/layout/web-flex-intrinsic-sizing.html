@@ -1,0 +1,16 @@
+<!doctype html><style>
+@font-face {font-family:GoRegular;src:url('../../../widgets/scripts/web/go-regular.ttf')}
+* {box-sizing:border-box}
+body {margin:0;font:16px/24px GoRegular}
+.row {display:flex;width:600px;gap:20px;align-items:center}
+.nav {display:flex;gap:6px}
+.link {flex:1 1 0%;display:flex}
+.link a {width:100%;padding:4px 16px;white-space:nowrap}
+.search {flex:1 1 0%}
+.card {display:flex;flex-direction:column;flex-grow:1;width:100%;margin:-20px}
+.preview {display:flex;flex-grow:1;width:100%;padding:20px}
+.column {display:flex;flex-direction:column;align-items:center;width:600px}
+</style>
+<div class="row" id="navrow"><div class="search" id="search">Search</div><div class="nav" id="nav"><div class="link" id="one"><a>Learn</a></div><div class="link" id="two"><a>Reference</a></div></div></div>
+<div class="row" id="cardrow"><div class="card" id="card"><div style="height:120px"></div></div><div class="preview" id="preview"><div style="height:40px"></div></div></div>
+<div class="column" id="column"><p id="text" style="max-width:200px;margin:0">A wrapping paragraph needs the available width capped by max-width, including its last shorter line.</p></div>

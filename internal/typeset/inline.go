@@ -155,6 +155,10 @@ type InlineLayoutOptions struct {
 	// produces a final empty line (the caret needs a line to sit on).
 	PreserveWhitespace bool
 
+	// TrimTrailingEmptyLine uses CSS line breaking: a final preserved newline
+	// ends the last line without adding a caret line after it.
+	TrimTrailingEmptyLine bool
+
 	// TabStops are explicit tab positions in px from the layout's left
 	// edge, in ascending order. TabInterval is the repeating default used
 	// past the last explicit stop (and everywhere when TabStops is empty).
@@ -1042,7 +1046,7 @@ func BuildInlineLayout(items []InlineItem, opts InlineLayoutOptions) InlineLayou
 		place(ti, gap, contentW)
 		srcCursor = SourcePos{Item: t.srcItem, Off: t.srcEnd}
 	}
-	if len(cur) > 0 || (opts.PreserveWhitespace && endsWithBreak) {
+	if len(cur) > 0 || (opts.PreserveWhitespace && endsWithBreak && !opts.TrimTrailingEmptyLine) {
 		endLine(true)
 	}
 	if len(lineIdx) == 0 {
@@ -1200,7 +1204,10 @@ func (t inlineTok) aboveBelow(scale, spacing, mid float32, leadBelow, roundNorma
 	fa := inlineAscent(t.font)
 	fd := inlineDescent(t.font)
 	if t.lh != 0 {
-		scale, spacing = max(t.lh, 0), 0 // < 0: line-height normal
+		scale, spacing = max(t.lh, 0), 0 // -1: line-height normal
+		if t.lh == -2 {
+			scale = -2
+		} // explicit zero
 	}
 	la, lb := inlineLeading(t.font, scale, spacing, leadBelow)
 	above, below = fa+la, fd+lb
@@ -1937,16 +1944,19 @@ func inlineMidRef(f gfx.Font) float32 {
 }
 
 // inlineHalfLeading is the extra half-leading distributed above/below a text
-// run's ink box to reach its scaled line height (0 when line-height is at or
-// below the ink height).
+// run's ink box to reach its scaled line height. CSS permits negative
+// leading when the requested line height is smaller than the font metrics.
 // inlineLeading is the leading above and below a text line's ink: half each
 // (CSS), or with below set the face's own line gap split and everything line
 // spacing adds past it below the text (a word processor's; see
 // InlineLayoutOptions.LeadingBelow).
 func inlineLeading(f gfx.Font, scale, spacing float32, below bool) (above, under float32) {
 	half := inlineHalfLeading(f, scale, spacing)
-	if !below || half == 0 {
+	if !below {
 		return half, half
+	}
+	if half <= 0 {
+		return 0, 0
 	}
 	gap := (NaturalLineHeight(f) - inlineAscent(f) - inlineDescent(f)) / 2
 	if gap < 0 {
@@ -1962,9 +1972,6 @@ func inlineHalfLeading(f gfx.Font, scale, spacing float32) float32 {
 	lh := lineBox(f, scale, spacing)
 	ink := inlineAscent(f) + inlineDescent(f)
 	half := (lh - ink) / 2
-	if half < 0 {
-		return 0
-	}
 	return half
 }
 

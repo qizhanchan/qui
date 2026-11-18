@@ -171,9 +171,10 @@ type El struct {
 	// img leaf: raster/svg loaded from the src attribute (static path), or
 	// the in-memory bitmap given to SetImage (imgData, which wins over src).
 	// h.Icon's VectorSource path uses iconSrc below instead.
-	imgWidget qui.Widget
-	imgSrc    string
-	imgData   image.Image
+	imgWidget      qui.Widget
+	imgLazyStarted bool
+	imgSrc         string
+	imgData        image.Image
 
 	// <canvas> leaf: a replaced element whose pixels come from user code.
 	// canvasDraw is a paint callback (wrapped in a canvasLeaf); canvasUser
@@ -3359,11 +3360,15 @@ func (e *El) buildPseudoLeaf(cs *ComputedStyle) []qui.Widget {
 	ib.Wrap = !cs.NoWrap
 	ib.Align = cs.TextAlign
 	ib.PreserveWhitespace = cs.PreserveWS
+	ib.TrimTrailingEmptyLine = webCompat
 	ib.BreakLongWords = cs.BreakWord
 	ib.RoundNormalMetrics = webCompat
 	ib.LineHeightScale = 0
-	if cs.LineHeight > 0 {
+	if cs.LineHeight != 0 {
 		ib.LineHeightScale = cs.LineHeight
+		if cs.LineHeight < 0 {
+			ib.LineHeightScale = -2
+		}
 	}
 	st := ib.Style()
 	st.Font = fontFrom(cs)
@@ -3434,7 +3439,7 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 		return nil // a folded element's content rides in its ancestor's run
 	}
 	elementKids, kidParents := e.flatKids(cs)
-	hasFoldCandidate := e.text != ""
+	hasFoldCandidate := e.text != "" || webCompat
 	for _, k := range elementKids {
 		if ke, ok := k.(*El); ok && (ke.isTextSeg() || foldableTag(ke.tag)) {
 			hasFoldCandidate = true
@@ -3487,6 +3492,7 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 				anyFold = true
 			} else {
 				kinds[i] = kindAtomic
+				anyFold = anyFold || webCompat
 			}
 		default:
 			kinds[i] = kindBlock
@@ -3550,7 +3556,7 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 		if !meaningfulText && len(atomics) == 0 {
 			return
 		}
-		if !meaningfulText && len(atomics) == 1 {
+		if !webCompat && !meaningfulText && len(atomics) == 1 {
 			out = append(out, elementKids[atomics[0]])
 			return
 		}
@@ -3566,11 +3572,15 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 		ib.Wrap = !cs.NoWrap
 		ib.Align = cs.TextAlign
 		ib.PreserveWhitespace = cs.PreserveWS
+		ib.TrimTrailingEmptyLine = webCompat
 		ib.BreakLongWords = cs.BreakWord
 		ib.RoundNormalMetrics = webCompat
 		ib.LineHeightScale = 0
-		if cs.LineHeight > 0 {
+		if cs.LineHeight != 0 {
 			ib.LineHeightScale = cs.LineHeight
+			if cs.LineHeight < 0 {
+				ib.LineHeightScale = -2
+			}
 		}
 		ib.Strut = webCompat
 		ib.StrutNeedsText = e.engine != nil && e.engine.opts.Quirks != NoQuirksMode
@@ -3613,7 +3623,7 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 			continue
 		case kindAside:
 			aside = append(aside, elementKids[i])
-			if ke, ok := elementKids[i].(*El); ok && styles[i] != nil && styles[i].InlineStatic {
+			if ke, ok := elementKids[i].(*El); ok && styles[i] != nil && styles[i].InlineStatic && (!(styles[i].HasLeft || styles[i].HasRight) || !(styles[i].HasTop || styles[i].HasBottom)) {
 				// Mark its place in the line for its static position.
 				run = append(run, i)
 			} else if ok {
@@ -3920,6 +3930,9 @@ func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *Compu
 
 // spanLineHeight is a span's line-height scale: < 0 for normal.
 func spanLineHeight(cs *ComputedStyle) float32 {
+	if cs.LineHeight < 0 {
+		return -2
+	}
 	if cs.LineHeight > 0 {
 		return cs.LineHeight
 	}
@@ -4221,6 +4234,16 @@ func (e *El) ensureImg(cs *ComputedStyle) {
 		si.untinted = true
 		e.imgWidget = si
 		e.imgSrc = "\x00svg"
+		return
+	}
+	if e.engine != nil && e.engine.opts.ScriptDOM && !e.imgLazyStarted && strings.EqualFold(e.attrs["loading"], "lazy") {
+		if e.engine.lazyImages == nil {
+			e.engine.lazyImages = map[*El]bool{}
+		}
+		e.engine.lazyImages[e] = true
+		if e.imgWidget == nil {
+			e.imgWidget = widgets.NewBox(qui.FlowLayout{})
+		}
 		return
 	}
 	src := e.attrs["src"]
@@ -4608,6 +4631,11 @@ func (e *El) Measure(available qui.Size) qui.Size {
 			return sz
 		}
 	}
+	if webCompat && e.lastCS != nil && (!e.lastCS.HeightDefinite || e.lastCS.HeightIntrinsicAuto) {
+		// An offer from an ancestor is not a CSS auto height. Measure the
+		// content without shrinking its flex columns to that ancestor's slot.
+		available.H = 0
+	}
 	m := e.Box.Measure(available)
 	if cs := e.lastCS; cs != nil && cs.AspectRatio > 0 {
 		m = e.aspectSize(cs, available, m)
@@ -4624,9 +4652,13 @@ func (e *El) Measure(available qui.Size) qui.Size {
 		})
 		if e.scrollView.Orientation == widgets.ScrollHorizontal {
 			m.W = sv.W + ins.Horizontal()
-		} else {
-			m.H = sv.H + ins.Vertical()
 		}
+		// CSS auto height is the content's intrinsic height, including for
+		// horizontal overflow. A ScrollView's offered viewport height (or
+		// its last laid-out ContentSize) is not a content measurement: using
+		// it here makes nested auto-height flex boxes grow on every layout.
+		content := qui.MeasureChild(e.scrollInner, qui.Size{W: max(0, available.W-ins.Horizontal())})
+		m.H = content.H + ins.Vertical()
 	}
 	return m
 }
@@ -4683,6 +4715,11 @@ func (e *El) naturalImageSize() (qui.Size, bool) {
 // row of such logos into narrow cells without widening them.
 func (e *El) MinContentOverride() (float32, bool) {
 	cs := e.lastCS
+	if webCompat && cs != nil && e.isImg() && e.iconSrc == nil && cs.WidthPct > 0 {
+		// A replaced element's cyclic percentage width contributes zero to
+		// its ancestor's min-content size (CSS Sizing 3, cyclic percentages).
+		return e.Style().ContentInsets().Horizontal(), true
+	}
 	if !webCompat || cs == nil || !e.isImg() || e.iconSrc != nil || cs.HasWidth || cs.WidthPct > 0 {
 		return 0, false
 	}
@@ -4751,6 +4788,9 @@ func (e *El) replacedSize(avail qui.Size) (qui.Size, bool) {
 		h, hasH = boxH(cs.Height), true
 	}
 	ratio := nat.W / nat.H
+	if cs.AspectRatio > 0 {
+		ratio = cs.AspectRatio
+	}
 	switch {
 	case hasW && hasH:
 	case hasW:
@@ -5787,14 +5827,14 @@ func (e *El) InlineBaseline() float32 {
 	case *widgets.CheckBox, *widgets.RadioButton, *widgets.Switch:
 		return qui.MeasureChild(e, qui.Size{}).H
 	}
+	if b, ok := e.flexRowBaseline(cs); ok {
+		return b
+	}
 	// CSS: an inline-block with no in-flow line boxes, or whose overflow is
 	// not visible, takes its bottom margin edge as its baseline — 0 here
 	// (bottom on the line's baseline).
 	if cs.OverflowClip || e.overflowScroll || (e.text == "" && e.flowKids == nil && e.textLabel == nil) {
 		return 0
-	}
-	if b, ok := e.flexRowBaseline(cs); ok {
-		return b
 	}
 	return e.textTopBaseline(cs)
 }
@@ -5826,7 +5866,7 @@ func (e *El) flexRowBaseline(cs *ComputedStyle) (float32, bool) {
 	if ke, ok := item.(*El); ok {
 		itemBase = ke.InlineBaseline()
 		if itemBase == 0 {
-			return 0, false // a box without text: bottom-on-baseline
+			itemBase = qui.MeasureConstrained(item, qui.Size{}).H // synthesize at the item's border-box bottom
 		}
 	} else {
 		itemBase = e.textHalfLeadingAscent(cs) // the container's own text run
@@ -5834,7 +5874,7 @@ func (e *El) flexRowBaseline(cs *ComputedStyle) (float32, bool) {
 	st := e.Style()
 	ins := st.ContentInsets()
 	contentH := qui.MeasureConstrained(e, qui.Size{}).H - ins.Vertical()
-	itemH := qui.MeasureChild(item, qui.Size{}).H
+	itemH := qui.MeasureConstrained(item, qui.Size{}).H
 	m := item.Style().Margin
 	align := qui.FlexItemOf(item).Align
 	if align == qui.AlignDefault {

@@ -1,0 +1,16 @@
+{
+ "fixture": "web-inline-block-strut",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "row": [0,0,640,33],
+  "link": [0,2,25.66,31],
+  "second": [0,33,640,33],
+  "zero": [0,66,640,40],
+  "zerochild": [0,66,100,40],
+  "iconrow": [0,106,640,35],
+  "iconbutton": [0,106,32,32],
+  "limited": [0,141,200,31],
+  "wide": [0,141,200,31]
+ }
+}

@@ -1,0 +1,13 @@
+<!doctype html><style>
+@font-face {font-family:GoRegular;src:url('../../../widgets/scripts/web/go-regular.ttf')}
+body {margin:0;font:16px/24px GoRegular}
+.column {display:flex;flex-direction:column;width:400px}
+.row {display:flex;align-items:center;flex-grow:1}
+.scroll {overflow:auto}
+.x {overflow-x:auto;width:240px}
+.line {height:24px}
+</style>
+<div class="column" id="outer"><div class="row" id="row"><div id="x" class="x"><div class="scroll" style="width:240px" id="inner"><div class="line">First</div><div class="line">Second</div></div></div><div>Preview</div></div></div>
+<div id="max" class="scroll" style="max-height:30px"><div class="line">First</div><div class="line">Second</div></div>
+<div id="fixed" class="scroll" style="height:36px"><div class="line">First</div><div class="line">Second</div></div>
+<div class="column" id="growcolumn"><div class="scroll" id="growchild" style="flex:1"><div class="line">First</div><div class="line">Second</div></div></div>

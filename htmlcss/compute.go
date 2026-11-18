@@ -56,7 +56,7 @@ type ComputedStyle struct {
 	// RootFontSize is the document root's font size — what rem resolves
 	// against (16px, the initial size, when the root is not <html>).
 	RootFontSize float32
-	LineHeight   float32 // multiplier over font size
+	LineHeight   float32 // multiplier over font size; -1 = explicit zero, 0 = normal
 	// LineHeightPx is the computed line height in px when it was declared
 	// with a length or percentage (0 for a unitless number). CSS inherits
 	// such a line-height as that absolute length, not as a factor: a 32px
@@ -66,6 +66,7 @@ type ComputedStyle struct {
 	// (not inherited). Form controls use only their own: a browser's UA
 	// sheet resets theirs to normal.
 	LineHeightOwn bool
+	Direction     string // inherited CSS inline direction (ltr or rtl)
 	TextAlign     qui.TextAlign
 	// Float / Clear are CSS float and clear ("" = none). A float's display
 	// is blockified.
@@ -149,6 +150,9 @@ type ComputedStyle struct {
 	// (CSS 2.1 § 10.5) — its children's percentage heights resolve against
 	// it. Only tracked in web-compat mode.
 	HeightDefinite bool
+	// HeightIntrinsicAuto keeps flex-line-dependent percentages intrinsic
+	// during measurement; placement resolves them against the stretched line.
+	HeightIntrinsicAuto bool
 	// WidthPct/HeightPct hold `width: 50%`-style declarations as 0–1
 	// fractions; the root layout engines resolve them against the
 	// containing block at layout time (qui.Style.WidthPct/HeightPct).
@@ -400,7 +404,7 @@ type matchedDecl struct {
 
 func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedStyle {
 	rest := &restMatches{}
-	base := interpret(n, mergedDeclsRest(n, sheet, selectorState{}, rest, true), parent)
+	base := interpret(n, mergedDeclsRest(n, sheet, selectorState{}, rest, true, parent), parent)
 	// When the sheet has interactive-state rules, compute the matching
 	// variant(s) too — the built widget swaps to them while the element is
 	// hovered / focused / pressed. Each variant inherits from the parent's
@@ -428,7 +432,7 @@ func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedSty
 			cp := resting
 			return &cp
 		}
-		return interpret(n, mergedDeclsRest(n, sheet, st, rest, false), parent)
+		return interpret(n, mergedDeclsRest(n, sheet, st, rest, false, parent), parent)
 	}
 	hover, focus := mask&stateHover != 0, mask&stateFocus != 0
 	if sheet.HasHover || fwHover {
@@ -727,7 +731,7 @@ func stateRulesDiffer(n *Node, sheet *Stylesheet, st selectorState, rest *restMa
 }
 
 // mergedDeclsRest is mergedDecls recording (record) or reusing rest.
-func mergedDeclsRest(n *Node, sheet *Stylesheet, st selectorState, rest *restMatches, record bool) map[string]string {
+func mergedDeclsRest(n *Node, sheet *Stylesheet, st selectorState, rest *restMatches, record bool, parents ...*ComputedStyle) map[string]string {
 	// The matched declarations are scratch: reuse a buffer across calls
 	// (growing it per element was a fifth of a heavy page's cascade).
 	bufp := declBufPool.Get().(*[]matchedDecl)
@@ -847,12 +851,25 @@ func mergedDeclsRest(n *Node, sheet *Stylesheet, st selectorState, rest *restMat
 	// sub-shorthand) of its family that an EARLIER declaration set, so a
 	// longhand surviving next to its shorthand is known to come later —
 	// which is what lets the interpreter always prefer the longhand.
+	direction := "ltr"
+	if len(parents) > 0 && parents[0] != nil && parents[0].Direction != "" {
+		direction = parents[0].Direction
+	}
+	if dir, ok := n.Attr("dir"); ok && (dir == "rtl" || dir == "ltr") {
+		direction = dir
+	}
+	for _, d := range decls {
+		if d.decl.Property == "direction" && (d.decl.Value == "rtl" || d.decl.Value == "ltr") {
+			direction = d.decl.Value
+		}
+	}
 	merged := map[string]string{}
 	for _, m := range decls {
 		for _, lh := range shorthandLonghands[m.decl.Property] {
 			delete(merged, lh)
 		}
 		merged[m.decl.Property] = m.decl.Value
+		mergeLogicalBox(merged, m.decl, direction == "rtl")
 	}
 	return merged
 }
@@ -895,7 +912,16 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	inheritRegisteredProps(m, parent)
 	resolveCSSWideKeywords(m, parent)
 	expandShorthands(m)
-	cs := &ComputedStyle{raw: m, customProps: customProps}
+	cs := &ComputedStyle{raw: m, customProps: customProps, Direction: "ltr"}
+	if parent != nil && parent.Direction != "" {
+		cs.Direction = parent.Direction
+	}
+	if dir, ok := n.Attr("dir"); ok && (dir == "rtl" || dir == "ltr") {
+		cs.Direction = dir
+	}
+	if dir := m["direction"]; dir == "rtl" || dir == "ltr" {
+		cs.Direction = dir
+	}
 
 	// --- inheritable defaults ---
 	if parent != nil {
@@ -1123,10 +1149,16 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 			cs.LineHeightOwn = true
 		} else if lh, ok := parseFloat(strings.TrimSpace(v)); ok && !strings.ContainsAny(v, "px%rem") {
 			cs.LineHeight = lh // unitless multiplier
+			if lh == 0 {
+				cs.LineHeight = -1
+			}
 			cs.LineHeightPx = 0
 			cs.LineHeightOwn = true
 		} else if px, ok := parseLength(v, fs, fs); ok && fs > 0 {
 			cs.LineHeight = px / fs
+			if px == 0 {
+				cs.LineHeight = -1
+			}
 			cs.LineHeightPx = px
 			cs.LineHeightOwn = true
 		}
@@ -1495,10 +1527,12 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 			cs.FlexShrink, cs.HasFlexShrink = s, true
 		}
 	}
+	cs.FlexBasisAuto = webCompat // CSS initial flex-basis is auto, even with flex-grow.
 	if v, ok := m["flex-basis"]; ok {
 		if s := strings.ToLower(strings.TrimSpace(v)); s == "auto" || s == "content" {
 			cs.FlexBasisAuto = true
 		} else if s != "" {
+			cs.FlexBasisAuto = false
 			if px, frac, hasPct, ok := parseLengthPct(s, fs); ok && hasPct && frac > 0 {
 				cs.FlexBasisPct, cs.FlexBasisPctOffset = frac, px
 			} else if px, ok := parseLength(s, fs, 0); ok {
@@ -1528,9 +1562,10 @@ func resolveHeightDefiniteness(n *Node, cs, parent *ComputedStyle) {
 	outOfFlow := cs.Position == "absolute" || cs.Position == "fixed"
 	parentDefinite := root || (parent != nil && parent.HeightDefinite)
 	// A stretched item of a row flex container takes the container's
-	// (definite) cross size.
+	// resolved cross size, which is definite for its descendants even
+	// when the flex line was sized from its content.
 	stretched := parent != nil && isFlexDisplay(parent.Display) && parent.FlexDirection == qui.Horizontal &&
-		parent.HeightDefinite && !cs.HasHeight && cs.HeightPct == 0 &&
+		!cs.HasHeight && cs.HeightPct == 0 &&
 		(cs.AlignSelf == qui.AlignDefault && (parent.AlignItems == qui.AlignStretch || parent.AlignItems == qui.AlignDefault) ||
 			cs.AlignSelf == qui.AlignStretch)
 	if cs.HeightPct > 0 && !parentDefinite && !outOfFlow {
@@ -1544,6 +1579,7 @@ func resolveHeightDefiniteness(n *Node, cs, parent *ComputedStyle) {
 	}
 	// The root's percentages resolve against the viewport (the initial
 	// containing block); its own height is definite only when set.
+	cs.HeightIntrinsicAuto = !cs.HasHeight && parent != nil && (parent.HeightIntrinsicAuto || stretched && !parent.HeightDefinite)
 	cs.HeightDefinite = cs.HasHeight || (cs.HeightPct > 0 && (parentDefinite || outOfFlow)) ||
 		stretched || (outOfFlow && cs.HasTop && cs.HasBottom)
 }

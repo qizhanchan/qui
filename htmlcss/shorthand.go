@@ -290,3 +290,38 @@ func capitalizeWords(s string) string {
 	}
 	return string(out)
 }
+
+// mergeLogicalBox maps horizontal writing-mode box edges while folding the
+// cascade, so logical and physical properties compete in cascade order.
+func mergeLogicalBox(m map[string]string, d Declaration, rtl bool) {
+	for _, box := range []string{"margin", "padding"} {
+		if !strings.HasPrefix(d.Property, box+"-") {
+			continue
+		}
+		edge := strings.TrimPrefix(d.Property, box+"-")
+		start, end := "left", "right"
+		if rtl {
+			start, end = end, start
+		}
+		switch edge {
+		case "inline-start":
+			m[box+"-"+start] = d.Value
+		case "inline-end":
+			m[box+"-"+end] = d.Value
+		case "block-start":
+			m[box+"-top"] = d.Value
+		case "block-end":
+			m[box+"-bottom"] = d.Value
+		case "inline", "block":
+			vals := fieldsTopLevel(d.Value)
+			if len(vals) < 1 || len(vals) > 2 {
+				continue
+			}
+			if edge == "block" {
+				start, end = "top", "bottom"
+			}
+			m[box+"-"+start] = vals[0]
+			m[box+"-"+end] = vals[len(vals)-1]
+		}
+	}
+}

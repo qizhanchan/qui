@@ -1,0 +1,15 @@
+{
+ "fixture": "web-scroll-auto-height",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "outer": [0,0,400,48],
+  "row": [0,0,400,48],
+  "x": [0,0,240,48],
+  "inner": [0,0,240,48],
+  "max": [0,48,640,30],
+  "fixed": [0,78,640,36],
+  "growcolumn": [0,114,400,48],
+  "growchild": [0,114,400,48]
+ }
+}

@@ -315,6 +315,9 @@ func scaledLineHeight(fontSpec gfx.Font, scale float32) float32 {
 // lines wins when set; otherwise cssScale; otherwise CSS `line-height:
 // normal`, the face's own height.
 func lineBox(fontSpec gfx.Font, cssScale, lines float32) float32 {
+	if cssScale == -2 {
+		return 0
+	} // CSS explicit line-height: 0
 	// An unset Size means 14 px everywhere else in the font stack
 	// (GetFontFacesFor) — apply the same default here so the font-size
 	// branch agrees, instead of silently ignoring cssScale (0 × scale = 0).

@@ -36,6 +36,8 @@ type InlineBox struct {
 	// hang) — the white-space:pre / editing-surface mode. See
 	// qui.InlineLayoutOptions.PreserveWhitespace.
 	PreserveWhitespace bool
+	// TrimTrailingEmptyLine selects CSS final-newline behavior.
+	TrimTrailingEmptyLine bool
 
 	// Strut makes the box's own font and line height a floor for every
 	// line (CSS's strut; see InlineLayoutOptions.Strut).
@@ -271,16 +273,17 @@ func (b *InlineBox) buildItems(maxW float32) []InlineItem {
 
 func (b *InlineBox) options(maxW float32) InlineLayoutOptions {
 	o := InlineLayoutOptions{
-		MaxWidth:           maxW,
-		Wrap:               b.Wrap,
-		Align:              b.Align,
-		LineHeightScale:    b.LineHeightScale,
-		RoundNormalMetrics: b.RoundNormalMetrics,
-		BaseFont:           b.Style().Font,
-		PreserveWhitespace: b.PreserveWhitespace,
-		BreakLongWords:     b.BreakLongWords,
-		Strut:              b.Strut,
-		StrutNeedsText:     b.StrutNeedsText,
+		MaxWidth:              maxW,
+		Wrap:                  b.Wrap,
+		Align:                 b.Align,
+		LineHeightScale:       b.LineHeightScale,
+		RoundNormalMetrics:    b.RoundNormalMetrics,
+		BaseFont:              b.Style().Font,
+		PreserveWhitespace:    b.PreserveWhitespace,
+		BreakLongWords:        b.BreakLongWords,
+		Strut:                 b.Strut,
+		StrutNeedsText:        b.StrutNeedsText,
+		TrimTrailingEmptyLine: b.TrimTrailingEmptyLine,
 	}
 	if maxW > 0 && len(b.floatEx) > 0 {
 		in := b.Style().ContentInsets()
@@ -330,20 +333,21 @@ type inlineLayoutKey struct {
 	// inputs to the inline layout too: an inline image finishing its async
 	// load, or a badge changing text, invalidates the child's measure but
 	// leaves this box's text/font key untouched.
-	childSig           uint64
-	wrap               bool
-	align              TextAlign
-	lineHeightScale    float32
-	roundNormalMetrics bool
-	preserveWhitespace bool
-	breakLongWords     bool
-	family             string
-	size               float32
-	weight             FontWeight
-	bold, italic       bool
-	smallCaps          bool
-	letterSpacing      float32
-	wordSpacing        float32
+	childSig              uint64
+	wrap                  bool
+	align                 TextAlign
+	lineHeightScale       float32
+	roundNormalMetrics    bool
+	preserveWhitespace    bool
+	breakLongWords        bool
+	family                string
+	size                  float32
+	weight                FontWeight
+	bold, italic          bool
+	smallCaps             bool
+	letterSpacing         float32
+	wordSpacing           float32
+	trimTrailingEmptyLine bool
 }
 
 func (b *InlineBox) layoutKeyFor(maxW float32) inlineLayoutKey {
@@ -357,7 +361,8 @@ func (b *InlineBox) layoutKeyFor(maxW float32) inlineLayoutKey {
 		preserveWhitespace: b.PreserveWhitespace,
 		breakLongWords:     b.BreakLongWords,
 		family:             f.Family, size: f.Size, weight: f.Weight,
-		bold: f.Bold, italic: f.Italic, smallCaps: f.SmallCaps,
+		trimTrailingEmptyLine: b.TrimTrailingEmptyLine,
+		bold:                  f.Bold, italic: f.Italic, smallCaps: f.SmallCaps,
 		letterSpacing: f.LetterSpacing, wordSpacing: f.WordSpacing,
 	}
 }
@@ -1038,37 +1043,23 @@ func boxMargin(w Widget) Insets {
 
 func inlineChildSize(w Widget, avail Size) Size {
 	st := w.Style()
-	var m Size
 	if st != nil && st.Width <= 0 && st.WidthPct <= 0 {
-		// An atomic inline of auto width shrinks to fit its content.
+		// CSS shrink-to-fit, constrained by percentage min/max against the
+		// containing line rather than against the resulting intrinsic width.
 		sw := ShrinkToFit(w, avail.W)
-		m = MeasureChild(w, Size{W: sw, H: avail.H})
+		if avail.W > 0 {
+			if st.MaxWidthPct > 0 {
+				sw = min(sw, st.MaxWidthPct*avail.W+st.PctExtra.W)
+			}
+			if st.MinWidthPct > 0 {
+				sw = max(sw, st.MinWidthPct*avail.W+st.PctExtra.W)
+			}
+		}
+		m := MeasureConstrained(w, Size{W: sw, H: avail.H})
 		m.W = sw
-	} else {
-		m = MeasureChild(w, avail)
-	}
-	if st == nil {
 		return m
 	}
-	if st.Width > 0 {
-		m.W = st.Width
-	}
-	if st.Height > 0 {
-		m.H = st.Height
-	}
-	if st.MinWidth > 0 && m.W < st.MinWidth {
-		m.W = st.MinWidth
-	}
-	if st.MinHeight > 0 && m.H < st.MinHeight {
-		m.H = st.MinHeight
-	}
-	if st.MaxWidth > 0 && m.W > st.MaxWidth {
-		m.W = st.MaxWidth
-	}
-	if st.MaxHeight > 0 && m.H > st.MaxHeight {
-		m.H = st.MaxHeight
-	}
-	return m
+	return MeasureConstrained(w, avail)
 }
 
 // drawTextShadows paints the runs' CSS text-shadow layers under the text:

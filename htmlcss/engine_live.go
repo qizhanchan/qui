@@ -36,6 +36,7 @@ import (
 //   - a stylesheet containing :has() promotes a dirty element to its
 //     top-level root, because a descendant mutation can change any ancestor.
 type StyleEngine struct {
+	lazyImages map[*El]bool          // script-enabled loading=lazy images awaiting a nearby viewport
 	animEvents AnimationEventHandler // CSS animation / transition events (anim.go)
 	// linkHandler, when set, decides what a link click does (events.go).
 	linkHandler LinkHandler
