@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -13,14 +14,16 @@ import (
 	"github.com/qizhanchan/qui/media/internal/h264"
 	"github.com/qizhanchan/qui/media/internal/hevc"
 	"github.com/qizhanchan/qui/media/internal/mp4x"
+	"github.com/qizhanchan/qui/media/internal/vp9"
 )
 
-// The pure-Go pipeline backend: MP4 demux (internal/mp4x) + the self-written
-// H.264, HEVC and AV1 decoders (internal/h264, internal/hevc,
-// internal/av1) + GPU YUV→RGB
-// (gl_yuv.go), with no ffmpeg
-// and no platform framework. Audio (AAC-LC) is decoded by internal/aac and
-// played through internal/audioout when available.
+// The pure-Go pipeline backend: MP4 demux (internal/mp4x), plus WebM /
+// Matroska, Ogg and MP3 (container_golang.go), + the self-written H.264,
+// HEVC, AV1 and VP9 decoders (internal/h264, internal/hevc, internal/av1,
+// internal/vp9; VP9 from WebM only) +
+// GPU YUV→RGB, with no ffmpeg and no platform framework. Audio (AAC-LC,
+// Opus, MP3: internal/aac, internal/opus, internal/mp3) is played through
+// internal/audioout when available.
 //
 // It registers itself as "golang" and is selected by QUI_MEDIA_BACKEND=golang
 // (or by "auto" when no native backend is registered).
@@ -30,23 +33,76 @@ type golangBackend struct{}
 
 func (golangBackend) Capabilities() Capabilities {
 	c := Capabilities{
-		VideoCodecs: []string{"h264", "hevc", "av1"},
-		Containers:  []string{"mp4", "mov", "m4v", "m4a"},
+		VideoCodecs: []string{"h264", "hevc", "av1", "vp9"},
+		Containers:  []string{"mp4", "mov", "m4v", "m4a", "webm", "mkv", "mka", "ogg", "opus", "mp3"},
 	}
 	if golangAudioAvailable() {
-		c.AudioCodecs = []string{"aac"}
+		c.AudioCodecs = []string{"aac", "opus", "mp3"}
 	}
 	return c
 }
 
 func (golangBackend) OpenSource(path string) (Source, error) {
-	r, err := mp4x.Open(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	s := &golangSource{r: r}
+	st, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	switch c := sniffContainer(f, st.Size()); c {
+	case "mp4":
+		_ = f.Close()
+		r, err := mp4x.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		return openGolangSource(r)
+	case "":
+		_ = f.Close()
+		return nil, ErrNotSupported
+	default:
+		return openContainer(c, f, st.Size(), f)
+	}
+}
+
+// StreamCapabilities: the pure-Go pipeline decodes the same set from a
+// ByteSource as from a file.
+func (b golangBackend) StreamCapabilities() Capabilities { return b.Capabilities() }
+
+// OpenStream opens an MP4 held by a ByteSource. The reader reads sample
+// bytes through bs.ReadAt; closing the source closes bs.
+func (golangBackend) OpenStream(bs ByteSource) (Source, error) {
+	switch c := sniffContainer(bs, bs.Size()); c {
+	case "mp4":
+		r, err := mp4x.OpenReader(bs, bs.Size())
+		if err != nil {
+			return nil, err
+		}
+		return openGolangSource(r)
+	case "":
+		return nil, ErrNotSupported
+	default:
+		return openContainer(c, bs, bs.Size(), bs)
+	}
+}
+
+// openGolangSource wires decoders for r's tracks. It owns r: on error r is
+// closed.
+func openGolangSource(r *mp4x.Reader) (Source, error) {
+	s := &golangSource{r: r, closer: r}
 	if vt := r.VideoTrack(); vt != nil && (vt.Codec == "h264" || vt.Codec == "hevc" || vt.Codec == "av1") {
-		if err := s.openVideo(vt); err != nil {
+		err := ErrCodecUnsupported
+		if vt.SampleCount() > 0 {
+			var cfg videoConfig
+			if cfg, err = mp4VideoConfig(r, vt); err == nil {
+				r.Keyframes(vt) // build the index before any concurrent use
+				err = s.openVideo(cfg, fileTrack{r, vt})
+			}
+		}
+		if err != nil {
 			_ = r.Close()
 			return nil, err
 		}
@@ -63,14 +119,21 @@ func (golangBackend) OpenSource(path string) (Source, error) {
 	return s, nil
 }
 
-// golangSource is an open MP4 file.
+// golangSource is an open media file: an MP4 (r), a WebM/Matroska, Ogg
+// or MP3 file (container_golang.go), or MSE buffers.
 type golangSource struct {
-	r *mp4x.Reader
+	r *mp4x.Reader // MP4 / MSE only
+	// closer releases the container (the mp4x reader, the file or the
+	// ByteSource); buffered, when set, answers Buffered for containers
+	// other than MP4.
+	closer   io.Closer
+	buffered func() []TimeRange
 
-	vt        *mp4x.Track
+	vtr       sampleTrack // the video samples (a file's table, or an MSE buffer)
 	video     *VideoTrackInfo
 	hevc      bool     // HEVC rather than H.264
 	av1       bool     // AV1: samples are temporal units, not NAL units
+	vp9       bool     // VP9: samples are frames / superframes
 	params    [][]byte // parameter sets (AV1: configOBUs) fed before the first sample
 	lenSize   int
 	audio     *golangAudio
@@ -82,33 +145,59 @@ type golangSource struct {
 	closeOnce sync.Once
 }
 
-func (s *golangSource) openVideo(vt *mp4x.Track) error {
-	if vt.SampleCount() == 0 {
-		return ErrCodecUnsupported
-	}
-	var w, h int
-	var fpsVUI float64
+// videoConfig is a video track's decoder configuration, whatever the
+// container: the codec ("h264", "hevc", "av1", "vp9"), its parameter sets (H.264
+// SPS/PPS, HEVC VPS/SPS/PPS with the NAL length size) or AV1 configOBUs,
+// and the container's frame rate and duration (0 = unknown).
+type videoConfig struct {
+	codec         string
+	vps, sps, pps [][]byte
+	lenSize       int
+	av1OBUs       []byte
+	width, height int // container frame size (VP9)
+	fps           float32
+	duration      time.Duration
+}
+
+// mp4VideoConfig reads vt's configuration from the MP4 sample entry.
+func mp4VideoConfig(r *mp4x.Reader, vt *mp4x.Track) (videoConfig, error) {
+	cfg := videoConfig{codec: vt.Codec, fps: vt.FPS, duration: vt.Duration}
+	var err error
 	switch vt.Codec {
 	case "av1":
-		cfg, err := s.r.AV1ConfigOBUs()
-		if err != nil {
-			return err
-		}
+		cfg.av1OBUs, err = r.AV1ConfigOBUs()
+	case "hevc":
+		cfg.vps, cfg.sps, cfg.pps, cfg.lenSize, err = r.HVCCParameterSets()
+	default:
+		cfg.codec = "h264"
+		cfg.sps, cfg.pps, cfg.lenSize, err = r.AVCCParameterSets()
+	}
+	return cfg, err
+}
+
+// openVideo starts decoding the samples of tr, configured by cfg.
+func (s *golangSource) openVideo(cfg videoConfig, tr sampleTrack) error {
+	var w, h int
+	var fpsVUI float64
+	switch cfg.codec {
+	case "av1":
 		// SequenceHeaderOf rejects what the decoder cannot handle
 		// (4:2:2 / 4:4:4, 12-bit); 10-bit output is rounded to 8 bits.
-		seq, err := av1.SequenceHeaderOf(cfg)
+		seq, err := av1.SequenceHeaderOf(cfg.av1OBUs)
 		if err != nil {
 			return ErrCodecUnsupported
 		}
 		w, h = seq.MaxWidth, seq.MaxHeight
 		fpsVUI = seq.FPS()
 		s.av1 = true
-		s.params = [][]byte{cfg}
+		s.params = [][]byte{cfg.av1OBUs}
+	case "vp9":
+		// The profile was checked on the first frame where it is known
+		// (webmVideoConfig); a later profile 1–3 frame fails decoding.
+		w, h = cfg.width, cfg.height
+		s.vp9 = true
 	case "hevc":
-		vps, sps, pps, ls, err := s.r.HVCCParameterSets()
-		if err != nil {
-			return err
-		}
+		vps, sps, pps, ls := cfg.vps, cfg.sps, cfg.pps, cfg.lenSize
 		if len(vps) == 0 || len(sps) == 0 || len(pps) == 0 || ls < 1 || ls > 4 {
 			return ErrCodecUnsupported
 		}
@@ -123,11 +212,8 @@ func (s *golangSource) openVideo(vt *mp4x.Track) error {
 		s.hevc = true
 		s.params = append(append(append([][]byte{}, vps...), sps...), pps...)
 		s.lenSize = ls
-	default:
-		sps, pps, ls, err := s.r.AVCCParameterSets()
-		if err != nil {
-			return err
-		}
+	case "h264":
+		sps, pps, ls := cfg.sps, cfg.pps, cfg.lenSize
 		if len(sps) == 0 || len(pps) == 0 || ls < 1 || ls > 4 {
 			return ErrCodecUnsupported
 		}
@@ -143,22 +229,23 @@ func (s *golangSource) openVideo(vt *mp4x.Track) error {
 		fpsVUI = p.FPS()
 		s.params = append(append([][]byte{}, sps...), pps...)
 		s.lenSize = ls
+	default:
+		return ErrCodecUnsupported
 	}
-	s.vt = vt
-	s.r.Keyframes(vt) // build the index before any concurrent use
-	dur := vt.Duration
-	if n := vt.SampleCount(); n > 0 {
-		end := s.r.PTS(vt, n-1) + s.r.SampleDuration(vt, n-1)
+	s.vtr = tr
+	dur := cfg.duration
+	if n := s.vtr.count(); n > 0 {
+		end := s.vtr.pts(n-1) + s.vtr.dur(n-1)
 		if end > dur {
 			dur = end
 		}
 	}
-	fps := vt.FPS
+	fps := cfg.fps
 	if fps == 0 {
 		fps = float32(fpsVUI)
 	}
 	s.video = &VideoTrackInfo{
-		Codec:       vt.Codec,
+		Codec:       cfg.codec,
 		Width:       w,
 		Height:      h,
 		FPS:         fps,
@@ -277,7 +364,7 @@ func (s *golangSource) SeekVideo(pts time.Duration, precise bool) error {
 		return nil
 	}
 	s.ahead.stop()
-	idx := s.r.SeekKeyframe(s.vt, pts)
+	idx := s.vtr.seekKeyframe(pts)
 	s.play.start(idx, pts, precise)
 	s.ahead = startDecodeAhead(s.play)
 	return nil
@@ -289,7 +376,7 @@ func (s *golangSource) OpenScrubDecoder() (ScrubDecoder, error) {
 	if s.closed {
 		return nil, io.EOF
 	}
-	if s.vt == nil {
+	if s.video == nil {
 		return nil, ErrNoTrack
 	}
 	if s.scrub == nil {
@@ -316,7 +403,9 @@ func (s *golangSource) Close() error {
 			s.scrub.closed = true
 			s.scrub.mu.Unlock()
 		}
-		err = s.r.Close()
+		if s.closer != nil {
+			err = s.closer.Close()
+		}
 	})
 	return err
 }
@@ -337,6 +426,21 @@ type videoCodec interface {
 type av1Codec struct{ *av1.Decoder }
 
 func (c av1Codec) DecodeNAL(tu []byte) error { return c.Decode(tu) }
+
+// vp9Codec adapts vp9.Decoder to videoCodec: each "NAL" is a WebM block.
+type vp9Codec struct{ *vp9.Decoder }
+
+func (c vp9Codec) DecodeNAL(b []byte) error { return c.Decode(b) }
+
+func (c vp9Codec) DecodeNALs(bs [][]byte) error {
+	var first error
+	for _, b := range bs {
+		if err := c.Decode(b); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
 
 func (c av1Codec) DecodeNALs(tus [][]byte) error {
 	var first error
@@ -364,6 +468,14 @@ type videoDecoder struct {
 	precise bool
 	buf     []byte
 	errs    int
+	// Frames carry a sequence tag; tagPTS / tagDur remember the sample
+	// each came from, so a track whose indices move (MSE) still maps
+	// decoded frames to their times.
+	seq     int64
+	tagPTS  map[int64]time.Duration
+	tagDur  map[int64]time.Duration
+	trkGen  uint64
+	lastFed time.Duration // PTS of the last sample fed
 }
 
 func (s *golangSource) newVideoDecoder() *videoDecoder {
@@ -376,6 +488,8 @@ func (v *videoDecoder) start(idx int, target time.Duration, precise bool) {
 	switch {
 	case s.av1:
 		v.dec = av1Codec{av1.New()}
+	case s.vp9:
+		v.dec = vp9Codec{vp9.New()}
 	case s.hevc:
 		v.dec = hevc.New()
 	default:
@@ -386,7 +500,10 @@ func (v *videoDecoder) start(idx int, target time.Duration, precise bool) {
 	}
 	v.next = idx
 	v.flushed = false
-	v.minPTS = s.r.PTS(s.vt, idx)
+	v.tagPTS, v.tagDur = map[int64]time.Duration{}, map[int64]time.Duration{}
+	v.trkGen = s.vtr.gen()
+	v.lastFed = -1 << 62
+	v.minPTS = s.vtr.pts(idx)
 	if idx == 0 {
 		v.minPTS = -1 << 62
 	}
@@ -397,17 +514,30 @@ func (v *videoDecoder) start(idx int, target time.Duration, precise bool) {
 // nextFrame returns the next picture in display order.
 func (v *videoDecoder) nextFrame(ctx context.Context) (*h264.Frame, time.Duration, error) {
 	s := v.s
-	n := s.vt.SampleCount()
 	for {
 		for f := v.dec.Next(); f != nil; f = v.dec.Next() {
-			pts := s.r.PTS(s.vt, int(f.Tag))
-			if pts < v.minPTS || v.precise && pts+s.r.SampleDuration(s.vt, int(f.Tag)) <= v.target {
+			pts, dur := v.tagPTS[f.Tag], v.tagDur[f.Tag]
+			delete(v.tagPTS, f.Tag)
+			delete(v.tagDur, f.Tag)
+			if pts < v.minPTS || v.precise && pts+dur <= v.target {
 				h264.Recycle(f)
 				continue
 			}
 			return f, pts, nil
 		}
-		if v.next >= n {
+		if g := s.vtr.gen(); g != v.trkGen {
+			// Samples were inserted or removed: continue after the last
+			// one fed, by time.
+			v.trkGen = g
+			v.next = s.vtr.sampleAt(v.lastFed) + 1
+			for v.next < s.vtr.count() && s.vtr.pts(v.next) <= v.lastFed {
+				v.next++
+			}
+		}
+		if v.next >= s.vtr.count() && !v.flushed && s.vtr.more(ctx, v.next) {
+			continue
+		}
+		if v.next >= s.vtr.count() {
 			if v.flushed {
 				return nil, 0, io.EOF
 			}
@@ -429,14 +559,15 @@ var errVideoCorrupt = errors.New("media: video stream could not be decoded")
 
 func (v *videoDecoder) feed(i int) error {
 	s := v.s
-	b, err := s.r.ReadSampleInto(v.buf, s.vt, i)
+	b, err := s.vtr.read(v.buf, i)
 	if err != nil {
 		return err
 	}
 	v.buf = b
+	v.lastFed = s.vtr.pts(i)
 	var nals [][]byte
 	switch {
-	case s.av1:
+	case s.av1, s.vp9:
 		nals = [][]byte{b}
 	case s.hevc:
 		nals, err = hevc.SplitLengthPrefixed(b, s.lenSize)
@@ -446,9 +577,11 @@ func (v *videoDecoder) feed(i int) error {
 	if err != nil && len(nals) == 0 {
 		v.errs++
 	}
-	v.dec.SetTag(int64(i))
+	v.seq++
+	v.tagPTS[v.seq], v.tagDur[v.seq] = v.lastFed, s.vtr.dur(i)
+	v.dec.SetTag(v.seq)
 	if err := v.dec.DecodeNALs(nals); err != nil {
-		if errors.Is(err, h264.ErrUnsupported) || errors.Is(err, hevc.ErrUnsupported) || errors.Is(err, av1.ErrUnsupported) {
+		if errors.Is(err, h264.ErrUnsupported) || errors.Is(err, hevc.ErrUnsupported) || errors.Is(err, av1.ErrUnsupported) || errors.Is(err, vp9.ErrUnsupported) {
 			return ErrCodecUnsupported
 		}
 		v.errs++
@@ -483,9 +616,9 @@ func (d *golangScrub) DecodeAt(pts time.Duration) (VideoFrame, error) {
 	}
 	v := d.dec
 	s := v.s
-	idx := s.r.SeekKeyframe(s.vt, pts)
+	idx := s.vtr.seekKeyframe(pts)
 	// Continue forward within the same GOP instead of restarting.
-	if !d.started || pts < d.lastEnd || idx >= v.next || s.r.SeekKeyframe(s.vt, d.lastPTS) != idx {
+	if !d.started || pts < d.lastEnd || idx >= v.next || s.vtr.seekKeyframe(d.lastPTS) != idx {
 		v.start(idx, 0, false)
 		d.started = true
 	}
@@ -502,7 +635,7 @@ func (d *golangScrub) DecodeAt(pts time.Duration) (VideoFrame, error) {
 		}
 		h264.Recycle(best)
 		best, bestPTS = f, fpts
-		end := fpts + s.r.SampleDuration(s.vt, int(f.Tag))
+		end := fpts + v.lastDurFor(fpts)
 		d.lastPTS, d.lastEnd = fpts, end
 		if end > pts {
 			break
@@ -516,4 +649,59 @@ func (d *golangScrub) Close() error {
 	defer d.mu.Unlock()
 	d.closed = true
 	return nil
+}
+
+// Buffered maps the ByteSource's downloaded byte ranges onto presentation
+// time: runs of consecutive samples (of the video track, else audio) whose
+// bytes are all held. A file-backed source is fully buffered.
+func (s *golangSource) Buffered() []TimeRange {
+	if s.buffered != nil {
+		return s.buffered()
+	}
+	if s.r == nil {
+		return nil
+	}
+	t := s.r.VideoTrack()
+	if t == nil || s.video == nil {
+		t = s.r.AudioTrack()
+	}
+	if t == nil || t.SampleCount() == 0 {
+		return nil
+	}
+	ra, ok := s.r.Source().(ByteRanger)
+	n := t.SampleCount()
+	if !ok {
+		return []TimeRange{{0, (s.r.PTS(t, n-1) + s.r.SampleDuration(t, n-1)).Seconds()}}
+	}
+	ranges := ra.BufferedBytes()
+	var out []TimeRange
+	in := false
+	var cur TimeRange
+	for i := 0; i < n; i++ {
+		off, sz := s.r.SampleSpan(t, i)
+		pts := s.r.PTS(t, i).Seconds()
+		end := pts + s.r.SampleDuration(t, i).Seconds()
+		if coveredBy(ranges, off, sz) {
+			if !in {
+				cur, in = TimeRange{pts, end}, true
+			} else {
+				cur.Start = min(cur.Start, pts)
+				cur.End = max(cur.End, end)
+			}
+			continue
+		}
+		if in {
+			out = append(out, cur)
+			in = false
+		}
+	}
+	if in {
+		out = append(out, cur)
+	}
+	return out
+}
+
+// lastDurFor is the duration of the sample presented at pts.
+func (v *videoDecoder) lastDurFor(pts time.Duration) time.Duration {
+	return v.s.vtr.dur(v.s.vtr.sampleAt(pts))
 }

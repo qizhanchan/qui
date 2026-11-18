@@ -44,6 +44,13 @@ func testMatchesFFmpeg(t *testing.T, file, codec, hash string) {
 	if err != nil {
 		t.Fatalf("OpenSource: %v", err)
 	}
+	checkMatchesFFmpeg(t, src, codec, hash)
+}
+
+func checkMatchesFFmpeg(t *testing.T, src Source, codec, hash string) {
+	if src == nil {
+		t.Fatal("nil source")
+	}
 	defer src.Close()
 	vt := src.VideoTrack()
 	if vt.Width != 160 || vt.Height != 90 || vt.Codec != codec {

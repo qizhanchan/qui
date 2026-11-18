@@ -24,6 +24,7 @@ package mp4x
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"time"
@@ -109,8 +110,15 @@ func (t *Track) SampleCount() int {
 
 // Reader is an open MP4 file.
 type Reader struct {
-	f    *os.File
-	info *mp4.ProbeInfo
+	// f is the byte source: an *os.File for Open, or any io.ReaderAt for
+	// OpenReader (a network-backed source that blocks until bytes arrive).
+	// Box extraction at open time reads through a SectionReader over it;
+	// sample reads use ReadAt, so concurrent decoders never share a seek
+	// position.
+	f      io.ReaderAt
+	closer io.Closer
+	size   int64
+	info   *mp4.ProbeInfo
 
 	video *Track
 	audio *Track
@@ -122,12 +130,37 @@ func Open(path string) (*Reader, error) {
 	if err != nil {
 		return nil, err
 	}
-	info, err := mp4.Probe(f)
+	st, err := f.Stat()
 	if err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("mp4x: probe %s: %w", path, err)
+		return nil, err
 	}
-	r := &Reader{f: f, info: info}
+	r, err := OpenReader(f, st.Size())
+	if err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("%w (%s)", err, path)
+	}
+	return r, nil
+}
+
+// OpenReader parses an MP4 held by ra (size bytes long) and enumerates its
+// tracks. When ra is also an io.Closer, Close closes it; on error the caller
+// keeps ownership. ra may block in ReadAt (a progressively downloaded
+// source): Open reads the box headers and the sample tables, sample reads
+// fetch only the samples asked for.
+func OpenReader(ra io.ReaderAt, size int64) (*Reader, error) {
+	if size <= 0 {
+		return nil, errors.New("mp4x: empty source")
+	}
+	sr := io.NewSectionReader(ra, 0, size)
+	info, err := mp4.Probe(sr)
+	if err != nil {
+		return nil, fmt.Errorf("mp4x: probe: %w", err)
+	}
+	r := &Reader{f: ra, size: size, info: info}
+	if c, ok := ra.(io.Closer); ok {
+		r.closer = c
+	}
 	byID := map[uint32]*Track{}
 	var tracks []*Track
 	for _, raw := range info.Tracks {
@@ -137,7 +170,6 @@ func Open(path string) (*Reader, error) {
 	}
 	// The extras also classify HEVC tracks, which go-mp4 leaves unknown.
 	if err := r.readTrakExtras(byID, info.Timescale); err != nil {
-		_ = f.Close()
 		return nil, err
 	}
 	for _, t := range tracks {
@@ -156,14 +188,12 @@ func Open(path string) (*Reader, error) {
 	for _, t := range []*Track{r.video, r.audio} {
 		if t != nil && len(t.raw.Samples) > 0 {
 			if err := t.buildProgressive(); err != nil {
-				_ = f.Close()
 				return nil, err
 			}
 		}
 	}
 	if len(info.Segments) > 0 {
 		if err := r.buildFragments(); err != nil {
-			_ = f.Close()
 			return nil, err
 		}
 		for _, t := range []*Track{r.video, r.audio} {
@@ -178,12 +208,13 @@ func Open(path string) (*Reader, error) {
 // readTrakExtras reads per-trak boxes go-mp4's probe does not expose: the
 // sync sample table and the codec configuration.
 func (r *Reader) readTrakExtras(byID map[uint32]*Track, movieTimescale uint32) error {
-	traks, err := mp4.ExtractBox(r.f, nil, mp4.BoxPath{mp4.BoxTypeMoov(), mp4.BoxTypeTrak()})
+	rs := r.seeker()
+	traks, err := mp4.ExtractBox(rs, nil, mp4.BoxPath{mp4.BoxTypeMoov(), mp4.BoxTypeTrak()})
 	if err != nil {
 		return err
 	}
 	for _, trak := range traks {
-		bips, err := mp4.ExtractBoxesWithPayload(r.f, trak, []mp4.BoxPath{
+		bips, err := mp4.ExtractBoxesWithPayload(rs, trak, []mp4.BoxPath{
 			{mp4.BoxTypeTkhd()},
 			{mp4.BoxTypeMdia(), mp4.BoxTypeMinf(), mp4.BoxTypeStbl(), mp4.BoxTypeStss()},
 			{mp4.BoxTypeMdia(), mp4.BoxTypeMinf(), mp4.BoxTypeStbl(), mp4.BoxTypeStsd(), mp4.BoxTypeAvc1(), mp4.BoxTypeAvcC()},
@@ -299,9 +330,17 @@ func (r *Reader) Close() error {
 	if r == nil || r.f == nil {
 		return nil
 	}
-	err := r.f.Close()
-	r.f = nil
+	var err error
+	if r.closer != nil {
+		err = r.closer.Close()
+	}
+	r.f, r.closer = nil, nil
 	return err
+}
+
+// seeker is a fresh ReadSeeker over the whole source, for box extraction.
+func (r *Reader) seeker() io.ReadSeeker {
+	return io.NewSectionReader(r.f, 0, r.size)
 }
 
 // Fragmented reports whether the file uses fragmented MP4 (moof/traf). Such
@@ -626,3 +665,16 @@ func hasRandomAccess(b []byte, ls int, hevc bool) bool {
 	}
 	return false
 }
+
+// SampleSpan returns where sample i of t lives in the source: its byte
+// offset and size.
+func (r *Reader) SampleSpan(t *Track, i int) (off, size int64) {
+	if t == nil || i < 0 || i >= len(t.samples) {
+		return 0, 0
+	}
+	s := &t.samples[i]
+	return int64(s.off), int64(s.size)
+}
+
+// Source is the byte source the reader reads from.
+func (r *Reader) Source() io.ReaderAt { return r.f }

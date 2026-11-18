@@ -40,12 +40,13 @@ func (r *Reader) trackByID(id uint32) *Track {
 // buildFragments walks every movie fragment and fills each track's fragment
 // sample table.
 func (r *Reader) buildFragments() error {
-	moofs, err := mp4.ExtractBoxes(r.f, nil, []mp4.BoxPath{{mp4.BoxTypeMoof()}})
+	rs := r.seeker()
+	moofs, err := mp4.ExtractBoxes(rs, nil, []mp4.BoxPath{{mp4.BoxTypeMoof()}})
 	if err != nil {
 		return err
 	}
 	for _, mi := range moofs {
-		bips, err := mp4.ExtractBoxesWithPayload(r.f, mi, []mp4.BoxPath{
+		bips, err := mp4.ExtractBoxesWithPayload(rs, mi, []mp4.BoxPath{
 			{mp4.BoxTypeTraf(), mp4.BoxTypeTfhd()},
 			{mp4.BoxTypeTraf(), mp4.BoxTypeTfdt()},
 			{mp4.BoxTypeTraf(), mp4.BoxTypeTrun()},

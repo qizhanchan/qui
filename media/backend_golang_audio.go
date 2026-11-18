@@ -4,6 +4,8 @@ package media
 
 import (
 	"encoding/binary"
+	"errors"
+	"io"
 	"math"
 	"sync"
 	"time"
@@ -13,24 +15,27 @@ import (
 	"github.com/qizhanchan/qui/media/internal/mp4x"
 )
 
-// golangAudio is the pure-Go backend's AudioRenderer: AAC-LC access units
-// from the MP4 are decoded on a producer goroutine (internal/aac) and fed
-// to the platform sink (internal/audioout). The sink's sample clock drives
-// HostTime, which VideoView uses as the master clock.
+// golangAudio is the pure-Go backend's AudioRenderer: compressed packets
+// (AAC from MP4/Matroska, Opus from WebM/Ogg, MP3) are decoded on a
+// producer goroutine by an audioDecoder and fed to the platform sink
+// (internal/audioout). The sink's sample clock drives HostTime, which
+// VideoView uses as the master clock.
 type golangAudio struct {
-	r    *mp4x.Reader
-	t    *mp4x.Track
+	src  audioStream
 	info *AudioTrackInfo
 	sink audioout.Sink
 	rate int // output sample rate
 	chs  int
 
-	mu      sync.Mutex
-	dec     *aac.Decoder
-	base    time.Duration // content time of the sink's zero
-	next    int           // next access unit to decode
-	trim    int           // frames still to drop (seek / edit-list priming)
-	pending []byte        // decoded PCM not yet accepted by the sink
+	mu   sync.Mutex
+	dec  audioDecoder
+	base time.Duration // content time of the sink's zero
+	// seekTo is the content time the output must start at; the first
+	// packet that decodes to audio sets trim (or pads) from its PTS.
+	seekTo  time.Duration
+	trimSet bool
+	trim    int    // frames still to drop (seek / pre-skip / priming)
+	pending []byte // decoded PCM not yet accepted by the sink
 	eof     bool
 	playing bool
 	ended   bool
@@ -55,6 +60,96 @@ type golangAudio struct {
 	pcmB []byte
 }
 
+// audioDecoder is a codec as the renderer drives it: Decode appends one
+// packet's interleaved float32 PCM (full scale ±1) to out; Reset drops
+// all state (after a seek). aac.Decoder satisfies it directly.
+type audioDecoder interface {
+	Decode(pkt []byte, out []float32) ([]float32, error)
+	Reset()
+	SampleRate() int
+	Channels() int
+}
+
+// audioPacket is one compressed packet with its timing. dropEnd is the
+// number of decoded frames to discard from its end (Opus/Vorbis final
+// granule, Matroska DiscardPadding, MP3 gapless padding).
+type audioPacket struct {
+	data    []byte
+	pts     time.Duration
+	dropEnd int
+}
+
+// errAudioWait: no packet yet, but more may come (an MSE buffer that has
+// not been appended to): try again later.
+var errAudioWait = errors.New("media: audio packet not yet available")
+
+// audioStream is the packet source of the renderer, over any container.
+type audioStream interface {
+	// seek positions the stream so that the next packet starts at or
+	// before t minus the codec's pre-roll.
+	seek(t time.Duration)
+	// next returns the next packet, reading into buf's storage; io.EOF
+	// after the last, errAudioWait when more may come later.
+	next(buf []byte) (audioPacket, error)
+}
+
+// trackStream is an audioStream over a sampleTrack (an MP4 or Matroska
+// track, or an MSE buffer).
+type trackStream struct {
+	tr   sampleTrack
+	rate int
+	// preRollPackets packets (AAC: 1, so the overlap-add of the first
+	// audible frame is complete) and preRoll of time (Opus: 80 ms) are
+	// decoded before a seek target and discarded.
+	preRollPackets int
+	preRoll        time.Duration
+	// padding, when set, is the DiscardPadding of sample i.
+	padding func(i int) time.Duration
+
+	i       int
+	trkGen  uint64
+	lastPTS time.Duration
+}
+
+func (s *trackStream) seek(t time.Duration) {
+	idx := s.tr.sampleAt(t - s.preRoll)
+	if n := s.tr.count(); idx >= n {
+		s.i = n
+		return
+	}
+	s.i = max(idx-s.preRollPackets, 0)
+	s.trkGen = s.tr.gen()
+}
+
+func (s *trackStream) next(buf []byte) (audioPacket, error) {
+	if g := s.tr.gen(); g != s.trkGen {
+		s.trkGen = g
+		s.i = s.tr.sampleAt(s.lastPTS) + 1
+	}
+	if s.i >= s.tr.count() {
+		if s.tr.more(nil, s.i) && s.i >= s.tr.count() {
+			return audioPacket{}, errAudioWait // more is on its way (MSE)
+		}
+		if s.i >= s.tr.count() {
+			return audioPacket{}, io.EOF
+		}
+	}
+	i := s.i
+	s.i++
+	s.lastPTS = s.tr.pts(i)
+	b, err := s.tr.read(buf, i)
+	if err != nil {
+		return audioPacket{}, err
+	}
+	p := audioPacket{data: b, pts: s.lastPTS}
+	if s.padding != nil {
+		if pad := s.padding(i); pad > 0 {
+			p.dropEnd = int(math.Round(pad.Seconds() * float64(s.rate)))
+		}
+	}
+	return p, nil
+}
+
 func golangAudioAvailable() bool { return audioout.Available() }
 
 func newGolangAudio(r *mp4x.Reader, t *mp4x.Track) (*golangAudio, error) {
@@ -63,10 +158,36 @@ func newGolangAudio(r *mp4x.Reader, t *mp4x.Track) (*golangAudio, error) {
 
 // newGolangAudioSink is newGolangAudio with an injectable sink (tests).
 func newGolangAudioSink(r *mp4x.Reader, t *mp4x.Track, open func(audioout.Format) (audioout.Sink, error)) (*golangAudio, error) {
+	return newGolangAudioTrack(r, t, fileTrack{r, t}, open)
+}
+
+// newGolangAudioTrack is the AAC renderer over any sample source; r
+// supplies the AudioSpecificConfig (a file, or an MSE initialization
+// segment).
+func newGolangAudioTrack(r *mp4x.Reader, t *mp4x.Track, tr sampleTrack, open func(audioout.Format) (audioout.Sink, error)) (*golangAudio, error) {
 	asc, err := r.AudioSpecificConfig()
 	if err != nil {
 		return nil, err
 	}
+	if _, mse := tr.(*mseTrack); t.SampleCount() == 0 && !mse {
+		return nil, ErrNoTrack
+	}
+	dec, err := newAACDecoder(asc)
+	if err != nil {
+		return nil, err
+	}
+	dur := t.Duration
+	if n := tr.count(); n > 0 {
+		if end := tr.pts(n-1) + tr.dur(n-1); end > 0 && (dur == 0 || end < dur+time.Second) {
+			dur = end
+		}
+	}
+	st := &trackStream{tr: tr, rate: dec.SampleRate(), preRollPackets: 1}
+	return newGolangAudioStream("aac", dec, st, dur, open)
+}
+
+// newAACDecoder builds an AAC decoder from an AudioSpecificConfig.
+func newAACDecoder(asc []byte) (audioDecoder, error) {
 	cfg, err := aac.ParseASC(asc)
 	if err != nil {
 		return nil, err
@@ -75,25 +196,25 @@ func newGolangAudioSink(r *mp4x.Reader, t *mp4x.Track, open func(audioout.Format
 	if err != nil {
 		return nil, ErrCodecUnsupported
 	}
-	if t.SampleCount() == 0 {
-		return nil, ErrNoTrack
-	}
+	return dec, nil
+}
+
+// newGolangAudioStream starts the renderer: codec names the track, dec
+// decodes src's packets, dur is the track duration.
+func newGolangAudioStream(codec string, dec audioDecoder, src audioStream, dur time.Duration, open func(audioout.Format) (audioout.Sink, error)) (*golangAudio, error) {
 	a := &golangAudio{
-		r: r, t: t, dec: dec, rate: dec.SampleRate(), chs: dec.Channels(),
+		src: src, dec: dec, rate: dec.SampleRate(), chs: dec.Channels(),
 		wake: make(chan struct{}, 1), done: make(chan struct{}),
+	}
+	if a.rate <= 0 || a.chs <= 0 {
+		return nil, ErrCodecUnsupported
 	}
 	sink, err := open(audioout.Format{SampleRate: a.rate, Channels: a.chs})
 	if err != nil {
 		return nil, err
 	}
 	a.sink = sink
-	dur := t.Duration
-	if n := t.SampleCount(); n > 0 {
-		if end := r.PTS(t, n-1) + r.SampleDuration(t, n-1); end > 0 && (dur == 0 || end < dur+time.Second) {
-			dur = end
-		}
-	}
-	a.info = &AudioTrackInfo{Codec: "aac", SampleRate: a.rate, Channels: a.chs, Duration: dur}
+	a.info = &AudioTrackInfo{Codec: codec, SampleRate: a.rate, Channels: a.chs, Duration: dur}
 	a.seekLocked(0)
 	go a.produce()
 	return a, nil
@@ -102,31 +223,17 @@ func newGolangAudioSink(r *mp4x.Reader, t *mp4x.Track, open func(audioout.Format
 // seekLocked positions decoding so that content time t is the next frame
 // sent to the sink. Caller holds a.mu.
 func (a *golangAudio) seekLocked(t time.Duration) {
-	idx := a.r.SampleAtTime(a.t, t)
-	n := a.t.SampleCount()
+	a.src.seek(t)
 	a.dec.Reset()
 	a.pending = a.pending[:0]
 	a.base = t
-	a.eof = idx >= n
+	a.seekTo = t
+	a.trimSet = false
+	a.trim = 0
+	a.eof = false
 	a.ended = false
 	a.drained = false
 	a.errReported = false
-	if a.eof {
-		a.next = n
-		return
-	}
-	// Decode one access unit before idx (discarded) so the overlap-add of
-	// the first audible frame is complete.
-	start := max(idx-1, 0)
-	a.next = start
-	pts := a.r.PTS(a.t, start)
-	a.trim = int(math.Round((t - pts).Seconds() * float64(a.rate)))
-	if a.trim < 0 {
-		// Content starts after t (leading silence): pad instead.
-		pad := -a.trim * 2 * a.chs
-		a.pending = append(a.pending, make([]byte, pad)...)
-		a.trim = 0
-	}
 }
 
 func (a *golangAudio) poke() {
@@ -202,24 +309,37 @@ func (a *golangAudio) produce() {
 }
 
 func (a *golangAudio) decodeOneLocked() error {
-	n := a.t.SampleCount()
-	if a.next >= n {
-		a.eof = true
-		return nil
+	p, err := a.src.next(a.buf)
+	if err == errAudioWait {
+		return nil // try again
 	}
-	b, err := a.r.ReadSampleInto(a.buf, a.t, a.next)
-	a.next++
 	if err != nil {
-		// A truncated/unreadable sample ends the stream (unchanged).
+		// The end, or a truncated/unreadable packet, ends the stream.
 		a.eof = true
 		return nil
 	}
+	b := p.data
 	a.buf = b
 	// Decode errors are concealed as silence; they are also reported to the
 	// optional handler so callers can log or retry the file.
 	var decErr error
 	a.f32, decErr = a.dec.Decode(b, a.f32[:0])
 	frames := len(a.f32) / a.chs
+	if p.dropEnd > 0 {
+		frames = max(frames-p.dropEnd, 0)
+		a.f32 = a.f32[:frames*a.chs]
+	}
+	if frames > 0 && !a.trimSet {
+		// The first packet that yields audio after a seek: drop what
+		// precedes the target (pre-roll, pre-skip, priming), or pad when
+		// the content starts after it.
+		a.trimSet = true
+		a.trim = int(math.Round((a.seekTo - p.pts).Seconds() * float64(a.rate)))
+		if a.trim < 0 {
+			a.pending = append(a.pending, make([]byte, -a.trim*2*a.chs)...)
+			a.trim = 0
+		}
+	}
 	skip := min(a.trim, frames)
 	a.trim -= skip
 	pcm := a.f32[skip*a.chs:]
@@ -240,7 +360,6 @@ func (a *golangAudio) decodeOneLocked() error {
 	a.pending = append(a.pending, out...)
 	return decErr
 }
-
 func (a *golangAudio) Play() error {
 	a.mu.Lock()
 	if !a.playing {

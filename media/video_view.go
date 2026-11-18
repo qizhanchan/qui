@@ -243,6 +243,17 @@ func (v *VideoView) Open(path string) error {
 		v.fail(err)
 		return err
 	}
+	return v.OpenSource(src)
+}
+
+// OpenSource installs an already-open Source (from OpenStream) in place
+// of any previous one, exactly like Open does for a path. The view takes
+// ownership of src: it is closed on error, on the next Open and on
+// Destroy. Returns ErrNoTrack (closing src) when it has no video.
+func (v *VideoView) OpenSource(src Source) error {
+	if src == nil {
+		return ErrNoTrack
+	}
 	if src.VideoTrack() == nil {
 		_ = src.Close()
 		return ErrNoTrack
@@ -448,8 +459,8 @@ func (v *VideoView) SeekTo(t time.Duration) error {
 	if t < 0 {
 		t = 0
 	}
-	if v.track != nil && t > v.track.Duration && v.track.Duration > 0 {
-		t = v.track.Duration
+	if d := trackDuration(v.src, v.track); d > 0 && t > d {
+		t = d
 	}
 	src := v.src
 	v.resumeSeek = false
@@ -475,7 +486,25 @@ func (v *VideoView) Duration() time.Duration {
 	if v.track == nil {
 		return 0
 	}
-	return v.track.Duration
+	return trackDuration(v.src, v.track)
+}
+
+// liveDuration is implemented by sources whose length changes while they
+// play (Media Source Extensions: the page sets it, live streams grow).
+type liveDuration interface {
+	CurrentDuration() time.Duration
+}
+
+// trackDuration is the playable length: the source's live duration when
+// it has one, else the track's.
+func trackDuration(src Source, track *VideoTrackInfo) time.Duration {
+	if ld, ok := src.(liveDuration); ok {
+		return ld.CurrentDuration()
+	}
+	if track == nil {
+		return 0
+	}
+	return track.Duration
 }
 
 // Position returns the current playback position from the clock.
@@ -625,8 +654,8 @@ func (v *VideoView) step(direction int) error {
 	if target < 0 {
 		target = 0
 	}
-	if track.Duration > 0 && target > track.Duration {
-		target = track.Duration
+	if d := trackDuration(v.src, track); d > 0 && target > d {
+		target = d
 	}
 	frame, err := v.DecodeFrameAt(target)
 	if err != nil {
@@ -901,6 +930,7 @@ func (v *VideoView) Tick(_ time.Time) qui.Rect {
 	clockNow := c.HostTime()
 	sink := v.frameSink
 	track := v.track
+	src := v.src
 	loop := v.loop
 	state := v.state
 	endedCB := v.onEnded
@@ -943,7 +973,7 @@ func (v *VideoView) Tick(_ time.Time) qui.Rect {
 		v.pumpMu.Unlock()
 	}
 
-	if state == StatePlaying && track != nil && track.Duration > 0 && clockNow >= track.Duration {
+	if d := trackDuration(src, track); state == StatePlaying && track != nil && d > 0 && clockNow >= d {
 		v.mu.Lock()
 		if loop {
 			v.clock.SeekTo(0)

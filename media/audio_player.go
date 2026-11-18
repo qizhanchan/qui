@@ -84,6 +84,16 @@ func (p *AudioPlayer) Open(path string) error {
 		p.fireError(err)
 		return err
 	}
+	return p.OpenSource(src)
+}
+
+// OpenSource installs an already-open Source (from OpenStream) in place
+// of any previous one, like Open does for a path. The player takes
+// ownership of src: it is closed on error, on the next Open and on Close.
+func (p *AudioPlayer) OpenSource(src Source) error {
+	if p == nil || src == nil {
+		return ErrClosed
+	}
 	if src.AudioTrack() == nil {
 		_ = src.Close()
 		return ErrNoTrack
