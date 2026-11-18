@@ -57,3 +57,8 @@ func acceptHit(hit Widget) Widget {
 	}
 	return hit
 }
+
+// AcceptHit is acceptHit for widgets that hit-test their own descendants
+// (widgets.Box layers): a pointer-transparent result is discarded so the
+// search continues below it.
+func AcceptHit(hit Widget) Widget { return acceptHit(hit) }

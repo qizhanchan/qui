@@ -24,7 +24,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | `br` | ✅ | inline forced break |
 | `blockquote` | ✅ | UA left border + indent |
 | `hr` | ✅ | rendered as `widgets.Rule`; `border-*` applies to the line itself |
-| `ul` `ol` `li` | ✅ | the marker hangs outside the content (`list-style-position: outside`), so content starts at the item's content edge; disc/circle/square/decimal; `ol` auto-numbering; the clipboard rebuilds list structure. `li` computes as `display: block` (not `list-item`) |
+| `ul` `ol` `li` | ✅ | the marker hangs outside the content (`list-style-position: outside`), so content starts at the item's content edge. Only `display: list-item` gets a marker (an inline-block / flex `li` has none; a `div` with `display: list-item` does). `list-style-type` (inherited): disc/circle/square (nested `ul` defaults circle → square), decimal, decimal-leading-zero, lower/upper-alpha/latin, lower/upper-roman, lower-greek, none, a string; `<ol start reversed type>`, `<li value>`; the clipboard rebuilds list structure |
 | `img` | 🟡 | local raster (PNG / JPEG / GIF first frame / BMP / TIFF / WebP / ICO·CUR) + `.svg` (with tint) + `data:` URI + an in-memory `image.Image` (`h.Img().Image(img)` / `El.SetImage`) + `object-fit: cover/contain/scale-down`; **no** remote URL / `srcset` / animated GIF |
 | `label` | 🟡 | folds to inline text; `for=` click linkage is implemented on the `label[for]` row below |
 | `table` `thead` `tbody` `tfoot` `tr` `td` `th` `caption` `colgroup` `col` | ✅ | cells flattened onto one grid (columns align across rows) with column widths from the CSS 2.1 algorithms at layout time: automatic layout (max-content columns, cell `width` sizes its column, `colspan` excess spread over the spanned columns, a wider table's extra shared in proportion to content, a narrower one shrunk from min-content) and `table-layout: fixed` (`<col>` / first-row widths, the rest equal). `th` bold + centered, `tr:nth-child` striping, `border-spacing` between and around cells (UA default 2px, cell padding 1px, as in Chrome), auto-width shrink-to-fit. Also: `<caption>` as a full-width spanning row (`caption-side: top/bottom`), `<colgroup>`/`<col>` widths (`width` attr or inline style, with `span`, `%` of table width), `border-collapse: collapse` (single-line merging), `rowspan` row-height contribution. Limit: `<col>` does not take class selectors |
@@ -60,19 +60,17 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 
 | Tag | Status | Notes |
 |---|---|---|
-| `canvas` | ✅ | a "widget draws itself" mount point (no JS 2D context — use qui's drawing). `El.SetCanvasDraw(func(cv qui.Canvas, bounds qui.Rect))` installs a per-frame draw callback; `El.SetCanvas(qui.Widget)` inserts an arbitrary custom widget (`scene3d.Viewport`, a `graphs` chart, …). CSS `width`/`height` size it (default 300×150), and a drawn canvas paints over its whole box when layout stretches it (flex-grow, align stretch); unwired renders a dashed placeholder. Default `display:inline-block`, `Role()=image` |
+| `canvas` | ✅ | a replaced element: `width`/`height` attributes give its intrinsic size (300×150 default; one CSS dimension keeps the ratio — they are not CSS dimension hints). Content comes from `El.SetCanvasDraw(func(cv qui.Canvas, bounds qui.Rect))` or `El.SetCanvas(qui.Widget)`; for a web `CanvasRenderingContext2D` use `htmlcss/canvas2d` (paths, all composite ops, shadows, gradients/patterns, clip, text, drawImage, image data — Chrome pixel goldens), which q-browser binds to JS. Unwired renders a dashed placeholder. Default `display:inline-block`, `Role()=image` |
 
 ### Deliberately not supported (use native widgets / other packages)
 
 | Tag | Alternative |
 |---|---|
-| `audio` | `media.AudioPlayer` |
-| `video` | `media.VideoView` |
-| `iframe` / embedded browser | `webview` (CEF, build tag) |
+| `audio` / `video` | supported by `media/htmlmedia` (blank-import it): HTMLMediaElement state machine, Chrome-like controls, poster, `<source>` fallback; MP4 / WebM / Ogg / MP3, MSE through `media.MSEBuffer` |
+| `iframe` / embedded browser | a host-registered element (q-browser renders nested documents), or `webview` (CEF, build tag) |
 | `svg` (inline tag) | `<img src=*.svg>` or `h.Icon` + `svg.Document` (`qui.VectorSource`) |
 | `dialog` | reactive `h.Dialog` (shell) / `h.ModalPortalWith` / `widgets.Dialog`. Portal content cascades from its declaring element (inheritance + ancestor selectors) |
 | `details/summary` `progress` `meter` | composed native `widgets` (ScrollView/Progress etc.) |
-| `text-shadow` | ❌ |
 
 ---
 
@@ -128,8 +126,12 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | `box-shadow` | 🟡 | multiple layers (comma-separated); **inset ignored** (no inner-shadow primitive) |
 | `opacity` | ✅ | |
 | `transform` | ✅ | translate/rotate/scale/skew/matrix (2D, via `Canvas.Concat`) + `transform-origin` (keyword/%); **no** 3D |
-| `filter` | 🟡 | `blur()` + `drop-shadow()` via `SaveLayer`; first function only; no brightness/contrast |
-| `backdrop-filter` | ❌ | needs background sampling |
+| `filter` | ✅ | function lists in order: `blur()`, `drop-shadow()`, `brightness()`, `contrast()`, `grayscale()`, `sepia()`, `invert()`, `saturate()`, `hue-rotate()`, `opacity()` (SaveLayer image filter; lengths scale with the device). No `url()` SVG filters |
+| `backdrop-filter` (+ `-webkit-`) | 🟡 | same functions, applied to what is painted under the border box (rounded corners / clip-path respected) on the CPU raster canvas. Reads only the box's region (edges extended) and only within the nearest ancestor layer |
+| `text-shadow` | ✅ | multiple layers with blur, on labels and folded inline runs (and their decorations); inherited |
+| `clip-path` (+ `-webkit-`) | ✅ | `inset()` (with `round`), `circle()`, `ellipse()` (radii, `closest-side`/`farthest-side`, `at <position>`), `polygon()` (`evenodd`), `path()`, a reference box (`border-box`/`padding-box`/`content-box`/`margin-box`); clips painting AND hit testing. No `url()` |
+| `mask-image` / `mask` (+ `-webkit-`) | ✅ | first layer: `url()` (raster, or SVG kept as a vector — the `background: currentColor` + SVG mask icon idiom) or a gradient; `mask-size`, `mask-position`, `mask-repeat`, `mask-origin`, `mask-mode` (alpha; luminance approximated). Images load through the resource loader like `background-image` |
+| `currentColor` | ✅ | in any property other than `color` |
 
 ### Layout / positioning
 
@@ -142,12 +144,12 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | Grid: `grid-template-columns/rows` (px/fr/auto/repeat), `grid-auto-rows/columns`, `gap`/`row-gap`/`column-gap` | ✅ | items past the template get implicit tracks sized by `grid-auto-*` |
 | Grid placement: `grid-column/row`, `span`, `grid-template-areas` | ✅ | line numbers (1-based `a / b`), `span N`, `grid-area` (named area or 4 line numbers); named areas with implicit track counts. Limit: only the `grid-column/row` shorthand (not `*-start`/`*-end`); mixing an explicit axis with an auto axis degrades to pure span auto-placement |
 | `position: relative` | ✅ | top/right/bottom/left offsets; establishes a containing block |
-| `position: absolute` | ✅ | out of flow, positioned against the nearest positioned ancestor. The containing block is the positioned ancestor's padding box; `%` insets and sizes resolve against it. Limits: no `z-index` stacking; an `auto` side lands at the containing-block origin rather than the static position |
-| `position: fixed` | 🟡 | treated as absolute (relative to the nearest positioned ancestor / root); **not** viewport-fixed |
-| `position: sticky` | ❌ | |
+| `position: absolute` | ✅ | out of flow, positioned against the nearest positioned ancestor's padding box; `%` insets and sizes resolve against it; an `auto` side uses the static position (inline-level boxes too), `max-width` clamps before end-anchoring |
+| `position: fixed` | ✅ | relative to the viewport when the document is in a `ScrollView` with `FixedViewport` (re-placed on every scroll; does not add scroll overflow); otherwise like absolute |
+| `position: sticky` | ✅ | insets against the scrolling viewport (`ScrollView.FixedViewport`), constrained to the containing block |
 | `overflow: hidden/clip/auto/scroll` (incl. `-x`/`-y`) | ✅ | `auto`/`scroll` hosts a `ScrollView` with an overlay scrollbar (no gutter, like Chrome on macOS). Both axes scroll when both are `auto`/`scroll` — and when one is `visible` beside a scrolling one, which computes to `auto` as in Chrome (`overflow-y: auto` alone also scrolls content overflowing to the right; `overflow-x: hidden` keeps it out): the content is laid out at the box's width and X scrolls over its scrollable overflow (the widest descendant's right edge), with a second bar, sideways wheel / trackpad input and ←/→. Limits: an `overflow-x: auto` strip does not also scroll Y; descendants overflowing a non-clipping parent are hit-testable only inside such a two-axis scroller |
 | `visibility: hidden/collapse` | ✅ | keeps the layout box, does not draw (self + subtree). Limit: descendant `visibility:visible` re-show is not supported |
-| `z-index` | 🟡 | paint order ascending by z; **no** full stacking context (no new context, no subtree isolation) |
+| `z-index` | ✅ | stacking contexts (positioned + z-index, fixed/sticky, opacity < 1, transform, filter, isolation); positioned boxes paint by z in their stacking root, hit testing in reverse |
 | `float` `clear` `columns` | ❌ | no floats / multi-column |
 
 ### Interaction / pointer
@@ -176,19 +178,22 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | `:checked` `:disabled` | ✅ | attribute-driven + runtime relink: toggling a checkbox/radio or `El.SetDisabled(bool)` syncs the attribute and triggers a scoped restyle, so `:checked`/`:disabled` (including `:has(:checked)` etc.) re-cascade immediately |
 | `:enabled` `:required` `:optional` `:read-only` `:read-write` | ✅ | attribute-driven. `:enabled`/`:required`/`:optional` apply only to form controls; `:read-only` matches everything not user-editable (per spec); `:read-write` matches editable controls. Missing: `:valid`/`:invalid`/`:placeholder-shown`/`:indeterminate`/`:default` |
 | `:nth-last-child(An+B)` `:empty` `:has()` | ✅ | `:has()` is limited to a single simple descendant selector (`div:has(img)`) |
-| `::before` `::after` | 🟡 | generate `content` text (leaf/inline elements fold into the same InlineBox). `content` supports quoted strings + `attr(name)` + concatenation. Limits: not generated on elements with block children; no `counter()` or full generated-box model |
+| `::before` `::after` | 🟡 | generate `content` text (leaf/inline elements fold into the same InlineBox). `content` supports quoted strings + `attr(name)` + concatenation. `counter()` / `counters()` (with a counter style) and `open-quote`/`close-quote` resolve. Limits: not generated on elements with block children; no full generated-box model |
+| `::marker` | ✅ | `color`, `font-*`, `content` (incl. `counter(list-item)`) |
+| `counter-reset` / `counter-increment` / `counter-set` | ✅ | CSS Lists 3 scoping, implicit `list-item` counter (reset by `ol`/`ul`/`menu`), on elements and `::before`/`::after` |
 | Other pseudo-elements (`::first-line`, …) | ❌ | parsed but not generated |
 | CSS variables `--x` / `var(--x, fallback)` / `:root` | ✅ | inheritance + recursive resolution (depth limit 16). Readable from Go with `ComputedStyle.Var` |
 | CSS-wide keywords `inherit` / `initial` / `unset` / `revert` | ✅ | on every property; `revert` behaves as `unset`. A shorthand mixing one with other tokens is dropped as invalid |
 | Custom properties and elements | ✅ | `RegisterProperty(name, PropertyDef{Inherited, Initial})` makes any property name readable through `ComputedStyle.Property` (`inherit` / `initial` / `unset` resolve as on built-in properties); `RegisterElement(tag, ElementDef{Create, Apply})` backs a custom tag with a native widget that the element hosts, with `Apply` mapping the computed style onto it after each restyle. `El.SetOnStyle` is the per-element form |
 | Shorthands `font` `flex` `inset` | ✅ | |
 | `@media` | 🟡 | `min-width`/`max-width` (`and`, screen/all/print) evaluated at parse time against the viewport width; matching blocks flatten into the stylesheet. **Not responsive** (does not re-evaluate on resize) |
-| `@font-face` `@keyframes` `@import` `@supports` | ❌ | at-rules skipped wholesale |
+| `@font-face` `@import` `@supports` | ❌ | skipped by the engine (a host such as q-browser resolves `@import` and loads `@font-face` web fonts itself) |
+| `@keyframes` | ✅ | (+ `-webkit-`) see `animation` |
 | `!important` / cascade priority / inline style | ✅ | UA < author < inline, important across layers |
 | Runtime stylesheet swap `StyleEngine.SetCSS` | ✅ | re-parses and full-restyles in place — the theme-switch hook (swap `:root` variables). `RenderResult.Engine` exposes the static render's engine |
 | Colors: hex 3/6/8, `rgb()`/`rgba()`, `hsl()`/`hsla()`, full named set | ✅ | hsl supports comma and space syntax and `deg`/negative hue; the full CSS Level 4 named set (148 + transparent). No `hwb()`/`lab()`/`lch()` |
 | Lengths: px/em/rem/pt/%/unitless/`calc()`/`min()`/`max()`/`clamp()` | 🟡 | `calc()` supports `+ - * /`, parentheses, nesting, mixed units; `min`/`max`/`clamp` parse each argument through `parseLength`. Limit: `%` inside `calc()` only works where the property itself supports `%`. **No** `vw`/`vh`/`ch` |
-| `transition` / `animation` | ❌ | dynamic infrastructure not built |
+| `transition` / `animation` | ✅ | longhands + shorthands; easing (cubic-bezier, steps, keywords), delay, iterations, direction, fill-mode; animated properties: `opacity`, `transform` (matrix interpolation), `background-color`; events via `StyleEngine.SetAnimationEventHandler` (transition run/start/end/cancel, animation start/iteration/end/cancel) |
 
 ---
 
@@ -226,6 +231,7 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 | HTML `hidden` attribute | ✅ | implemented per UA rules (a tier-0 `display:none`), so author CSS can override it. Static `Render` prunes resolved-none subtrees at compile time |
 | `autofocus` | ✅ | focuses the element (its editing control for form elements) once, when it first mounts — including inside a portal |
 | `tabindex` | ✅ | any integer makes an element focusable (click, `RequestFocus`, keys); Tab order follows HTML — positive values first ascending (ties in document order), then `0` and natively focusable elements in document order; negative = click/script focus only, skipped by Tab. A click on text inside a tabindex element focuses the element (checked at click time, so rows added later count). On a form control it orders / removes the backing control's Tab stop. A tabindex `overflow:auto` element is one focus target: its internal ScrollView steps aside and the element scrolls with the arrow keys. Non-integer values are ignored. DSL: `h.Div().TabIndex(0)` |
+| `contenteditable` / `designMode` | ✅ | caret, mouse / keyboard selection, typing into the real text nodes, Enter splits blocks (`<div>`), Shift+Enter `<br>`, ⌘B/I/U, undo/redo, plain-text clipboard, IME composition (only editing hosts are IME clients). Hosts get edit callbacks to fire `beforeinput`/`input` and sync a DOM Selection. Limits: no list-aware Enter/Backspace, no typing-style removal |
 | `accesskey` / `minlength` / `pattern` / `rows` / `cols` / `inputmode` / `spellcheck` | ❌ | not read |
 | `label[for]` click focus | ✅ | toggle / select / focus |
 | AX roles (button/link/textbox/img/list/heading…) | ✅ | `El.Role()` + `AccessibleName()`, addressable by the agent |
@@ -236,11 +242,11 @@ This is the authoritative capability list for the `htmlcss` engine. It answers w
 
 Grouped by how likely a desktop application is to need them.
 
-**High value (native + everyday):** `aspect-ratio`; `position: sticky`; `::placeholder` and `:placeholder-shown`/`:valid`/`:invalid`/`:indeterminate`/`:default` (all need a "value changed → scoped restyle" hook); `::selection`/`::marker`; `:is()`/`:where()`/CSS nesting; `transition`; the `scroll` and `change` events; the `minlength`/`pattern`/`rows`/`cols`/`inputmode`/`spellcheck` attributes.
+**High value (native + everyday):** `aspect-ratio`; `position: sticky`; `::placeholder` and `:placeholder-shown`/`:valid`/`:invalid`/`:indeterminate`/`:default` (all need a "value changed → scoped restyle" hook); `::selection`; `:is()`/`:where()`/CSS nesting; `transition`; the `scroll` and `change` events; the `minlength`/`pattern`/`rows`/`cols`/`inputmode`/`spellcheck` attributes.
 
-**Medium value:** Grid `justify-items`/`justify-self`/`place-*`; `min-content`/`max-content`/`fit-content` sizing keywords; responsive `@media` re-evaluation and `prefers-color-scheme`/`(hover)`/`(pointer)`/`prefers-reduced-motion`; `@container`; `color-scheme`; `oklch()`/`color-mix()`/`light-dark()`/`hwb()`/`lab()`; `text-shadow`; text polish (`text-wrap`, `hyphens`, `tab-size`, `font-variant-*` (other than ligatures), `text-underline-offset`); `background-position`/`-repeat`/explicit `background-size`/repeating gradients; remote image URLs / `srcset`; scroll and resize polish (`resize`, `appearance`, `caret-color`, `scrollbar-gutter`, `overscroll-behavior`, `scroll-behavior`, scroll-snap); `<select multiple>`/`size`; native date/color pickers; `<a target>`/`download`.
+**Medium value:** Grid `justify-items`/`justify-self`/`place-*`; `min-content`/`max-content`/`fit-content` sizing keywords; responsive `@media` re-evaluation and `prefers-color-scheme`/`(hover)`/`(pointer)`/`prefers-reduced-motion`; `@container`; `color-scheme`; `oklch()`/`color-mix()`/`light-dark()`/`hwb()`/`lab()`; text polish (`text-wrap`, `hyphens`, `tab-size`, `font-variant-*` (other than ligatures), `text-underline-offset`); `background-position`/`-repeat`/explicit `background-size`/repeating gradients; remote image URLs / `srcset`; scroll and resize polish (`resize`, `appearance`, `caret-color`, `scrollbar-gutter`, `overscroll-behavior`, `scroll-behavior`, scroll-snap); `<select multiple>`/`size`; native date/color pickers; `<a target>`/`download`.
 
-**Deliberately not supported:** `float`/`clear`; multi-column; `@keyframes` + `animation`; `writing-mode`; `clip-path`/`mask`; `mix-blend-mode`/`isolation`; full stacking context; `backdrop-filter`; 3D `transform`; `contenteditable`; `<iframe>` (use `webview`); Shadow DOM / `<template>` / `<slot>`; `content-visibility`/`will-change`; `@import`; `@supports`.
+**Deliberately not supported:** `float`/`clear`; multi-column; `writing-mode`; `mix-blend-mode`; 3D `transform`; `<iframe>` in the engine itself (hosts register it, or use `webview`); Shadow DOM / `<template>` / `<slot>`; `content-visibility`/`will-change`; `@import`; `@supports`.
 
 ---
 

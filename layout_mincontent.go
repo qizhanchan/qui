@@ -33,7 +33,7 @@ func MinContentWidth(w Widget) float32 {
 	if p := widgetPreferredSize(w); p.W > 0 {
 		return p.W
 	}
-	return contentMinWidth(w)
+	return max(contentMinWidth(w), aspectWidth(w.Style()))
 }
 
 // ContentMinWidth is w's min-content width from its CONTENT, ignoring an
@@ -43,6 +43,20 @@ func MinContentWidth(w Widget) float32 {
 func ContentMinWidth(w Widget) float32 { return contentMinWidth(w) }
 
 func contentMinWidth(w Widget) float32 {
+	s := w.Style()
+	v := cachedIntrinsic(w, false, func() float32 { return contentMinWidthUncached(w) })
+	if s != nil {
+		if s.MaxWidth > 0 && v > s.MaxWidth {
+			v = s.MaxWidth
+		}
+		if s.MinWidth > 0 && v < s.MinWidth {
+			v = s.MinWidth
+		}
+	}
+	return v
+}
+
+func contentMinWidthUncached(w Widget) float32 {
 	s := w.Style()
 	var v float32
 	switch {
@@ -63,14 +77,6 @@ func contentMinWidth(w Widget) float32 {
 		}
 	default:
 		v = MeasureChild(w, Size{}).W
-	}
-	if s != nil {
-		if s.MaxWidth > 0 && v > s.MaxWidth {
-			v = s.MaxWidth
-		}
-		if s.MinWidth > 0 && v < s.MinWidth {
-			v = s.MinWidth
-		}
 	}
 	return v
 }

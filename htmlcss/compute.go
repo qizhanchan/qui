@@ -1,11 +1,14 @@
 package htmlcss
 
 import (
+	"cmp"
 	"maps"
+	"slices"
 	"sort"
 	"strconv"
-	"unicode"
 	"strings"
+	"sync"
+	"unicode"
 
 	"github.com/qizhanchan/qui"
 )
@@ -53,7 +56,7 @@ type ComputedStyle struct {
 	// RootFontSize is the document root's font size — what rem resolves
 	// against (16px, the initial size, when the root is not <html>).
 	RootFontSize float32
-	LineHeight float32 // multiplier over font size
+	LineHeight   float32 // multiplier over font size
 	// LineHeightPx is the computed line height in px when it was declared
 	// with a length or percentage (0 for a unitless number). CSS inherits
 	// such a line-height as that absolute length, not as a factor: a 32px
@@ -207,13 +210,33 @@ type ComputedStyle struct {
 	HasOpacity   bool
 	Transform    *transformSpec
 	Gradient     *gradientSpec
-	Filter       qui.ImageFilter // CSS filter: blur()/drop-shadow()
+	Filter       qui.ImageFilter // CSS filter (filters.go)
+	// BackdropFilter is CSS backdrop-filter (same functions as filter).
+	BackdropFilter qui.ImageFilter
+	// TextShadows is CSS text-shadow (inherited), first layer on top.
+	TextShadows []qui.ShadowStyle
+	// ClipPath is CSS clip-path; Mask the first mask-image layer with its
+	// longhands (masking.go).
+	ClipPath *clipPathSpec
+	Mask     *maskSpec
+	// ListItem: the element is display: list-item (Display is then
+	// "block") and gets a marker. ListStyleType is the inherited
+	// list-style-type ("" = disc); Counters are the element's own
+	// counter-reset / counter-set / counter-increment (counters.go).
+	ListItem      bool
+	ListStyleType string
+	Counters      []counterOp
 	// BackgroundImageURL is the url() from background-image (resolved + loaded
 	// in El.applyComputed, which has the engine's BaseDir). Gradient wins.
 	BackgroundImageURL string
 
 	// Positioning + overflow (Wave 2).
 	Position                             string // "", static, relative, absolute, fixed
+	ZIndexSet                            bool
+	AspectRatio                          float32 // CSS aspect-ratio (width / height), 0 = auto
+	WidthPctOffset, HeightPctOffset      float32 // px added to WidthPct / HeightPct (calc(% ± px))
+	FlexBasisPct, FlexBasisPctOffset     float32 // a percentage flex-basis (and its calc() px)   // z-index is an integer, not auto
+	InlineStatic                         bool    // an inline-level box blockified by absolute/fixed (its static position is on the line)
 	Top, Right, Bottom, Left             float32
 	HasTop, HasRight, HasBottom, HasLeft bool
 	// InsetPct holds percentage insets (top, right, bottom, left) as
@@ -314,6 +337,7 @@ func (cs *ComputedStyle) isVisualBox() bool {
 		cs.MaxWidthPct > 0 || cs.MaxHeightPct > 0 ||
 		cs.HasShadow || cs.Gradient != nil || cs.HasOpacity || cs.Transform != nil ||
 		cs.Filter != nil || cs.BackgroundImageURL != "" ||
+		cs.ClipPath != nil || cs.Mask != nil || cs.BackdropFilter != nil ||
 		cs.hasStateBoxVariant()
 }
 
@@ -392,8 +416,12 @@ func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedSty
 	// cascade instead.
 	mask := sheet.stateMask(n)
 	resting := *base
-	variant := func(need bool, st selectorState) *ComputedStyle {
-		if !need {
+	// fw is whether a framework state rule concerns n in this state; a
+	// variant without one whose author state rules all match exactly as at
+	// rest (`.x:hover` on a node that is not .x, an ancestor-state union
+	// with no ancestor-state rule matching) is a copy of base too.
+	variant := func(need, fw bool, st selectorState) *ComputedStyle {
+		if !need || !fw && !stateRulesDiffer(n, sheet, st, rest) {
 			cp := resting
 			return &cp
 		}
@@ -405,22 +433,23 @@ func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedSty
 		// (hovering an element hovers its ancestors), so `.row:hover .del`
 		// also lands in .del's own Hover variant — and `.a:hover .b:hover`
 		// works when the cursor is on .b.
-		base.Hover = variant(hover || fwHover, selectorState{hover: true})
+		base.Hover = variant(hover || fwHover, fwHover, selectorState{hover: true})
 	}
 	if sheet.HasFocus || fwFocus {
-		base.Focus = variant(focus || fwFocus, selectorState{focus: true})
+		base.Focus = variant(focus || fwFocus, fwFocus, selectorState{focus: true})
 		base.FocusOptIn = true
 		if sheet.HasFocusWithin {
 			// Only when a :focus-within rule exists can it be the sole
 			// reason for the focus variant. With no focus rule among n's
 			// candidates both cascades are the resting one.
-			base.FocusOptIn = (focus || fwFocus) && !maps.Equal(
+			base.FocusOptIn = (focus || fwFocus) &&
+				(fwFocus || stateRulesDiffer(n, sheet, selectorState{focus: true, noFocusWithin: true}, rest)) && !maps.Equal(
 				mergedDecls(n, sheet, selectorState{focus: true, noFocusWithin: true}),
 				mergedDecls(n, sheet, selectorState{}))
 		}
 	}
 	if sheet.HasFocusVisible || fwFocusVisible {
-		base.FocusVisible = variant(focus || mask&stateFocusVisible != 0 || fwFocusVisible,
+		base.FocusVisible = variant(focus || mask&stateFocusVisible != 0 || fwFocusVisible, fwFocusVisible || fwFocus,
 			selectorState{focus: true, focusVisible: true})
 	}
 	if sheet.HasActive || fwActive {
@@ -428,7 +457,7 @@ func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedSty
 		// propagate to ancestor compounds in matching, keeping `.btn:hover`
 		// under an `.btn:active` press and `.row:hover .btn:active` while
 		// the row is hovered.
-		base.Active = variant(hover || mask&stateActive != 0 || fwActive,
+		base.Active = variant(hover || mask&stateActive != 0 || fwActive, fwActive || fwHover,
 			selectorState{hover: true, active: true})
 	}
 	// The ancestor-state UNION variants: only NON-subject compounds are
@@ -437,15 +466,15 @@ func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedSty
 	// such rule matches this node, so their delta is a no-op — see
 	// hasStateBoxVariant / textStateDiffers / El.linkAncestorState.
 	if sheet.HasAncestorHover {
-		base.AncestorHover = variant(hover || fwHover, selectorState{ancestorHover: true})
+		base.AncestorHover = variant(hover || fwHover, fwHover, selectorState{ancestorHover: true})
 	}
 	if sheet.HasAncestorFocus {
 		// On a non-subject compound :focus-visible acts as :focus.
-		base.AncestorFocus = variant(focus || mask&stateFocusVisible != 0 || fwFocus || fwFocusVisible,
+		base.AncestorFocus = variant(focus || mask&stateFocusVisible != 0 || fwFocus || fwFocusVisible, fwFocus || fwFocusVisible,
 			selectorState{ancestorFocus: true})
 	}
 	if sheet.HasAncestorActive {
-		base.AncestorActive = variant(mask&stateActive != 0 || fwActive, selectorState{ancestorActive: true})
+		base.AncestorActive = variant(mask&stateActive != 0 || fwActive, fwActive, selectorState{ancestorActive: true})
 	}
 	return base
 }
@@ -453,7 +482,9 @@ func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedSty
 // pseudoStyle computes the style + text for a ::before/::after pseudo-element
 // of n (which = "before"/"after"), inheriting from n's own computed style.
 // Returns "" content when no matching rule carries a drawable `content`.
-func pseudoStyle(n *Node, sheet *Stylesheet, which string, parent *ComputedStyle) (*ComputedStyle, string) {
+// pseudoDecls runs the cascade for n's `which` pseudo-element; nil when
+// no rule matches.
+func pseudoDecls(n *Node, sheet *Stylesheet, which string) map[string]string {
 	var decls []matchedDecl
 	order := 0
 	for _, ri := range sheet.candidateRules(n) {
@@ -482,7 +513,7 @@ func pseudoStyle(n *Node, sheet *Stylesheet, which string, parent *ComputedStyle
 		}
 	}
 	if len(decls) == 0 {
-		return nil, ""
+		return nil
 	}
 	sort.SliceStable(decls, func(i, j int) bool { return cascadeKey(decls[i]) < cascadeKey(decls[j]) })
 	// Fold like mergedDecls: a later shorthand evicts earlier longhands.
@@ -493,11 +524,32 @@ func pseudoStyle(n *Node, sheet *Stylesheet, which string, parent *ComputedStyle
 		}
 		merged[m.decl.Property] = m.decl.Value
 	}
+	return merged
+}
+
+func pseudoStyle(n *Node, sheet *Stylesheet, which string, parent *ComputedStyle) (*ComputedStyle, string) {
+	merged := pseudoDecls(n, sheet, which)
+	if merged == nil {
+		return nil, ""
+	}
 	content, ok := merged["content"]
 	if !ok {
 		return nil, "" // no content → no generated box
 	}
 	return interpret(n, merged, parent), unquoteContent(content, n)
+}
+
+// pseudoStyleContent is pseudoStyle returning the raw `content` value
+// (has reports whether one was declared) and the style even when no
+// content is — ::marker styles the default marker without one. nil style
+// when no rule matches at all.
+func pseudoStyleContent(n *Node, sheet *Stylesheet, which string, parent *ComputedStyle) (cs *ComputedStyle, content string, has bool) {
+	merged := pseudoDecls(n, sheet, which)
+	if merged == nil {
+		return nil, "", false
+	}
+	content, has = merged["content"]
+	return interpret(n, merged, parent), content, has
 }
 
 // UnescapeCSS resolves CSS escapes in an identifier or string body: a
@@ -549,7 +601,11 @@ func isHexDigit(c byte) bool {
 // references, which resolve to the element's attribute value (empty when the
 // attribute is absent). none/normal → empty (no generated box). counter() and
 // other unsupported functions pass through verbatim.
-func unquoteContent(v string, n *Node) string {
+func unquoteContent(v string, n *Node) string { return unquoteContentWith(v, n, nil) }
+
+// unquoteContentWith is unquoteContent resolving counter() / counters()
+// through counter (nil keeps them verbatim, the counter-less behavior).
+func unquoteContentWith(v string, n *Node, counter func(fn cssFunction) string) string {
 	v = strings.TrimSpace(v)
 	if v == "" || strings.EqualFold(v, "none") || strings.EqualFold(v, "normal") {
 		return ""
@@ -593,6 +649,30 @@ func unquoteContent(v string, n *Node) string {
 					continue
 				}
 			}
+			// counter(name[, style]) / counters(name, sep[, style]).
+			if rest := strings.ToLower(v[i:]); counter != nil && (strings.HasPrefix(rest, "counter(") || strings.HasPrefix(rest, "counters(")) {
+				if end := closingParen(v, i+strings.IndexByte(rest, '(')); end > 0 {
+					if fns := splitFunctionsQuoted(v[i : end+1]); len(fns) == 1 {
+						sb.WriteString(counter(fns[0]))
+					}
+					i = end + 1
+					matched = true
+					continue
+				}
+			}
+			if rest := strings.ToLower(v[i:]); counter != nil {
+				kw := rest
+				if sp := strings.IndexAny(kw, " \t\n"); sp >= 0 {
+					kw = kw[:sp]
+				}
+				switch kw {
+				case "open-quote", "close-quote", "no-open-quote", "no-close-quote":
+					sb.WriteString(map[string]string{"open-quote": "\u201c", "close-quote": "\u201d"}[kw])
+					i += len(kw)
+					matched = true
+					continue
+				}
+			}
 			// Unrecognized token (e.g. counter(...)) — return verbatim, matching
 			// the previous pass-through behavior for non-string content.
 			if !matched {
@@ -615,9 +695,45 @@ func mergedDecls(n *Node, sheet *Stylesheet, st selectorState) map[string]string
 // skip re-matching rules that use no state pseudo.
 type restMatches struct{ spec []int32 }
 
+// stateRulesDiffer reports whether any of n's candidate author rules that
+// use a state pseudo matches differently under st than it did at rest
+// (rest, recorded by the resting cascade). When none does, the author
+// cascade under st is the resting one.
+func stateRulesDiffer(n *Node, sheet *Stylesheet, st selectorState, rest *restMatches) bool {
+	cands := sheet.candidateRules(n)
+	if rest == nil || len(rest.spec) != len(cands) {
+		return true
+	}
+	states := sheet.ruleIndex().states
+	for k, ri := range cands {
+		if states[ri] == 0 {
+			continue
+		}
+		best := -1
+		for _, sel := range sheet.Rules[ri].Selectors {
+			if sel.matches(n, st) {
+				a, b, c := sel.specificity()
+				best = max(best, min(a, 99)*10000+min(b, 99)*100+min(c, 99))
+			}
+		}
+		if int32(best) != rest.spec[k] {
+			return true
+		}
+	}
+	return false
+}
+
 // mergedDeclsRest is mergedDecls recording (record) or reusing rest.
 func mergedDeclsRest(n *Node, sheet *Stylesheet, st selectorState, rest *restMatches, record bool) map[string]string {
-	var decls []matchedDecl
+	// The matched declarations are scratch: reuse a buffer across calls
+	// (growing it per element was a fifth of a heavy page's cascade).
+	bufp := declBufPool.Get().(*[]matchedDecl)
+	decls := (*bufp)[:0]
+	defer func() {
+		clear(decls) // drop the strings it references
+		*bufp = decls[:0]
+		declBufPool.Put(bufp)
+	}()
 
 	// Tier 0: user-agent defaults for this tag. Push-button input types
 	// (submit/reset/button) borrow the <button> default chrome.
@@ -630,6 +746,14 @@ func mergedDeclsRest(n *Node, sheet *Stylesheet, st selectorState, rest *restMat
 		decls = append(decls, matchedDecl{
 			decl: Declaration{Property: "display", Value: "none", Important: true}, tier: 0,
 		})
+	}
+	// `audio:not([controls]) { display: none !important }` (HTML § 15.4.1).
+	if n.Tag == "audio" {
+		if _, c := n.Attr("controls"); !c {
+			decls = append(decls, matchedDecl{
+				decl: Declaration{Property: "display", Value: "none", Important: true}, tier: 0,
+			})
+		}
 	}
 	if _, hidden := n.Attr("hidden"); hidden {
 		decls = append(decls, matchedDecl{
@@ -712,8 +836,8 @@ func mergedDeclsRest(n *Node, sheet *Stylesheet, st selectorState, rest *restMat
 
 	// Cascade sort: !important tier first, then origin tier, then
 	// specificity, then source order. Stable so equal keys keep order.
-	sort.SliceStable(decls, func(i, j int) bool {
-		return cascadeKey(decls[i]) < cascadeKey(decls[j])
+	slices.SortStableFunc(decls, func(a, b matchedDecl) int {
+		return cmp.Compare(cascadeKey(a), cascadeKey(b))
 	})
 
 	// Fold in cascade order. A shorthand evicts every longhand (and
@@ -729,6 +853,12 @@ func mergedDeclsRest(n *Node, sheet *Stylesheet, st selectorState, rest *restMat
 	}
 	return merged
 }
+
+// declBufPool holds mergedDeclsRest's scratch declaration lists.
+var declBufPool = sync.Pool{New: func() any {
+	b := make([]matchedDecl, 0, 128)
+	return &b
+}}
 
 func cascadeKey(m matchedDecl) int {
 	tier := m.tier
@@ -807,6 +937,9 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		// pointer-events inherits (CSS): a scrim's children are click-through
 		// too, unless one says `auto`.
 		cs.PointerNone = parent.PointerNone
+		// text-shadow and list-style-type inherit (CSS).
+		cs.TextShadows = parent.TextShadows
+		cs.ListStyleType = parent.ListStyleType
 	} else {
 		cs.Color = qui.Color{A: 1} // CSS initial (canvastext): black
 		cs.FontSize = 16
@@ -820,6 +953,11 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	cs.Display = strings.ToLower(strings.TrimSpace(m["display"]))
 	if cs.Display == "" {
 		cs.Display = defaultDisplay(n.Tag)
+		// <li> is display: list-item in the UA sheet; the rest of the
+		// engine lays it out as the block it is, ListItem adds the marker.
+		cs.ListItem = n.Tag == "li"
+	} else if isListItemDisplay(cs.Display) {
+		cs.Display, cs.ListItem = "block", true
 	}
 	// float (CSS 2.1 § 9.7): an absolutely positioned box does not float;
 	// a float's display is blockified.
@@ -930,6 +1068,9 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 			cs.ColorOwn = true
 		}
 	}
+	// currentColor in any other property is the used `color` (CSS Color 4).
+	m = resolveCurrentColor(m, cs.Color)
+	cs.raw = m
 	// --- accent-color (inherited; "auto" falls back to the native default) ---
 	if v, ok := m["accent-color"]; ok {
 		if strings.EqualFold(strings.TrimSpace(v), "auto") {
@@ -1146,11 +1287,32 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 			cs.Transform = t
 		}
 	}
+	if pre := individualTransformOps(m, fs); len(pre) > 0 {
+		if cs.Transform == nil {
+			cs.Transform = &transformSpec{sx: 1, sy: 1}
+		}
+		cs.Transform.ops = append(pre, cs.Transform.ops...)
+	}
 	if v, ok := m["filter"]; ok {
 		if f, ok := parseFilter(v, fs); ok {
 			cs.Filter = f
 		}
 	}
+	if v, ok := m["backdrop-filter"]; ok {
+		cs.BackdropFilter, _ = parseFilter(v, fs)
+	} else if v, ok := m["-webkit-backdrop-filter"]; ok {
+		cs.BackdropFilter, _ = parseFilter(v, fs)
+	}
+	if v, ok := m["text-shadow"]; ok {
+		cs.TextShadows = parseTextShadows(v, fs, cs.Color)
+	}
+	if v, ok := m["clip-path"]; ok {
+		cs.ClipPath, _ = parseClipPath(v, fs)
+	} else if v, ok := m["-webkit-clip-path"]; ok {
+		cs.ClipPath, _ = parseClipPath(v, fs)
+	}
+	cs.Mask, _ = parseMask(m, fs)
+	parseListAndCounters(n, m, cs)
 	if v, ok := m["transform-origin"]; ok && cs.Transform != nil {
 		if ox, oy, ok := parseTransformOrigin(v); ok {
 			cs.Transform.ox, cs.Transform.oy, cs.Transform.hasOrigin = ox, oy, true
@@ -1161,7 +1323,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	cs.Position = strings.ToLower(strings.TrimSpace(m["position"]))
 	if v, ok := m["z-index"]; ok {
 		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
-			cs.ZIndex = n
+			cs.ZIndex, cs.ZIndexSet = n, true
 		}
 	}
 	if v, ok := m["top"]; ok {
@@ -1198,6 +1360,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	// inline runs (buildFlow), so it stays a standalone positioned widget.
 	if (cs.Position == "absolute" || cs.Position == "fixed") && strings.HasPrefix(cs.Display, "inline") {
 		cs.Display = "block"
+		cs.InlineStatic = true
 	}
 
 	// --- border ---
@@ -1237,6 +1400,8 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	if v, ok := m["width"]; ok {
 		if pct, ok := parsePercentFraction(v); ok {
 			cs.WidthPct = pct
+		} else if px, frac, hasPct, ok := parseLengthPct(v, fs); ok && hasPct && frac > 0 {
+			cs.WidthPct, cs.WidthPctOffset = frac, px // calc(100% - 2rem)
 		} else if px, ok := parseLength(v, fs, 0); ok {
 			cs.Width, cs.HasWidth = px, true
 		}
@@ -1244,6 +1409,8 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	if v, ok := m["height"]; ok {
 		if pct, ok := parsePercentFraction(v); ok {
 			cs.HeightPct = pct
+		} else if px, frac, hasPct, ok := parseLengthPct(v, fs); ok && hasPct && frac > 0 {
+			cs.HeightPct, cs.HeightPctOffset = frac, px
 		} else if px, ok := parseLength(v, fs, 0); ok {
 			cs.Height, cs.HasHeight = px, true
 		}
@@ -1275,6 +1442,11 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		} else if px, ok := parseLength(v, fs, 0); ok {
 			cs.MaxHeight = px
 		}
+	}
+
+	cs.AspectRatio = 0
+	if v, ok := m["aspect-ratio"]; ok {
+		cs.AspectRatio = parseAspectRatio(v)
 	}
 
 	// --- flex ---
@@ -1316,7 +1488,9 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		if s := strings.ToLower(strings.TrimSpace(v)); s == "auto" || s == "content" {
 			cs.FlexBasisAuto = true
 		} else if s != "" {
-			if px, ok := parseLength(s, fs, 0); ok {
+			if px, frac, hasPct, ok := parseLengthPct(s, fs); ok && hasPct && frac > 0 {
+				cs.FlexBasisPct, cs.FlexBasisPctOffset = frac, px
+			} else if px, ok := parseLength(s, fs, 0); ok {
 				cs.FlexBasis, cs.HasFlexBasis = px, true
 			}
 		}
@@ -1344,7 +1518,7 @@ func resolveHeightDefiniteness(n *Node, cs, parent *ComputedStyle) {
 	parentDefinite := root || (parent != nil && parent.HeightDefinite)
 	// A stretched item of a row flex container takes the container's
 	// (definite) cross size.
-	stretched := parent != nil && parent.Display == "flex" && parent.FlexDirection == qui.Horizontal &&
+	stretched := parent != nil && isFlexDisplay(parent.Display) && parent.FlexDirection == qui.Horizontal &&
 		parent.HeightDefinite && !cs.HasHeight && cs.HeightPct == 0 &&
 		(cs.AlignSelf == qui.AlignDefault && (parent.AlignItems == qui.AlignStretch || parent.AlignItems == qui.AlignDefault) ||
 			cs.AlignSelf == qui.AlignStretch)
@@ -2045,6 +2219,12 @@ func firstSummary(details *Node) *Node {
 	return nil
 }
 
+// isFlexDisplay / isGridDisplay report a flex (grid) container, block- or
+// inline-level: inline-flex lays its children out as flex items exactly
+// like flex, only the box itself sits on a line.
+func isFlexDisplay(d string) bool { return d == "flex" || d == "inline-flex" }
+func isGridDisplay(d string) bool { return d == "grid" || d == "inline-grid" }
+
 // blockify maps a display value to its block-level equivalent (CSS
 // Display 3 § 2.7): what floats, absolutely positioned boxes and flex / grid
 // items get.
@@ -2304,4 +2484,27 @@ func parseFeatureSettings(v string) ([]string, bool) {
 		out = append(out, tag+"="+strconv.Itoa(val))
 	}
 	return out, true
+}
+
+// parseAspectRatio reads `16 / 9`, `1.5` or `auto 4/3` as width / height
+// (0 for auto or invalid).
+func parseAspectRatio(v string) float32 {
+	v = strings.TrimSpace(strings.ToLower(v))
+	v = strings.TrimSpace(strings.TrimPrefix(v, "auto"))
+	if v == "" {
+		return 0
+	}
+	a, b, slash := strings.Cut(v, "/")
+	w, ok := parseFloat(strings.TrimSpace(a))
+	if !ok || w <= 0 {
+		return 0
+	}
+	if !slash {
+		return w
+	}
+	h, ok := parseFloat(strings.TrimSpace(b))
+	if !ok || h <= 0 {
+		return 0
+	}
+	return w / h
 }

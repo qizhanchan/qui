@@ -164,18 +164,6 @@ func decodeDataURIImage(uri string) image.Image {
 // listMarker returns the bullet / number string for a <li>, honoring
 // list-style-type (inherited from the parent list). Empty string means no
 // marker (list-style-type: none, or the li isn't directly inside a list).
-// listStyleFromShorthand extracts the list-style-type keyword from a
-// `list-style` shorthand value (ignoring position / image parts).
-func listStyleFromShorthand(v string) string {
-	for _, f := range strings.Fields(strings.ToLower(v)) {
-		switch f {
-		case "none", "disc", "circle", "square", "decimal":
-			return f
-		}
-	}
-	return ""
-}
-
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if strings.TrimSpace(v) != "" {
@@ -187,7 +175,7 @@ func firstNonEmpty(vals ...string) string {
 
 // chooseLayout maps computed display to a qui layout engine.
 func chooseLayout(cs *ComputedStyle) qui.Layout {
-	if cs.Display == "flex" {
+	if isFlexDisplay(cs.Display) {
 		// column-gap separates items in a row and row-gap the lines a
 		// row wraps into; a column flips them
 		gap, cross := cs.ColumnGap, cs.RowGap
@@ -272,6 +260,9 @@ func applyBox(box *widgets.Box, cs *ComputedStyle, forceContainingBlock bool) {
 			KX: t.kx, KY: t.ky, Matrix: t.matrix,
 			OX: t.ox, OY: t.oy, HasOrigin: t.hasOrigin,
 		}
+		if ops := t.ops; len(ops) > 0 {
+			box.Transform.Resolve = func(w, h float32) qui.Matrix { return resolveTransformOps(ops, w, h) }
+		}
 	} else {
 		// Reused El: a dropped `transform` must clear, not linger.
 		box.Transform = nil
@@ -279,7 +270,9 @@ func applyBox(box *widgets.Box, cs *ComputedStyle, forceContainingBlock bool) {
 	// Reset first (reused El): a dropped `overflow` must stop clipping.
 	box.ClipChildren = cs.OverflowClip
 	box.Filter = cs.Filter // CSS filter: blur()/drop-shadow() (nil clears)
+	box.BackdropFilter = cs.BackdropFilter
 	applyPositioning(box, cs, forceContainingBlock)
+	applyStacking(box, cs)
 	// A focusable box (:focus styling) is an interactive control — make its
 	// text content non-selectable so a click focuses the box itself rather
 	// than being captured by a selectable child Label.
@@ -290,6 +283,7 @@ func applyBox(box *widgets.Box, cs *ComputedStyle, forceContainingBlock bool) {
 
 // positionedBox is what applyPositioning needs from a widget.
 type positionedBox interface {
+	SetViewportPositioning(qui.ViewportPositioning)
 	SetPositionOffset(qui.Point)
 	SetOutOfFlow(bool)
 	SetEstablishesAbsContainingBlock(bool)
@@ -314,6 +308,25 @@ func applyPositioning(box positionedBox, cs *ComputedStyle, forceContainingBlock
 			Y: relOffset(cs.HasTop, cs.Top, cs.HasBottom, cs.Bottom),
 		}
 		establishesContainingBlock = true
+	case "sticky":
+		// In flow; a document viewport shifts it while scrolling
+		// (qui.StickyRect) by these insets. A containing block, being
+		// positioned.
+		establishesContainingBlock = true
+		var anchor qui.AnchorSide
+		if cs.HasLeft {
+			absolutePosition.Left, anchor = cs.Left, anchor|qui.AnchorLeft
+		}
+		if cs.HasRight {
+			absolutePosition.Right, anchor = cs.Right, anchor|qui.AnchorRight
+		}
+		if cs.HasTop {
+			absolutePosition.Top, anchor = cs.Top, anchor|qui.AnchorTop
+		}
+		if cs.HasBottom {
+			absolutePosition.Bottom, anchor = cs.Bottom, anchor|qui.AnchorBottom
+		}
+		absolutePosition.Anchor = anchor
 	case "absolute", "fixed":
 		// Out of flow; positioned relative to the nearest positioned ancestor
 		// (Container.layoutAbsoluteDescendants). Being positioned, it is also a
@@ -344,7 +357,16 @@ func applyPositioning(box positionedBox, cs *ComputedStyle, forceContainingBlock
 		absolutePosition.BottomPct, absolutePosition.LeftPct = cs.InsetPct[2], cs.InsetPct[3]
 		absolutePosition.WidthPct, absolutePosition.HeightPct = cs.WidthPct, cs.HeightPct
 		absolutePosition.Anchor = anchor
+		absolutePosition.InlineStatic = cs.InlineStatic
 	}
+	vpp := qui.ViewportNone
+	switch cs.Position {
+	case "fixed":
+		vpp = qui.ViewportFixed
+	case "sticky":
+		vpp = qui.ViewportSticky
+	}
+	box.SetViewportPositioning(vpp)
 	box.SetPositionOffset(positionOffset)
 	box.SetOutOfFlow(outOfFlow)
 	box.SetEstablishesAbsContainingBlock(establishesContainingBlock)
@@ -516,7 +538,8 @@ func applyCommonStyle(st *qui.Style, cs *ComputedStyle) {
 	// border compensation the absolute sizes get above.
 	st.WidthPct = cs.WidthPct
 	st.HeightPct = cs.HeightPct
-	st.PctExtra = qui.Size{W: extraH, H: extraV}
+	st.PctExtra = qui.Size{W: extraH + cs.WidthPctOffset, H: extraV + cs.HeightPctOffset}
+	st.AspectRatio, st.AspectBorderBox = cs.AspectRatio, cs.BoxSizing == "border-box"
 	st.MarginLeftAuto = cs.MarginLeftAuto
 	st.MarginRightAuto = cs.MarginRightAuto
 	st.MarginTopAuto = cs.MarginTopAuto
@@ -576,6 +599,12 @@ func applyCommonStyle(st *qui.Style, cs *ComputedStyle) {
 	st.AlignSelf = cs.AlignSelf
 	if cs.HasFlexBasis {
 		st.Basis = cs.FlexBasis
+	}
+	st.BasisPct, st.BasisExtra, st.BasisExtraV = cs.FlexBasisPct, 0, 0
+	if cs.FlexBasisPct > 0 {
+		// flex-basis sizes the content box like width does (content-box).
+		st.BasisExtra = cs.FlexBasisPctOffset + extraH
+		st.BasisExtraV = cs.FlexBasisPctOffset + extraV
 	}
 	st.BasisAuto = cs.FlexBasisAuto
 	if cs.HasShadow {
@@ -856,6 +885,7 @@ func applyTextStyle(lbl *widgets.Label, text string, cs *ComputedStyle, o textLa
 		text = transformText(text, cs.TextTransform)
 	}
 	lbl.SetText(text)
+	lbl.TextShadows = cs.TextShadows
 	qui.UpdateStyle(lbl, func(st *qui.Style) {
 		st.Foreground = cs.Color
 		st.Font = fontFrom(cs)
@@ -978,7 +1008,9 @@ func collapseInline(s string) string {
 	}
 	leading := isSpace(s[0])
 	trailing := isSpace(s[len(s)-1])
-	core := strings.Join(strings.Fields(s), " ")
+	// Only ASCII white space collapses (as in collapseText): a no-break
+	// space is content — editors type U+00A0 to keep a trailing space.
+	core := strings.Join(strings.FieldsFunc(s, func(r rune) bool { return r < 0x80 && isSpace(byte(r)) }), " ")
 	if core == "" {
 		return " " // whitespace-only node → a single separating space
 	}
@@ -1002,4 +1034,21 @@ func findTag(n *Node, tag string) *Node {
 		}
 	}
 	return nil
+}
+
+// applyStacking marks positioned boxes and the boxes that form a stacking
+// context, so painting and hit testing layer them (widgets/stacking.go).
+func applyStacking(box *widgets.Box, cs *ComputedStyle) {
+	switch cs.Position {
+	case "relative", "absolute", "fixed", "sticky":
+		box.Positioned = true
+	default:
+		box.Positioned = false
+	}
+	op := cs.Opacity
+	box.StackingContext = box.Positioned && cs.ZIndexSet ||
+		cs.Position == "fixed" || cs.Position == "sticky" ||
+		(op > 0 && op < 1) || cs.Transform != nil || cs.Filter != nil ||
+		cs.ClipPath != nil || cs.Mask != nil || cs.BackdropFilter != nil ||
+		strings.EqualFold(strings.TrimSpace(cs.raw["isolation"]), "isolate")
 }

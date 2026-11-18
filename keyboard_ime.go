@@ -47,6 +47,44 @@ type IMEClient interface {
 	CaretRect() Rect
 }
 
+// IMEActivity is implemented by an IMEClient that accepts composition
+// only some of the time — a widget type shared by editable and plain
+// content (htmlcss elements: only an editing host composes). While
+// IMEActive reports false the widget is not treated as an IME client: no
+// preedit or commit reaches it, it has no caret rect, and the platform
+// bridge keeps the input method out of its keystrokes (macOS delivers the
+// typed characters directly instead of opening a composition), so a page's
+// key shortcuts and Space-to-scroll keep working with a CJK IME on.
+type IMEActivity interface {
+	IMEActive() bool
+}
+
+// imeClientOf returns w as an active IME client.
+func imeClientOf(w Widget) (IMEClient, bool) {
+	c, ok := w.(IMEClient)
+	if !ok {
+		return nil, false
+	}
+	if a, ok := w.(IMEActivity); ok && !a.IMEActive() {
+		return nil, false
+	}
+	return c, true
+}
+
+// IMEBypassed reports whether the focused widget opted out of the input
+// method (an IMEClient whose IMEActive is false): the platform then feeds
+// keystrokes to it as plain characters, never as a composition.
+func (w *Window) IMEBypassed() bool {
+	if w == nil || w.focused == nil {
+		return false
+	}
+	if _, ok := w.focused.(IMEClient); !ok {
+		return false
+	}
+	_, active := imeClientOf(w.focused)
+	return !active
+}
+
 // SetPreedit forwards a composition update to the focused widget if
 // it implements IMEClient. Safe to call when nothing is focused —
 // it silently no-ops.
@@ -59,7 +97,7 @@ func (w *Window) SetPreedit(text string, cursor int) {
 		return
 	}
 	w.assertUIThread("Window.SetPreedit")
-	if client, ok := w.focused.(IMEClient); ok {
+	if client, ok := imeClientOf(w.focused); ok {
 		client.SetPreedit(text, cursor)
 	}
 	w.Invalidate()
@@ -75,7 +113,7 @@ func (w *Window) CommitIME(text string) {
 	if text == "" {
 		return
 	}
-	if client, ok := w.focused.(IMEClient); ok {
+	if client, ok := imeClientOf(w.focused); ok {
 		client.CommitIME(text)
 	}
 	w.Invalidate()
@@ -89,7 +127,7 @@ func (w *Window) CaretRect() Rect {
 		return Rect{}
 	}
 	w.assertUIThread("Window.CaretRect")
-	if client, ok := w.focused.(IMEClient); ok {
+	if client, ok := imeClientOf(w.focused); ok {
 		// The client reports the caret in its own coordinate space (derived
 		// from its Bounds + text layout); map it out so the OS candidate
 		// window lands on screen even when the field is inside a scroll

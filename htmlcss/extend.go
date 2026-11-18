@@ -21,6 +21,52 @@ type ElementDef struct {
 	// the place to map CSS (color, custom properties) onto the widget's
 	// own setters. Optional.
 	Apply func(el *El, w qui.Widget, cs *ComputedStyle)
+	// NaturalSize, when set, makes the element a replaced element sized
+	// like <img> (CSS 2.1 § 10.3.2 / 10.6.2): its intrinsic size and ratio
+	// come from here (a <video>'s frame size), and a declared width or
+	// height scales the other by that ratio. ok=false falls back to the
+	// widget's own measure. Call El.NaturalSizeChanged when it changes.
+	// Optional.
+	NaturalSize func(el *El, w qui.Widget) (size qui.Size, ok bool)
+	// AttrChanged runs after an attribute of the element changed (set or
+	// removed) once its widget exists — a <video> reloading on a new src.
+	// Optional.
+	AttrChanged func(el *El, w qui.Widget, name string)
+}
+
+// NaturalSizeChanged tells the engine a custom element's NaturalSize
+// answer changed (a video's metadata arrived): its box is re-measured.
+func (e *El) NaturalSizeChanged() {
+	if e == nil {
+		return
+	}
+	e.InvalidateLayout()
+	if e.engine != nil {
+		e.engine.markReflow(e)
+	}
+}
+
+// Resources returns the host's resource loader (Options.Resources), or
+// nil. Element extensions type-assert it for loaders of their own kind
+// (a media loader for <video>).
+func (eng *StyleEngine) Resources() ResourceLoader {
+	if eng == nil {
+		return nil
+	}
+	return eng.opts.Resources
+}
+
+// attrChanged notifies a custom element's AttrChanged hook.
+func (e *El) attrChanged(name string) {
+	if e.isCanvas() && (name == "width" || name == "height") {
+		e.markDirty() // the intrinsic size changed
+	}
+	if e.canvasUser == nil {
+		return
+	}
+	if def, ok := lookupElement(e.tag); ok && def.AttrChanged != nil {
+		def.AttrChanged(e, e.canvasUser, name)
+	}
 }
 
 var (

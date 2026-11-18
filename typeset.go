@@ -497,3 +497,15 @@ func TextXHeightCenterY(rect Rect, fontSpec Font) float32 {
 }
 
 func ToPoints(px float32) float32 { return typeset.ToPoints(px) }
+
+// TextOutline shapes text as one line and returns its glyph outlines with
+// the pen starting at (x, baseline), and the line's advance. Glyphs
+// without outlines (color emoji) are skipped but keep their advance.
+func TextOutline(text string, font Font, x, baseline float32) (*Path, float32) {
+	return typeset.TextOutline(text, font, x, baseline)
+}
+
+// FontVerticalMetrics is font's ascent and descent in pixels, both positive.
+func FontVerticalMetrics(font Font) (ascent, descent float32) {
+	return typeset.FontVerticalMetrics(font)
+}

@@ -56,6 +56,9 @@ var allowed = map[string][]string{
 	"physics/...":      {"physics"},
 	"media":            {"", "media/internal/..."},
 	"media/...":        {"media/internal/..."},
+	// htmlmedia renders <video> / <audio> in htmlcss on top of media.
+	"media/htmlmedia": {"", "htmlcss", "media", "widgets", "svg"},
+	"htmlcss/canvas2d": {"", "htmlcss", "svg"},
 	"agent":            {"", "agent/internal/..."},
 	"agent/...":        {"agent/internal/..."},
 	"cmd/...":          nil, // binaries and examples may import anything

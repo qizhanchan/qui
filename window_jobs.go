@@ -248,3 +248,31 @@ func WakeEventLoop() {
 	}
 	plat.wake()
 }
+
+// BeforeLayout runs fn on the UI thread before the next layout pass: in
+// the frame being built when called from a job, an event handler or a
+// Tick of it, else in the next frame (it wakes the loop). One-shot, UI
+// thread only. It is for deferred work that must land in the frame that
+// caused it, such as a style engine coalescing a burst of DOM mutations:
+// a PostJob from inside a job runs a frame later, after the stale state
+// has been painted.
+func (w *Window) BeforeLayout(fn func()) {
+	if w == nil || fn == nil {
+		return
+	}
+	w.assertUIThread("Window.BeforeLayout")
+	w.beforeLayout = append(w.beforeLayout, fn)
+	w.wakeLoop()
+}
+
+// runBeforeLayout drains the BeforeLayout callbacks, including those they
+// add (a few rounds, so a callback cannot keep a frame from finishing).
+func (w *Window) runBeforeLayout() {
+	for round := 0; round < 4 && len(w.beforeLayout) > 0; round++ {
+		fns := w.beforeLayout
+		w.beforeLayout = nil
+		for _, fn := range fns {
+			fn()
+		}
+	}
+}

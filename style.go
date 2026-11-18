@@ -127,6 +127,13 @@ type Style struct {
 	// containing block on that axis (CSS `max-width: 100%`). Like
 	// Width/HeightPct they resolve at layout time in the engine that knows
 	// the containing size; the absolute Min*/Max* fields win when set.
+	// AspectRatio (width / height, 0 = none) and whether it sizes the
+	// border box (box-sizing: border-box) or the content box. An auto
+	// width with a definite Height follows it in intrinsic sizing
+	// (MaxContentWidth / MinContentWidth); htmlcss applies the height side.
+	AspectRatio     float32
+	AspectBorderBox bool
+
 	MinWidthPct  float32
 	MinHeightPct float32
 	MaxWidthPct  float32
@@ -135,10 +142,16 @@ type Style struct {
 	// Layout participation. Mirror FlexItem so a child's flex behavior
 	// can be declared in Style. FlexLayout reads FlexItem() first; when
 	// FlexItem is zero-valued, it falls back to these fields.
-	Grow      float32
-	Shrink    float32
-	Basis     float32
-	AlignSelf AlignCross
+	Grow   float32
+	Shrink float32
+	Basis  float32
+	// BasisPct is a percentage flex-basis as a fraction of the flex
+	// container's main size; BasisExtra is added to it (a calc() offset,
+	// content-box padding). Used when Basis is 0.
+	BasisPct    float32
+	BasisExtra  float32 // in a row
+	BasisExtraV float32 // in a column
+	AlignSelf   AlignCross
 	// BasisAuto keeps a growing item's basis at its content size (CSS
 	// flex-basis: auto, as in `flex: auto` or a bare flex-grow) instead of
 	// the engine's Grow>0 ⇒ basis 0 default (`flex: <n>`).
@@ -376,8 +389,10 @@ func styleLayoutEqual(a, b Style) bool {
 		a.FlexAutoMinWidth == b.FlexAutoMinWidth && a.FlexAutoMinHeight == b.FlexAutoMinHeight &&
 		a.Float == b.Float && a.Clear == b.Clear && a.NewFormattingContext == b.NewFormattingContext &&
 		a.MinWidthPct == b.MinWidthPct && a.MinHeightPct == b.MinHeightPct &&
+		a.AspectRatio == b.AspectRatio && a.AspectBorderBox == b.AspectBorderBox &&
 		a.MaxWidthPct == b.MaxWidthPct && a.MaxHeightPct == b.MaxHeightPct &&
 		a.Grow == b.Grow && a.Shrink == b.Shrink && a.Basis == b.Basis &&
+		a.BasisPct == b.BasisPct && a.BasisExtra == b.BasisExtra && a.BasisExtraV == b.BasisExtraV &&
 		a.AlignSelf == b.AlignSelf
 }
 
@@ -583,6 +598,9 @@ func (s Style) MergedWith(override Style) Style {
 	}
 	if override.Basis != 0 {
 		out.Basis = override.Basis
+	}
+	if override.BasisPct != 0 {
+		out.BasisPct, out.BasisExtra, out.BasisExtraV = override.BasisPct, override.BasisExtra, override.BasisExtraV
 	}
 	if override.AlignSelf != 0 {
 		out.AlignSelf = override.AlignSelf

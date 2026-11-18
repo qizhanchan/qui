@@ -40,6 +40,11 @@ type clickDispatch struct {
 	activator      *El
 	activatorAt    qui.MouseEvent
 	activatorActed bool
+	// activated: the default action ran. A document hosted inside another
+	// htmlcss tree (SetHostedWidget — a browser page in its chrome) sees
+	// the release dispatched once per tree, sharing this record; the
+	// default action must still run only once.
+	activated bool
 }
 
 // curClick is the click being dispatched. All dispatch runs on the UI
@@ -162,7 +167,8 @@ func (e *El) dispatchRelease(me qui.MouseEvent, selfOver bool) bool {
 	}
 	// The default action follows the dispatch, so an ancestor's handler
 	// can still prevent it.
-	if a := cs.activator; a != nil && !cs.prevented {
+	if a := cs.activator; a != nil && !cs.prevented && !cs.activated {
+		cs.activated = true
 		a.activate(cs.activatorAt, cs.activatorActed)
 	}
 	return false

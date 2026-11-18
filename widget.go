@@ -295,12 +295,15 @@ type BaseWidget struct {
 	flex           FlexItem
 	grid           GridItem
 	absolute       AbsolutePosition
-	outOfFlow      bool         // taken out of normal flow (CSS position:absolute/fixed)
-	absCB          bool         // establishes a containing block for out-of-flow descendants
-	collapsed      bool         // removed from layout AND paint entirely (CSS display:none)
-	layoutDirty    bool         // only the root's flag is consulted; set via InvalidateLayout
-	measureMemo    measureCache // MeasureChild's memo; see layout_measure_cache.go
-	hooks          *widgetHooks // OnFocus / OnBlur / OnKeyDown; see widget_hooks.go
+	outOfFlow      bool  // taken out of normal flow (CSS position:absolute/fixed)
+	staticPos      Point // where an out-of-flow box would sit in flow (its static position)
+	staticSet      bool
+	viewportPos    ViewportPositioning // CSS position: fixed / sticky (see layout_viewport.go)
+	absCB          bool                // establishes a containing block for out-of-flow descendants
+	collapsed      bool                // removed from layout AND paint entirely (CSS display:none)
+	layoutDirty    bool                // only the root's flag is consulted; set via InvalidateLayout
+	measureMemo    measureCache        // MeasureChild's memo; see layout_measure_cache.go
+	hooks          *widgetHooks        // OnFocus / OnBlur / OnKeyDown; see widget_hooks.go
 }
 
 func NewBaseWidget() BaseWidget {
@@ -815,6 +818,25 @@ func (b *BaseWidget) SetOutOfFlow(v bool) {
 	}
 	b.outOfFlow = v
 	b.InvalidateLayout()
+}
+
+// SetStaticPosition records an out-of-flow widget's static position: the
+// border-box origin it would have had in its parent's flow (CSS 2.1
+// § 10.3.7 / 10.6.4). Container.Layout records it; an axis with no inset
+// (left / right, or top / bottom, both auto) is placed there.
+func (b *BaseWidget) SetStaticPosition(p Point) {
+	b.staticPos, b.staticSet = p, true
+}
+
+// StaticPosition reports the recorded static position.
+func (b *BaseWidget) StaticPosition() (Point, bool) { return b.staticPos, b.staticSet }
+
+// staticPositionOf reads a widget's static position, if it records one.
+func staticPositionOf(w Widget) (Point, bool) {
+	if sp, ok := w.(interface{ StaticPosition() (Point, bool) }); ok {
+		return sp.StaticPosition()
+	}
+	return Point{}, false
 }
 
 // Collapsed reports whether the widget is removed from its parent entirely

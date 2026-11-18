@@ -252,3 +252,7 @@ func NewHeadlessWindowForTest(width, height int) (*Window, error) {
 	}
 	return newWindowFromConfig(adaptApp(app), platformWindowConfig{Title: "test", Width: width, Height: height})
 }
+
+// TickAnimatorsForTest runs one animator tick at now, as a frame would —
+// for tests in other packages that drive animations without a frame loop.
+func (w *Window) TickAnimatorsForTest(now time.Time) { w.tickAnimators(now) }

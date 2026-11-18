@@ -117,7 +117,7 @@ var inlineTags = map[string]bool{
 	"abbr": true, "mark": true, "sub": true, "sup": true, "img": true,
 	"input": true, "button": true, "select": true, "textarea": true, "br": true,
 	"s": true, "del": true, "strike": true, "ins": true,
-	"canvas": true, "svg": true,
+	"canvas": true, "svg": true, "video": true, "audio": true,
 	// Phrasing elements with no UA styling of their own beyond inline.
 	"time": true, "cite": true, "q": true, "dfn": true, "kbd": true,
 	"samp": true, "var": true, "bdi": true, "bdo": true, "data": true,
@@ -192,7 +192,7 @@ func defaultDisplay(tag string) string {
 		return "none"
 	}
 	if inlineTags[tag] {
-		if tag == "img" || tag == "input" || tag == "button" || tag == "select" || tag == "textarea" || tag == "canvas" {
+		if tag == "img" || tag == "input" || tag == "button" || tag == "select" || tag == "textarea" || tag == "canvas" || tag == "video" || tag == "audio" {
 			return "inline-block"
 		}
 		return "inline"

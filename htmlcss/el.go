@@ -130,6 +130,12 @@ type El struct {
 	// position stays stable.
 	flowKids   []qui.Widget
 	inlinePool []*widgets.InlineBox
+	// staticMarker is a zero-size atom an inline-level absolutely
+	// positioned element leaves in its parent's inline run: its laid-out
+	// origin is the element's static position (StaticAnchor).
+	staticMarker *staticMarker
+	// anim holds the running CSS transitions / animations (anim.go).
+	anim *elAnimations
 
 	// captionRowOffset (table El only): grid rows the <caption> pushes data
 	// cells down by (1 for a top caption, 0 otherwise). Subtracted when a
@@ -153,6 +159,12 @@ type El struct {
 	markerShape *listMarkerWidget
 	liContent   *widgets.Box
 	liMarker    *widgets.Box // zero-width host hanging the marker outside (outsideMarkerLayout)
+	// markerOwnColor: a ::marker rule sets the marker's color, so the
+	// li's interactive text color must not override it.
+	markerOwnColor bool
+	// counterCS is the style being applied while counters are evaluated
+	// for this element (counters.go); nil otherwise.
+	counterCS *ComputedStyle
 
 	// img leaf: raster/svg loaded from the src attribute (static path), or
 	// the in-memory bitmap given to SetImage (imgData, which wins over src).
@@ -341,6 +353,9 @@ type El struct {
 	// Background-image: url() bitmap, cached by source URL (applyBackgroundImage).
 	bgImg    image.Image
 	bgImgSrc string
+	// mask-image: url() source, cached by URL (applyMasking).
+	maskSrc    maskSource
+	maskSrcURL string
 	// ::before / ::after generated content (text + computed style), resolved
 	// each restyle from the stylesheet's pseudo-element rules.
 	pbText, paText string
@@ -526,9 +541,11 @@ func (e *El) setAttr(k, v string) {
 	}
 	if k == "style" && e.engine != nil {
 		e.engine.markStyleAttr(e)
+		e.attrChanged(k)
 		return
 	}
 	e.markDirty()
+	e.attrChanged(k)
 }
 
 // applyPlaceholder pushes a changed placeholder attribute to an existing
@@ -621,6 +638,7 @@ func (e *El) RemoveAttr(k string) {
 		e.applyPlaceholder("")
 	}
 	e.markDirty()
+	e.attrChanged(k)
 }
 
 // SetManagedAttrs replaces the set of attributes owned by a DECLARATIVE
@@ -863,7 +881,7 @@ func (e *El) ClaimsTextFocus() bool { return e.tabFocusable() }
 // its backing control).
 func (e *El) tabFocusable() bool {
 	_, ok := e.TabIndex()
-	return ok && !e.isControl()
+	return ok && !e.isControl() || e.isEditingHost()
 }
 
 // TabIndexFor implements qui.TabIndexHost: a form element's tabindex
@@ -926,6 +944,7 @@ func (e *El) SetFocused(focused bool) {
 	if !changed {
 		return
 	}
+	e.editFocusChanged(focused) // contenteditable caret (edit_input.go)
 	if focused {
 		if e.onFocus != nil {
 			e.onFocus()
@@ -2619,7 +2638,13 @@ func (e *El) viewportPropagated(cs *ComputedStyle) *ComputedStyle {
 // applyComputed pushes a freshly-computed style onto this element, reusing
 // the one-shot builder's appliers. Called top-down by StyleEngine.restyle.
 func (e *El) applyComputed(cs *ComputedStyle) {
+	prev := e.lastCS
 	e.lastCS = cs
+	if cs != nil {
+		defer e.updateAnimations(prev, cs)
+	} else {
+		e.cancelAnimations()
+	}
 	if cs != nil && cs.RootFontSize > 0 {
 		remPx = cs.RootFontSize // rem in lengths resolved while applying
 	}
@@ -2735,6 +2760,10 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		if e.hostsWidget {
 			e.LayoutEngine = hostFillLayout{}
 			e.adoptHostedFlex(cs)
+		} else if e.hasNaturalSize() {
+			// A replaced custom element (<video>): replacedSize sizes the
+			// element, and the widget fills its content box.
+			e.LayoutEngine = hostFillLayout{}
 		} else if _, drawn := e.canvasWidget.(*canvasLeaf); drawn {
 			// The paint region is the element's box, as in a browser: a
 			// canvas stretched by flex-grow / align stretch / a % size
@@ -2816,7 +2845,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 
 	// Content layout from computed display.
 	var contentLayout qui.Layout
-	if cs.Display == "grid" {
+	if isGridDisplay(cs.Display) {
 		contentLayout = gridLayout(cs, len(e.elementKids))
 	} else {
 		contentLayout = chooseLayout(cs)
@@ -2872,6 +2901,9 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	// background-image: url(...) — a stretched bitmap fill (gradient wins).
 	e.applyBackgroundImage(cs)
 
+	// clip-path / mask-image (masking.go).
+	e.applyMasking(cs)
+
 	// <input type=color>: reflect the picked color. Two looks:
 	//   - plain swatch (no icon): the whole background IS the color, the
 	//     classic color-well.
@@ -2916,18 +2948,29 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 
 	// Grid cell placement: when this element is a child of a display:grid box,
 	// resolve its grid-column / grid-row / grid-area into explicit placement.
-	if bp := e.boxParent(); bp != nil && bp.lastCS != nil && bp.lastCS.Display == "grid" {
+	if bp := e.boxParent(); bp != nil && bp.lastCS != nil && isGridDisplay(bp.lastCS.Display) {
 		e.applyGridItem(cs, bp.lastCS)
 	}
 
 	// ::before / ::after generated content (resolved from pseudo-element rules).
 	e.pbText, e.pbCS, e.paText, e.paCS = "", nil, "", nil
 	if e.engine != nil && e.engine.sheet != nil && e.node != nil && !e.isTextSeg() {
-		if pcs, txt := pseudoStyle(e.node, e.engine.sheet, "before", cs); txt != "" {
-			e.pbText, e.pbCS = txt, pcs
-		}
-		if pcs, txt := pseudoStyle(e.node, e.engine.sheet, "after", cs); txt != "" {
-			e.paText, e.paCS = txt, pcs
+		for _, which := range [...]string{"before", "after"} {
+			pcs, content, has := pseudoStyleContent(e.node, e.engine.sheet, which, cs)
+			if pcs == nil || !has {
+				continue
+			}
+			txt := unquoteContentWith(content, e.node, func(fn cssFunction) string {
+				return e.counterContent(fn, which, cs, pcs)
+			})
+			if txt == "" {
+				continue
+			}
+			if which == "before" {
+				e.pbText, e.pbCS = txt, pcs
+			} else {
+				e.paText, e.paCS = txt, pcs
+			}
 		}
 	}
 
@@ -3099,7 +3142,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 		// opts into display:flex/grid keeps its own alignment.
 		if e.flowKids == nil &&
 			(e.tag == "button" || e.isButtonInput() || e.isFileInput()) &&
-			cs.Display != "flex" && cs.Display != "grid" {
+			!isFlexDisplay(cs.Display) && !isGridDisplay(cs.Display) {
 			e.LayoutEngine = qui.FlexLayout{
 				Direction:  qui.Horizontal,
 				Justify:    qui.JustifyCenter,
@@ -3118,7 +3161,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	//
 	// Assigned in BOTH directions: Els are reused across restyles, so a
 	// class change that drops `user-select: none` has to hand selection back.
-	selectable := !cs.NoSelect && !e.isControlSurface()
+	selectable := !cs.NoSelect && !e.isControlSurface() && e.editableState() == 0
 	if e.textLabel != nil {
 		e.textLabel.Selectable = selectable
 	}
@@ -3132,26 +3175,31 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	// moves to the liContent host (see syncChildren).
 	e.marker = ""
 	e.listTag = ""
-	if e.tag == "li" && !e.overflowScroll {
-		if m := e.listMarker(cs); m != "" {
+	e.markerOwnColor = false
+	// Only display: list-item generates a marker: an <li> made
+	// inline-block or flex by the page shows none, as in a browser.
+	if cs.ListItem && !e.overflowScroll {
+		m, mcs := e.listMarker(cs)
+		if m != "" {
 			e.marker = m
 			if e.elParent != nil {
 				e.listTag = e.elParent.tag // "ol" / "ul" for clipboard rebuild
 			}
+			e.markerOwnColor = mcs != cs && mcs.Color != cs.Color
 			if shape, ok := markerShapeFor(m); ok {
 				// disc / circle / square draw as geometry — the bullet
 				// codepoints are full-width in a CJK primary font, which is
 				// qui's default. See listmarker.go.
 				if e.markerShape == nil {
-					e.markerShape = newListMarker(shape, fontFrom(cs), cs.Color)
+					e.markerShape = newListMarker(shape, fontFrom(mcs), mcs.Color)
 				} else {
-					e.markerShape.set(shape, fontFrom(cs), cs.Color)
+					e.markerShape.set(shape, fontFrom(mcs), mcs.Color)
 				}
 			} else {
 				if e.markerLabel == nil {
 					e.markerLabel = widgets.NewLabel(m)
 				}
-				applyTextStyle(e.markerLabel, m, cs, textLabelOpts{boxless: true, noWrap: true})
+				applyTextStyle(e.markerLabel, m, mcs, textLabelOpts{boxless: true, noWrap: true})
 				// A list marker isn't user-selectable (browser behavior) — keep
 				// it out of drag-selection and clipboard; the real <ol>/<ul>
 				// regenerates its own markers on paste.
@@ -3301,12 +3349,17 @@ func (e *El) buildPseudoLeaf(cs *ComputedStyle) []qui.Widget {
 	st.Background = qui.Color{}
 	if e.pbText != "" {
 		ib.AddTextPaint(e.pbText, fontFrom(e.pbCS), e.pbCS.Color, e.pbCS.decoration(), e.pbCS.decorationPaint(), "")
+		ib.ShadowLastText(e.pbCS.TextShadows)
 	}
 	if collapseText(e.text) != "" {
+		n0 := ib.PartCount()
 		ib.AddTextPaint(e.text, fontFrom(cs), cs.Color, cs.decoration(), cs.decorationPaint(), "")
+		tagAdded(ib, n0, e, tagText)
+		ib.ShadowLastText(cs.TextShadows)
 	}
 	if e.paText != "" {
 		ib.AddTextPaint(e.paText, fontFrom(e.paCS), e.paCS.Color, e.paCS.decoration(), e.paCS.decorationPaint(), "")
+		ib.ShadowLastText(e.paCS.TextShadows)
 	}
 	return []qui.Widget{ib}
 }
@@ -3354,7 +3407,7 @@ func (e *El) ensureLabel() {
 // common all-block container: the tag pre-filter rejects it without
 // computing any child style.
 func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
-	if e.folded || len(e.elementKids) == 0 || cs.Display == "flex" || cs.Display == "grid" {
+	if e.folded || len(e.elementKids) == 0 || isFlexDisplay(cs.Display) || isGridDisplay(cs.Display) {
 		return nil // a folded element's content rides in its ancestor's run
 	}
 	elementKids, kidParents := e.flatKids(cs)
@@ -3457,6 +3510,9 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 		var atomics []int
 		for _, i := range run {
 			ke, _ := elementKids[i].(*El)
+			if kinds[i] == kindAside {
+				continue
+			}
 			if kinds[i] == kindAtomic {
 				atomics = append(atomics, i)
 				continue
@@ -3502,12 +3558,22 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 		st.Padding = qui.Insets{}
 		st.Background = qui.Color{}
 		if leading {
+			n0 := ib.PartCount()
 			ib.AddTextPaint(e.text, fontFrom(cs), cs.Color, cs.decoration(), cs.decorationPaint(), "")
+			tagAdded(ib, n0, e, tagText)
+			ib.ShadowLastText(cs.TextShadows)
 		}
 		for _, i := range run {
 			ke, ok := elementKids[i].(*El)
 			if !ok {
 				ib.AddBox(elementKids[i], qui.InlineBaseline)
+				continue
+			}
+			if kinds[i] == kindAside {
+				if ke.staticMarker == nil {
+					ke.staticMarker = newStaticMarker()
+				}
+				ib.AddBox(ke.staticMarker, qui.InlineTop)
 				continue
 			}
 			e.appendInlineChild(ib, ke, styles[i], cs, "", nil)
@@ -3523,6 +3589,12 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 			continue
 		case kindAside:
 			aside = append(aside, elementKids[i])
+			if ke, ok := elementKids[i].(*El); ok && styles[i] != nil && styles[i].InlineStatic {
+				// Mark its place in the line for its static position.
+				run = append(run, i)
+			} else if ok {
+				ke.staticMarker = nil
+			}
 			continue
 		}
 		run = append(run, i)
@@ -3755,7 +3827,9 @@ func (e *El) childStyle(c *El, parent *ComputedStyle) *ComputedStyle {
 // break-wrapped onto their own lines (anonymous-block approximation).
 func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *ComputedStyle, href string, link *El) {
 	if ke.tag == "br" {
+		n0 := ib.PartCount()
 		ib.AddBreak()
+		tagAdded(ib, n0, ke, tagBreak)
 		return
 	}
 	if ke.isTextSeg() {
@@ -3767,17 +3841,24 @@ func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *Compu
 			t = collapseInline(t)
 		}
 		if t != "" {
+			n0 := ib.PartCount()
 			ib.AddLinkText(t, fontFrom(kcs), kcs.Color, kcs.decoration(), kcs.decorationPaint(), href, linkSource(link))
+			tagAdded(ib, n0, ke, tagText)
+			ib.ShadowLastText(kcs.TextShadows)
 		}
 		return
 	}
 	if !foldableInline(ke, kcs) {
 		if kcs != nil && (kcs.Display == "block" || kcs.Display == "flex" || kcs.Display == "grid") {
 			ib.AddBreak()
+			n0 := ib.PartCount()
 			ib.AddBox(ke, inlineVAlignOf(kcs))
+			tagAdded(ib, n0, ke, tagBox)
 			ib.AddBreak()
 		} else {
+			n0 := ib.PartCount()
 			ib.AddBox(ke, inlineVAlignOf(kcs))
+			tagAdded(ib, n0, ke, tagBox)
 		}
 		return
 	}
@@ -3795,7 +3876,10 @@ func (e *El) appendInlineChild(ib *widgets.InlineBox, ke *El, kcs, parent *Compu
 		defer ib.CloseSpan()
 	}
 	if ke.text != "" {
+		n0 := ib.PartCount()
 		ib.AddLinkText(ke.text, fontFrom(kcs), kcs.Color, kcs.decoration(), kcs.decorationPaint(), href, linkSource(link))
+		tagAdded(ib, n0, ke, tagText)
+		ib.ShadowLastText(kcs.TextShadows)
 	}
 	for _, k := range ke.elementKids {
 		if kke, ok := k.(*El); ok {
@@ -3854,7 +3938,8 @@ func inlineHasContent(e *El) bool {
 // own. Width / height do not apply to inline boxes at all.
 func spanFoldable(cs *ComputedStyle) bool {
 	return !cs.HasShadow && cs.Gradient == nil && !cs.HasOpacity && cs.Transform == nil &&
-		cs.Filter == nil && cs.BackgroundImageURL == "" && !cs.hasStateBoxVariant()
+		cs.Filter == nil && cs.BackgroundImageURL == "" && cs.ClipPath == nil && cs.Mask == nil && cs.BackdropFilter == nil &&
+		!cs.hasStateBoxVariant()
 }
 
 // inlineSpanStyle is a folded inline element's span decoration.
@@ -3941,6 +4026,16 @@ func linkSource(a *El) any {
 	return a
 }
 
+// hasNaturalSize reports a custom element sized as a replaced element
+// (ElementDef.NaturalSize).
+func (e *El) hasNaturalSize() bool {
+	if e.canvasUser == nil || e.hostsWidget {
+		return false
+	}
+	def, ok := lookupElement(e.tag)
+	return ok && def.NaturalSize != nil
+}
+
 // isCanvas reports whether this is a <canvas> element — a replaced leaf
 // whose content is supplied by the caller (SetCanvasDraw / SetCanvas).
 func (e *El) isCanvas() bool {
@@ -3951,17 +4046,51 @@ func (e *El) isCanvas() bool {
 	return custom
 }
 
-// canvasSize resolves the canvas region's pixel size from CSS, defaulting
-// to HTML's intrinsic 300×150 canvas geometry when unspecified.
+// canvasSize resolves the canvas region's pixel size from CSS. The
+// intrinsic size is the width / height attributes (HTML's 300×150 when
+// absent or invalid); one CSS dimension alone keeps that aspect ratio.
 func (e *El) canvasSize(cs *ComputedStyle) (w, h float32) {
-	w, h = 300, 150
-	if cs.HasWidth {
+	iw, ih := canvasAttrDim(e, "width", 300), canvasAttrDim(e, "height", 150)
+	w, h = iw, ih
+	switch {
+	case cs.HasWidth && cs.HasHeight:
+		w, h = cs.Width, cs.Height
+	case cs.HasWidth:
 		w = cs.Width
-	}
-	if cs.HasHeight {
+		if iw > 0 {
+			h = w * ih / iw
+		}
+	case cs.HasHeight:
 		h = cs.Height
+		if ih > 0 {
+			w = h * iw / ih
+		}
 	}
 	return w, h
+}
+
+// canvasAttrDim is a canvas width / height attribute: a non-negative
+// integer, else def (HTML's "rules for parsing non-negative integers").
+func canvasAttrDim(e *El, name string, def float32) float32 {
+	v, ok := e.Attr(name)
+	if !ok {
+		return def
+	}
+	v = strings.TrimSpace(v)
+	n, digits := 0, 0
+	for _, r := range v {
+		if r < '0' || r > '9' {
+			break
+		}
+		if n < 1<<24 {
+			n = n*10 + int(r-'0')
+		}
+		digits++
+	}
+	if digits == 0 {
+		return def
+	}
+	return float32(n)
 }
 
 // ensureCanvas (re)builds the widget backing a <canvas> leaf: the caller's
@@ -4181,49 +4310,40 @@ func (e *El) markerWidget() qui.Widget {
 	return e.markerLabel
 }
 
-// listMarker returns the bullet / number string for this li, honoring
-// list-style-type on the li or its parent list. Empty means no marker
-// (list-style-type none, or the li isn't directly inside a ul/ol).
+// listMarker returns the marker string for this list item and the style it
+// is drawn with (the ::marker style, else the item's own). Empty means no
+// marker (list-style-type none, or ::marker content none).
 //
-// The string stays the marker's semantic value (clipboard rebuild, AX) even
-// when a bullet is DRAWN rather than typeset — see markerWidget.
-func (e *El) listMarker(cs *ComputedStyle) string {
-	p := e.elParent
-	if p == nil || (p.tag != "ul" && p.tag != "ol") {
-		return ""
-	}
-	lst := firstNonEmpty(cs.raw["list-style-type"], listStyleFromShorthand(cs.raw["list-style"]))
-	if lst == "" && p.lastCS != nil {
-		lst = firstNonEmpty(p.lastCS.raw["list-style-type"], listStyleFromShorthand(p.lastCS.raw["list-style"]))
-	}
-	lst = strings.ToLower(strings.TrimSpace(lst))
-	if lst == "none" {
-		return ""
-	}
-	if p.tag == "ol" {
-		idx := 1
-		for _, k := range p.elementKids {
-			ke, ok := k.(*El)
-			if !ok {
-				continue
-			}
-			if ke == e {
-				break
-			}
-			if ke.tag == "li" {
-				idx++
-			}
+// The marker is the list-item counter in the inherited list-style-type
+// ("3." for decimal, "c." for lower-alpha, a bullet for disc / circle /
+// square), or the ::marker `content` when a rule sets one. The string
+// stays the marker's semantic value (clipboard rebuild, AX) even when a
+// bullet is DRAWN rather than typeset — see markerWidget.
+func (e *El) listMarker(cs *ComputedStyle) (string, *ComputedStyle) {
+	mcs := cs
+	content, hasContent := "", false
+	if e.engine != nil && e.engine.sheet != nil && e.node != nil {
+		if pcs, c, has := pseudoStyleContent(e.node, e.engine.sheet, "marker", cs); pcs != nil {
+			mcs, content, hasContent = pcs, c, has
 		}
-		return strconv.Itoa(idx) + "."
 	}
-	switch lst {
-	case "circle":
-		return "◦"
-	case "square":
-		return "▪"
-	default: // disc
-		return "•"
+	if hasContent && !strings.EqualFold(strings.TrimSpace(content), "normal") {
+		txt := unquoteContentWith(content, e.node, func(fn cssFunction) string {
+			return e.counterContent(fn, "marker", cs, mcs)
+		})
+		return txt, mcs
 	}
+	lst := cs.ListStyleType
+	if lst == "none" {
+		return "", mcs
+	}
+	if isBulletStyle(lst) {
+		return formatCounter(0, firstNonEmpty(lst, "disc")), mcs
+	}
+	if lst[0] == '"' || lst[0] == '\'' {
+		return formatCounter(0, lst), mcs
+	}
+	return formatCounter(e.listItemOrdinal(cs), lst) + ".", mcs
 }
 
 func (e *El) ensureScroll() {
@@ -4459,12 +4579,15 @@ func (e *El) Measure(available qui.Size) qui.Size {
 	if e.displayNone {
 		return qui.Size{}
 	}
-	if webCompat && e.isImg() && e.iconSrc == nil {
+	if webCompat && e.isImg() && e.iconSrc == nil || e.hasNaturalSize() {
 		if sz, ok := e.replacedSize(available); ok {
 			return sz
 		}
 	}
 	m := e.Box.Measure(available)
+	if cs := e.lastCS; cs != nil && cs.AspectRatio > 0 {
+		m = e.aspectSize(cs, available, m)
+	}
 	if e.overflowScroll && e.scrollView != nil {
 		// The ScrollView grows into the element's box, so the flex column
 		// holding it reports the offer (or 0 when unconstrained) on the
@@ -4504,6 +4627,16 @@ func (fillLayout) Measure(children []qui.Widget, avail qui.Size) qui.Size {
 
 // naturalImageSize is the loaded picture's intrinsic size.
 func (e *El) naturalImageSize() (qui.Size, bool) {
+	if def, ok := lookupElement(e.tag); ok && def.NaturalSize != nil {
+		if e.canvasUser == nil {
+			return qui.Size{}, false
+		}
+		sz, ok := def.NaturalSize(e, e.canvasUser)
+		if !ok || sz.W <= 0 || sz.H <= 0 {
+			return qui.Size{}, false
+		}
+		return sz, true
+	}
 	switch w := e.imgWidget.(type) {
 	case *widgets.Image:
 		if w.Image != nil {
@@ -4831,6 +4964,7 @@ func (e *El) Draw(canvas qui.Canvas) {
 			canvas.StrokeRect(ring, e.lastCS.OutlineColor, w)
 		}
 	}
+	e.drawEditing(canvas) // contenteditable caret (edit_view.go)
 }
 
 // applyStateText resolves the text color + decoration for the box's current
@@ -4888,10 +5022,10 @@ func (e *El) applyStateText(av *ancestorVariant) {
 		e.textLabel.Style().Foreground = color
 		e.textLabel.Paragraph.Decoration = dec
 	}
-	if e.markerLabel != nil {
+	if e.markerLabel != nil && !e.markerOwnColor {
 		e.markerLabel.Style().Foreground = color
 	}
-	if e.markerShape != nil {
+	if e.markerShape != nil && !e.markerOwnColor {
 		e.markerShape.color = color
 	}
 	if e.iconImg != nil && !e.iconUntinted {
@@ -5165,6 +5299,10 @@ func (e *El) Handle(event qui.Event) bool {
 			if !ownControl && e.onKeyDown != nil && e.onKeyDown(ke) {
 				return true
 			}
+			// An editing host's default action (edit_input.go).
+			if e.editKeyDown(ke) {
+				return true
+			}
 			// A focused tabindex scroll container scrolls with the arrow
 			// keys (its default action, after the author's handler).
 			if sv := e.scrollView; sv != nil && sv.FocusDelegated && e.overflowScroll &&
@@ -5194,6 +5332,9 @@ func (e *El) Handle(event qui.Event) bool {
 			}
 		}
 		return handled
+	}
+	if ce, ok := event.(qui.CharEvent); ok && ce.Phase() != qui.PhaseCapture && e.editChar(ce) {
+		return true
 	}
 	me, ok := event.(qui.MouseEvent)
 	if !ok {
@@ -5258,6 +5399,9 @@ func (e *El) Handle(event qui.Event) bool {
 	// from a press on a child is unaffected.
 	if me.Phase() == qui.PhaseCapture {
 		return handled
+	}
+	if e.editMouse(me) { // caret placement / selection in an editing host
+		handled = true
 	}
 	switch me.Type() {
 	case qui.EventMouseDown:
@@ -6217,4 +6361,80 @@ func (e *El) MarginsCollapseWithChildren() bool {
 		return false
 	}
 	return true
+}
+
+// staticMarker is the zero-size inline atom holding an inline-level
+// out-of-flow element's place in a line.
+type staticMarker struct{ qui.BaseWidget }
+
+func newStaticMarker() *staticMarker {
+	m := &staticMarker{BaseWidget: qui.NewBaseWidget()}
+	m.SetSelf(m)
+	return m
+}
+
+func (m *staticMarker) Measure(qui.Size) qui.Size { return qui.Size{} }
+func (m *staticMarker) Draw(qui.Canvas)           {}
+func (m *staticMarker) HitTest(qui.Point) qui.Widget {
+	return nil
+}
+
+// StaticAnchor is the widget whose origin is this out-of-flow element's
+// static position (an inline-level one inside a line), or nil.
+func (e *El) StaticAnchor() qui.Widget {
+	if e.staticMarker == nil || e.staticMarker.Parent() == nil {
+		return nil
+	}
+	return e.staticMarker
+}
+
+// aspectSize applies CSS aspect-ratio to a measured size: an auto height
+// follows the width (the declared one, else the width the box is offered —
+// a block fills it), an auto width follows a declared height. The ratio
+// sizes the content box, or the border box under box-sizing: border-box;
+// content taller than the ratio still grows the box (min-height: auto).
+func (e *El) aspectSize(cs *ComputedStyle, avail, m qui.Size) qui.Size {
+	ins := e.Style().ContentInsets()
+	border := cs.BoxSizing == "border-box"
+	toContent := func(v float32, horizontal bool) float32 {
+		if border {
+			return v
+		}
+		if horizontal {
+			return max(v-ins.Horizontal(), 0)
+		}
+		return max(v-ins.Vertical(), 0)
+	}
+	fromContent := func(v float32, horizontal bool) float32 {
+		if border {
+			return v
+		}
+		if horizontal {
+			return v + ins.Horizontal()
+		}
+		return v + ins.Vertical()
+	}
+	autoH := !cs.HasHeight && cs.HeightPct == 0
+	autoW := !cs.HasWidth && cs.WidthPct == 0
+	switch {
+	case autoH:
+		w := m.W
+		if st := e.Style(); st.Width > 0 {
+			w = st.Width
+		} else if avail.W > 0 && (!autoW || e.Box.Display != qui.FlowInline) {
+			w = avail.W
+			if mw := e.Style().MaxWidth; mw > 0 && w > mw {
+				w = mw
+			}
+		}
+		h := fromContent(toContent(w, true)/cs.AspectRatio, false)
+		m.H = max(m.H, h)
+	case autoW:
+		h := m.H
+		if st := e.Style(); st.Height > 0 {
+			h = st.Height
+		}
+		m.W = max(m.W, fromContent(toContent(h, false)*cs.AspectRatio, true))
+	}
+	return m
 }

@@ -214,6 +214,27 @@ static void quiInterpretKeyEvents(id self, SEL _cmd, NSArray* events) {
         }
         return;
     }
+    // The focused widget opted out of the input method (a link, a button,
+    // a plain element of a page): no composition, no candidate window —
+    // the keystroke's characters go straight through as typed text.
+    if (handleNum != nil && quiIMEBypassed((uintptr_t)[handleNum unsignedLongValue])) {
+        NSNumber* marked = objc_getAssociatedObject(self, kQuiHasMarkedKey);
+        if (marked != nil && [marked boolValue]) {
+            [[self inputContext] discardMarkedText];
+            objc_setAssociatedObject(self, kQuiHasMarkedKey, @NO, OBJC_ASSOCIATION_RETAIN);
+            quiIMESetPreedit((uintptr_t)[handleNum unsignedLongValue], (char*)"", 0);
+        }
+        for (NSEvent* ev in events) {
+            if ([ev type] != NSEventTypeKeyDown) continue;
+            if ([ev modifierFlags] & (NSEventModifierFlagCommand | NSEventModifierFlagControl)) continue;
+            NSString* chars = [ev characters];
+            if ([chars length] == 0) continue;
+            const char* utf8 = [chars UTF8String];
+            if (utf8 == NULL) continue;
+            quiIMEBypassChars((uintptr_t)[handleNum unsignedLongValue], (char*)utf8);
+        }
+        return;
+    }
     if (gPrevInterpretKeyEvents) gPrevInterpretKeyEvents(self, _cmd, events);
 }
 

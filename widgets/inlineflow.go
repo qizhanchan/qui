@@ -95,6 +95,10 @@ type InlineBox struct {
 	spanStack           []int32
 	hoverSpan           int32
 	spanFirst, spanLast []int
+
+	// partTags are the host's source tags per part (TagLastPart; see
+	// inlineflow_edit.go) — how an editor maps layout items to its model.
+	partTags []any
 }
 
 // inlinePart is one appended piece: a styled text run or an atomic child.
@@ -117,6 +121,8 @@ type inlinePart struct {
 	lh       float32 // its line-height scale (0 = the box's)
 	inset    float32 // > 0: a span's start / end edge (no text, no box)
 	insetEnd bool
+
+	shadows []ShadowStyle // CSS text-shadow layers of a text run
 }
 
 // NewInlineBox constructs an empty inline box. Append content with
@@ -152,6 +158,19 @@ func (b *InlineBox) AddLinkText(text string, font Font, color Color, deco TextDe
 	b.haveLay = false
 	b.haveFit = false
 	b.InvalidateLayout()
+}
+
+// ShadowLastText gives the most recently added text run CSS text-shadow
+// layers (first layer on top). A no-op when the last part is not text.
+func (b *InlineBox) ShadowLastText(shadows []ShadowStyle) {
+	if len(shadows) == 0 || len(b.parts) == 0 {
+		return
+	}
+	p := &b.parts[len(b.parts)-1]
+	if p.isBox || p.inset > 0 {
+		return
+	}
+	p.shadows = shadows
 }
 
 // AddBox appends an atomic inline child widget aligned via valign. The child
@@ -191,6 +210,7 @@ func (b *InlineBox) Clear() {
 	b.spans = b.spans[:0]
 	b.spanStack = b.spanStack[:0]
 	b.hoverSpan = 0
+	b.partTags = b.partTags[:0]
 	b.ClearChildren()
 	b.haveLay = false
 	b.haveFit = false
@@ -500,6 +520,22 @@ func (b *InlineBox) Layout(rect Rect) {
 	}
 }
 
+// InlineEnd reports where inline content placed after this box would
+// start: the end of the last line (its top edge). A following out-of-flow
+// box that was inline-level has its static position there.
+func (b *InlineBox) InlineEnd() (Point, bool) {
+	if !b.haveLay || len(b.layout.Lines) == 0 {
+		return Point{}, false
+	}
+	origin := b.Bounds()
+	ln := b.layout.Lines[len(b.layout.Lines)-1]
+	x := float32(0)
+	for _, f := range ln.Frags {
+		x = max(x, f.Rect.X+f.Rect.W)
+	}
+	return Point{X: origin.X + x, Y: origin.Y + ln.Y}, true
+}
+
 func (b *InlineBox) Draw(canvas Canvas) {
 	origin := b.Bounds()
 	if b.Style().Background.A > 0 {
@@ -507,7 +543,9 @@ func (b *InlineBox) Draw(canvas Canvas) {
 	}
 	b.drawSpans(canvas, origin)
 	b.drawSelection(canvas, origin)
-	DrawInlineText(canvas, b.hoverLayout(), origin)
+	layout := b.hoverLayout()
+	b.drawTextShadows(canvas, layout, origin)
+	DrawInlineText(canvas, layout, origin)
 	for _, child := range b.ChildList() {
 		if boxChildHidden(child) {
 			continue
@@ -1027,4 +1065,74 @@ func inlineChildSize(w Widget, avail Size) Size {
 		m.H = st.MaxHeight
 	}
 	return m
+}
+
+// drawTextShadows paints the runs' CSS text-shadow layers under the text:
+// pass k repaints every fragment whose run has a k-th shadow in that
+// shadow's color, offset and blurred. The fragments map back to their run
+// through SrcItem (parts and layout items are 1:1).
+func (b *InlineBox) drawTextShadows(canvas Canvas, layout InlineLayout, origin Rect) {
+	maxK := 0
+	for i := range b.parts {
+		if n := len(b.parts[i].shadows); n > maxK {
+			maxK = n
+		}
+	}
+	if maxK == 0 {
+		return
+	}
+	partOf := func(f InlineFrag, prev int) int {
+		if f.SrcItem >= 0 && f.SrcItem < len(b.parts) {
+			return f.SrcItem
+		}
+		return prev // a synthesized joining space rides with its neighbor
+	}
+	for k := maxK - 1; k >= 0; k-- {
+		pass := InlineLayout{Width: layout.Width, Height: layout.Height, Lines: make([]InlineLine, len(layout.Lines))}
+		var sh ShadowStyle
+		any := false
+		for li, ln := range layout.Lines {
+			ln.Frags = append([]InlineFrag(nil), ln.Frags...)
+			prev := -1
+			for fi := range ln.Frags {
+				f := &ln.Frags[fi]
+				if f.Box {
+					continue
+				}
+				pi := partOf(*f, prev)
+				prev = pi
+				f.Background = Color{}
+				if pi < 0 || k >= len(b.parts[pi].shadows) {
+					f.Text = ""
+					continue
+				}
+				s := b.parts[pi].shadows[k]
+				if !any {
+					sh, any = s, true
+				}
+				f.Color = s.Color
+				f.DecorationPaint.Color = s.Color
+			}
+			pass.Lines[li] = ln
+		}
+		if !any {
+			continue
+		}
+		// One offset and blur per pass (runs in a box nearly always share
+		// an inherited text-shadow); colors are per fragment.
+		sh.Color.A = 1
+		drawTextShadowLayer(canvas, sh, Rect{X: origin.X, Y: origin.Y, W: max(origin.W, layout.Width), H: max(origin.H, layout.Height)}, false,
+			func(c Canvas) { DrawInlineText(c, pass, origin) })
+	}
+}
+
+// PaintBounds covers the runs' text shadows, which paint past the box.
+func (b *InlineBox) PaintBounds() Rect {
+	r := b.Bounds()
+	for i := range b.parts {
+		if len(b.parts[i].shadows) > 0 {
+			r = r.Union(textShadowBounds(b.Bounds(), b.parts[i].shadows))
+		}
+	}
+	return r
 }

@@ -50,6 +50,9 @@ type GridItem struct {
 	ColSpan  int // 0 or 1 = single-cell
 	RowSpan  int // 0 or 1 = single-cell
 	Explicit bool
+	// ColOnly: Col is definite but the row is auto (CSS grid-column set,
+	// grid-row auto) — auto-placement finds the row in that column.
+	ColOnly bool
 }
 
 // SetCell is the canonical way to place a widget at an explicit grid
@@ -157,10 +160,14 @@ func (l GridLayout) withImplicit(children []Widget) (GridLayout, []GridItem) {
 		p := GridItemOf(ch)
 		p.ColSpan, p.RowSpan = max(p.ColSpan, 1), max(p.RowSpan, 1)
 		placements[i] = p
-		if p.Explicit {
+		switch {
+		case p.Explicit:
 			nCols = max(nCols, p.Col+p.ColSpan)
 			rowEnd = max(rowEnd, p.Row+p.RowSpan)
-		} else {
+		case p.ColOnly:
+			nCols = max(nCols, p.Col+p.ColSpan)
+			autoRows += p.RowSpan
+		default:
 			nCols = max(nCols, p.ColSpan)
 			autoRows += p.RowSpan
 		}
@@ -319,34 +326,56 @@ func (l GridLayout) autoPlace(placements []GridItem) {
 			mark(p.Col, p.Row, p.ColSpan, p.RowSpan)
 		}
 	}
-	// Second pass: place autos into first free slot fitting their span.
-	cursor := 0
-	for i := range placements {
-		if placements[i].Explicit {
-			continue
+	free := func(c, r, cs, rs int) bool {
+		if c < 0 || c+cs > nCols || r+rs > nRows {
+			return false
 		}
-		p := placements[i]
-		for ; cursor < nCols*nRows; cursor++ {
-			c := cursor % nCols
-			r := cursor / nCols
-			if c+p.ColSpan > nCols || r+p.RowSpan > nRows {
-				continue
-			}
-			ok := true
-			for rr := r; rr < r+p.RowSpan && ok; rr++ {
-				for cc := c; cc < c+p.ColSpan && ok; cc++ {
-					if occupied[rr*nCols+cc] {
-						ok = false
-					}
+		for rr := r; rr < r+rs; rr++ {
+			for cc := c; cc < c+cs; cc++ {
+				if occupied[rr*nCols+cc] {
+					return false
 				}
 			}
-			if ok {
-				placements[i].Col = c
-				placements[i].Row = r
-				placements[i].Explicit = true
-				mark(c, r, p.ColSpan, p.RowSpan)
-				cursor++
+		}
+		return true
+	}
+	// Second pass (CSS Grid § 8.5, sparse): one cursor walks the grid in
+	// row-major order. An item with a definite column moves the cursor to
+	// that column (to the next row if the column is behind it) and down
+	// until the item fits; a fully auto item takes the first free slot from
+	// the cursor on.
+	curR, curC := 0, 0
+	for i := range placements {
+		p := placements[i]
+		if p.Explicit {
+			continue
+		}
+		if p.ColOnly {
+			if p.Col < curC {
+				curR++
+			}
+			curC = p.Col
+			for curR < nRows && !free(curC, curR, p.ColSpan, p.RowSpan) {
+				curR++
+			}
+			if curR >= nRows {
+				continue
+			}
+			placements[i].Row, placements[i].Explicit = curR, true
+			mark(curC, curR, p.ColSpan, p.RowSpan)
+			continue
+		}
+		for curR < nRows {
+			if free(curC, curR, p.ColSpan, p.RowSpan) {
+				placements[i].Col, placements[i].Row, placements[i].Explicit = curC, curR, true
+				mark(curC, curR, p.ColSpan, p.RowSpan)
+				curC += p.ColSpan
 				break
+			}
+			curC++
+			if curC+p.ColSpan > nCols {
+				curC = 0
+				curR++
 			}
 		}
 	}

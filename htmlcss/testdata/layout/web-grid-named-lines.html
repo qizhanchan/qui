@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+.g { display: grid; grid-template-columns: minmax(0,1fr) [title-start] repeat(2, 60px) [title-end content-start] repeat(4, 60px) [content-end] minmax(0,1fr); width: 600px; }
+.g > div { height: 20px; background: #ccc; }
+#t { grid-column: title; }
+#c { grid-column: content; }
+#c2 { grid-column: content-start / span 2; }
+#full { grid-column: 1 / -1; }
+.areas { display: grid; grid-template-areas: "head head" "side main"; grid-template-columns: 100px 200px; margin-top: 10px; }
+.areas > div { height: 20px; background: #aaa; }
+#h { grid-column: head-start / head-end; }
+#m { grid-row: main; grid-column: main; }
+#s { grid-area: side; }
+</style></head><body>
+<div class="g" id="g"><div id="t"></div><div id="c"></div><div id="c2"></div><div id="a1"></div></div>
+<div class="areas" id="ar"><div id="h"></div><div id="s"></div><div id="m"></div></div>
+</body></html>

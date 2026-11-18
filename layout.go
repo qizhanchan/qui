@@ -197,6 +197,24 @@ func applyConstraints(size, min, max Size) Size {
 // The absolute Min*/Max* fields still win when set; percentages only
 // fill an axis the absolute size left at zero. Only positive cb axes
 // resolve (a zero-height containing block leaves height-% unresolved).
+// pctIndefinite is > 0 while a box whose width depends on its content
+// (a content-sized flex item) is being measured for its intrinsic size:
+// its descendants' percentage widths are cyclic then and behave as auto
+// (CSS Sizing 3 § 5.2.1), resolving against the box once it is laid out.
+// Measure memos key on it (measureEntry.indef).
+var pctIndefinite int
+
+// widthPctDefinite reports whether percentage widths resolve now.
+func widthPctDefinite() bool { return pctIndefinite == 0 }
+
+// measureIntrinsic measures w with its descendants' percentage widths
+// indefinite.
+func measureIntrinsic(w Widget, avail Size, measure func(Widget, Size) Size) Size {
+	pctIndefinite++
+	defer func() { pctIndefinite-- }()
+	return measure(w, avail)
+}
+
 // pctWidth / pctHeight resolve a percentage size against the containing
 // block on that axis, adding the content-box extra (Style.PctExtra).
 func (s *Style) pctWidth(frac, cbW float32) float32  { return cbW*frac + s.PctExtra.W }
@@ -205,7 +223,7 @@ func (s *Style) pctHeight(frac, cbH float32) float32 { return cbH*frac + s.PctEx
 func resolvedMinSize(w Widget, cb Size) Size {
 	min := widgetMinSize(w)
 	if s := w.Style(); s != nil {
-		if min.W == 0 && s.MinWidthPct > 0 && cb.W > 0 {
+		if min.W == 0 && s.MinWidthPct > 0 && cb.W > 0 && widthPctDefinite() {
 			min.W = s.pctWidth(s.MinWidthPct, cb.W)
 		}
 		if min.H == 0 && s.MinHeightPct > 0 && cb.H > 0 {
@@ -218,7 +236,7 @@ func resolvedMinSize(w Widget, cb Size) Size {
 func resolvedMaxSize(w Widget, cb Size) Size {
 	max := widgetMaxSize(w)
 	if s := w.Style(); s != nil {
-		if max.W == 0 && s.MaxWidthPct > 0 && cb.W > 0 {
+		if max.W == 0 && s.MaxWidthPct > 0 && cb.W > 0 && widthPctDefinite() {
 			max.W = s.pctWidth(s.MaxWidthPct, cb.W)
 		}
 		if max.H == 0 && s.MaxHeightPct > 0 && cb.H > 0 {
@@ -282,7 +300,7 @@ func ownWidthAvail(avail Size, prefW, minW, maxW float32) Size {
 func MeasureConstrained(w Widget, avail Size) Size {
 	p := widgetPreferredSize(w)
 	if s := w.Style(); s != nil {
-		if p.W == 0 && s.WidthPct > 0 && avail.W > 0 {
+		if p.W == 0 && s.WidthPct > 0 && avail.W > 0 && widthPctDefinite() {
 			p.W = s.pctWidth(s.WidthPct, avail.W)
 		}
 		if p.H == 0 && s.HeightPct > 0 && avail.H > 0 {

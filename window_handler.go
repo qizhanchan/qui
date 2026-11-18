@@ -174,7 +174,7 @@ func (w *Window) onCommitText(text string)          { w.CommitIME(text) }
 // coordinates (viewport coordinates times zoom), for backends anchoring a
 // candidate window.
 func (w *Window) imeCaretRect() (x, y, width, height float64, ok bool) {
-	if _, isClient := w.focused.(IMEClient); !isClient {
+	if _, isClient := imeClientOf(w.focused); !isClient {
 		return 0, 0, 0, 0, false
 	}
 	r := w.CaretRect()

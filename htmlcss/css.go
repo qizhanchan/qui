@@ -191,10 +191,14 @@ type Stylesheet struct {
 	// FontFaces holds each @font-face rule's descriptors (font-family,
 	// src, font-weight, font-style, unicode-range, …) for the host to load.
 	FontFaces [][]Declaration
+	// Keyframes holds the @keyframes rules by name (CSS Animations).
+	Keyframes map[string][]keyframe
 	// idx buckets Rules by their selectors' subject (see ruleIndex);
 	// built lazily, rebuilt when Rules changes.
 	idxMu sync.Mutex
 	idx   *ruleIndex
+	// counterUse memoizes sheetUsesCounters (counters.go).
+	counterUse counterUseEntry
 	// HasHas is true when any selector uses :has(). Unlike ordinary supported
 	// selectors, :has makes an element's match depend on descendants, so a
 	// mutation may invalidate every ancestor up to its top-level style root.
@@ -400,6 +404,13 @@ func (c *cssParseCtx) atRule(prelude, block string, sheet *Stylesheet, layer int
 		// Not modeled: @starting-style only matters for transitions.
 	case "@font-face":
 		sheet.FontFaces = append(sheet.FontFaces, parseDeclarations(block))
+	case "@keyframes", "@-webkit-keyframes":
+		if name := strings.Trim(strings.TrimSpace(cond), `"'`); name != "" {
+			if sheet.Keyframes == nil {
+				sheet.Keyframes = map[string][]keyframe{}
+			}
+			sheet.Keyframes[name] = parseKeyframes(block)
+		}
 	default:
 		// @keyframes, @page, @property, @counter-style, … are skipped.
 	}

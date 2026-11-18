@@ -1,0 +1,27 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+.wrap { width: 600px; }
+#c1 { width: calc(100% - 40px); height: 20px; background: #ccc; }
+#c2 { width: calc(50% + 2rem); padding: 0 10px; height: 20px; background: #aaa; }
+.row { display: flex; margin-top: 10px; }
+.row > div { height: 20px; background: #999; }
+#b1 { flex: 0 0 25%; }
+#b2 { flex: 0 0 calc(50% - 8px); }
+#b3 { flex: 1 1 calc(66.666% - 8px); }
+.bento { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 10px; }
+.bento > div { aspect-ratio: 816 / 676; flex: 1 1 calc(66.666% - 8px); background: #777; }
+.bento > div + div { flex-basis: calc(33.333% - 8px); }
+#ar1 { width: 200px; aspect-ratio: 16 / 9; background: #555; margin-top: 10px; }
+#ar2 { aspect-ratio: 2; background: #444; }
+.fr { display: flex; } #ar3 { height: 50px; aspect-ratio: 3/1; background: #333; }
+</style></head><body>
+<div class="wrap" id="w">
+  <div id="c1"></div><div id="c2"></div>
+  <div class="row" id="r"><div id="b1"></div><div id="b2"></div></div>
+  <div class="row" id="r2"><div id="b3"></div></div>
+  <div class="bento" id="bento"><div id="k1"></div><div id="k2"></div></div>
+  <div id="ar1"></div><div id="ar2"></div><div class="fr"><div id="ar3"></div></div>
+</div>
+</body></html>

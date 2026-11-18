@@ -21,6 +21,66 @@ type transformSpec struct {
 	matrix    *qui.Matrix
 	ox, oy    float32 // transform-origin fraction (0..1)
 	hasOrigin bool
+	// ops is the function list in source order; when set it is the
+	// transform (the decomposed fields above stay identity). Percentages
+	// in translate resolve against the border box at paint time.
+	ops []transformOp
+}
+
+// transformOp is one transform function.
+type transformOp struct {
+	kind       byte // 't' translate, 's' scale, 'r' rotate, 'k' skew, 'm' matrix
+	a, b       float32
+	aPct, bPct float32 // translate percentages (fractions of the box)
+	m          qui.Matrix
+	// 'L': an interpolation between two op lists at lerpT (animations),
+	// resolved per box size.
+	lerpA, lerpB []transformOp
+	lerpT        float32
+}
+
+// resolve composes ops for a w×h box into one matrix about the origin.
+func resolveTransformOps(ops []transformOp, w, h float32) qui.Matrix {
+	m := qui.IdentityMatrix()
+	for _, op := range ops {
+		var n qui.Matrix
+		switch op.kind {
+		case 't':
+			n = qui.TranslateMatrix(op.a+op.aPct*w, op.b+op.bPct*h)
+		case 's':
+			n = qui.ScaleMatrix(op.a, op.b)
+		case 'r':
+			n = qui.RotateMatrix(op.a)
+		case 'k':
+			n = qui.Matrix{A: 1, B: float32(math.Tan(float64(op.a))), C: float32(math.Tan(float64(op.b))), D: 1}
+		case 'm':
+			n = op.m
+		case 'L':
+			a, b := resolveTransformOps(op.lerpA, w, h), resolveTransformOps(op.lerpB, w, h)
+			t := op.lerpT
+			l := func(x, y float32) float32 { return x + (y-x)*t }
+			n = qui.Matrix{A: l(a.A, b.A), B: l(a.B, b.B), C: l(a.C, b.C), D: l(a.D, b.D), TX: l(a.TX, b.TX), TY: l(a.TY, b.TY)}
+		default:
+			continue
+		}
+		m = m.Concat(n)
+	}
+	return m
+}
+
+// lengthOrPct parses a translate argument: px (pct 0) or a percentage.
+func lengthOrPct(tok string, fs float32) (px, pct float32, ok bool) {
+	tok = strings.TrimSpace(tok)
+	if strings.HasSuffix(tok, "%") {
+		if f, o := parseFloat(strings.TrimSuffix(tok, "%")); o {
+			return 0, f / 100, true
+		}
+		return 0, 0, false
+	}
+	if px, ok := parseLength(tok, fs, 0); ok {
+		return px, 0, true
+	}
+	return 0, 0, false
 }
 
 // gradientSpec is a parsed `linear-gradient(...)`: a direction angle
@@ -131,50 +191,6 @@ func parseBoxShadows(v string, fs float32) []qui.ShadowStyle {
 	return out
 }
 
-// parseFilter parses a CSS `filter` value into a qui.ImageFilter. Supports
-// `blur(<len>)` and `drop-shadow(<x> <y> [blur] <color>)`. Multiple functions
-// are not composed — the first recognized one wins. ok=false when none parse.
-func parseFilter(v string, fs float32) (qui.ImageFilter, bool) {
-	v = strings.TrimSpace(v)
-	if v == "" || strings.EqualFold(v, "none") {
-		return nil, false
-	}
-	for _, fn := range splitFunctions(v) {
-		switch fn.name {
-		case "blur":
-			if len(fn.args) >= 1 {
-				if px, ok := parseLength(fn.args[0], fs, 0); ok && px > 0 {
-					return qui.BlurImageFilter{Radius: px}, true
-				}
-			}
-		case "drop-shadow":
-			var lens []float32
-			var col qui.Color
-			haveCol := false
-			for _, tok := range fn.args {
-				for _, f := range fieldsTopLevel(tok) {
-					if c, ok := parseColor(f); ok {
-						col, haveCol = c, true
-					} else if px, ok := parseLength(f, fs, 0); ok {
-						lens = append(lens, px)
-					}
-				}
-			}
-			if len(lens) >= 2 {
-				if !haveCol {
-					col = qui.Color{A: 0.5}
-				}
-				blur := float32(0)
-				if len(lens) >= 3 {
-					blur = lens[2]
-				}
-				return qui.DropShadowImageFilter{Offset: qui.Point{X: lens[0], Y: lens[1]}, Blur: blur, Color: col}, true
-			}
-		}
-	}
-	return nil, false
-}
-
 // parseOpacity parses an `opacity` value clamped to [0,1].
 func parseOpacity(v string) (float32, bool) {
 	f, ok := parseFloat(strings.TrimSpace(v))
@@ -184,88 +200,100 @@ func parseOpacity(v string) (float32, bool) {
 	return clamp01(f), true
 }
 
-// parseTransform parses a `transform` function list into a transformSpec.
+// parseTransform parses a `transform` function list into a transformSpec
+// whose ops keep the source order (CSS Transforms 1: `translate(…)
+// rotate(…)` differs from `rotate(…) translate(…)`). 3D functions keep
+// their 2D part (translate3d's x/y, rotateZ, scale3d's x/y, matrix3d's 2D
+// coefficients); rotateX / rotateY project as a scale by the cosine.
 func parseTransform(v string, fs float32) (*transformSpec, bool) {
 	v = strings.TrimSpace(v)
 	if v == "" || strings.EqualFold(v, "none") {
 		return nil, false
 	}
 	t := &transformSpec{sx: 1, sy: 1}
-	found := false
+	add := func(op transformOp) { t.ops = append(t.ops, op) }
+	num := func(args []string, i int, def float32) float32 {
+		if i < len(args) {
+			if f, ok := parseFloat(strings.TrimSpace(args[i])); ok {
+				return f
+			}
+		}
+		return def
+	}
 	for _, fn := range splitFunctions(v) {
-		name, args := fn.name, fn.args
+		name, args := strings.ToLower(fn.name), fn.args
 		switch name {
-		case "translate":
+		case "translate", "translate3d":
+			var op transformOp
+			op.kind = 't'
 			if len(args) >= 1 {
-				if px, ok := parseLength(args[0], fs, 0); ok {
-					t.tx = px
-				}
+				op.a, op.aPct, _ = lengthOrPct(args[0], fs)
 			}
 			if len(args) >= 2 {
-				if px, ok := parseLength(args[1], fs, 0); ok {
-					t.ty = px
-				}
+				op.b, op.bPct, _ = lengthOrPct(args[1], fs)
 			}
-			found = true
+			add(op)
 		case "translatex":
 			if len(args) >= 1 {
-				if px, ok := parseLength(args[0], fs, 0); ok {
-					t.tx = px
-				}
+				op := transformOp{kind: 't'}
+				op.a, op.aPct, _ = lengthOrPct(args[0], fs)
+				add(op)
 			}
-			found = true
 		case "translatey":
 			if len(args) >= 1 {
-				if px, ok := parseLength(args[0], fs, 0); ok {
-					t.ty = px
-				}
+				op := transformOp{kind: 't'}
+				op.b, op.bPct, _ = lengthOrPct(args[0], fs)
+				add(op)
 			}
-			found = true
-		case "rotate":
+		case "translatez", "perspective":
+			add(transformOp{kind: 't'}) // no 2D effect, still a transform
+		case "rotate", "rotatez":
 			if len(args) >= 1 {
-				t.rotate, found = parseAngle(args[0]), true
+				add(transformOp{kind: 'r', a: parseAngle(args[0])})
 			}
-		case "scale":
+		case "rotate3d":
+			if len(args) == 4 && num(args, 0, 0) == 0 && num(args, 1, 0) == 0 {
+				a := parseAngle(args[3])
+				if num(args, 2, 1) < 0 {
+					a = -a
+				}
+				add(transformOp{kind: 'r', a: a})
+			}
+		case "rotatex":
 			if len(args) >= 1 {
-				if s, ok := parseFloat(args[0]); ok {
-					t.sx, t.sy = s, s
-				}
+				add(transformOp{kind: 's', a: 1, b: float32(math.Cos(float64(parseAngle(args[0]))))})
 			}
-			if len(args) >= 2 {
-				if s, ok := parseFloat(args[1]); ok {
-					t.sy = s
-				}
+		case "rotatey":
+			if len(args) >= 1 {
+				add(transformOp{kind: 's', a: float32(math.Cos(float64(parseAngle(args[0])))), b: 1})
 			}
-			found = true
+		case "scale", "scale3d":
+			if len(args) >= 1 {
+				sx := num(args, 0, 1)
+				add(transformOp{kind: 's', a: sx, b: num(args, 1, sx)})
+			}
 		case "scalex":
-			if len(args) >= 1 {
-				if s, ok := parseFloat(args[0]); ok {
-					t.sx = s
-				}
-			}
-			found = true
+			add(transformOp{kind: 's', a: num(args, 0, 1), b: 1})
 		case "scaley":
-			if len(args) >= 1 {
-				if s, ok := parseFloat(args[0]); ok {
-					t.sy = s
-				}
-			}
-			found = true
+			add(transformOp{kind: 's', a: 1, b: num(args, 0, 1)})
+		case "scalez":
+			add(transformOp{kind: 's', a: 1, b: 1})
 		case "skew":
+			op := transformOp{kind: 'k'}
 			if len(args) >= 1 {
-				t.kx = parseAngle(args[0])
+				op.a = parseAngle(args[0])
 			}
 			if len(args) >= 2 {
-				t.ky = parseAngle(args[1])
+				op.b = parseAngle(args[1])
 			}
-			found = true
+			add(op)
 		case "skewx":
 			if len(args) >= 1 {
-				t.kx, found = parseAngle(args[0]), true
+				add(transformOp{kind: 'k', a: parseAngle(args[0])})
 			}
 		case "skewy":
 			if len(args) >= 1 {
-				t.ky, found = parseAngle(args[0]), true
+				add(transformOp{kind: 'k', b: parseAngle(args[0])})
 			}
 		case "matrix":
 			if len(args) == 6 {
@@ -280,16 +308,74 @@ func parseTransform(v string, fs float32) (*transformSpec, bool) {
 				}
 				if ok {
 					// CSS matrix(a,b,c,d,e,f) = [a c e; b d f].
-					t.matrix = &qui.Matrix{A: m[0], C: m[1], B: m[2], D: m[3], TX: m[4], TY: m[5]}
-					found = true
+					add(transformOp{kind: 'm', m: qui.Matrix{A: m[0], C: m[1], B: m[2], D: m[3], TX: m[4], TY: m[5]}})
 				}
+			}
+		case "matrix3d":
+			if len(args) == 16 {
+				f := func(i int) float32 { return num(args, i, 0) }
+				// Column-major 4×4: the 2D part is m11 m12 m21 m22 m41 m42.
+				add(transformOp{kind: 'm', m: qui.Matrix{A: f(0), C: f(1), B: f(4), D: f(5), TX: f(12), TY: f(13)}})
 			}
 		}
 	}
-	if !found {
+	if len(t.ops) == 0 {
 		return nil, false
 	}
+	// The decomposed fields mirror the ops for code that reads a simple
+	// transform (pixel translations summed, rotations summed, scales
+	// multiplied); painting uses the ordered ops.
+	for _, op := range t.ops {
+		switch op.kind {
+		case 't':
+			t.tx += op.a
+			t.ty += op.b
+		case 'r':
+			t.rotate += op.a
+		case 's':
+			t.sx *= op.a
+			t.sy *= op.b
+		case 'k':
+			t.kx += op.a
+			t.ky += op.b
+		case 'm':
+			m := op.m
+			t.matrix = &m
+		}
+	}
 	return t, true
+}
+
+// individualTransformOps parses the CSS Transforms 2 `translate`, `rotate`
+// and `scale` properties, which apply in that order before `transform`.
+func individualTransformOps(m map[string]string, fs float32) []transformOp {
+	var ops []transformOp
+	if v := strings.TrimSpace(m["translate"]); v != "" && v != "none" {
+		f := strings.Fields(v)
+		op := transformOp{kind: 't'}
+		op.a, op.aPct, _ = lengthOrPct(f[0], fs)
+		if len(f) > 1 {
+			op.b, op.bPct, _ = lengthOrPct(f[1], fs)
+		}
+		ops = append(ops, op)
+	}
+	if v := strings.TrimSpace(m["rotate"]); v != "" && v != "none" {
+		f := strings.Fields(v)
+		ops = append(ops, transformOp{kind: 'r', a: parseAngle(f[len(f)-1])})
+	}
+	if v := strings.TrimSpace(m["scale"]); v != "" && v != "none" {
+		f := strings.Fields(v)
+		if sx, ok := parseFloat(f[0]); ok {
+			sy := sx
+			if len(f) > 1 {
+				if y, ok := parseFloat(f[1]); ok {
+					sy = y
+				}
+			}
+			ops = append(ops, transformOp{kind: 's', a: sx, b: sy})
+		}
+	}
+	return ops
 }
 
 // parseTransformOrigin resolves transform-origin into (0..1, 0..1) fractions.

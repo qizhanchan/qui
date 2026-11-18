@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/go-text/typesetting/di"
+	"golang.org/x/text/unicode/bidi"
 
 	"github.com/qizhanchan/qui/internal/gfx"
 )
@@ -1433,6 +1434,12 @@ func visualInlineTokenOrder(toks []inlineTok, idxs []int, opts *InlineLayoutOpti
 	if len(idxs) < 2 || opts == nil {
 		return idxs
 	}
+	// A left-to-right line with no right-to-left or embedding rune is
+	// already in visual order: skip shaping it again just to find that out
+	// (it was most of laying out a long left-to-right page).
+	if opts.Direction != TextDirectionRTL && !tokensNeedBidi(toks, idxs) {
+		return idxs
+	}
 	type tokenRange struct {
 		index      int
 		start, end int
@@ -2022,4 +2029,32 @@ func (l InlineLayout) LinkSourceAt(origin gfx.Rect, pt gfx.Point) (href string, 
 		}
 	}
 	return "", nil, false
+}
+
+// tokensNeedBidi reports whether any text token of idxs holds a rune that
+// can make the visual order differ from the logical one in a left-to-right
+// paragraph: a right-to-left letter, an Arabic number or an explicit
+// directional control.
+func tokensNeedBidi(toks []inlineTok, idxs []int) bool {
+	for _, i := range idxs {
+		for _, r := range toks[i].text {
+			if r < 0x0590 {
+				continue // Latin, Greek, Cyrillic, … : no RTL class below Hebrew
+			}
+			if runeNeedsBidi(r) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func runeNeedsBidi(r rune) bool {
+	props, _ := bidi.LookupRune(r)
+	switch props.Class() {
+	case bidi.R, bidi.AL, bidi.AN, bidi.RLE, bidi.RLO, bidi.RLI, bidi.FSI,
+		bidi.LRE, bidi.LRO, bidi.LRI, bidi.PDF, bidi.PDI:
+		return true
+	}
+	return false
 }

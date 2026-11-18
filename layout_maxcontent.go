@@ -34,21 +34,8 @@ func MaxContentWidth(w Widget) float32 {
 	if p := widgetPreferredSize(w); p.W > 0 {
 		return p.W
 	}
-	var v float32
-	if mc, ok := w.(MaxContentWidther); ok {
-		v = mc.MaxContentWidth()
-	} else if h, ok := w.(layoutHost); ok {
-		if ml, ok := h.layoutEngine().(MaxContentLayout); ok {
-			v = ml.MaxContentWidth(h.inFlowChildren())
-			if s != nil {
-				v += s.ContentInsets().Horizontal()
-			}
-		} else {
-			v = maxContentByMeasure(w)
-		}
-	} else {
-		v = maxContentByMeasure(w)
-	}
+	v := cachedIntrinsic(w, true, func() float32 { return contentMaxWidth(w) })
+	v = max(v, aspectWidth(s))
 	if s != nil {
 		if s.MaxWidth > 0 && v > s.MaxWidth {
 			v = s.MaxWidth
@@ -58,6 +45,24 @@ func MaxContentWidth(w Widget) float32 {
 		}
 	}
 	return v
+}
+
+// contentMaxWidth is w's max-content width from its content, before the
+// aspect ratio and min / max widths apply.
+func contentMaxWidth(w Widget) float32 {
+	if mc, ok := w.(MaxContentWidther); ok {
+		return mc.MaxContentWidth()
+	}
+	if h, ok := w.(layoutHost); ok {
+		if ml, ok := h.layoutEngine().(MaxContentLayout); ok {
+			v := ml.MaxContentWidth(h.inFlowChildren())
+			if s := w.Style(); s != nil {
+				v += s.ContentInsets().Horizontal()
+			}
+			return v
+		}
+	}
+	return maxContentByMeasure(w)
 }
 
 func maxContentByMeasure(w Widget) float32 {
@@ -176,4 +181,17 @@ func ShrinkToFit(w Widget, availW float32) float32 {
 		return maxW
 	}
 	return max(MinContentWidth(w), availW)
+}
+
+// aspectWidth is the width an aspect-ratio gives a box with a definite
+// height and an auto width (0 when it does not apply).
+func aspectWidth(s *Style) float32 {
+	if s == nil || s.AspectRatio <= 0 || s.Height <= 0 || s.Width > 0 || s.WidthPct > 0 {
+		return 0
+	}
+	if s.AspectBorderBox {
+		return s.Height * s.AspectRatio
+	}
+	ins := s.ContentInsets()
+	return max(s.Height-ins.Vertical(), 0)*s.AspectRatio + ins.Horizontal()
 }

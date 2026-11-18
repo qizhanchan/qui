@@ -84,16 +84,37 @@ func (e *El) applyGridItem(cs, parentCS *ComputedStyle) {
 			}
 		}
 	}
+	colNames := gridLineNames(parentCS.raw["grid-template-columns"], parentCS.raw["grid-template-areas"], false)
+	rowNames := gridLineNames(parentCS.raw["grid-template-rows"], parentCS.raw["grid-template-areas"], true)
 	if v := strings.TrimSpace(cs.raw["grid-column"]); v != "" {
-		colStart, colSpan = parseGridPlacement(v)
+		colStart, colSpan = parseGridPlacementNamed(v, colNames)
 	}
 	if v := strings.TrimSpace(cs.raw["grid-row"]); v != "" {
-		rowStart, rowSpan = parseGridPlacement(v)
+		rowStart, rowSpan = parseGridPlacementNamed(v, rowNames)
+	}
+	if v := strings.TrimSpace(cs.raw["grid-column-start"]); v != "" {
+		end := strings.TrimSpace(cs.raw["grid-column-end"])
+		colStart, colSpan = parseGridPlacementNamed(v+" / "+orAuto(end), colNames)
+	} else if v := strings.TrimSpace(cs.raw["grid-column-end"]); v != "" && colStart < 0 {
+		if n, ok := resolveGridLine(v, colNames, true); ok && n > 0 {
+			colStart = max(n-colSpan, 0)
+		}
+	}
+	if v := strings.TrimSpace(cs.raw["grid-row-start"]); v != "" {
+		end := strings.TrimSpace(cs.raw["grid-row-end"])
+		rowStart, rowSpan = parseGridPlacementNamed(v+" / "+orAuto(end), rowNames)
 	}
 
 	gi := qui.GridItem{ColSpan: colSpan, RowSpan: rowSpan}
 	if colStart >= 0 && rowStart >= 0 {
 		gi.Col, gi.Row, gi.Explicit = colStart, rowStart, true
+	} else if colStart >= 0 {
+		// A definite column with an auto row: the next free row in that
+		// column — placed at the column on the first row here, which is
+		// what the common one-row-per-section layouts (named content
+		// columns) need.
+		gi.Col, gi.Explicit = colStart, false
+		gi.ColOnly = true
 	}
 	e.SetGridItem(gi)
 }
@@ -392,4 +413,197 @@ func gridGaps(cs *ComputedStyle) (row, col float32) {
 		}
 	}
 	return row, col
+}
+
+// lastLineKey holds the explicit grid's last line number in a line-name
+// map (not a valid CSS ident, so it never collides with a name).
+const lastLineKey = " last"
+
+func orAuto(v string) string {
+	if v == "" {
+		return "auto"
+	}
+	return v
+}
+
+// gridLineNames maps line names of a track list to their 1-based line
+// numbers, in order: `[a b] 1fr [c] repeat(2, [d] 60px)` names line 1 a and
+// b, line 2 c, lines 2 and 3 d. A grid-template-areas area `x` adds the
+// implicit names x-start / x-end. auto-fill / auto-fit repeats contribute
+// no names (their count is known only at layout).
+func gridLineNames(tracks, areas string, rows bool) map[string][]int {
+	names := map[string][]int{}
+	line := 1
+	addNames := func(group string) {
+		for _, n := range strings.Fields(group) {
+			names[n] = append(names[n], line)
+		}
+	}
+	var walk func(v string, times int)
+	walk = func(v string, times int) {
+		for t := 0; t < times; t++ {
+			i := 0
+			for i < len(v) {
+				switch c := v[i]; {
+				case c == '[':
+					j := strings.IndexByte(v[i:], ']')
+					if j < 0 {
+						return
+					}
+					addNames(v[i+1 : i+j])
+					i += j + 1
+				case c == ' ' || c == '\t' || c == '\n':
+					i++
+				default:
+					// One token: a track, possibly a function with parens.
+					j, depth := i, 0
+					for j < len(v) {
+						if v[j] == '(' {
+							depth++
+						} else if v[j] == ')' {
+							depth--
+						} else if depth == 0 && (v[j] == ' ' || v[j] == '[') {
+							break
+						}
+						j++
+					}
+					tok := v[i:j]
+					low := strings.ToLower(tok)
+					if strings.HasPrefix(low, "repeat(") && strings.HasSuffix(tok, ")") {
+						parts := splitTopLevel(tok[len("repeat("):len(tok)-1], ',')
+						if len(parts) >= 2 {
+							if n, ok := atoi(strings.TrimSpace(parts[0])); ok && n >= 1 {
+								walk(strings.Join(parts[1:], ","), min(n, 1000))
+							}
+						}
+					} else if tok != "" {
+						line++
+					}
+					i = j
+				}
+			}
+		}
+	}
+	walk(strings.TrimSpace(tracks), 1)
+	// The explicit grid's last line, for negative line numbers ("-1").
+	lastLine := line
+	areaMap := parseGridAreas(areas)
+	for _, a := range areaMap {
+		end := a[1] + a[3] + 1
+		if rows {
+			end = a[0] + a[2] + 1
+		}
+		lastLine = max(lastLine, end)
+	}
+	names[lastLineKey] = []int{lastLine}
+	for name, a := range areaMap {
+		start, span := a[1], a[3]
+		if rows {
+			start, span = a[0], a[2]
+		}
+		names[name+"-start"] = append(names[name+"-start"], start+1)
+		names[name+"-end"] = append(names[name+"-end"], start+span+1)
+	}
+	return names
+}
+
+// resolveGridLine resolves one grid line token to a 1-based line number:
+// an integer, `<name>`, `<name> <n>` / `<n> <name>` (the nth line of that
+// name). A bare name as a start (end) line also finds the implicit
+// `<name>-start` (`-end`) lines first, as CSS Grid § 8.3.1 does.
+func resolveGridLine(tok string, names map[string][]int, end bool) (int, bool) {
+	tok = strings.TrimSpace(tok)
+	if tok == "" || strings.EqualFold(tok, "auto") {
+		return 0, false
+	}
+	if n, ok := atoi(tok); ok {
+		if n < 0 {
+			// Counted from the end of the explicit grid: -1 is its last line.
+			last := 1
+			if ls := names[lastLineKey]; len(ls) > 0 {
+				last = ls[0]
+			}
+			n = max(last+1+n, 1)
+		}
+		if n == 0 {
+			return 0, false
+		}
+		return n, true
+	}
+	f := strings.Fields(tok)
+	nth, name := 1, ""
+	for _, x := range f {
+		if n, ok := atoi(x); ok {
+			nth = n
+		} else {
+			name = x
+		}
+	}
+	if name == "" {
+		return 0, false
+	}
+	suffix := "-start"
+	if end {
+		suffix = "-end"
+	}
+	for _, key := range []string{name + suffix, name} {
+		if ls := names[key]; len(ls) > 0 {
+			i := nth - 1
+			if nth < 0 {
+				i = len(ls) + nth
+			}
+			if i >= 0 && i < len(ls) {
+				return ls[i], true
+			}
+		}
+	}
+	return 0, false
+}
+
+// parseGridPlacementNamed is parseGridPlacement with line names: "a / b",
+// "content" (content-start … content-end), "a / span 2", "span 2 / b".
+func parseGridPlacementNamed(v string, names map[string][]int) (start, span int) {
+	start, span = -1, 1
+	parts := splitTopLevel(v, '/')
+	first := strings.TrimSpace(parts[0])
+	second := ""
+	if len(parts) >= 2 {
+		second = strings.TrimSpace(parts[1])
+	} else if _, isNum := atoi(first); !isNum && !strings.HasPrefix(strings.ToLower(first), "span") {
+		// A lone name spans its -start to -end lines (end defaults to the
+		// same ident).
+		second = first
+	}
+	spanOf := func(tok string) (int, bool) {
+		if strings.HasPrefix(strings.ToLower(tok), "span") {
+			return max(atoiOr(strings.TrimSpace(tok[4:]), 1), 1), true
+		}
+		return 0, false
+	}
+	if n, ok := spanOf(first); ok {
+		span = n
+		if e, ok := resolveGridLine(second, names, true); ok {
+			return max(e-1-n, 0), n
+		}
+		return -1, n
+	}
+	s, okS := resolveGridLine(first, names, false)
+	if !okS {
+		if n, ok := spanOf(second); ok {
+			return -1, n
+		}
+		return -1, 1
+	}
+	start = s - 1
+	if n, ok := spanOf(second); ok {
+		return start, n
+	}
+	if e, ok := resolveGridLine(second, names, true); ok {
+		if e-1 > start {
+			span = e - 1 - start
+		} else if e-1 < start {
+			start, span = e-1, start-(e-1)
+		}
+	}
+	return start, max(span, 1)
 }

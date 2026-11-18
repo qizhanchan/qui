@@ -49,6 +49,27 @@ type Container struct {
 	// that should only appear while the tab is hovered. Optional.
 	OnHoverChange func(hovering bool)
 	hovering      bool
+
+	// laidOut records the last completed Layout (see layoutCurrent).
+	laidOut struct {
+		rect    Rect
+		version uint64
+		epoch   measureEpoch
+		win     *Window // laid out while attached to (Layout hooks act on attach)
+		ok      bool
+	}
+}
+
+// layoutCurrent reports whether laying the container out at rect would
+// change nothing: the last Layout had the same rect, nothing in the subtree
+// invalidated layout since (markLayoutDirty bumps the measure memo's
+// version on every ancestor) and no global measure input changed. A
+// relayout after a script edits one paragraph of a long page then walks
+// the paragraph's ancestors and the boxes that moved, not every box.
+func (c *Container) layoutCurrent(rect Rect) bool {
+	l := &c.laidOut
+	return l.ok && l.rect == rect && l.version == c.measureMemo.version &&
+		l.win == c.window && l.epoch == currentMeasureEpoch() && !layoutCacheVerify.Load()
 }
 
 func NewContainer(layout Layout, children ...Widget) *Container {
@@ -445,14 +466,25 @@ func (c *Container) Measure(available Size) Size {
 
 func (c *Container) Layout(rect Rect) {
 	c.assertUIThread("Container.Layout")
+	if c.layoutCurrent(rect) {
+		return
+	}
+	// The version as the pass starts: an invalidation during it (a child
+	// adjusting itself) leaves the record stale, so the next pass runs.
+	version, epoch := c.measureMemo.version, currentMeasureEpoch()
 	c.BaseWidget.Layout(rect)
 	if c.LayoutEngine == nil {
 		return
 	}
+	defer func() {
+		c.laidOut.rect, c.laidOut.version, c.laidOut.epoch = rect, version, epoch
+		c.laidOut.win, c.laidOut.ok = c.window, true
+	}()
 	// Border + padding: a border is part of the box, so children start
 	// inside it (CSS) instead of under it.
 	content := rect.Inset(c.style.ContentInsets())
 	c.LayoutEngine.Apply(c.inFlowChildren(), content)
+	c.recordStaticPositions(content)
 	// If this container is a containing block (a positioned element, or the
 	// root), position the out-of-flow descendants anchored to it now that its
 	// box is known. The descendants were skipped by the flow above.
@@ -479,13 +511,68 @@ func (c *Container) selfOrContainer() Widget {
 // reusing the same axis solver AbsoluteLayout uses.
 func (c *Container) layoutAbsoluteDescendants(cb Rect) {
 	for _, ch := range c.collectAbsoluteDescendants(c.selfOrContainer()) {
-		pos := AbsolutePositionOf(ch).resolvedIn(cb, ch)
-		x, w := resolveAnchorAxis(pos.Anchor, AnchorLeft, AnchorRight,
-			pos.Left, pos.Right, pos.Width, cb.X, cb.W, ch, true)
-		y, h := resolveAnchorAxis(pos.Anchor, AnchorTop, AnchorBottom,
-			pos.Top, pos.Bottom, pos.Height, cb.Y, cb.H, ch, false)
-		clamped := applyConstraints(Size{W: w, H: h}, widgetMinSize(ch), widgetMaxSize(ch))
-		ch.Layout(Rect{X: x, Y: y, W: clamped.W, H: clamped.H})
+		placeAbsolute(ch, cb)
+	}
+}
+
+// recordStaticPositions gives each out-of-flow child the position its
+// hypothetical in-flow box would have (CSS 2.1 § 10.3.7): below the
+// previous in-flow sibling at the content's start edge — or, for a box
+// that was inline-level, on the line right after an inline-level previous
+// sibling. Only flow layouts stack; in a flex / grid container the static
+// position is the content box's start corner.
+func (c *Container) recordStaticPositions(content Rect) {
+	_, flow := c.LayoutEngine.(FlowLayout)
+	if !flow {
+		if fl, ok := c.LayoutEngine.(*FlowLayout); ok && fl != nil {
+			flow = true
+		}
+	}
+	var prev Widget
+	for _, ch := range c.children {
+		if isCollapsed(ch) {
+			continue
+		}
+		if !isOutOfFlow(ch) {
+			prev = ch
+			continue
+		}
+		sp, ok := ch.(interface{ SetStaticPosition(Point) })
+		if !ok {
+			continue
+		}
+		p := Point{X: content.X, Y: content.Y}
+		if a, ok := ch.(interface{ StaticAnchor() Widget }); ok {
+			if w := a.StaticAnchor(); w != nil {
+				ab := w.Bounds()
+				sp.SetStaticPosition(Point{X: ab.X, Y: ab.Y})
+				continue
+			}
+		}
+		if flow && prev != nil {
+			pb := prev.Bounds()
+			ie, hasEnd := prev.(interface{ InlineEnd() (Point, bool) })
+			var end Point
+			if hasEnd {
+				end, hasEnd = ie.InlineEnd()
+			}
+			switch {
+			case AbsolutePositionOf(ch).InlineStatic && hasEnd:
+				p = end
+			case AbsolutePositionOf(ch).InlineStatic && flowLevelOf(prev) == FlowInline:
+				p = Point{X: pb.X + pb.W, Y: pb.Y}
+			default:
+				p.Y = pb.Y + pb.H
+				if st := prev.Style(); st != nil {
+					p.Y += st.Margin.Bottom
+				}
+			}
+		}
+		if st := ch.Style(); st != nil {
+			p.X += st.Margin.Left
+			p.Y += st.Margin.Top
+		}
+		sp.SetStaticPosition(p)
 	}
 }
 

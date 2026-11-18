@@ -23,6 +23,11 @@ import (
 type Box struct {
 	Container
 
+	// paintBounds memoizes untransformedPaintBounds for one paint pass
+	// (qui.PaintPass); pbGen 0 = none.
+	pbGen       uint64
+	paintBounds Rect
+
 	// Display selects how this box participates in its parent's flow
 	// (FlowBlock is the default). The html-css engine sets it from the
 	// element's computed CSS `display`.
@@ -69,6 +74,22 @@ type Box struct {
 	// layer transformed by this ImageFilter (CSS filter: blur()/drop-shadow()).
 	Filter ImageFilter
 
+	// ClipPath, when non-nil, returns the clip region (CSS clip-path) for
+	// the box's current border box: the box and its whole subtree paint
+	// only inside the path, and points outside it are not hits.
+	ClipPath func(bounds Rect) *Path
+
+	// BackdropFilter, when non-nil, filters what is painted behind the box
+	// (CSS backdrop-filter) inside its border box — rounded corners and
+	// ClipPath included — before the box paints. Needs a canvas that can
+	// read its pixels back (the CPU raster canvas); elsewhere it is skipped.
+	BackdropFilter ImageFilter
+
+	// Mask, when non-nil, paints the CSS mask layer for the box's border
+	// box: the subtree is composited through an offscreen layer and only
+	// kept where the mask paints coverage (its alpha), as mask-image does.
+	Mask func(canvas Canvas, bounds Rect)
+
 	// ClipChildren clips descendant painting to the box's bounds
 	// (CSS overflow: hidden). Content that exceeds the box is not painted.
 	ClipChildren bool
@@ -78,6 +99,18 @@ type Box struct {
 	// position:relative with top/left offsets. Applied in Layout so bounds
 	// and hit-testing stay correct.
 	PosOffset Point
+
+	// Positioned marks a positioned box (CSS position other than static).
+	// Positioned descendants are painted in layers by their stacking
+	// context — after the in-flow content, ordered by z-index — rather than
+	// in tree order inside their parent (CSS 2.1 Appendix E), and they are
+	// hit-tested first. See stacking.go.
+	Positioned bool
+	// StackingContext marks a box that forms a CSS stacking context (a
+	// z-index on a positioned box, opacity < 1, a transform or filter,
+	// position: fixed / sticky, isolation): its positioned descendants
+	// layer within it instead of in an outer context.
+	StackingContext bool
 
 	focused         bool // has keyboard focus (only meaningful when Focus != nil)
 	focusVisible    bool // the focus came from the keyboard (see FocusVisible)
@@ -106,6 +139,10 @@ type BoxTransform struct {
 	// only when HasOrigin; otherwise the box center (0.5, 0.5) is used.
 	OX, OY    float32
 	HasOrigin bool
+	// Resolve, when non-nil, supersedes Matrix and the decomposed fields:
+	// it builds the transform (about the origin) for a w×h box, so
+	// percentage translations follow the box's size (CSS translate(50%)).
+	Resolve func(w, h float32) Matrix
 }
 
 // FlowLevel reports the box's flow participation to a parent FlowLayout.
@@ -240,6 +277,47 @@ func (b *Box) HitTest(p Point) Widget {
 		}
 		p = inv.TransformPoint(p)
 	}
+	// clip-path cuts the hit region too (CSS Masking 1 § 5: "pointer
+	// events must not be dispatched on the clipped-out areas").
+	if b.ClipPath != nil {
+		if path := b.ClipPath(b.Bounds()); path == nil || !path.Contains(p) {
+			return nil
+		}
+	}
+	if !b.stackRoot() {
+		return b.Container.HitTest(p)
+	}
+	// Layers paint over the in-flow content, so they are hit first —
+	// topmost (last painted) first — even outside this box's own bounds
+	// (an absolutely positioned menu hanging below its header).
+	if isWidgetHiddenForHit(b) {
+		return nil
+	}
+	layers := b.stackLayers()
+	split := 0
+	for split < len(layers) && zIndexOf(layers[split]) < 0 {
+		split++
+	}
+	clipped := b.ClipChildren && !b.Bounds().Contains(p)
+	for i := len(layers) - 1; i >= split; i-- {
+		if clipped {
+			break
+		}
+		if hit := AcceptHit(layers[i].HitTest(p)); hit != nil {
+			return hit
+		}
+	}
+	if hit := b.Container.HitTest(p); hit != nil && hit != Widget(b) && hit != b.Self() {
+		return hit
+	}
+	for i := split - 1; i >= 0; i-- {
+		if clipped {
+			break
+		}
+		if hit := AcceptHit(layers[i].HitTest(p)); hit != nil {
+			return hit
+		}
+	}
 	return b.Container.HitTest(p)
 }
 
@@ -260,6 +338,17 @@ func (b *Box) PaintBounds() Rect {
 }
 
 func (b *Box) untransformedPaintBounds() Rect {
+	gen, painting := PaintPass()
+	if !painting {
+		return b.computePaintBounds()
+	}
+	if b.pbGen != gen {
+		b.paintBounds, b.pbGen = b.computePaintBounds(), gen
+	}
+	return b.paintBounds
+}
+
+func (b *Box) computePaintBounds() Rect {
 	bounds := b.Bounds()
 	visual := bounds
 	if !b.ClipChildren {
@@ -287,23 +376,118 @@ func (b *Box) Draw(canvas Canvas) {
 	// layer; CSS transform applies an affine about the box center. Both are
 	// paint-only and wrap the normal content draw. Set up once, unwind via
 	// RestoreTo so partial state can't leak to siblings.
+	//
+	// The effects nest in CSS order (Filter Effects 1 § 2, Masking 1):
+	// filter, then clip-path, then mask, then opacity — so the clip and the
+	// mask cut the filtered result (a drop shadow outside the clip is gone)
+	// and opacity fades what is left.
 	opacity := b.Style().Opacity
 	hasOpacity := opacity > 0 && opacity < 1
-	if hasOpacity || b.Transform != nil || b.VisualTransform != nil || b.Filter != nil {
-		base := canvas.Save()
-		defer canvas.RestoreTo(base)
-		if b.Transform != nil || b.VisualTransform != nil {
-			canvas.Concat(b.paintTransformMatrix())
-		}
-		if hasOpacity || b.Filter != nil {
-			p := Paint{ImageFilter: b.Filter}
-			if hasOpacity {
-				p.Alpha = opacity
-			}
-			canvas.SaveLayer(b.untransformedPaintBounds(), p)
+	if !hasOpacity && b.Transform == nil && b.VisualTransform == nil && b.Filter == nil &&
+		b.ClipPath == nil && b.Mask == nil && b.BackdropFilter == nil {
+		b.drawContent(canvas, bounds)
+		return
+	}
+	base := canvas.Save()
+	defer canvas.RestoreTo(base)
+	if b.Transform != nil || b.VisualTransform != nil {
+		canvas.Concat(b.paintTransformMatrix())
+	}
+	var clipPath *Path
+	if b.ClipPath != nil {
+		clipPath = b.ClipPath(bounds)
+		if clipPath == nil || clipPath.IsEmpty() {
+			return // an empty clip region hides the whole subtree
 		}
 	}
+	// The backdrop is read before any layer of this box is pushed: inside
+	// one there is nothing behind the box to read.
+	if b.BackdropFilter != nil {
+		if bf, ok := canvas.(BackdropFilterCanvas); ok {
+			shape := clipPath
+			if st := b.Style(); shape == nil && (!st.Corners.IsZero() || st.Radius > 0) {
+				shape = cornerPath(bounds, st.Corners.Resolved(st.Radius))
+			}
+			bf.BackdropFilter(bounds, shape, ScaleImageFilter(b.BackdropFilter, canvasScale(canvas)))
+		}
+	}
+	if clipPath != nil {
+		canvas.ClipPath(clipPath)
+	}
+	layerBounds := b.untransformedPaintBounds()
+	if hasOpacity || b.Mask != nil {
+		p := Paint{}
+		if hasOpacity {
+			p.Alpha = opacity
+		}
+		canvas.SaveLayer(layerBounds, p)
+	}
+	filterDepth := -1
+	if b.Filter != nil {
+		filterDepth = canvas.SaveLayer(layerBounds, Paint{ImageFilter: ScaleImageFilter(b.Filter, canvasScale(canvas))})
+	}
 	b.drawContent(canvas, bounds)
+	if b.Mask != nil {
+		if filterDepth >= 0 {
+			canvas.RestoreTo(filterDepth) // composite the filtered content first
+		}
+		// DstIn keeps the content only where the mask paints coverage. The
+		// layer spans the whole content layer so the unmasked rest (outside
+		// the mask's painting area) is cleared too, as mask-clip does.
+		d := canvas.SaveLayer(layerBounds, Paint{BlendMode: BlendDstIn})
+		b.Mask(canvas, bounds)
+		canvas.RestoreTo(d)
+	}
+}
+
+// BackdropFilterCanvas is a canvas that can filter its own pixels in place
+// (the CPU raster canvas): BackdropFilter replaces what is painted inside
+// bounds (and shape, when non-nil) with filter's output.
+type BackdropFilterCanvas interface {
+	BackdropFilter(bounds Rect, shape *Path, filter ImageFilter)
+}
+
+// ScalableImageFilter is an ImageFilter whose lengths are in logical
+// pixels: ScaledImageFilter returns the filter for a device scale (filters
+// run on the physical-pixel layer buffer).
+type ScalableImageFilter interface {
+	ImageFilter
+	ScaledImageFilter(scale float32) ImageFilter
+}
+
+// ScaleImageFilter converts a filter given in logical pixels into one for
+// a canvas whose device scale is scale (HiDPI): blur radii and shadow
+// offsets grow with it. Filters it does not know pass through unchanged.
+func ScaleImageFilter(f ImageFilter, scale float32) ImageFilter {
+	if scale <= 0 || scale == 1 || f == nil {
+		return f
+	}
+	switch v := f.(type) {
+	case ScalableImageFilter:
+		return v.ScaledImageFilter(scale)
+	case BlurImageFilter:
+		v.Radius *= scale
+		return v
+	case DropShadowImageFilter:
+		v.Offset.X *= scale
+		v.Offset.Y *= scale
+		v.Blur *= scale
+		return v
+	}
+	return f
+}
+
+// canvasScale is the canvas's current logical→physical scale factor.
+func canvasScale(canvas Canvas) float32 {
+	m := canvas.CurrentMatrix()
+	det := m.A*m.D - m.B*m.C
+	if det < 0 {
+		det = -det
+	}
+	if det <= 0 {
+		return 1
+	}
+	return float32(math.Sqrt(float64(det)))
 }
 
 // drawContent paints decorations then children, honoring the current clip.
@@ -334,15 +518,35 @@ func (b *Box) drawContent(canvas Canvas, bounds Rect) {
 			clip = ca.ClipBoundsLogical()
 		}
 	}
+	var layers []Widget
+	root := b.stackRoot()
+	if root {
+		layers = b.stackLayers()
+	}
+	// Negative z-index layers paint under the in-flow content.
+	split := 0
+	for split < len(layers) && zIndexOf(layers[split]) < 0 {
+		split++
+	}
+	drawLayers := func(ls []Widget) {
+		for _, w := range ls {
+			if !clip.IsEmpty() && !PaintBoundsOf(w).Intersects(clip) {
+				continue
+			}
+			w.Draw(canvas)
+		}
+	}
+	drawLayers(layers[:split])
 	for _, child := range ChildrenInPaintOrder(b.ChildList()) {
-		if boxChildHidden(child) {
-			continue
+		if boxChildHidden(child) || isPositionedBox(child) {
+			continue // positioned children paint with their stacking context
 		}
 		if !clip.IsEmpty() && !PaintBoundsOf(child).Intersects(clip) {
 			continue
 		}
 		child.Draw(canvas)
 	}
+	drawLayers(layers[split:])
 }
 
 // boxTransformMatrix builds the affine matrix used for box painting and
@@ -359,6 +563,9 @@ func boxTransformMatrix(bounds Rect, t *BoxTransform) Matrix {
 	cx := bounds.X + ox*bounds.W
 	cy := bounds.Y + oy*bounds.H
 	m := TranslateMatrix(cx, cy)
+	if t.Resolve != nil {
+		return m.Concat(t.Resolve(bounds.W, bounds.H)).Concat(TranslateMatrix(-cx, -cy))
+	}
 	if t.Matrix != nil {
 		return m.Concat(*t.Matrix).Concat(TranslateMatrix(-cx, -cy))
 	}

@@ -23,6 +23,10 @@ type AbsolutePosition struct {
 	// Style.PctExtra (content-box padding + border).
 	LeftPct, TopPct, RightPct, BottomPct float32
 	WidthPct, HeightPct                  float32
+	// InlineStatic marks a box whose display before blockification was
+	// inline-level: its static position is on the current line (after the
+	// inline content before it) rather than below it.
+	InlineStatic bool
 }
 
 // resolvedIn returns pos with its percentages resolved against the
@@ -58,14 +62,25 @@ type AbsoluteLayout struct{}
 
 func (AbsoluteLayout) Apply(children []Widget, bounds Rect) {
 	for _, ch := range children {
-		pos := AbsolutePositionOf(ch).resolvedIn(bounds, ch)
-		x, w := resolveAnchorAxis(pos.Anchor, AnchorLeft, AnchorRight,
-			pos.Left, pos.Right, pos.Width, bounds.X, bounds.W, ch, true)
-		y, h := resolveAnchorAxis(pos.Anchor, AnchorTop, AnchorBottom,
-			pos.Top, pos.Bottom, pos.Height, bounds.Y, bounds.H, ch, false)
-		clamped := applyConstraints(Size{W: w, H: h}, widgetMinSize(ch), widgetMaxSize(ch))
-		ch.Layout(Rect{X: x, Y: y, W: clamped.W, H: clamped.H})
+		placeAbsolute(ch, bounds)
 	}
+}
+
+// placeAbsolute lays out one out-of-flow child against containing block
+// cb: insets anchor it, an axis without insets goes to the child's static
+// position when one was recorded.
+func placeAbsolute(ch Widget, cb Rect) {
+	pos := AbsolutePositionOf(ch).resolvedIn(cb, ch)
+	sx, sy := cb.X, cb.Y
+	if sp, ok := staticPositionOf(ch); ok {
+		sx, sy = sp.X, sp.Y
+	}
+	x, w := resolveAnchorAxisStatic(pos.Anchor, AnchorLeft, AnchorRight,
+		pos.Left, pos.Right, pos.Width, cb.X, cb.W, ch, true, sx)
+	y, h := resolveAnchorAxisStatic(pos.Anchor, AnchorTop, AnchorBottom,
+		pos.Top, pos.Bottom, pos.Height, cb.Y, cb.H, ch, false, sy)
+	clamped := applyConstraints(Size{W: w, H: h}, widgetMinSize(ch), widgetMaxSize(ch))
+	ch.Layout(Rect{X: x, Y: y, W: clamped.W, H: clamped.H})
 }
 
 // resolveAnchorAxis computes position + size for one axis. When both
@@ -76,6 +91,15 @@ func (AbsoluteLayout) Apply(children []Widget, bounds Rect) {
 func resolveAnchorAxis(anchor, startBit, endBit AnchorSide,
 	startDist, endDist, explicit, parentStart, parentExtent float32,
 	child Widget, widthAxis bool) (pos, size float32) {
+	return resolveAnchorAxisStatic(anchor, startBit, endBit, startDist, endDist, explicit,
+		parentStart, parentExtent, child, widthAxis, parentStart)
+}
+
+// resolveAnchorAxisStatic is resolveAnchorAxis with the axis's static
+// position: where the box goes when neither inset is set.
+func resolveAnchorAxisStatic(anchor, startBit, endBit AnchorSide,
+	startDist, endDist, explicit, parentStart, parentExtent float32,
+	child Widget, widthAxis bool, static float32) (pos, size float32) {
 
 	start := anchor&startBit != 0
 	end := anchor&endBit != 0
@@ -83,6 +107,18 @@ func resolveAnchorAxis(anchor, startBit, endBit AnchorSide,
 	minAxis := min.H
 	if widthAxis {
 		minAxis = min.W
+	}
+	// max-width / max-height bound a single-anchored or unanchored box's
+	// size BEFORE an end anchor places it: right: 0 with width: 85% and
+	// max-width: 27rem sits flush right at 27rem, not at 85%'s left edge.
+	if mx := widgetMaxSize(child); !(start && end) {
+		maxAxis := mx.H
+		if widthAxis {
+			maxAxis = mx.W
+		}
+		if maxAxis > 0 && explicit > maxAxis {
+			explicit = maxAxis
+		}
 	}
 
 	switch {
@@ -114,8 +150,9 @@ func resolveAnchorAxis(anchor, startBit, endBit AnchorSide,
 		}
 		pos = parentStart + parentExtent - endDist - size
 	default:
-		// Neither anchor — place at parent origin with natural size.
-		pos = parentStart
+		// Neither anchor — the static position (the parent origin when
+		// none was recorded) at the natural size.
+		pos = static
 		size = explicit
 		if size <= 0 {
 			size = anchorMeasure(child, parentExtent, widthAxis)

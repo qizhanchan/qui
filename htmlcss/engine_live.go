@@ -36,6 +36,7 @@ import (
 //   - a stylesheet containing :has() promotes a dirty element to its
 //     top-level root, because a descendant mutation can change any ancestor.
 type StyleEngine struct {
+	animEvents AnimationEventHandler // CSS animation / transition events (anim.go)
 	// linkHandler, when set, decides what a link click does (events.go).
 	linkHandler LinkHandler
 	// tooltipStyled: the stylesheet set the window's tooltip colors.
@@ -59,6 +60,9 @@ type StyleEngine struct {
 	// dirtied or need a reflow: they re-apply their style even when it
 	// computes the same (restyleWalk).
 	mustApply map[*El]bool
+
+	// edit is the document's editing state (contenteditable; edit.go).
+	edit *editState
 
 	// styled counts the elements restyle walks reached, applied those
 	// that re-applied their style (applyComputed), across the engine's
@@ -86,6 +90,7 @@ type StyleEngine struct {
 	// so these are invalidated from a window focus-change listener instead.
 	focusDeps   map[*El]bool
 	focusHooked bool
+	unhookFocus func() // removes the focus-change listener (Close)
 
 	// unsubscribeLocale drops the engine's language-change hook when the
 	// tree unmounts. A locale switch changes what every data-i18n
@@ -252,7 +257,7 @@ func (eng *StyleEngine) ensureFocusHook() {
 		return // pre-attach; a later addStateDep retries
 	}
 	eng.focusHooked = true
-	win.AddFocusChangeListener(func() {
+	eng.unhookFocus = win.AddFocusChangeListener(func() {
 		for dep := range eng.focusDeps {
 			dep.Invalidate()
 		}
@@ -304,14 +309,20 @@ func (eng *StyleEngine) AdoptRoot(root qui.Widget) {
 	eng.Restyle()
 }
 
-// Close releases the engine's global subscriptions. Multi-window apps
-// must call it when a window's tree goes away, or its style engine stays
-// reachable from the locale subscriber list forever.
+// Close releases the engine's global subscriptions — the locale
+// subscriber list and its window's focus listeners. Multi-window apps and
+// browsers (a tab navigating away) must call it when a tree goes away, or
+// its style engine, and every element it styled, stays reachable forever.
 func (eng *StyleEngine) Close() {
 	if eng.unsubscribeLocale != nil {
 		eng.unsubscribeLocale()
 		eng.unsubscribeLocale = nil
 	}
+	if eng.unhookFocus != nil {
+		eng.unhookFocus()
+		eng.unhookFocus = nil
+	}
+	eng.focusDeps = nil
 }
 
 // Root returns the current root element (nil before mount).
@@ -376,15 +387,27 @@ func (eng *StyleEngine) markDirty(e *El) {
 	// once. The structural case needs it too: a scoped walk from the parent
 	// skips re-applying a parent whose own style is unchanged unless it is
 	// marked for reflow, so its run would keep the child's old text.
-	if p := e.elParent; p != nil && p.flowKids != nil {
+	if p := e.elParent; p != nil && (p.flowKids != nil || e.isTextSeg()) {
 		eng.addReflow(p)
 	}
+	eng.reflowRunOwner(e.elParent)
 	if _, _, structural := eng.sheetFlags(); structural &&
 		(e.structRel || eng.structRelevant(e.node) || e.elParent != nil && eng.structRelevant(e.elParent.node)) {
 		eng.markDirtyKind(e, dirtyParent)
 		return
 	}
 	eng.markDirtyKind(e, dirtySelf)
+}
+
+// reflowRunOwner records for a rebuild the element whose inline run shows
+// e's content when e is folded into an ancestor's run (a <b> inside a
+// paragraph): e's own arrangement is not where its text renders.
+func (eng *StyleEngine) reflowRunOwner(e *El) {
+	for p := e; p != nil && p.folded; p = p.elParent {
+		if p.elParent != nil {
+			eng.addReflow(p.elParent)
+		}
+	}
 }
 
 // markStyleAttr records an element whose style attribute changed (see
@@ -462,6 +485,7 @@ func (eng *StyleEngine) addReflow(e *El) {
 // need a style (removals and reorders change nothing); with them, e's
 // subtree is restyled (positions changed for every child).
 func (eng *StyleEngine) childrenChanged(e *El) {
+	eng.reflowRunOwner(e)
 	has, _, structural := eng.sheetFlags()
 	if structural {
 		// Only matters when a structural rule concerns e or a child.
@@ -522,10 +546,18 @@ func (eng *StyleEngine) schedule() {
 		return
 	}
 	eng.pending = true
-	win.PostJob(func() {
+	run := func() {
+		if !eng.pending {
+			return // the other path ran it
+		}
 		eng.pending = false
 		eng.flush()
-	})
+	}
+	// Before this frame's layout, so mutations made by a job (a script
+	// timer) are styled in the frame they happen in; the job is the
+	// fallback for windows that are not stepping (tests drain jobs).
+	win.BeforeLayout(run)
+	win.PostJob(run)
 }
 
 // FlushPendingStyles applies any coalesced restyle synchronously, now.
@@ -861,6 +893,7 @@ func layoutView(cs *ComputedStyle) *ComputedStyle {
 	v.Opacity, v.HasOpacity = 0, false
 	v.Transform = nil // transforms move pixels, not boxes
 	v.Filter = nil
+	v.TextShadows, v.ClipPath, v.Mask, v.BackdropFilter = nil, nil, nil, nil // paint-only
 	v.Cursor, v.HasCursor = 0, false
 	v.NoSelect, v.PointerNone = false, false
 	v.AppRegion = ""

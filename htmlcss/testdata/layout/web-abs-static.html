@@ -1,0 +1,27 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+.case { height: 140px; border-top: 1px solid #ccc; }
+.cb { position: relative; width: 300px; height: 120px; margin: 8px; padding: 6px; background: #eee; }
+.blk { width: 120px; height: 24px; background: #ccc; }
+.abs { position: absolute; width: 30px; height: 10px; background: #888; }
+.inner { margin-left: 20px; padding-top: 4px; }
+</style></head><body>
+<!-- Block-level abs boxes with auto insets sit where they would in flow. -->
+<section class="case"><div class="cb" id="cb1">
+  <div class="blk" id="b1"></div>
+  <div class="abs" id="a1"></div>
+  <div class="blk" id="b2"></div>
+  <div class="abs" id="a2" style="top: 5px"></div>
+  <div class="abs" id="a3" style="left: 200px"></div>
+</div></section>
+<!-- The static position comes from the parent, the offsets from the CB. -->
+<section class="case"><div class="cb" id="cb2">
+  <div class="inner" id="in2"><div class="blk" id="b3"></div><div class="abs" id="a4"></div><div class="abs" id="a5" style="right: 0"></div></div>
+</div></section>
+<!-- First child: the static position is the parent's content edge. -->
+<section class="case"><div class="cb" id="cb3"><div class="abs" id="a6"></div><div class="blk" id="b4"></div></div></section>
+<!-- Inline-level: an abs span in a line sits after the text before it. -->
+<section class="case"><div class="cb" id="cb4"><span>Hello</span><span class="abs" id="a7" style="display:inline-block"></span><span>world</span></div></section>
+</body></html>

@@ -315,6 +315,10 @@ func (w *Window) Step() {
 	for _, ov := range slices.Clone(w.exitingOverlays) {
 		w.unionDirty(tickWidget(ov, now))
 	}
+	// Deferred work that belongs to this frame (a style engine's coalesced
+	// restyle after this frame's jobs mutated the DOM) runs before layout,
+	// so the frame never paints the half-updated state.
+	w.runBeforeLayout()
 	// Layout caching: skip Measure+Layout unless something explicitly
 	// invalidated the layout. This is the win for high-frequency
 	// repaints like cursor blink — the layout hasn't changed, only
@@ -430,9 +434,13 @@ func (w *Window) Step() {
 			clips = []Rect{clip}
 		}
 		w.inPaint = true
-		for _, c := range clips {
-			w.paintClip(drawCanvas, c)
-		}
+		func() {
+			beginPaintPass()
+			defer endPaintPass()
+			for _, c := range clips {
+				w.paintClip(drawCanvas, c)
+			}
+		}()
 		w.inPaint = false
 		drawCanvas.RestoreTo(dprID)
 	}

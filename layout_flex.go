@@ -211,8 +211,29 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 		cb := Size{W: bounds.W, H: bounds.H}
 		min := resolvedMinSize(ch, cb)
 		max := resolvedMaxSize(ch, cb)
-		nat := measureWithConstraints(ch, cb)
+		var nat Size
+		if l.Direction == Horizontal && contentSizedItem(ch, fx) {
+			// A content-sized item (flex: none / 0 auto, width: auto): its
+			// descendants' percentage widths are cyclic while it is sized.
+			nat = measureIntrinsic(ch, cb, measureWithConstraints)
+		} else {
+			nat = measureWithConstraints(ch, cb)
+		}
 		basis := fx.Basis
+		if s := ch.Style(); basis <= 0 && s != nil && s.BasisPct > 0 && widthPctDefinite() {
+			// A percentage flex-basis resolves against the container's
+			// main size (an indefinite one leaves it content-sized).
+			main, extra := bounds.W, s.BasisExtra
+			if l.Direction == Vertical {
+				main, extra = bounds.H, s.BasisExtraV
+			}
+			if main > 0 {
+				basis = s.BasisPct*main + extra
+				if basis <= 0 {
+					basis = 0.001 // a definite zero basis, not "auto"
+				}
+			}
+		}
 		minMain := min.W
 		minCross := min.H
 		maxMain := max.W
@@ -226,7 +247,7 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 		// becomes the basis (like an explicit width with flex-basis:auto);
 		// cross-axis pct replaces the natural size resolveCross aligns with.
 		if s := ch.Style(); s != nil {
-			if s.Width == 0 && s.WidthPct > 0 {
+			if s.Width == 0 && s.WidthPct > 0 && widthPctDefinite() {
 				nat.W = s.pctWidth(s.WidthPct, bounds.W)
 				if l.Direction == Horizontal && basis <= 0 {
 					basis = nat.W
@@ -252,7 +273,7 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 		}
 		if explicitCross == 0 {
 			if s := ch.Style(); s != nil {
-				if l.Direction == Vertical && s.WidthPct > 0 {
+				if l.Direction == Vertical && s.WidthPct > 0 && widthPctDefinite() {
 					explicitCross = s.pctWidth(s.WidthPct, bounds.W)
 				} else if l.Direction == Horizontal && s.HeightPct > 0 {
 					explicitCross = s.pctHeight(s.HeightPct, bounds.H)
@@ -706,9 +727,20 @@ func (l FlexLayout) applyWrap(children []Widget, bounds Rect, mainAvail, crossAv
 	if len(lines) == 0 {
 		return
 	}
-	// First pass: compute each line's cross extent.
+	// First pass: resolve each line's flexible lengths (grow / shrink
+	// within the line, CSS Flexbox § 9.7), re-measure the items' cross
+	// sizes at those main sizes, and take the line's cross extent.
 	lineCross := make([]float32, len(lines))
 	for li, line := range lines {
+		lineItems := make([]flexItem, len(line))
+		for k, idx := range line {
+			lineItems[k] = items[idx]
+		}
+		l.resolveMainSizes(lineItems, mainAvail)
+		l.remeasureCross(lineItems, bounds)
+		for k, idx := range line {
+			items[idx] = lineItems[k]
+		}
 		var maxCross float32
 		for _, idx := range line {
 			c := items[idx].natural.H
@@ -766,7 +798,7 @@ func (l FlexLayout) applyWrap(children []Widget, bounds Rect, mainAvail, crossAv
 		// case (JustifyStart on a toolbar) this is just trailing slack.
 		var lineMain float32
 		for k, idx := range line {
-			s := items[idx].basis
+			s := items[idx].size
 			if s > mainAvail {
 				s = mainAvail
 			}
@@ -936,10 +968,23 @@ func (fl FlexLayout) Measure(children []Widget, padded Size) Size {
 				minMain = ContentMinWidth(child)
 			}
 		}
-		if basis := widgetFlexItem(child).Basis; basis > 0 {
+		basis := widgetFlexItem(child).Basis
+		if s := child.Style(); basis <= 0 && s != nil && s.BasisPct > 0 && widthPctDefinite() {
+			if fl.Direction == Horizontal && padded.W > 0 {
+				basis = max(s.BasisPct*padded.W+s.BasisExtra, 0)
+			} else if fl.Direction == Vertical && padded.H > 0 {
+				basis = max(s.BasisPct*padded.H+s.BasisExtraV, 0)
+			}
+		}
+		if basis > 0 {
 			mainSize = basis + marginMain
 			if mainSize < minMain+marginMain {
 				mainSize = minMain + marginMain
+			}
+			// The cross size at that main size: wrapping text, an
+			// aspect-ratio box.
+			if fl.Direction == Horizontal {
+				crossSize = measureWithConstraints(child, Size{W: mainSize - marginMain, H: padded.H}).H + margin.Vertical()
 			}
 		}
 		measures[i] = childMeasure{main: mainSize, cross: crossSize, minMain: minMain}
@@ -1075,4 +1120,19 @@ func (fl FlexLayout) Measure(children []Widget, padded Size) Size {
 		result = Size{W: crossMax, H: mainSum}
 	}
 	return result
+}
+
+// contentSizedItem reports a flex item whose main size comes from its
+// content: no flex-basis, no growth, no width of its own.
+func contentSizedItem(ch Widget, fx FlexItem) bool {
+	if fx.Basis > 0 || fx.Grow > 0 {
+		return false
+	}
+	if p := widgetPreferredSize(ch); p.W > 0 {
+		return false
+	}
+	if s := ch.Style(); s != nil && s.WidthPct > 0 {
+		return false
+	}
+	return true
 }

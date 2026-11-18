@@ -24,7 +24,7 @@
 | `br` | ✅ | inline 强制换行 |
 | `blockquote` | ✅ | UA 左边框 + 缩进 |
 | `hr` | ✅ | 渲染为 `widgets.Rule`；`border-*` 作用于线本身 |
-| `ul` `ol` `li` | ✅ | 标记悬挂在内容之外（`list-style-position: outside`），内容从列表项内容边开始；disc/circle/square/decimal；ol 自动编号；剪贴板可重建列表结构。`li` 的计算值为 `display: block`（非 `list-item`） |
+| `ul` `ol` `li` | ✅ | 标记悬挂在内容之外（`list-style-position: outside`），内容从列表项内容边开始。只有 `display: list-item` 生成标记（inline-block / flex 的 `li` 没有；`display: list-item` 的 `div` 有）。`list-style-type`（继承）：disc/circle/square（嵌套 `ul` 默认 circle → square）、decimal、decimal-leading-zero、lower/upper-alpha/latin、lower/upper-roman、lower-greek、none、字符串；`<ol start reversed type>`、`<li value>`；剪贴板可重建列表结构 |
 | `img` | 🟡 | 本地光栅 + `.svg`（可染色）+ `data:` URI + `object-fit: cover/contain`；**不支持**远程 URL / `srcset` |
 | `label` | 🟡 | 折叠为 inline 文本；`for=` 点击联动见下方 `label[for]` 行 |
 | `table` `thead` `tbody` `tfoot` `tr` `td` `th` `caption` `colgroup` `col` | ✅ | 单元格拍平到一个网格（列跨行对齐），列宽在布局期按 CSS 2.1 算法求解：自动布局（列取 max-content、单元格 `width` 决定其列宽、`colspan` 超出部分分摊到所跨列、表比内容宽时按内容比例分配余量、比内容窄时从 min-content 收缩）与 `table-layout: fixed`（取 `<col>` / 首行宽度，其余等分）。`th` 粗体居中、`tr:nth-child` 行条纹、`border-spacing` 作用于单元格之间及四周（UA 默认 2px、单元格 padding 1px，同 Chrome）、auto-width 表 shrink-to-fit。另有：`<caption>` 全宽跨列行（`caption-side: top/bottom`）、`<colgroup>/<col>` 列宽（`width` 属性或内联样式，含 `span`、相对表宽的 `%`）、`border-collapse: collapse`（单线合并）、`rowspan` 行高贡献。限制：`<col>` 不接受 class 选择器 |
@@ -60,19 +60,17 @@
 
 | 标签 | 状态 | 备注 |
 |---|---|---|
-| `canvas` | ✅ | 「widget 自绘」挂载点（不给 JS 2D context，直接用 qui 的绘制能力）。`El.SetCanvasDraw(func(cv qui.Canvas, bounds qui.Rect))` 装一个每帧调用的绘制回调；`El.SetCanvas(qui.Widget)` 插入任意自定义 widget（`scene3d.Viewport`、`graphs` 图表……）。CSS `width/height` 定尺寸（缺省 300×150）；未接线时渲染虚线占位框。默认 `display:inline-block`、`Role()=image` |
+| `canvas` | ✅ | 替换元素：`width`/`height` 属性给出固有尺寸（默认 300×150；只设一个 CSS 尺寸时保持比例——它们不是 CSS 尺寸提示）。内容来自 `El.SetCanvasDraw(func(cv qui.Canvas, bounds qui.Rect))` 或 `El.SetCanvas(qui.Widget)`；网页的 `CanvasRenderingContext2D` 用 `htmlcss/canvas2d`（路径、全部合成模式、阴影、渐变 / 图案、裁剪、文字、drawImage、像素读写，有 Chrome 像素金标准），q-browser 把它绑定到 JS。未接线时画虚线占位。默认 `display:inline-block`，`Role()=image` |
 
 ### 明确不支持（🚫 走原生 widgets / 其他包）
 
 | 标签 | 替代方案 |
 |---|---|
-| `audio` | `media.AudioPlayer` |
-| `video` | `media.VideoView` |
-| `iframe` / 内嵌浏览器 | `webview`（CEF，需 build tag） |
+| `audio` / `video` | 由 `media/htmlmedia` 支持（空导入即可）：HTMLMediaElement 状态机、Chrome 风格控件、海报图、`<source>` 回退；MP4 / WebM / Ogg / MP3，MSE 走 `media.MSEBuffer` |
+| `iframe` / 内嵌浏览器 | 宿主注册的元素（q-browser 渲染嵌套文档），或 `webview`（CEF，需 build tag） |
 | `svg`（内联标签） | `<img src=*.svg>` 或 `h.Icon` + `svg.Document`（`qui.VectorSource`） |
 | `dialog` | reactive `h.Dialog`（外壳）/ `h.ModalPortalWith` / `widgets.Dialog`。portal 内容从声明它的元素继承样式，包括属性继承和祖先选择器 |
 | `details/summary` `progress` `meter` | 原生 `widgets` 组合（ScrollView/Progress 等） |
-| `text-shadow` | ❌ |
 
 ---
 
@@ -127,8 +125,12 @@
 | `box-shadow` | 🟡 | 多层（逗号分隔）；**inset 忽略**（无内阴影 primitive） |
 | `opacity` | ✅ | |
 | `transform` | ✅ | translate/rotate/scale/skew/matrix（2D，经 `Canvas.Concat`）+ `transform-origin`（关键字/%）；**无** 3D |
-| `filter` | 🟡 | `blur()` + `drop-shadow()` 经 SaveLayer；多函数取首个；无 brightness/contrast |
-| `backdrop-filter` | ❌ | 需背景采样 |
+| `filter` | ✅ | 按顺序应用函数列表：`blur()`、`drop-shadow()`、`brightness()`、`contrast()`、`grayscale()`、`sepia()`、`invert()`、`saturate()`、`hue-rotate()`、`opacity()`（SaveLayer 图像滤镜；长度随设备缩放）。不支持 `url()` SVG 滤镜 |
+| `backdrop-filter`（含 `-webkit-`） | 🟡 | 同样的函数，作用于边框盒下方已绘制的内容（遵循圆角 / clip-path），仅 CPU 光栅画布。只读取盒自身区域（边缘延伸），且只在最近的祖先图层内 |
+| `text-shadow` | ✅ | 多层 + 模糊，作用于标签与折叠的行内文本（含装饰线）；继承 |
+| `clip-path`（含 `-webkit-`） | ✅ | `inset()`（含 `round`）、`circle()`、`ellipse()`（半径、`closest-side`/`farthest-side`、`at <position>`）、`polygon()`（`evenodd`）、`path()`、参考盒（`border-box`/`padding-box`/`content-box`/`margin-box`）；同时裁剪绘制与命中测试。不支持 `url()` |
+| `mask-image` / `mask`（含 `-webkit-`） | ✅ | 首层：`url()`（位图，或保持矢量的 SVG——`background: currentColor` + SVG 遮罩图标写法）或渐变；`mask-size`、`mask-position`、`mask-repeat`、`mask-origin`、`mask-mode`（alpha；luminance 为近似）。图片与 `background-image` 一样经资源加载器加载 |
+| `currentColor` | ✅ | 在 `color` 以外的任意属性中 |
 
 ### 布局 / 定位
 
@@ -141,12 +143,12 @@
 | Grid：`grid-template-columns/rows`（px/fr/auto/repeat）、`grid-auto-rows/columns`、`gap`/`row-gap`/`column-gap` | ✅ | 超出模板的项获得按 `grid-auto-*` 定尺寸的隐式轨道 |
 | Grid 单元格放置：`grid-column/row`、`span`、`grid-template-areas` | ✅ | 行/列线号（1-based `a / b`）、`span N`、`grid-area`（命名区或 4 线号）；命名区 + 隐含轨道数。限制：仅 `grid-column/row` 简写（不读 `*-start`/`*-end`）；混合「显式一轴 + 自动另一轴」退化为纯 span 自动排布 |
 | `position: relative` | ✅ | top/right/bottom/left 偏移；建立包含块 |
-| `position: absolute` | ✅ | 脱离常规流，相对最近 positioned 祖先定位。包含块为 positioned 祖先的 padding box，`%` 偏移与尺寸据此解析。限制：无 `z-index` 层叠；`auto` 侧落在包含块原点而非静态位 |
-| `position: fixed` | 🟡 | 当作 absolute（相对最近 positioned 祖先 / root）；**不随视口固定** |
-| `position: sticky` | ❌ | |
+| `position: absolute` | ✅ | 脱离常规流，相对最近 positioned 祖先的 padding box 定位；`%` 偏移和尺寸相对它解析；`auto` 一侧取静态位置（行内级盒子也支持），`max-width` 在靠右 / 靠下锚定之前收紧 |
+| `position: fixed` | ✅ | 文档在开启 `FixedViewport` 的 `ScrollView` 里时相对视口固定（每次滚动重新放置，不撑出滚动溢出）；否则同 absolute |
+| `position: sticky` | ✅ | 相对滚动视口（`ScrollView.FixedViewport`）的偏移，受包含块约束 |
 | `overflow: hidden/clip/auto/scroll`（含 `-x`/`-y`） | ✅ | auto/scroll 托管 `ScrollView`，滚动条为覆盖式（不占位，同 macOS 上的 Chrome） |
 | `visibility: hidden/collapse` | ✅ | 保留布局盒、不绘制（自身 + 子树）。限制：子孙 `visibility:visible` 反显未支持 |
-| `z-index` | 🟡 | 绘制顺序按 z 升序；**无完整 stacking context** |
+| `z-index` | ✅ | 层叠上下文（positioned + z-index、fixed / sticky、opacity < 1、transform、filter、isolation）；positioned 盒子在所属层叠根内按 z 绘制，命中测试反向 |
 | `float` `clear` `columns` | ❌ | 无浮动 / 多列 |
 
 ### 交互 / 指针
@@ -175,19 +177,22 @@
 | `:checked` `:disabled` | ✅ | 属性驱动 + 运行时实时联动：勾选 / 切换单选或 `El.SetDisabled(bool)` 会同步属性并触发作用域 restyle，使 `:checked`/`:disabled`（含 `:has(:checked)` 等）即时重级联 |
 | `:enabled` `:required` `:optional` `:read-only` `:read-write` | ✅ | 属性驱动。`:enabled`/`:required`/`:optional` 只作用于表单控件；`:read-only` 按规范匹配一切非用户可改元素；`:read-write` 只匹配可编辑控件。**欠**：`:valid`/`:invalid`/`:placeholder-shown`/`:indeterminate`/`:default` |
 | `:nth-last-child(An+B)` `:empty` `:has()` | ✅ | `:has()` 限单个简单后代选择器（`div:has(img)`） |
-| `::before` `::after` | 🟡 | 生成 `content` 文本（叶 / 行内元素折进同一 InlineBox）。`content` 支持引号字符串 + `attr(name)` + 拼接。限制：带块级子元素的元素上不生成；不支持 `counter()` 或生成盒的完整盒模型 |
+| `::before` `::after` | 🟡 | 生成 `content` 文本（叶 / 行内元素折进同一 InlineBox）。`content` 支持引号字符串 + `attr(name)` + 拼接，`counter()` / `counters()`（含计数器样式）与 `open-quote`/`close-quote`。限制：带块级子元素的元素上不生成；无生成盒的完整盒模型 |
+| `::marker` | ✅ | `color`、`font-*`、`content`（含 `counter(list-item)`） |
+| `counter-reset` / `counter-increment` / `counter-set` | ✅ | CSS Lists 3 作用域，隐式 `list-item` 计数器（由 `ol`/`ul`/`menu` 重置），作用于元素及 `::before`/`::after` |
 | 其他伪元素（`::first-line`…） | ❌ | 解析但不生成 |
 | CSS 变量 `--x` / `var(--x, fallback)` / `:root` | ✅ | 继承 + 递归解析（深度上限 16）。Go 侧用 `ComputedStyle.Var` 读取 |
 | CSS 全局关键字 `inherit` / `initial` / `unset` / `revert` | ✅ | 作用于所有属性；`revert` 按 `unset` 处理。简写中混入其他值时整条声明按无效丢弃 |
 | 自定义属性与自定义元素 | ✅ | `RegisterProperty(name, PropertyDef{Inherited, Initial})` 让任意属性名可经 `ComputedStyle.Property` 读取（`inherit` / `initial` / `unset` 的解析与内置属性一致）；`RegisterElement(tag, ElementDef{Create, Apply})` 让自定义标签承载一个原生 widget，`Apply` 在每次 restyle 后把计算样式映射到它上面。逐元素版本是 `El.SetOnStyle` |
 | 简写 `font` `flex` `inset` | ✅ | |
 | `@media` | 🟡 | `min-width`/`max-width`（`and`、screen/all/print）在解析时对视口宽度求值；匹配块扁平进样式表。**非响应式**（不随 resize 重算） |
-| `@font-face` `@keyframes` `@import` `@supports` | ❌ | at-rule 整块跳过 |
+| `@font-face` `@import` `@supports` | ❌ | 引擎跳过（q-browser 这类宿主自己解析 `@import`、加载 `@font-face` Web 字体） |
+| `@keyframes` | ✅ | （含 `-webkit-`）见 `animation` |
 | `!important` / 级联优先级 / 内联 style | ✅ | UA < author < inline，important 跨层 |
 | 运行时换样式表 `StyleEngine.SetCSS` | ✅ | 重解析并全量 Restyle，树原地重级联 —— 主题切换钩子（换一套 `:root` 变量即可）。`RenderResult.Engine` 暴露静态渲染的引擎 |
 | 颜色：hex 3/6/8、`rgb()`/`rgba()`、`hsl()`/`hsla()`、具名色全集 | ✅ | hsl 支持逗号式与空格式、`deg`/负 hue；CSS Level 4 具名色全集 148 色 + transparent。无 `hwb()`/`lab()`/`lch()` |
 | 长度：px/em/rem/pt/%/无单位/`calc()`/`min()`/`max()`/`clamp()` | 🟡 | `calc()` 支持 `+ - * /`、括号、嵌套、单位混算；`min`/`max`/`clamp` 各参数经 `parseLength`。限制：内含 `%` 只在该属性本身支持 `%` 参照时有效。**无** `vw`/`vh`/`ch` |
-| `transition` / `animation` | ❌ | 动态基建未建 |
+| `transition` / `animation` | ✅ | 分项与简写；缓动（cubic-bezier、steps、关键字）、延迟、次数、方向、fill-mode；可动画属性：`opacity`、`transform`（矩阵插值）、`background-color`；事件经 `StyleEngine.SetAnimationEventHandler`（transition run/start/end/cancel、animation start/iteration/end/cancel） |
 
 ---
 
@@ -225,6 +230,7 @@
 | HTML `hidden` 属性 | ✅ | 按 UA 规则实现（tier 0 的 `display:none`），作者 CSS 可覆盖。静态 `Render` 下命中 display:none 的编译期剪枝 |
 | `autofocus` | ✅ | 元素首次挂载时聚焦一次，表单元素会聚焦到它的编辑控件；在 portal 里同样有效 |
 | `tabindex` | ✅ | 任意整数都让元素可聚焦（点击、`RequestFocus`、接收按键）；Tab 顺序同 HTML——正值优先、升序（相同值按文档顺序），然后是 `0` 和原生可聚焦元素按文档顺序；负值只能点击/代码聚焦，Tab 跳过。点击 tabindex 元素里的文字聚焦的是该元素（点击时判定，之后新增的行同样生效）。用在表单控件上时调整/移除其 backing 控件的 Tab 停靠。带 tabindex 的 `overflow:auto` 元素只算一个焦点目标：内部 ScrollView 让出焦点，元素自己用方向键滚动。非整数值忽略。DSL：`h.Div().TabIndex(0)` |
+| `contenteditable` / `designMode` | ✅ | 光标、鼠标 / 键盘选区、直接写入真实文本节点、回车分块（`<div>`）、Shift+回车 `<br>`、⌘B/I/U、撤销重做、纯文本剪贴板、输入法组字（只有可编辑区域接输入法）。宿主拿到编辑回调后派发 `beforeinput`/`input` 并同步 DOM Selection。限制：列表内回车 / 退格无特殊处理，光标处格式不自动取消 |
 | `accesskey` / `minlength` / `pattern` / `rows` / `cols` / `inputmode` / `spellcheck` | ❌ | 不读取 |
 | `label[for]` 点击聚焦控件 | ✅ | toggle / select / focus |
 | AX 角色（button/link/textbox/img/list/heading…） | ✅ | `El.Role()` + `AccessibleName()`，agent 可寻址 |
@@ -235,11 +241,11 @@
 
 按桌面应用需要它的高频程度分组。
 
-**高价值（原生 + 日常）：** `aspect-ratio`；`position: sticky`；`::placeholder` 与 `:placeholder-shown`/`:valid`/`:invalid`/`:indeterminate`/`:default`（共用「值变化 → 作用域 restyle」实时钩子）；`::selection`/`::marker`；`:is()`/`:where()`/CSS 嵌套；`transition`；`scroll` 与 `change` 事件；`minlength`/`pattern`/`rows`/`cols`/`inputmode`/`spellcheck` 属性。
+**高价值（原生 + 日常）：** `aspect-ratio`；`position: sticky`；`::placeholder` 与 `:placeholder-shown`/`:valid`/`:invalid`/`:indeterminate`/`:default`（共用「值变化 → 作用域 restyle」实时钩子）；`::selection`；`:is()`/`:where()`/CSS 嵌套；`transition`；`scroll` 与 `change` 事件；`minlength`/`pattern`/`rows`/`cols`/`inputmode`/`spellcheck` 属性。
 
-**中价值：** Grid `justify-items`/`justify-self`/`place-*`；`min-content`/`max-content`/`fit-content` 尺寸关键字；`@media` 响应式重算与 `prefers-color-scheme`/`(hover)`/`(pointer)`/`prefers-reduced-motion`；`@container`；`color-scheme`；`oklch()`/`color-mix()`/`light-dark()`/`hwb()`/`lab()`；`text-shadow`；文本抛光（`text-wrap`、`hyphens`、`tab-size`、`font-variant*`、`font-feature-settings`、`text-underline-offset`）；`background-position`/`-repeat`/显式 `background-size`/repeating 渐变；远程图片 URL / `srcset`；滚动与 resize 抛光（`resize`、`appearance`、`caret-color`、`scrollbar-gutter`、`overscroll-behavior`、`scroll-behavior`、scroll-snap）；`<select multiple>`/`size`；原生日期 / 颜色选择器；`<a target>`/`download`。
+**中价值：** Grid `justify-items`/`justify-self`/`place-*`；`min-content`/`max-content`/`fit-content` 尺寸关键字；`@media` 响应式重算与 `prefers-color-scheme`/`(hover)`/`(pointer)`/`prefers-reduced-motion`；`@container`；`color-scheme`；`oklch()`/`color-mix()`/`light-dark()`/`hwb()`/`lab()`；文本抛光（`text-wrap`、`hyphens`、`tab-size`、`font-variant*`、`font-feature-settings`、`text-underline-offset`）；`background-position`/`-repeat`/显式 `background-size`/repeating 渐变；远程图片 URL / `srcset`；滚动与 resize 抛光（`resize`、`appearance`、`caret-color`、`scrollbar-gutter`、`overscroll-behavior`、`scroll-behavior`、scroll-snap）；`<select multiple>`/`size`；原生日期 / 颜色选择器；`<a target>`/`download`。
 
-**明确不做：** `float`/`clear`；多列；`@keyframes` + `animation`；`writing-mode`；`clip-path`/`mask`；`mix-blend-mode`/`isolation`；完整 stacking context；`backdrop-filter`；3D `transform`；`contenteditable`；`<iframe>`（走 `webview`）；Shadow DOM / `<template>` / `<slot>`；`content-visibility`/`will-change`；`@import`；`@supports`。
+**明确不做：** `float`/`clear`；多列；`writing-mode`；`mix-blend-mode`；3D `transform`；引擎本身的 `<iframe>`（由宿主注册，或走 `webview`）；Shadow DOM / `<template>` / `<slot>`；`content-visibility`/`will-change`；`@import`；`@supports`。
 
 ---
 

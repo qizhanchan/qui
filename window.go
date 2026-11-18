@@ -326,6 +326,8 @@ type Window struct {
 	// It is embedded by value so even a zero-value Window can accept the
 	// first PostJob concurrently without racing a lazy pointer install.
 	jobs windowJobQueue
+	// beforeLayout holds one-shot BeforeLayout callbacks.
+	beforeLayout []func()
 	// Event recording state. recorders is a fan-out list of
 	// listener functions; publishEventRecord notifies each one
 	// per dispatched event.

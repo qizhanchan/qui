@@ -23,6 +23,11 @@ type Host interface {
 	// IMECaretRect returns the caret in view (window-logical) coordinates.
 	IMECaretRect(handle uintptr) (x, y, w, h float64)
 
+	// IMEBypassed reports that the focused widget opted out of the input
+	// method; IMEBypassChars then receives the keystroke's characters.
+	IMEBypassed(handle uintptr) bool
+	IMEBypassChars(handle uintptr, text string)
+
 	RawKeyboardMode(handle uintptr, keyCode, mods int) int
 	RawKeyboardActive(handle uintptr) bool
 	RawKeyboardChars(handle uintptr, text string, mods int)
@@ -68,6 +73,21 @@ func quiIMECaretRect(id C.uintptr_t, outX, outY, outW, outH *C.double) {
 	}
 	x, y, w, h := host.IMECaretRect(uintptr(id))
 	*outX, *outY, *outW, *outH = C.double(x), C.double(y), C.double(w), C.double(h)
+}
+
+//export quiIMEBypassed
+func quiIMEBypassed(id C.uintptr_t) C.int {
+	if host == nil || !host.IMEBypassed(uintptr(id)) {
+		return 0
+	}
+	return 1
+}
+
+//export quiIMEBypassChars
+func quiIMEBypassChars(id C.uintptr_t, text *C.char) {
+	if host != nil {
+		host.IMEBypassChars(uintptr(id), C.GoString(text))
+	}
 }
 
 //export quiRawKeyboardMode

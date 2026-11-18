@@ -354,6 +354,32 @@ func parseLength(s string, fontSize, pctRef float32) (float32, bool) {
 	return 0, false
 }
 
+// parseLengthPct parses a length that may depend on a percentage: a plain
+// length (frac 0), a percentage, or a calc() mixing them — `calc(100% -
+// 2rem)` is frac 1 with px -32. calc() is linear in its percentages, so
+// evaluating it against references 0 and 1 separates the two parts.
+// hasPct reports a percentage part.
+func parseLengthPct(v string, fs float32) (px, frac float32, hasPct, ok bool) {
+	s := strings.TrimSpace(strings.ToLower(v))
+	if !strings.Contains(s, "%") {
+		px, ok = parseLength(s, fs, 0)
+		return px, 0, false, ok
+	}
+	if strings.HasSuffix(s, "%") && !strings.Contains(s, "(") {
+		f, ok := parseFloat(strings.TrimSuffix(s, "%"))
+		return 0, f / 100, true, ok
+	}
+	if !strings.HasPrefix(s, "calc(") {
+		return 0, 0, false, false // min()/max() with % are not linear
+	}
+	v0, ok0 := parseLength(s, fs, 0)
+	v1, ok1 := parseLength(s, fs, 1)
+	if !ok0 || !ok1 {
+		return 0, 0, false, false
+	}
+	return v0, v1 - v0, true, true
+}
+
 // parseMinMaxClamp evaluates the CSS math functions min()/max()/clamp() to
 // logical pixels. Each argument is resolved via parseLength (so calc()/px/%/em
 // nest freely). clamp(min, val, max) returns val clamped to [min, max]. Any

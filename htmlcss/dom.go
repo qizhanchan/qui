@@ -50,6 +50,10 @@ type Node struct {
 	// element on a restyle); re-split when the attribute changes.
 	classSrc  string
 	classList []string
+
+	// designMode marks a document root in design mode (edit.go): every
+	// element below it is :read-write.
+	designMode bool
 }
 
 // siblingParent is the parent whose Children hold n's siblings — nil for
@@ -259,8 +263,19 @@ func isEditableNode(n *Node) bool {
 	if n == nil || n.Type != ElementNode {
 		return false
 	}
-	if ce, ok := n.Attr("contenteditable"); ok && strings.ToLower(strings.TrimSpace(ce)) != "false" {
-		return true
+	// contenteditable is inherited: the editing host and everything in it
+	// is read-write (until a contenteditable=false island), as is the
+	// whole document in design mode.
+	for a := n; a != nil; a = a.Parent {
+		if ce, ok := a.Attr("contenteditable"); ok {
+			if strings.ToLower(strings.TrimSpace(ce)) != "false" {
+				return true
+			}
+			break
+		}
+		if a.Parent == nil && a.designMode {
+			return true
+		}
 	}
 	switch n.Tag {
 	case "textarea":

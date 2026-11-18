@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+.case { height: 100px; border-top: 1px solid #ccc; }
+ul, ol { margin: 0; padding-left: 40px; }
+/* A flex <li> is not a list item: no marker, and its children are its
+   own flex items (go.dev's header menu). */
+#flex li { display: flex; justify-content: space-between; width: 300px; }
+/* Inline-block items line up in a row with no markers. */
+#row li { display: inline-block; width: 80px; height: 20px; }
+/* display: list-item on a div makes a list item. */
+#divs > div { display: list-item; height: 20px; }
+#ol3 li { height: 20px; }
+</style></head><body>
+<section class="case"><ul id="flex"><li id="f1"><span id="fa">left</span><span id="fb">right</span></li><li id="f2"><span id="fc">a</span><span id="fd">b</span></li></ul></section>
+<section class="case"><ul id="row"><li id="r1">one</li><li id="r2">two</li><li id="r3">three</li></ul></section>
+<section class="case"><div id="divs" style="padding-left:40px"><div id="d1">first</div><div id="d2">second</div></div></section>
+<section class="case"><ol id="ol3" start="8" reversed><li id="o1">a</li><li id="o2" value="20">b</li></ol></section>
+</body></html>

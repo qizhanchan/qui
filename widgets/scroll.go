@@ -68,6 +68,15 @@ type ScrollView struct {
 	BaseWidget
 	Content     Widget
 	ContentSize Size
+	// FixedViewport makes this view the viewport of a document: its
+	// content's position: fixed boxes are laid out against the visible
+	// area and its position: sticky boxes stick to it, both following the
+	// scroll position (qui layout_viewport.go). A browser sets it on the
+	// view showing the page.
+	FixedViewport bool
+	vpBoxes       []Widget        // fixed / sticky boxes of the content
+	stickyBase    map[Widget]Rect // sticky boxes' in-flow rects
+	stickyPlaced  map[Widget]Rect // where placeViewportBoxes last put them
 	// Orientation selects the scroll axis. Zero value = ScrollVertical.
 	Orientation ScrollOrientation
 	// ScrollStep is the pixel delta per wheel notch. 0 means the default.
@@ -137,6 +146,15 @@ type ScrollView struct {
 	scrollX   float32
 	overflowW float32
 	barDragX  ScrollBarDrag
+
+	contentZoom float32 // SetContentZoom (scroll_zoom.go); 0 = none
+
+	// PixelScroll moves the pixels already on screen when the offset
+	// changes (Window.ScrollPixels) and repaints only the strip the move
+	// exposes, the scrollbars and the fixed / sticky boxes, instead of the
+	// whole viewport. Only for content that moves rigidly with the scroll
+	// (see scroll_blit.go); a browser page view sets it.
+	PixelScroll bool
 
 	// OnScroll, when set, is invoked whenever the scroll offset changes
 	// value (wheel, drag, track click, keys, or ScrollTo). Hosts use it
@@ -301,7 +319,7 @@ func (s *ScrollView) fitNatural(available Size) Size {
 
 func (s *ScrollView) Layout(rect Rect) {
 	s.BaseWidget.Layout(rect)
-	s.ensureContentSize(s.innerBounds())
+	s.ensureContentSize(s.unzoom(s.innerBounds()))
 	s.ClampScroll()
 	if s.Content == nil {
 		return
@@ -314,12 +332,62 @@ func (s *ScrollView) Layout(rect Rect) {
 	r := s.contentRect()
 	MeasureChild(s.Content, Size{W: r.W, H: r.H})
 	s.Content.Layout(r)
+	if s.FixedViewport {
+		s.vpBoxes = ViewportPositioned(s.Content)
+		old, placed := s.stickyBase, s.stickyPlaced
+		s.stickyBase = map[Widget]Rect{}
+		s.stickyPlaced = map[Widget]Rect{}
+		for _, w := range s.vpBoxes {
+			if ViewportPositioningOf(w) != ViewportSticky {
+				continue
+			}
+			// A subtree the layout pass skipped (unchanged) still holds
+			// the shifted rect this view gave it: keep its in-flow base.
+			if p, ok := placed[w]; ok && p == w.Bounds() {
+				s.stickyBase[w] = old[w]
+			} else {
+				s.stickyBase[w] = w.Bounds()
+			}
+		}
+	}
 	if s.crossScrolls() {
 		s.overflowW = scrollableWidth(s.Content, r.X)
 	} else {
 		s.overflowW = 0
 	}
 	s.clampX(s.scrollX)
+	s.placeViewportBoxes()
+}
+
+// placeViewportBoxes lays the content's fixed and sticky boxes out for the
+// current scroll position.
+func (s *ScrollView) placeViewportBoxes() {
+	if !s.FixedViewport || len(s.vpBoxes) == 0 {
+		return
+	}
+	cr := s.contentRect()
+	vp := s.unzoom(s.viewportRect())
+	view := Rect{X: cr.X + s.scrollX, Y: cr.Y + s.scrollOff, W: vp.W, H: vp.H}
+	if s.Orientation == ScrollHorizontal {
+		view = Rect{X: cr.X + s.scrollOff, Y: cr.Y, W: vp.W, H: vp.H}
+	}
+	scroll := Point{X: view.X - cr.X, Y: view.Y - cr.Y}
+	for _, w := range s.vpBoxes {
+		switch ViewportPositioningOf(w) {
+		case ViewportFixed:
+			PlaceFixed(w, view, scroll)
+		case ViewportSticky:
+			base, ok := s.stickyBase[w]
+			if !ok {
+				continue
+			}
+			r := StickyRect(w, base, view)
+			if r != w.Bounds() {
+				w.Layout(r)
+			}
+			s.stickyPlaced[w] = r
+		}
+	}
 }
 
 // crossScrolls reports whether the view scrolls on X as well.
@@ -337,6 +405,9 @@ func scrollableWidth(w Widget, originX float32) float32 {
 	walk = func(w Widget) {
 		if w == nil || boxChildHidden(w) {
 			return
+		}
+		if ViewportPositioningOf(w) == ViewportFixed {
+			return // a fixed box does not extend the document
 		}
 		if b := w.Bounds(); b.W > 0 && b.X+b.W > right {
 			right = b.X + b.W
@@ -379,9 +450,9 @@ func (s *ScrollView) innerBounds() Rect {
 func (s *ScrollView) contentRect() Rect {
 	b := s.innerBounds()
 	if s.Orientation == ScrollHorizontal {
-		return Rect{X: b.X, Y: b.Y, W: s.ContentSize.W, H: b.H - s.barSlot()}
+		return Rect{X: b.X, Y: b.Y, W: s.ContentSize.W, H: (b.H - s.barSlot()) / s.zoomFactor()}
 	}
-	return Rect{X: b.X, Y: b.Y, W: b.W - s.barSlot(), H: s.ContentSize.H}
+	return Rect{X: b.X, Y: b.Y, W: (b.W - s.barSlot()) / s.zoomFactor(), H: s.ContentSize.H}
 }
 
 // viewportRect is the on-screen area the content is visible through:
@@ -420,16 +491,14 @@ func (s *ScrollView) contentTranslation() (dx, dy float32) {
 // testing, AX bounds, agent geometry, and per-widget event coordinates
 // all flow through it.
 func (s *ScrollView) ChildInteractionTransform() Matrix {
-	dx, dy := s.contentTranslation()
-	return TranslateMatrix(dx, dy)
+	return s.contentMatrix()
 }
 
 // ChildPaintTransform is the paint-time counterpart: the same translation
 // Draw concatenates onto the canvas, so a descendant's Invalidate() maps
 // its dirty rect to the right screen pixels.
 func (s *ScrollView) ChildPaintTransform() Matrix {
-	dx, dy := s.contentTranslation()
-	return TranslateMatrix(dx, dy)
+	return s.contentMatrix()
 }
 
 // PaintClip reports the viewport, so a descendant that is scrolled out of
@@ -497,8 +566,7 @@ func (s *ScrollView) Draw(canvas Canvas) {
 			// After this, ClipBoundsLogical() reports the clip in CONTENT
 			// coordinates (canvasState inverts the current matrix), so the
 			// content's own dirty-region culling keeps working unchanged.
-			dx, dy := s.contentTranslation()
-			canvas.Translate(dx, dy)
+			s.applyContentTransform(canvas)
 			if !boxChildHidden(s.Content) {
 				s.Content.Draw(canvas)
 			}
@@ -727,8 +795,7 @@ func (s *ScrollView) HitTest(p Point) Widget {
 		}
 	}
 	if s.Content != nil {
-		dx, dy := s.contentTranslation()
-		local := Point{X: p.X - dx, Y: p.Y - dy}
+		local := s.toContent(p)
 		if hit := s.Content.HitTest(local); hit != nil {
 			return hit
 		}
@@ -813,7 +880,7 @@ func (s *ScrollView) maxScrollX() float32 {
 	if !s.crossScrolls() {
 		return 0
 	}
-	return max(0, s.overflowW-s.viewportRect().W)
+	return max(0, s.overflowW-s.unzoom(s.viewportRect()).W)
 }
 
 func (s *ScrollView) clampX(old float32) {
@@ -821,7 +888,7 @@ func (s *ScrollView) clampX(old float32) {
 	if s.scrollX == old {
 		return
 	}
-	s.Invalidate()
+	s.scrolled(s.scrollX-old, 0)
 	if s.OnScroll != nil {
 		s.OnScroll()
 	}
@@ -843,7 +910,7 @@ func (s *ScrollView) barX() ScrollBar {
 		Track:      track,
 		Horizontal: true,
 		Content:    s.overflowW,
-		Viewport:   s.viewportRect().W,
+		Viewport:   s.unzoom(s.viewportRect()).W,
 		Offset:     s.scrollX,
 	}
 }
@@ -877,7 +944,11 @@ func (s *ScrollView) clampFrom(old float32) {
 	// A content shrink / resize can clamp the offset without going through
 	// ScrollTo; hosts mirroring the position via OnScroll must still hear
 	// about it.
-	s.Invalidate()
+	if s.Orientation == ScrollHorizontal {
+		s.scrolled(s.scrollOff-old, 0)
+	} else {
+		s.scrolled(0, s.scrollOff-old)
+	}
 	if s.OnScroll != nil {
 		s.OnScroll()
 	}
@@ -962,7 +1033,7 @@ func (s *ScrollView) ensureContentSize(rect Rect) {
 
 func (s *ScrollView) maxScroll() float32 {
 	var over float32
-	inner := s.innerBounds()
+	inner := s.unzoom(s.innerBounds())
 	if s.Orientation == ScrollHorizontal {
 		over = s.ContentSize.W - inner.W
 	} else {
@@ -1014,9 +1085,9 @@ const preciseDeltaScale = 10
 // inertia). Platforms without phase reporting keep the notched behavior.
 func (s *ScrollView) wheelPixels(delta float32, phase GesturePhase) float32 {
 	if phase != GesturePhaseNone {
-		return delta * preciseDeltaScale
+		return delta * preciseDeltaScale / s.zoomFactor()
 	}
-	return delta * s.wheelStep()
+	return delta * s.wheelStep() / s.zoomFactor()
 }
 
 func (s *ScrollView) wheelStep() float32 {
@@ -1078,7 +1149,7 @@ func (s *ScrollView) bar() ScrollBar {
 		Track:      s.barTrack(),
 		Horizontal: s.Orientation == ScrollHorizontal,
 		Content:    s.contentMainSize(),
-		Viewport:   s.mainExtent(s.innerBounds()),
+		Viewport:   s.mainExtent(s.unzoom(s.innerBounds())),
 		Offset:     s.scrollOff,
 	}
 }

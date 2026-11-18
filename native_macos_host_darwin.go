@@ -39,6 +39,28 @@ func (macHost) IMECaretRect(handle uintptr) (x, y, w, h float64) {
 	return float64(r.X) * zoom, float64(r.Y) * zoom, float64(r.W) * zoom, float64(r.H) * zoom
 }
 
+func (macHost) IMEBypassed(handle uintptr) bool {
+	w := lookupIMEWindow(handle)
+	return w != nil && w.IMEBypassed()
+}
+
+// IMEBypassChars delivers a keystroke's characters as typed text for a
+// widget that opted out of the input method. Control characters and
+// AppKit's function-key code points (arrows, F-keys: U+F700…U+F8FF) are
+// key presses the key path already delivered.
+func (macHost) IMEBypassChars(handle uintptr, text string) {
+	w := lookupIMEWindow(handle)
+	if w == nil {
+		return
+	}
+	for _, r := range text {
+		if r < 0x20 || r == 0x7F || r >= 0xF700 && r <= 0xF8FF {
+			continue
+		}
+		w.onChar(r)
+	}
+}
+
 func (macHost) RawKeyboardMode(handle uintptr, keyCode, mods int) int {
 	w := lookupIMEWindow(handle)
 	if w == nil {

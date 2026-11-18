@@ -22,6 +22,9 @@ type Label struct {
 	BaseWidget
 	Paragraph  ParagraphStyle
 	Selectable bool
+	// TextShadows are CSS text-shadow layers painted behind the text (and
+	// its decorations), first layer on top. Spread is ignored.
+	TextShadows []ShadowStyle
 
 	text  string
 	spans []TextSpan
@@ -290,15 +293,24 @@ func (l *Label) Draw(canvas Canvas) {
 	}
 	opts := l.Paragraph.LayoutOptions(content.W)
 	fg := l.resolveForeground()
-	if len(l.spans) > 0 {
-		DrawRichTextLayout(canvas, l.richTextLayout(opts, fg), content)
-		return
+	drawText := func(canvas Canvas) {
+		if len(l.spans) > 0 {
+			DrawRichTextLayout(canvas, l.richTextLayout(opts, fg), content)
+			return
+		}
+		layout := DrawTextBlock(canvas, l.Text(), content, fg, l.Style().Font, opts)
+		if l.Paragraph.Decoration != 0 {
+			DrawTextDecorationPaint(canvas, layout, content, fg, l.Style().Font, l.Paragraph.Decoration, l.Paragraph.DecorationPaint)
+		}
 	}
-	layout := DrawTextBlock(canvas, l.Text(), content, fg, l.Style().Font, opts)
-	if l.Paragraph.Decoration != 0 {
-		DrawTextDecorationPaint(canvas, layout, content, fg, l.Style().Font, l.Paragraph.Decoration, l.Paragraph.DecorationPaint)
+	if len(l.TextShadows) > 0 {
+		drawTextShadows(canvas, l.TextShadows, rect, drawText)
 	}
+	drawText(canvas)
 }
+
+// PaintBounds covers the text shadows, which paint past the label's box.
+func (l *Label) PaintBounds() Rect { return textShadowBounds(l.Bounds(), l.TextShadows) }
 
 // CursorAt reports the hover shape per point: a hand over a hyperlink run,
 // an I-beam over the rest of a selectable label. A non-selectable label

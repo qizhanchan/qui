@@ -12,7 +12,8 @@ import (
 
 // dimensionTags take width/height attributes as CSS lengths.
 var dimensionTags = map[string]bool{
-	"img": true, "canvas": true, "video": true, "iframe": true, "embed": true,
+	"img": true, "video": true, // not canvas: its width/height are only its intrinsic size
+	"iframe": true, "embed": true,
 	"object": true, "table": true, "td": true, "th": true, "col": true, "input": true,
 	"svg": true,
 }

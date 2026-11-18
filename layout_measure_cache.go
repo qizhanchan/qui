@@ -54,7 +54,10 @@ func currentMeasureEpoch() measureEpoch {
 	return measureEpoch{layoutEpoch, ThemeGeneration(), FontRegistryGeneration(), LocaleGeneration()}
 }
 
-type measureEntry struct{ avail, size Size }
+type measureEntry struct {
+	avail, size Size
+	indef       bool // measured with percentage widths indefinite
+}
 
 // measureCache is a widget's memo of Measure results. version changes on
 // every invalidation, so a Measure that was in flight when its subtree
@@ -64,23 +67,43 @@ type measureCache struct {
 	version uint64
 	entries []measureEntry
 	next    int // ring position once entries is full
+	// intrinsic memoizes the widget's content-derived min- and
+	// max-content widths (see cachedIntrinsic), under the same validity
+	// rules as entries: [kind][percentages indefinite].
+	intrinsic [2][2]intrinsicEntry
+}
+
+// intrinsicEntry is one memoized intrinsic width.
+type intrinsicEntry struct {
+	v  float32
+	ok bool
 }
 
 func (c *measureCache) invalidate() {
 	c.version++
 	c.entries = c.entries[:0]
 	c.next = 0
+	c.intrinsic = [2][2]intrinsicEntry{}
+}
+
+// syncEpoch drops everything cached under an older measure epoch.
+func (c *measureCache) syncEpoch(epoch measureEpoch) bool {
+	if c.epoch == epoch {
+		return true
+	}
+	c.epoch = epoch
+	c.entries = c.entries[:0]
+	c.next = 0
+	c.intrinsic = [2][2]intrinsicEntry{}
+	return false
 }
 
 func (c *measureCache) lookup(avail Size, epoch measureEpoch) (Size, bool) {
-	if c.epoch != epoch {
-		c.epoch = epoch
-		c.entries = c.entries[:0]
-		c.next = 0
+	if !c.syncEpoch(epoch) {
 		return Size{}, false
 	}
 	for _, e := range c.entries {
-		if e.avail == avail {
+		if e.avail == avail && e.indef == (pctIndefinite > 0) {
 			return e.size, true
 		}
 	}
@@ -89,10 +112,10 @@ func (c *measureCache) lookup(avail Size, epoch measureEpoch) (Size, bool) {
 
 func (c *measureCache) store(avail, size Size) {
 	if len(c.entries) < measureCacheSize {
-		c.entries = append(c.entries, measureEntry{avail, size})
+		c.entries = append(c.entries, measureEntry{avail, size, pctIndefinite > 0})
 		return
 	}
-	c.entries[c.next] = measureEntry{avail, size}
+	c.entries[c.next] = measureEntry{avail, size, pctIndefinite > 0}
 	c.next = (c.next + 1) % measureCacheSize
 }
 
@@ -143,6 +166,61 @@ func MeasureChild(w Widget, avail Size) Size {
 		c.store(key, size)
 	}
 	return size
+}
+
+// cachedIntrinsic returns compute() — w's content min-content (max false)
+// or max-content (max true) width — memoized like MeasureChild: the value
+// stands until something in w's subtree invalidates layout or a global
+// measure input changes. Intrinsic widths do not depend on the available
+// space, so one entry per kind is enough; without the memo, a shrink-to-
+// fit box nested in a flex row nested in a table recomputed its whole
+// subtree's intrinsic widths at every level (react.dev spent seconds
+// re-tokenizing its code blocks).
+func cachedIntrinsic(w Widget, max bool, compute func() float32) float32 {
+	mc, ok := w.(measureCacher)
+	if !ok {
+		return compute()
+	}
+	c := mc.measureCacheRef()
+	epoch := currentMeasureEpoch()
+	c.syncEpoch(epoch)
+	kind, indef := 0, 0
+	if max {
+		kind = 1
+	}
+	if pctIndefinite > 0 {
+		indef = 1
+	}
+	e := &c.intrinsic[kind][indef]
+	if e.ok {
+		if layoutCacheVerify.Load() {
+			verifyIntrinsic(w, max, e.v, compute)
+		}
+		return e.v
+	}
+	version := c.version
+	v := compute()
+	if c.version == version && c.epoch == currentMeasureEpoch() {
+		*e = intrinsicEntry{v: v, ok: true}
+	}
+	return v
+}
+
+func verifyIntrinsic(w Widget, max bool, cached float32, compute func() float32) {
+	fresh := compute()
+	if fresh == cached {
+		return
+	}
+	kind := "min"
+	if max {
+		kind = "max"
+	}
+	key := fmt.Sprintf("%T/%s-content", w, kind)
+	if verifiedStale[key] {
+		return
+	}
+	verifiedStale[key] = true
+	log.Printf("qui/layoutcache: STALE %s cached=%v fresh=%v — it changed size without InvalidateLayout on itself", key, cached, fresh)
 }
 
 // verifiedStale remembers which widget types already reported a stale
