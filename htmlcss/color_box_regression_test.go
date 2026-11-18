@@ -32,7 +32,8 @@ func TestAtRulesDoNotSwallowFollowingRule(t *testing.T) {
 		`@charset "utf-8"; .btn{color:red}`,
 		`@import url(x.css); .btn{color:red}`,
 		`@keyframes s{from{opacity:0}to{opacity:1}} .btn{color:red}`,
-		`@supports (display:grid){.x{color:blue}} .btn{color:red}`,
+		`@supports not (display:grid){.x{color:blue}} .btn{color:red}`,
+		`@page {margin:1cm} .btn{color:red}`,
 	} {
 		sheet := ParseCSS(src)
 		if len(sheet.Rules) != 1 {
@@ -43,6 +44,29 @@ func TestAtRulesDoNotSwallowFollowingRule(t *testing.T) {
 			got := d
 			t.Errorf("%q: surviving rule %+v, want color:red", src, got)
 		}
+	}
+}
+
+// Conditional group rules whose condition holds contribute their rules
+// in place; @layer contents rank below unlayered rules.
+func TestConditionalAtRules(t *testing.T) {
+	sheet := ParseCSSViewport(`
+@supports (display:grid){.a{color:blue}}
+@media (width >= 600px) and (hover: hover){.b{color:blue}}
+@media (400px <= width <= 500px){.c{color:blue}}
+@media print, (prefers-color-scheme: dark){.d{color:blue}}
+@layer base{.e{color:blue}}
+.f{color:red; &:hover{color:green} .g &{color:blue} @media (min-width: 1px){color:pink}}
+`, 800)
+	want := []string{".a", ".b", ".e", ".f", ".f:hover", ".g .f", ".f"}
+	if len(sheet.Rules) != len(want) {
+		t.Fatalf("%d rules, want %d (%v)", len(sheet.Rules), len(want), want)
+	}
+	if sheet.Rules[2].Layer != 1 || sheet.Rules[3].Layer != 0 {
+		t.Errorf("layers = %d, %d; want 1 (base), 0", sheet.Rules[2].Layer, sheet.Rules[3].Layer)
+	}
+	if d := sheet.Rules[6].Declarations; len(d) != 1 || d[0].Value != "pink" {
+		t.Errorf("nested @media declarations = %+v", d)
 	}
 }
 

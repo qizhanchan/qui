@@ -108,7 +108,7 @@ func resolveFlowInlineSize(child Widget, cb Size, availW float32) Size {
 	pref := flowPreferredSize(child, cb)
 	w := pref.W
 	if w == 0 {
-		w = MeasureChild(child, Size{W: availW, H: cb.H}).W
+		w = ShrinkToFit(child, availW)
 	}
 	w = clampAxis(w, min.W, max.W)
 	h := pref.H

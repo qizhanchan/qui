@@ -922,8 +922,16 @@ func boxMargin(w Widget) Insets {
 }
 
 func inlineChildSize(w Widget, avail Size) Size {
-	m := MeasureChild(w, avail)
 	st := w.Style()
+	var m Size
+	if st != nil && st.Width <= 0 && st.WidthPct <= 0 {
+		// An atomic inline of auto width shrinks to fit its content.
+		sw := ShrinkToFit(w, avail.W)
+		m = MeasureChild(w, Size{W: sw, H: avail.H})
+		m.W = sw
+	} else {
+		m = MeasureChild(w, avail)
+	}
 	if st == nil {
 		return m
 	}

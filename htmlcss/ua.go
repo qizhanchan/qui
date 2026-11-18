@@ -118,6 +118,54 @@ var inlineTags = map[string]bool{
 	"input": true, "button": true, "select": true, "textarea": true, "br": true,
 	"s": true, "del": true, "strike": true, "ins": true,
 	"canvas": true,
+	// Phrasing elements with no UA styling of their own beyond inline.
+	"time": true, "cite": true, "q": true, "dfn": true, "kbd": true,
+	"samp": true, "var": true, "bdi": true, "bdo": true, "data": true,
+	"font": true, "big": true, "tt": true, "nobr": true, "acronym": true,
+	"wbr": true, "output": true, "ruby": true, "rt": true, "rp": true,
+	"picture": true, "slot": true,
+}
+
+// blockTags are the HTML elements whose UA display is block-level (HTML
+// § 15.3). With SetWebCompat on, every other element —
+// including unknown and custom elements — is inline, as in a browser.
+var blockTags = map[string]bool{
+	"html": true, "body": true, "address": true, "article": true, "aside": true,
+	"blockquote": true, "center": true, "dd": true, "details": true, "dialog": true,
+	"dir": true, "div": true, "dl": true, "dt": true, "fieldset": true,
+	"figcaption": true, "figure": true, "footer": true, "form": true, "h1": true,
+	"h2": true, "h3": true, "h4": true, "h5": true, "h6": true, "header": true,
+	"hgroup": true, "hr": true, "legend": true, "li": true, "listing": true,
+	"main": true, "menu": true, "nav": true, "ol": true, "optgroup": true,
+	"option": true, "p": true, "plaintext": true, "pre": true, "search": true,
+	"section": true, "summary": true, "ul": true, "xmp": true, "frameset": true,
+	"frame": true, "noframes": true, "caption": true,
+}
+
+// webCompat is web-compatibility mode (SetWebCompat).
+var webCompat bool
+
+// SetWebCompat switches htmlcss to the behaviors a web browser needs
+// where they differ from what qui apps were written against:
+//
+//   - elements without a UA rule — unknown tags and custom elements
+//     (<my-widget>) — are inline, as HTML specifies (apps' own tags are
+//     blocks otherwise);
+//   - flex items get CSS's automatic minimum size (min-width/min-height:
+//     auto never lets them shrink below their content; see
+//     qui.Style.FlexAutoMinWidth).
+//
+// Off by default. Process-wide: a browser turns it on at startup.
+func SetWebCompat(on bool) { webCompat = on }
+
+// foldableTag reports whether an inline element of this tag may fold into
+// its parent's text run like a <span>: the phrasing tags, plus unknown /
+// custom elements once those are inline.
+func foldableTag(tag string) bool {
+	if textLikeInline[tag] {
+		return true
+	}
+	return webCompat && !blockTags[tag] && !inlineTags[tag] && !nonRenderedTags[tag]
 }
 
 // defaultDisplay returns the initial CSS display for a tag.
@@ -147,6 +195,9 @@ func defaultDisplay(tag string) string {
 		if tag == "img" || tag == "input" || tag == "button" || tag == "select" || tag == "textarea" || tag == "canvas" {
 			return "inline-block"
 		}
+		return "inline"
+	}
+	if webCompat && !blockTags[tag] {
 		return "inline"
 	}
 	return "block"
@@ -201,8 +252,14 @@ func uaDeclarations(tag string) []Declaration {
 	case "caption":
 		// Table caption: centered with a little breathing room (browser UA).
 		return decls("text-align", "center", "padding", "6px 0")
-	case "em", "i":
+	case "em", "i", "cite", "dfn", "var":
 		return decls("font-style", "italic")
+	case "kbd", "samp", "tt":
+		return decls("font-family", "monospace")
+	case "big":
+		return decls("font-size", "1.2em")
+	case "nobr":
+		return decls("white-space", "nowrap")
 	case "small":
 		return decls("font-size", "0.8333em") // Chrome's `smaller`: 1/1.2
 	case "a":

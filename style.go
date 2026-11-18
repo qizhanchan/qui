@@ -104,6 +104,17 @@ type Style struct {
 	MarginTopAuto    bool
 	MarginBottomAuto bool
 
+	// FlexAutoMin gives the widget CSS's automatic minimum size as a flex
+	// item (`min-width/min-height: auto`, CSS Flexbox § 4.5): when no
+	// minimum is set on the main axis, the item never shrinks below its
+	// content (min-content width in a row, content height in a column).
+	// Off, a flex item may shrink to zero — the long-standing qui default
+	// that apps' layouts rely on; htmlcss's web-compat mode turns it on.
+	// One flag per axis: `min-height: 0` opts a column item out while its
+	// width keeps the automatic minimum.
+	FlexAutoMinWidth  bool
+	FlexAutoMinHeight bool
+
 	// Min*Pct/Max*Pct express min/max sizes as a FRACTION (0–1] of the
 	// containing block on that axis (CSS `max-width: 100%`). Like
 	// Width/HeightPct they resolve at layout time in the engine that knows
@@ -354,6 +365,7 @@ func styleLayoutEqual(a, b Style) bool {
 		a.MarginRightAuto == b.MarginRightAuto &&
 		a.MarginTopAuto == b.MarginTopAuto &&
 		a.MarginBottomAuto == b.MarginBottomAuto &&
+		a.FlexAutoMinWidth == b.FlexAutoMinWidth && a.FlexAutoMinHeight == b.FlexAutoMinHeight &&
 		a.MinWidthPct == b.MinWidthPct && a.MinHeightPct == b.MinHeightPct &&
 		a.MaxWidthPct == b.MaxWidthPct && a.MaxHeightPct == b.MaxHeightPct &&
 		a.Grow == b.Grow && a.Shrink == b.Shrink && a.Basis == b.Basis &&

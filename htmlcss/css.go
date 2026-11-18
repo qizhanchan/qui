@@ -116,6 +116,10 @@ type Selector struct {
 type Rule struct {
 	Selectors    []Selector
 	Declarations []Declaration
+	// Layer is the rule's cascade layer: 0 unlayered, else the layer's
+	// rank (1 = first declared). Unlayered rules beat every layer; a later
+	// layer beats an earlier one — before specificity is compared.
+	Layer int
 }
 
 // selectorState is the interactive state passed into matching so state
@@ -174,6 +178,9 @@ type stateSel struct {
 // used as the final cascade tie-breaker).
 type Stylesheet struct {
 	Rules []Rule
+	// FontFaces holds each @font-face rule's descriptors (font-family,
+	// src, font-weight, font-style, unicode-range, …) for the host to load.
+	FontFaces [][]Declaration
 	// idx buckets Rules by their selectors' subject (see ruleIndex);
 	// built lazily, rebuilt when Rules changes.
 	idxMu sync.Mutex
@@ -269,8 +276,42 @@ func ParseCSSViewport(src string, viewportW float32) *Stylesheet {
 	if viewportW <= 0 {
 		viewportW = defaultViewportWidth
 	}
-	src = stripComments(src)
 	sheet := &Stylesheet{}
+	ctx := &cssParseCtx{viewportW: viewportW, layers: map[string]int{}}
+	ctx.parseBlock(stripComments(src), sheet, 0, nil)
+	return sheet
+}
+
+// cssParseCtx carries what a stylesheet parse shares across nested
+// blocks: the viewport @media / @container evaluate against, and the
+// cascade layers in order of first appearance.
+type cssParseCtx struct {
+	viewportW float32
+	layers    map[string]int
+	anonLayer int
+}
+
+// layerRank returns the rank of the named layer (1-based, by first
+// appearance; anonymous layers each get a fresh rank).
+func (c *cssParseCtx) layerRank(name string) int {
+	if name == "" {
+		c.anonLayer++
+		name = "\x00anon" + strconv.Itoa(c.anonLayer)
+	}
+	if r, ok := c.layers[name]; ok {
+		return r
+	}
+	r := len(c.layers) + 1
+	c.layers[name] = r
+	return r
+}
+
+// parseBlock parses a list of rules (a stylesheet, or the body of a
+// conditional group rule). layer is the cascade layer the rules belong to
+// (0 = unlayered). parents, when set, are the selectors of the style rule
+// this block is nested in (CSS Nesting: a conditional rule inside a style
+// rule).
+func (c *cssParseCtx) parseBlock(src string, sheet *Stylesheet, layer int, parents []string) {
 	p := &cssParser{src: src}
 	for !p.eof() {
 		p.skipSpaces()
@@ -284,6 +325,15 @@ func ParseCSSViewport(src string, viewportW float32) *Stylesheet {
 			rest := p.src[p.pos:]
 			if semi := strings.IndexByte(rest, ';'); semi >= 0 {
 				if brace := strings.IndexByte(rest, '{'); brace < 0 || semi < brace {
+					stmt := strings.TrimSpace(rest[:semi])
+					if names, ok := strings.CutPrefix(stmt, "@layer"); ok {
+						// `@layer a, b;` fixes the layers' order.
+						for _, n := range strings.Split(names, ",") {
+							if n = strings.TrimSpace(n); n != "" {
+								c.layerRank(n)
+							}
+						}
+					}
 					p.pos += semi + 1
 					continue
 				}
@@ -294,75 +344,185 @@ func ParseCSSViewport(src string, viewportW float32) *Stylesheet {
 			break
 		}
 		p.pos++ // consume '{'
-		if strings.HasPrefix(selText, "@media") {
-			block := p.readBalancedBlock() // inner rules, braces balanced
-			cond := strings.TrimSpace(strings.TrimPrefix(selText, "@media"))
-			if mediaMatches(cond, viewportW) {
-				inner := ParseCSSViewport(block, viewportW)
-				sheet.Rules = append(sheet.Rules, inner.Rules...)
-				sheet.HasHover = sheet.HasHover || inner.HasHover
-				sheet.HasFocus = sheet.HasFocus || inner.HasFocus
-				sheet.HasFocusVisible = sheet.HasFocusVisible || inner.HasFocusVisible
-				sheet.HasFocusWithin = sheet.HasFocusWithin || inner.HasFocusWithin
-				sheet.HasActive = sheet.HasActive || inner.HasActive
-				sheet.HasAncestorHover = sheet.HasAncestorHover || inner.HasAncestorHover
-				sheet.HasAncestorFocus = sheet.HasAncestorFocus || inner.HasAncestorFocus
-				sheet.HasAncestorActive = sheet.HasAncestorActive || inner.HasAncestorActive
-				sheet.HasHas = sheet.HasHas || inner.HasHas
-				sheet.HasSiblingCombinator = sheet.HasSiblingCombinator || inner.HasSiblingCombinator
-				sheet.HasStructural = sheet.HasStructural || inner.HasStructural
-				sheet.structKeys.merge(inner.structKeys)
-				sheet.stateSels = append(sheet.stateSels, inner.stateSels...)
-				sheet.hasSiblingStateSel = sheet.hasSiblingStateSel || inner.hasSiblingStateSel
-			}
-			continue
-		}
 		if strings.HasPrefix(selText, "@") {
-			// Other block at-rules (@keyframes, @supports, @font-face)
-			// are skipped whole; their blocks may nest, so a plain
-			// readUntil('}') would stop at the first inner rule's end.
-			p.readBalancedBlock()
+			block := p.readBalancedBlock() // inner rules, braces balanced
+			c.atRule(selText, block, sheet, layer, parents)
 			continue
 		}
-		body := p.readUntil('}')
-		if !p.eof() {
-			p.pos++ // consume '}'
+		body := p.readBalancedBlock()
+		if selText == "" {
+			continue
 		}
-		if selText == "" || strings.HasPrefix(selText, "@") {
-			continue // skip other at-rules and empties
+		c.styleRule(selText, body, sheet, layer, parents)
+	}
+}
+
+// atRule handles a block at-rule: conditional group rules recurse when
+// their condition holds, @layer opens a cascade layer, @font-face is
+// collected, the rest is skipped.
+func (c *cssParseCtx) atRule(prelude, block string, sheet *Stylesheet, layer int, parents []string) {
+	name := prelude
+	cond := ""
+	if i := strings.IndexAny(prelude, " \t\n("); i > 0 {
+		name, cond = prelude[:i], strings.TrimSpace(prelude[i:])
+	}
+	switch strings.ToLower(name) {
+	case "@media":
+		if mediaMatches(cond, c.viewportW) {
+			c.nestedGroup(block, sheet, layer, parents)
 		}
-		rule := Rule{
-			Selectors:    parseSelectorList(selText),
-			Declarations: parseDeclarations(body),
+	case "@supports":
+		if supportsMatches(cond) {
+			c.nestedGroup(block, sheet, layer, parents)
 		}
-		if len(rule.Selectors) > 0 && len(rule.Declarations) > 0 {
-			sheet.Rules = append(sheet.Rules, rule)
-			for _, sel := range rule.Selectors {
-				sheet.HasHas = sheet.HasHas || sel.hasPseudo(pseudoHas)
-				sib := sel.hasSiblingCombinator()
-				sheet.HasSiblingCombinator = sheet.HasSiblingCombinator || sib
-				if sib || sel.hasStructuralPseudo() {
-					sheet.HasStructural = true
-					sel.addStructKeys(&sheet.structKeys)
-				}
-				h, f, a := sel.stateGates()
-				sheet.HasHover = sheet.HasHover || h
-				sheet.HasFocus = sheet.HasFocus || f
-				sheet.HasFocusVisible = sheet.HasFocusVisible || sel.usesFocusVisible()
-				sheet.HasFocusWithin = sheet.HasFocusWithin || sel.usesFocusWithin()
-				sheet.HasActive = sheet.HasActive || a
-				nh, nf, na, viaSibling := sel.nonSubjectStateGates()
-				if nh || nf || na {
-					sheet.HasAncestorHover = sheet.HasAncestorHover || nh
-					sheet.HasAncestorFocus = sheet.HasAncestorFocus || nf
-					sheet.HasAncestorActive = sheet.HasAncestorActive || na
-					sheet.stateSels = append(sheet.stateSels, stateSel{sel: sel, h: nh, f: nf, a: na})
-					sheet.hasSiblingStateSel = sheet.hasSiblingStateSel || viaSibling
-				}
+	case "@container":
+		// Approximation: container queries are evaluated against the
+		// viewport (a container is never wider than it).
+		if containerMatches(cond, c.viewportW) {
+			c.nestedGroup(block, sheet, layer, parents)
+		}
+	case "@layer":
+		c.nestedGroup(block, sheet, c.layerRank(strings.TrimSpace(cond)), parents)
+	case "@scope", "@starting-style":
+		// Not modeled: @starting-style only matters for transitions.
+	case "@font-face":
+		sheet.FontFaces = append(sheet.FontFaces, parseDeclarations(block))
+	default:
+		// @keyframes, @page, @property, @counter-style, … are skipped.
+	}
+}
+
+// nestedGroup parses a conditional group's body: rules at top level, or —
+// inside a style rule — declarations for the parent selectors plus more
+// nested rules.
+func (c *cssParseCtx) nestedGroup(block string, sheet *Stylesheet, layer int, parents []string) {
+	if parents == nil {
+		c.parseBlock(block, sheet, layer, nil)
+		return
+	}
+	c.styleRule(strings.Join(parents, ", "), block, sheet, layer, nil)
+}
+
+// styleRule adds a style rule; its body may hold nested rules (CSS
+// Nesting), which are expanded against selText.
+func (c *cssParseCtx) styleRule(selText, body string, sheet *Stylesheet, layer int, parents []string) {
+	if parents != nil {
+		selText = strings.Join(nestSelectors(parents, splitTopLevel(selText, ',')), ", ")
+	}
+	decls, nested := splitNestedBody(body)
+	rule := Rule{
+		Selectors:    parseSelectorList(selText),
+		Declarations: parseDeclarations(decls),
+		Layer:        layer,
+	}
+	if len(rule.Selectors) > 0 && len(rule.Declarations) > 0 {
+		sheet.addRule(rule)
+	}
+	if nested != "" {
+		own := []string{}
+		for _, g := range splitTopLevel(selText, ',') {
+			if g = strings.TrimSpace(g); g != "" {
+				own = append(own, g)
+			}
+		}
+		c.parseBlock(nested, sheet, layer, own)
+	}
+}
+
+// nestSelectors expands nested selectors against their parents: `&` is
+// replaced by the parent, and a selector without `&` is a descendant of it
+// (a leading combinator relates it to the parent).
+func nestSelectors(parents, nested []string) []string {
+	var out []string
+	for _, n := range nested {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			continue
+		}
+		for _, p := range parents {
+			switch {
+			case strings.Contains(n, "&"):
+				out = append(out, strings.ReplaceAll(n, "&", p))
+			default:
+				out = append(out, p+" "+n)
 			}
 		}
 	}
-	return sheet
+	return out
+}
+
+// splitNestedBody separates a style rule's declarations from the rules
+// nested in it (CSS Nesting). A chunk that opens a '{' before its ';' is
+// a nested rule (or a nested conditional at-rule).
+func splitNestedBody(body string) (decls, nested string) {
+	if strings.IndexByte(body, '{') < 0 {
+		return body, ""
+	}
+	var d, n strings.Builder
+	p := &cssParser{src: body}
+	for !p.eof() {
+		start := p.pos
+		// Scan to the first top-level ';' or '{'.
+		depth := 0
+		for !p.eof() {
+			if p.skipString() {
+				continue
+			}
+			ch := p.src[p.pos]
+			if ch == '(' || ch == '[' {
+				depth++
+			} else if (ch == ')' || ch == ']') && depth > 0 {
+				depth--
+			} else if depth == 0 && (ch == ';' || ch == '{') {
+				break
+			}
+			p.pos++
+		}
+		if p.eof() {
+			d.WriteString(body[start:])
+			break
+		}
+		if p.src[p.pos] == ';' {
+			p.pos++
+			d.WriteString(body[start:p.pos])
+			continue
+		}
+		p.pos++ // '{'
+		inner := p.readBalancedBlock()
+		n.WriteString(body[start : p.pos-len(inner)-1])
+		n.WriteString(inner)
+		n.WriteString("}\n")
+	}
+	return d.String(), n.String()
+}
+
+// addRule appends a parsed style rule and records what it needs from the
+// matcher (state pseudo-classes, structural selectors, :has).
+func (sheet *Stylesheet) addRule(rule Rule) {
+	sheet.Rules = append(sheet.Rules, rule)
+	for _, sel := range rule.Selectors {
+		sheet.HasHas = sheet.HasHas || sel.hasPseudo(pseudoHas)
+		sib := sel.hasSiblingCombinator()
+		sheet.HasSiblingCombinator = sheet.HasSiblingCombinator || sib
+		if sib || sel.hasStructuralPseudo() {
+			sheet.HasStructural = true
+			sel.addStructKeys(&sheet.structKeys)
+		}
+		h, f, a := sel.stateGates()
+		sheet.HasHover = sheet.HasHover || h
+		sheet.HasFocus = sheet.HasFocus || f
+		sheet.HasFocusVisible = sheet.HasFocusVisible || sel.usesFocusVisible()
+		sheet.HasFocusWithin = sheet.HasFocusWithin || sel.usesFocusWithin()
+		sheet.HasActive = sheet.HasActive || a
+		nh, nf, na, viaSibling := sel.nonSubjectStateGates()
+		if nh || nf || na {
+			sheet.HasAncestorHover = sheet.HasAncestorHover || nh
+			sheet.HasAncestorFocus = sheet.HasAncestorFocus || nf
+			sheet.HasAncestorActive = sheet.HasAncestorActive || na
+			sheet.stateSels = append(sheet.stateSels, stateSel{sel: sel, h: nh, f: nf, a: na})
+			sheet.hasSiblingStateSel = sheet.hasSiblingStateSel || viaSibling
+		}
+	}
 }
 
 // hasPseudo reports whether any compound (including the argument of :not)
@@ -542,73 +702,6 @@ func (p *cssParser) readBalancedBlock() string {
 		p.pos++
 	}
 	return p.src[start:p.pos]
-}
-
-// mediaMatches evaluates a media query list against viewportW: it matches
-// when any comma-separated query does. Each query may start with `only`
-// (ignored, as browsers do) or `not` (negates the whole query).
-func mediaMatches(cond string, viewportW float32) bool {
-	cond = strings.ToLower(strings.TrimSpace(cond))
-	if cond == "" {
-		return true
-	}
-	for _, q := range splitTopLevel(cond, ',') {
-		q = strings.TrimSpace(q)
-		negate := false
-		if rest, ok := strings.CutPrefix(q, "not "); ok {
-			negate, q = true, strings.TrimSpace(rest)
-		} else if rest, ok := strings.CutPrefix(q, "only "); ok {
-			q = strings.TrimSpace(rest)
-		}
-		if mediaQueryMatches(q, viewportW) != negate {
-			return true
-		}
-	}
-	return false
-}
-
-// mediaQueryMatches evaluates one media query. Supports `screen`/`all`
-// (match), `print` (no), and `(min-width: N)` / `(max-width: N)` joined by
-// `and`. Unknown features fail the term (conservative).
-func mediaQueryMatches(cond string, viewportW float32) bool {
-	if cond == "" {
-		return true
-	}
-	for _, term := range strings.Split(cond, " and ") {
-		term = strings.TrimSpace(term)
-		switch term {
-		case "screen", "all", "":
-			continue
-		case "print":
-			return false
-		}
-		if !strings.HasPrefix(term, "(") || !strings.HasSuffix(term, ")") {
-			return false
-		}
-		inner := term[1 : len(term)-1]
-		colon := strings.IndexByte(inner, ':')
-		if colon < 0 {
-			return false
-		}
-		feature := strings.TrimSpace(inner[:colon])
-		val, ok := parseLength(strings.TrimSpace(inner[colon+1:]), 16, 0)
-		if !ok {
-			return false
-		}
-		switch feature {
-		case "min-width":
-			if viewportW < val {
-				return false
-			}
-		case "max-width":
-			if viewportW > val {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 // parseRelativeSelectorList parses :has()'s argument: comma-separated

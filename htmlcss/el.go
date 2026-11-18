@@ -2435,6 +2435,38 @@ func (e *El) isStyleRoot() bool {
 
 // --- styling ---
 
+// isDetailsSummary reports whether e is the summary of a <details>: its
+// first <summary> child, the one that toggles it.
+func (e *El) isDetailsSummary() bool {
+	if e.tag != "summary" || e.elParent == nil || e.elParent.tag != "details" || e.node == nil {
+		return false
+	}
+	return firstSummary(e.elParent.node) == e.node
+}
+
+// viewportPropagated applies CSS overflow propagation for a browser
+// document (Options.DocumentRoot): the overflow of <html> — or of <body>
+// when html's is visible — belongs to the viewport, not to the element, so
+// neither becomes a scroll container or clips its content (the page itself
+// scrolls). Returns cs unchanged elsewhere.
+func (e *El) viewportPropagated(cs *ComputedStyle) *ComputedStyle {
+	if e.engine == nil || !e.engine.opts.DocumentRoot || (e.tag != "html" && e.tag != "body") {
+		return cs
+	}
+	if !cs.OverflowScroll && !cs.OverflowClip {
+		return cs
+	}
+	if e.tag == "body" {
+		if p := e.elParent; p != nil && p.lastCS != nil && p.lastCS.OverflowScroll {
+			return cs // html took the viewport's overflow; body keeps its own
+		}
+	}
+	c := *cs
+	c.OverflowScroll, c.OverflowScrollX, c.OverflowScrollXY = false, false, false
+	c.OverflowClip, c.OverflowClipX, c.OverflowClipY = false, false, false
+	return &c
+}
+
 // applyComputed pushes a freshly-computed style onto this element, reusing
 // the one-shot builder's appliers. Called top-down by StyleEngine.restyle.
 func (e *El) applyComputed(cs *ComputedStyle) {
@@ -2442,6 +2474,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	if cs == nil {
 		return
 	}
+	cs = e.viewportPropagated(cs)
 	defer e.runStyleHooks(cs)
 
 	// Resolve data-i18n / data-i18n-placeholder / … before any branch
@@ -3103,7 +3136,7 @@ func (e *El) buildFlow(cs *ComputedStyle) []qui.Widget {
 	}
 	hasFoldCandidate := e.text != ""
 	for _, k := range e.elementKids {
-		if ke, ok := k.(*El); ok && (ke.isTextSeg() || textLikeInline[ke.tag]) {
+		if ke, ok := k.(*El); ok && (ke.isTextSeg() || foldableTag(ke.tag)) {
 			hasFoldCandidate = true
 			break
 		}
@@ -3294,7 +3327,7 @@ func foldableInline(c *El, cs *ComputedStyle) bool {
 	if c.isTextSeg() {
 		return true // anonymous text always folds
 	}
-	if !textLikeInline[c.tag] || c.isControl() || c.iconSrc != nil {
+	if !foldableTag(c.tag) || c.isControl() || c.iconSrc != nil {
 		return false
 	}
 	// A <label for=…> stays a real widget so its click can focus/toggle the
@@ -5048,6 +5081,15 @@ func (e *El) Click() bool {
 // thus the swatch's value prop — changed).
 func (e *El) runBuiltinClick() bool {
 	switch {
+	case e.isDetailsSummary():
+		// <summary> toggles its <details> (HTML § 4.11.1).
+		d := e.elParent
+		if _, open := d.attrs["open"]; open {
+			d.RemoveAttr("open")
+		} else {
+			d.SetAttr("open", "")
+		}
+		return true
 	case e.isColorInput():
 		e.openColorPopup()
 		return true

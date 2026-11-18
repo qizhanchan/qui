@@ -181,6 +181,8 @@ func (e *El) hasActivation(me qui.MouseEvent) bool {
 		return true
 	case e.tag == "a" && e.attrs["href"] != "":
 		return true
+	case e.isDetailsSummary():
+		return true
 	}
 	for _, ib := range e.inlinePool {
 		if href, _, ok := ib.LinkSourceAt(qui.Point{X: me.X, Y: me.Y}); ok && href != "" {

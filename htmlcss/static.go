@@ -31,7 +31,8 @@ func (eng *StyleEngine) buildStaticEl(n *Node, styles map[*Node]*ComputedStyle) 
 	// <col>, whose UA display is none but whose width hints buildTable reads
 	// off the DOM node mirror (they build as childless, non-rendering Els so
 	// their nodes land in the table's node.Children).
-	if cs := styles[n]; cs != nil && cs.Display == "none" && n.Tag != "colgroup" && n.Tag != "col" {
+	if cs := styles[n]; cs != nil && cs.Display == "none" && n.Tag != "colgroup" && n.Tag != "col" &&
+		!hiddenByClosedDetails(n) { // a closed <details>' content is built: opening it shows it
 		return nil
 	}
 

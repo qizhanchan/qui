@@ -349,6 +349,7 @@ type matchedDecl struct {
 	a, b, c int // specificity
 	order   int // source order
 	tier    int // 0 UA, 1 author, 2 inline; !important bumps within tier
+	layer   int // author cascade layer rank (Rule.Layer; 0 = unlayered)
 }
 
 func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedStyle {
@@ -455,7 +456,7 @@ func pseudoStyle(n *Node, sheet *Stylesheet, which string, parent *ComputedStyle
 		}
 		if best >= 0 {
 			for _, d := range rule.Declarations {
-				decls = append(decls, matchedDecl{decl: d, a: ba, b: bb, c: bc, order: order, tier: 1})
+				decls = append(decls, matchedDecl{decl: d, a: ba, b: bb, c: bc, order: order, tier: 1, layer: rule.Layer})
 				order++
 			}
 		}
@@ -565,6 +566,10 @@ func mergedDecls(n *Node, sheet *Stylesheet, st selectorState) map[string]string
 	}
 	// Still tier 0: framework component defaults (RegisterFrameworkCSS).
 	decls = append(decls, frameworkDecls(n, st)...)
+	// A closed <details> shows only its summary (HTML § 15.5.4).
+	if hiddenByClosedDetails(n) {
+		decls = append(decls, matchedDecl{decl: Declaration{Property: "display", Value: "none"}, tier: 0})
+	}
 	// Presentational hints (legacy HTML attributes) follow the UA sheet.
 	for _, d := range presentationalHints(n) {
 		decls = append(decls, matchedDecl{decl: d, tier: 0})
@@ -625,8 +630,15 @@ func cascadeKey(m matchedDecl) int {
 	if m.decl.Important {
 		tier += 10 // important beats any normal tier
 	}
-	spec := m.a*10000 + m.b*100 + m.c
-	return tier*1_000_000 + spec*10 // order handled by stable sort
+	// Cascade layers (CSS Cascade 5): unlayered author rules beat every
+	// layer, a later layer an earlier one — before specificity. (For
+	// !important the order flips; that refinement is not modeled.)
+	layer := 1023
+	if m.layer > 0 && m.layer < 1023 {
+		layer = m.layer
+	}
+	spec := min(m.a, 99)*10000 + min(m.b, 99)*100 + min(m.c, 99)
+	return tier*1_000_000_000 + layer*1_000_000 + spec // order handled by stable sort
 }
 
 // interpret turns the merged declaration map into a ComputedStyle,
@@ -1779,10 +1791,36 @@ func firstFontFamily(v string) string {
 			return name
 		}
 		if isGenericFontFamily(name) {
+			if mapped := genericFontFamilies[strings.ToLower(name)]; mapped != "" && qui.FontFamilyRegistered(mapped) {
+				return mapped
+			}
 			break
 		}
 	}
 	return first
+}
+
+// hiddenByClosedDetails reports whether n is content of a closed
+// <details> other than its summary.
+func hiddenByClosedDetails(n *Node) bool {
+	p := siblingParent(n)
+	if p == nil || p.Tag != "details" || n.Type != ElementNode {
+		return false
+	}
+	if _, open := p.Attr("open"); open {
+		return false
+	}
+	return firstSummary(p) != n
+}
+
+// firstSummary is a <details>' first <summary> child.
+func firstSummary(details *Node) *Node {
+	for _, c := range details.Children {
+		if c.Type == ElementNode && c.Tag == "summary" {
+			return c
+		}
+	}
+	return nil
 }
 
 // isInlineLevelDisplay reports display values that are inline-level
@@ -1793,6 +1831,22 @@ func isInlineLevelDisplay(d string) bool {
 		return true
 	}
 	return false
+}
+
+// genericFontFamilies maps CSS generic families to concrete ones (see
+// SetGenericFontFamilies). Empty by default: a generic means the default
+// face.
+var genericFontFamilies = map[string]string{}
+
+// SetGenericFontFamilies maps CSS generic family keywords (serif,
+// sans-serif, monospace, system-ui, cursive, fantasy, …) to installed or
+// registered families — a browser's font settings ("Standard font:
+// Times"). A generic left unmapped renders with the default face.
+func SetGenericFontFamilies(m map[string]string) {
+	genericFontFamilies = map[string]string{}
+	for k, v := range m {
+		genericFontFamilies[strings.ToLower(k)] = v
+	}
 }
 
 // isGenericFontFamily reports CSS generic family keywords.

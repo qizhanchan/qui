@@ -148,3 +148,20 @@ func (l GridLayout) MaxContentWidth(children []Widget) float32 {
 	}
 	return sum
 }
+
+// ShrinkToFit is CSS's shrink-to-fit width (CSS 2.1 § 10.3.5) of w in
+// availW: min(max(min-content, available), max-content) — what an
+// inline-block, a float or an absolutely positioned box of auto width
+// takes. Leaves that know their size are simply measured.
+func ShrinkToFit(w Widget, availW float32) float32 {
+	if _, ok := w.(layoutHost); !ok {
+		if _, ok := w.(MaxContentWidther); !ok {
+			return MeasureChild(w, Size{W: availW}).W
+		}
+	}
+	maxW := MaxContentWidth(w)
+	if availW <= 0 || maxW <= availW {
+		return maxW
+	}
+	return max(MinContentWidth(w), availW)
+}

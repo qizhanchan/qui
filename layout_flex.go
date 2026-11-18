@@ -273,6 +273,23 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 				}
 			}
 		}
+		// CSS automatic minimum size (min-*: auto): the content's size on
+		// the main axis, capped by a specified size there.
+		if s := ch.Style(); s != nil && minMain == 0 &&
+			(l.Direction == Horizontal && s.FlexAutoMinWidth || l.Direction == Vertical && s.FlexAutoMinHeight) {
+			p := widgetPreferredSize(ch)
+			if l.Direction == Horizontal {
+				minMain = ContentMinWidth(ch)
+				if p.W > 0 && p.W < minMain {
+					minMain = p.W
+				}
+			} else {
+				minMain = nat.H
+				if p.H > 0 && p.H < minMain {
+					minMain = p.H
+				}
+			}
+		}
 		if basis <= 0 {
 			if fx.Grow > 0 && !fx.BasisAuto {
 				basis = 0
@@ -910,6 +927,14 @@ func (fl FlexLayout) Measure(children []Widget, padded Size) Size {
 			crossSize = size.W
 			minMain = min.H
 			marginMain = margin.Vertical()
+		}
+		if s := child.Style(); s != nil && minMain == 0 &&
+			(fl.Direction == Horizontal && s.FlexAutoMinWidth || fl.Direction == Vertical && s.FlexAutoMinHeight) {
+			if fl.Direction == Vertical {
+				minMain = size.H - marginMain
+			} else {
+				minMain = ContentMinWidth(child)
+			}
 		}
 		if basis := widgetFlexItem(child).Basis; basis > 0 {
 			mainSize = basis + marginMain

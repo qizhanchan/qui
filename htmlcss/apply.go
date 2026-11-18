@@ -43,6 +43,13 @@ type Options struct {
 	Resources ResourceLoader
 }
 
+// minIsAuto reports a min-width / min-height value of `auto` (the
+// initial value, so also an absent one).
+func minIsAuto(v string) bool {
+	v = strings.TrimSpace(strings.ToLower(v))
+	return v == "" || v == "auto"
+}
+
 // textLikeInline are inline elements whose content folds into the parent
 // text run as styled spans (rather than becoming standalone widgets).
 var textLikeInline = map[string]bool{
@@ -50,6 +57,10 @@ var textLikeInline = map[string]bool{
 	"small": true, "code": true, "label": true, "u": true, "mark": true,
 	"abbr": true, "sub": true, "sup": true, "a": true, "br": true,
 	"s": true, "del": true, "strike": true, "ins": true,
+	"time": true, "cite": true, "q": true, "dfn": true, "kbd": true,
+	"samp": true, "var": true, "bdi": true, "bdo": true, "data": true,
+	"font": true, "big": true, "tt": true, "nobr": true, "acronym": true,
+	"output": true, "ruby": true, "rt": true, "rp": true,
 }
 
 // inlineVAlignOf maps an element's computed vertical-align to the engine's
@@ -476,6 +487,13 @@ func applyCommonStyle(st *qui.Style, cs *ComputedStyle) {
 	st.MarginRightAuto = cs.MarginRightAuto
 	st.MarginTopAuto = cs.MarginTopAuto
 	st.MarginBottomAuto = cs.MarginBottomAuto
+	// Web-compat: a flex item's min-width/min-height of `auto` is its
+	// content size (scroll containers' is 0).
+	st.FlexAutoMinWidth, st.FlexAutoMinHeight = false, false
+	if webCompat && !cs.OverflowScroll && !cs.OverflowClip {
+		st.FlexAutoMinWidth = minIsAuto(cs.raw["min-width"])
+		st.FlexAutoMinHeight = minIsAuto(cs.raw["min-height"])
+	}
 	if cs.MinWidth > 0 {
 		st.MinWidth = cs.MinWidth + extraH
 	}
