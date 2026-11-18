@@ -218,3 +218,49 @@ func TestStyleAttrRestyleScope(t *testing.T) {
 	}
 	_ = eng2
 }
+
+// Toggling only pointer-events (sites do it on every scroll to suppress
+// hover) retargets hit testing without re-applying any element, so the
+// subtree keeps its measurements and nothing repaints.
+func TestPointerEventsToggleSkipsApply(t *testing.T) {
+	eng, _, s1, _, p1, p2, _, _ := scopedFixture(t, `p { color: #333 }`)
+	before := eng.applied
+	s1.SetAttr("style", "pointer-events: none;")
+	if n := eng.applied - before; n != 0 {
+		t.Fatalf("pointer-events toggle re-applied %d elements, want 0", n)
+	}
+	for _, e := range []*El{s1, p1, p2} {
+		if !e.PointerTransparent() || !e.lastCS.PointerNone {
+			t.Fatalf("%s not pointer-transparent after pointer-events:none", e.tag)
+		}
+	}
+	s1.SetAttr("style", "")
+	if n := eng.applied - before; n != 0 {
+		t.Fatalf("pointer-events reset re-applied %d elements, want 0", n)
+	}
+	if p1.PointerTransparent() || p1.lastCS.PointerNone {
+		t.Fatal("p1 still pointer-transparent after pointer-events reset")
+	}
+	// A visual change in the same attribute still applies.
+	s1.SetAttr("style", "pointer-events: none; color: #f00")
+	if eng.applied == before {
+		t.Fatal("a color change alongside pointer-events was not applied")
+	}
+}
+
+// A pointer-events toggle reaches inheriting descendants without
+// recomputing their cascade, and stops at a descendant that declares its
+// own value.
+func TestPointerEventsToggleSkipsDescendantCascade(t *testing.T) {
+	eng, _, s1, _, p1, p2, _, _ := scopedFixture(t, `p { color: #333 } .own { pointer-events: auto }`)
+	p2.SetClass("own")
+	s1.SetAttr("style", "pointer-events: none;")
+	if !p1.PointerTransparent() || p2.PointerTransparent() {
+		t.Fatalf("p1 transparent=%v (want true), p2 with own auto transparent=%v (want false)",
+			p1.PointerTransparent(), p2.PointerTransparent())
+	}
+	if p1.lastCS.Color != p2.lastCS.Color {
+		t.Fatal("descendant style lost its cascade values")
+	}
+	_ = eng
+}

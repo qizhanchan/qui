@@ -858,21 +858,17 @@ func (r *WebGPURenderer) ScrollPixels(rect image.Rectangle, dx, dy int) bool {
 		return false
 	}
 	rr := rect.Sub(r.img.Rect.Min)
-	if r.shared != nil && r.frame != nil {
-		// Same contract as scrollImage: the rect must lie in the frame
-		// and the move must keep some of it, or nothing moved.
-		w, h := rr.Dx(), rr.Dy()
-		if !rr.In(image.Rect(0, 0, r.frame.Width(), r.frame.Height())) ||
-			dx <= -w || dx >= w || dy <= -h || dy >= h {
-			return false
+	if r.shared != nil {
+		// The shared frame IS img's memory: move the pixels with the CPU,
+		// under the same lock Begin takes for painting. A GPU copy needs a
+		// full-frame scratch texture (a texture cannot be copied onto
+		// itself) and a WaitIdle stall on every scroll step.
+		if !r.locked {
+			r.dev.WaitIdle() // the GPU may still be sampling the last frame
+			r.shared.lock()
+			r.locked = true
 		}
-		r.unlock()
-		enc := r.dev.CreateCommandEncoder()
-		moved := r.encodeMove(enc, rr, image.Pt(dx, dy))
-		r.dev.Submit(r.finish(enc))
-		r.afterSubmit()
-		r.dev.WaitIdle()
-		return moved
+		return scrollImage(r.img, rect, dx, dy)
 	}
 	if !scrollImage(r.img, rect, dx, dy) {
 		return false

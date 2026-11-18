@@ -288,8 +288,24 @@ func (f BlurImageFilter) ApplyImage(src *image.RGBA) *image.RGBA {
 	}
 	r := int(f.Radius + 0.5)
 	b := src.Bounds()
+	// A wide blur loses nothing to running at reduced resolution: average
+	// k×k blocks, blur with r/k, and upsample bilinearly. A 16px CSS
+	// backdrop blur at 2× (a sticky header's frosted glass, repainted on
+	// every scroll step) costs a sixteenth of the full-resolution passes.
+	if k := blurDownsample(r); k > 1 && b.Dx() >= 2*k && b.Dy() >= 2*k {
+		small := downsampleRGBA(src, k)
+		blurred := BlurImageFilter{Radius: float32(r) / float32(k)}.ApplyImage(small)
+		out := upsampleRGBA(blurred, b, k)
+		if blurred != small {
+			PutRGBA(blurred)
+		}
+		PutRGBA(small)
+		return out
+	}
 	// Ping-pong between two scratch images; src itself is never written.
-	a, c := image.NewRGBA(b), image.NewRGBA(b)
+	// Both are fully written by the first passes; a is scratch only.
+	a, c := GetRGBA(b, false), GetRGBA(b, false)
+	defer PutRGBA(a)
 	boxBlurPass(src, a, r, true)
 	boxBlurPass(a, c, r, false)
 	for pass := 1; pass < 3; pass++ {
@@ -420,4 +436,84 @@ func Clamp255(v float32) uint8 {
 		return 255
 	}
 	return uint8(v)
+}
+
+// blurDownsample is the reduction factor for a box-blur radius r.
+func blurDownsample(r int) int {
+	switch {
+	case r >= 16:
+		return 4
+	case r >= 6:
+		return 2
+	}
+	return 1
+}
+
+// downsampleRGBA averages k×k blocks of src (premultiplied, so a plain
+// mean is correct); a partial block at the right / bottom edge averages
+// the pixels it has. The result's origin is (0, 0).
+func downsampleRGBA(src *image.RGBA, k int) *image.RGBA {
+	b := src.Bounds()
+	w, h := (b.Dx()+k-1)/k, (b.Dy()+k-1)/k
+	dst := GetRGBA(image.Rect(0, 0, w, h), false) // every pixel written
+	for y := 0; y < h; y++ {
+		y0, y1 := b.Min.Y+y*k, min(b.Min.Y+(y+1)*k, b.Max.Y)
+		for x := 0; x < w; x++ {
+			x0, x1 := b.Min.X+x*k, min(b.Min.X+(x+1)*k, b.Max.X)
+			var sum [4]int
+			for sy := y0; sy < y1; sy++ {
+				i := src.PixOffset(x0, sy)
+				for sx := x0; sx < x1; sx++ {
+					sum[0] += int(src.Pix[i])
+					sum[1] += int(src.Pix[i+1])
+					sum[2] += int(src.Pix[i+2])
+					sum[3] += int(src.Pix[i+3])
+					i += 4
+				}
+			}
+			n := (y1 - y0) * (x1 - x0)
+			o := dst.PixOffset(x, y)
+			for ch := 0; ch < 4; ch++ {
+				dst.Pix[o+ch] = uint8((sum[ch] + n/2) / n)
+			}
+		}
+	}
+	return dst
+}
+
+// upsampleRGBA scales small (origin 0,0, one pixel per k×k block of the
+// target) back up to bounds with bilinear filtering between block centers,
+// clamping at the edges.
+func upsampleRGBA(small *image.RGBA, bounds image.Rectangle, k int) *image.RGBA {
+	dst := GetRGBA(bounds, false) // every pixel written
+	sw, sh := small.Bounds().Dx(), small.Bounds().Dy()
+	inv := 1 / float32(k)
+	for y := 0; y < bounds.Dy(); y++ {
+		fy := (float32(y)+0.5)*inv - 0.5
+		y0 := int(fy)
+		if fy < 0 {
+			y0 = -1
+		}
+		ty := fy - float32(y0)
+		ya, yb := clampInt(y0, 0, sh-1), clampInt(y0+1, 0, sh-1)
+		o := dst.PixOffset(bounds.Min.X, bounds.Min.Y+y)
+		for x := 0; x < bounds.Dx(); x++ {
+			fx := (float32(x)+0.5)*inv - 0.5
+			x0 := int(fx)
+			if fx < 0 {
+				x0 = -1
+			}
+			tx := fx - float32(x0)
+			xa, xb := clampInt(x0, 0, sw-1), clampInt(x0+1, 0, sw-1)
+			p00, p01 := small.PixOffset(xa, ya), small.PixOffset(xb, ya)
+			p10, p11 := small.PixOffset(xa, yb), small.PixOffset(xb, yb)
+			for ch := 0; ch < 4; ch++ {
+				top := float32(small.Pix[p00+ch])*(1-tx) + float32(small.Pix[p01+ch])*tx
+				bot := float32(small.Pix[p10+ch])*(1-tx) + float32(small.Pix[p11+ch])*tx
+				dst.Pix[o+ch] = uint8(top*(1-ty) + bot*ty + 0.5)
+			}
+			o += 4
+		}
+	}
+	return dst
 }

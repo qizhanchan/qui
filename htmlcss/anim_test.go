@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/qizhanchan/qui"
+	"github.com/qizhanchan/qui/widgets"
 )
 
 func TestTransitionOpacityAndEvents(t *testing.T) {
@@ -91,5 +94,38 @@ func TestParseEasingAndTime(t *testing.T) {
 	}
 	if v := parseEasing("steps(4, end)")(0.6); v != 0.5 {
 		t.Fatalf("steps = %v", v)
+	}
+}
+
+// A running animation reports its dirty rect in window space: inside a
+// scrolled view that is the element's on-screen place, not its content
+// coordinates (which would repaint the wrong band and leave it stale).
+func TestAnimatorDirtyRectInWindowSpace(t *testing.T) {
+	win, res := renderWeb(t, `<!doctype html><html><head><style>
+body { margin: 0 }
+#pad { height: 300px }
+#b { opacity: 1; transition: opacity 100ms linear; width: 50px; height: 40px; }
+#b.off { opacity: 0.2 }
+</style></head><body><div id=pad></div><div id=b></div><div style="height:600px"></div></body></html>`)
+	sv := widgets.NewScrollView()
+	sv.SetContentAuto(res.Root)
+	win.SetRoot(sv)
+	sv.Measure(qui.Size{W: 400, H: 300})
+	sv.Layout(qui.Rect{W: 400, H: 300})
+	sv.ScrollTo(200)
+	sv.Layout(qui.Rect{W: 400, H: 300})
+	b := res.ByID["b"].(*El)
+	b.SetClass("off")
+	res.Engine.FlushPendingStyles()
+	if b.anim == nil {
+		t.Fatal("no transition started")
+	}
+	dirty, _ := (&elAnimator{e: b}).Tick(b.anim.trans["opacity"].start.Add(50 * time.Millisecond))
+	want := qui.PaintBoundsInWindow(b)
+	if dirty != want {
+		t.Fatalf("animator dirty rect %+v, want window-space %+v", dirty, want)
+	}
+	if want.Y > 150 {
+		t.Fatalf("element should sit near y=100 on screen after scrolling 200px, at %+v", want)
 	}
 }

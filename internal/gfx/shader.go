@@ -98,6 +98,31 @@ type ConicGradient struct {
 	Center Point
 	Angle  float32
 	Stops  []GradientStop
+	// LUT, when set, is Stops sampled at ConicLUTSize even steps around
+	// the circle (see NewConicLUT). Painters that rebuild the gradient per
+	// frame keep one LUT per gradient so ColorAt skips the stop search.
+	LUT *ConicLUT
+}
+
+// ConicLUTSize is the angular resolution of a ConicLUT: about 0.35° per
+// entry, interpolated linearly, so even hard stops stay sharp to well
+// under a pixel at ordinary radii.
+const ConicLUTSize = 1024
+
+// ConicLUT is a conic gradient's stops sampled around the full circle;
+// entry ConicLUTSize repeats entry 0's position (t = 1).
+type ConicLUT [ConicLUTSize + 1]Color
+
+// NewConicLUT samples stops at ConicLUTSize+1 evenly spaced positions.
+func NewConicLUT(stops []GradientStop) *ConicLUT {
+	if len(stops) == 0 {
+		return nil
+	}
+	lut := new(ConicLUT)
+	for i := range lut {
+		lut[i] = sampleGradientStops(stops, float32(i)/ConicLUTSize)
+	}
+	return lut
 }
 
 // ColorAt samples the conic gradient at logical (x, y).
@@ -109,13 +134,26 @@ func (g ConicGradient) ColorAt(x, y float32) Color {
 		return g.Stops[0].Color
 	}
 	// Angle from center: 0 at 12 o'clock, increasing clockwise.
-	a := float32(math.Atan2(float64(x-g.Center.X), float64(g.Center.Y-y))) - g.Angle
+	a := atan2f(x-g.Center.X, g.Center.Y-y) - g.Angle
 	twoPi := float32(2 * math.Pi)
-	a = float32(math.Mod(float64(a), float64(twoPi)))
-	if a < 0 {
-		a += twoPi
+	// Atan2 is within ±π, so a few wraps normalize any start angle
+	// without math.Mod's float64 division.
+	if a < 0 || a >= twoPi {
+		a = float32(math.Mod(float64(a), float64(twoPi)))
+		if a < 0 {
+			a += twoPi
+		}
 	}
-	return sampleGradientStops(g.Stops, a/twoPi)
+	t := a / twoPi
+	if g.LUT != nil {
+		f := t * ConicLUTSize
+		i := int(f)
+		if i >= ConicLUTSize {
+			return g.LUT[ConicLUTSize]
+		}
+		return LerpColor(g.LUT[i], g.LUT[i+1], f-float32(i))
+	}
+	return sampleGradientStops(g.Stops, t)
 }
 
 // sampleGradientStops interpolates the color at parametric position t
@@ -234,4 +272,37 @@ func (s imageShader) ColorAt(x, y float32) Color {
 // ImageShader returns a Shader that samples img onto bounds with the given fit.
 func ImageShader(img image.Image, bounds Rect, fit ImageFit) Shader {
 	return imageShader{img: img, bounds: bounds, fit: fit}
+}
+
+// atan2f is math.Atan2 in float32 through a minimax polynomial for atan
+// on [0, 1] (max error about 1e-5 rad): a conic gradient evaluates it per
+// pixel, and the float64 library routine dominated large conic fills.
+func atan2f(y, x float32) float32 {
+	ax, ay := x, y
+	if ax < 0 {
+		ax = -ax
+	}
+	if ay < 0 {
+		ay = -ay
+	}
+	if ax == 0 && ay == 0 {
+		return 0
+	}
+	swap := ay > ax
+	z := ay / ax
+	if swap {
+		z = ax / ay
+	}
+	z2 := z * z
+	r := z * (0.99997726 + z2*(-0.33262347+z2*(0.19354346+z2*(-0.11643287+z2*(0.05265332+z2*(-0.01172120))))))
+	if swap {
+		r = math.Pi/2 - r
+	}
+	if x < 0 {
+		r = math.Pi - r
+	}
+	if y < 0 {
+		r = -r
+	}
+	return r
 }

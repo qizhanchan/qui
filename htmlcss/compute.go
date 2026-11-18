@@ -436,10 +436,16 @@ func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedSty
 	// variant without one whose author state rules all match exactly as at
 	// rest (`.x:hover` on a node that is not .x, an ancestor-state union
 	// with no ancestor-state rule matching) is a copy of base too.
+	// Unchanged variants share one read-only copy of the resting style:
+	// ComputedStyle is large and an element can carry up to seven variants.
+	var restCopy *ComputedStyle
 	variant := func(need, fw bool, st selectorState) *ComputedStyle {
 		if !need || !fw && !stateRulesDiffer(n, sheet, st, rest) {
-			cp := resting
-			return &cp
+			if restCopy == nil {
+				cp := resting
+				restCopy = &cp
+			}
+			return restCopy
 		}
 		return interpret(n, mergedDeclsRest(n, sheet, st, rest, false, parent), parent, sheet.FontFamilies)
 	}

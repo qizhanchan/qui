@@ -92,6 +92,7 @@ type gradientSpec struct {
 	conic            bool // conic-gradient (angleDeg = start angle)
 	centerX, centerY lenPct
 	hasCenter        bool
+	conicLUT         *qui.ConicLUT // built on first paint (UI thread)
 }
 
 // shaderFor builds a qui.LinearGradient whose endpoints span the box
@@ -116,7 +117,10 @@ func (g *gradientSpec) shaderFor(bounds qui.Rect) qui.Shader {
 			cx = bounds.X + g.centerX.resolve(bounds.W)
 			cy = bounds.Y + g.centerY.resolve(bounds.H)
 		}
-		return qui.ConicGradient{Center: qui.Point{X: cx, Y: cy}, Angle: g.angleDeg * float32(math.Pi) / 180, Stops: g.stops}
+		if g.conicLUT == nil {
+			g.conicLUT = qui.NewConicLUT(g.stops)
+		}
+		return qui.ConicGradient{Center: qui.Point{X: cx, Y: cy}, Angle: g.angleDeg * float32(math.Pi) / 180, Stops: g.stops, LUT: g.conicLUT}
 	}
 	rad := float64(g.angleDeg) * math.Pi / 180
 	// CSS: 0deg points up, clockwise-positive → dir = (sin, -cos).

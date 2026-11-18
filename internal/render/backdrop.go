@@ -40,7 +40,8 @@ func (b *CPUBackend) backdropFilter(region image.Rectangle, filter gfx.ImageFilt
 	if region.Empty() {
 		return
 	}
-	src := image.NewRGBA(region)
+	src := gfx.GetRGBA(region, false) // fully copied below
+	defer gfx.PutRGBA(src)
 	for y := region.Min.Y; y < region.Max.Y; y++ {
 		copy(src.Pix[src.PixOffset(region.Min.X, y):src.PixOffset(region.Max.X-1, y)+4],
 			img.Pix[img.PixOffset(region.Min.X, y):img.PixOffset(region.Max.X-1, y)+4])
@@ -48,6 +49,9 @@ func (b *CPUBackend) backdropFilter(region image.Rectangle, filter gfx.ImageFilt
 	out := filter.ApplyImage(src)
 	if out == nil {
 		return
+	}
+	if out != src {
+		defer gfx.PutRGBA(out)
 	}
 	for y := region.Min.Y; y < region.Max.Y; y++ {
 		for x := region.Min.X; x < region.Max.X; x++ {

@@ -619,7 +619,10 @@ func (a *elAnimator) Tick(now time.Time) (qui.Rect, bool) {
 	if done {
 		e.anim.registered = false
 	}
-	return qui.PaintBoundsOf(e), done
+	// The window wants the dirty rect in window space: inside a scrolled
+	// view the element's own bounds are content coordinates, and repainting
+	// there leaves the animated element stale on screen.
+	return qui.PaintBoundsInWindow(e), done
 }
 
 func (a *elAnimator) Stop() {}

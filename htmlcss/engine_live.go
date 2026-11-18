@@ -735,6 +735,9 @@ func (eng *StyleEngine) restyleAttrScope(e *El, parent *ComputedStyle) {
 	e.styledPass = eng.pass
 	e.styledIn = e.elParent
 	e.structRel = eng.structRelevant(e.node)
+	if eng.pointerEventsOnly(e, prev, cs) {
+		return
+	}
 	eng.applied++
 	e.applyComputed(cs)
 	if prev != nil && prev != cs && !reflect.DeepEqual(layoutView(prev), layoutView(cs)) {
@@ -829,6 +832,9 @@ func (eng *StyleEngine) restyleWalk(e *El, parent *ComputedStyle) {
 		}
 		return
 	}
+	if eng.pointerEventsOnly(e, prev, cs) {
+		return
+	}
 	eng.applied++
 	e.applyComputed(cs)
 	// applyComputed rebuilds widget state straight from cs, partly through
@@ -848,6 +854,105 @@ func (eng *StyleEngine) restyleWalk(e *El, parent *ComputedStyle) {
 	// Portal content declared under this element inherits from it.
 	for k := range e.styleKids {
 		eng.restyleWalk(k, cs)
+	}
+}
+
+// pointerEventsOnly handles a restyle whose only change is pointer-events
+// (sites disable hover while scrolling): it moves and paints nothing, so
+// hit testing is retargeted and the widgets are kept, instead of
+// rebuilding and repainting the subtree on every scroll step. Reports
+// whether it handled e (and walked its subtree). Elements with
+// pseudo-element rules qualify too: pointer-events cannot change what
+// ::before / ::after generate or how they paint.
+func (eng *StyleEngine) pointerEventsOnly(e *El, prev, cs *ComputedStyle) bool {
+	if !eng.scoped || prev == nil || prev == cs || e.onStyle != nil ||
+		e.canvasUser != nil ||
+		(prev.PointerNone == cs.PointerNone && prev.raw["pointer-events"] == cs.raw["pointer-events"]) ||
+		!onlyPointerEventsDiffer(prev, cs) {
+		return false
+	}
+	e.lastCS = cs
+	applyPointerEvents(e, cs)
+	if e.backing != nil {
+		applyPointerEvents(e.backing, cs)
+	}
+	if e.imgWidget != nil {
+		applyPointerEvents(e.imgWidget, cs)
+	}
+	for _, kid := range e.elementKids {
+		if ke, ok := kid.(*El); ok {
+			eng.inheritPointerEvents(ke, cs)
+		}
+	}
+	for k := range e.styleKids {
+		eng.restyleWalk(k, cs)
+	}
+	return true
+}
+
+// inheritPointerEvents updates a descendant of an element whose only change
+// was pointer-events. pointer-events is inherited and feeds no selector, so
+// the descendant's cascade is what it was with the inherited flag swapped:
+// no need to recompute the subtree's styles on every scroll-time toggle.
+// Elements that are dirty for other reasons, declare pointer-events
+// themselves or were never styled take the full walk.
+func (eng *StyleEngine) inheritPointerEvents(e *El, parent *ComputedStyle) {
+	prev := e.lastCS
+	if prev == nil || eng.mustApply[e] || e.isTextSeg() || len(e.styleKids) > 0 || e.onStyle != nil || e.canvasUser != nil {
+		eng.restyleWalk(e, parent)
+		return
+	}
+	if _, own := prev.raw["pointer-events"]; own || prev.PointerNone == parent.PointerNone {
+		// Its value, and so its whole subtree's, does not follow the
+		// change: nothing below here moves.
+		return
+	}
+	eng.styled++
+	e.styledPass = eng.pass
+	e.styledIn = e.elParent
+	cp := *prev
+	cp.PointerNone = parent.PointerNone
+	e.lastCS = &cp
+	applyPointerEvents(e, &cp)
+	if e.backing != nil {
+		applyPointerEvents(e.backing, &cp)
+	}
+	if e.imgWidget != nil {
+		applyPointerEvents(e.imgWidget, &cp)
+	}
+	for _, kid := range e.elementKids {
+		if ke, ok := kid.(*El); ok {
+			eng.inheritPointerEvents(ke, &cp)
+		}
+	}
+}
+
+// onlyPointerEventsDiffer reports whether a and b differ in nothing but
+// pointer-events (computed flag and declaration), ignoring custom-property
+// tables like widgetStyleView.
+func onlyPointerEventsDiffer(a, b *ComputedStyle) bool {
+	va, vb := widgetStyleView(a), widgetStyleView(b)
+	stripPointerEvents(va)
+	stripPointerEvents(vb)
+	return reflect.DeepEqual(va, vb)
+}
+
+func stripPointerEvents(v *ComputedStyle) {
+	if v == nil {
+		return
+	}
+	v.PointerNone = false
+	if _, ok := v.raw["pointer-events"]; ok {
+		raw := make(map[string]string, len(v.raw))
+		for k, val := range v.raw {
+			if k != "pointer-events" {
+				raw[k] = val
+			}
+		}
+		v.raw = raw
+	}
+	for _, s := range []**ComputedStyle{&v.Hover, &v.Focus, &v.Active, &v.FocusVisible, &v.AncestorHover, &v.AncestorFocus, &v.AncestorActive} {
+		stripPointerEvents(*s)
 	}
 }
 

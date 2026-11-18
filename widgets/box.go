@@ -706,8 +706,12 @@ func (b *Box) paintDecorations(canvas Canvas, bounds Rect) {
 	}
 	// Drop shadow paints behind everything (CSS box-shadow, outset only).
 	// Extra layers (CSS comma-separated shadows) paint first (farthest back).
+	// DrawShadow's Knockout already clips an outset shadow to outside a
+	// uniform rounded rect. Only shapes it cannot describe (a border path,
+	// per-corner radii) need the layer + dst-out cut, which costs a full
+	// offscreen composite of the shadow's extent on every paint.
 	shadowDepth := -1
-	if !st.Shadow.IsZero() || len(st.ExtraShadows) > 0 {
+	if (b.BorderPath != nil || !st.Corners.IsZero()) && hasOutsetShadow(st) {
 		shadowDepth = canvas.SaveLayer(b.untransformedPaintBounds(), Paint{})
 	}
 	for i := len(st.ExtraShadows) - 1; i >= 0; i-- {
@@ -939,3 +943,15 @@ func paintBorderEdge(canvas Canvas, r Rect, horizontal bool, thickness float32, 
 // (CSS overflow: hidden): what lies beyond is not part of an enclosing
 // scroller's scrollable overflow.
 func (b *Box) ClipsChildren() bool { return b.ClipChildren }
+
+func hasOutsetShadow(st *Style) bool {
+	if !st.Shadow.IsZero() && !st.Shadow.Inset {
+		return true
+	}
+	for _, sh := range st.ExtraShadows {
+		if !sh.IsZero() && !sh.Inset {
+			return true
+		}
+	}
+	return false
+}

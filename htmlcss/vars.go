@@ -31,7 +31,7 @@ func buildCustomProps(parent *ComputedStyle, m map[string]string) map[string]str
 			break
 		}
 	}
-	if !own && parent != nil && parent.customProps != nil {
+	if parent != nil && parent.customProps != nil && (!own || sameCustomProps(parent.customProps, m)) {
 		return parent.customProps
 	}
 	props := map[string]string{}
@@ -181,4 +181,25 @@ func splitVarArgs(inner string) (name, fallback string) {
 		fallback = strings.TrimSpace(strings.Join(parts[1:], ","))
 	}
 	return name, fallback
+}
+
+// sameCustomProps reports whether every custom property m declares already
+// has that exact value in the inherited table. Universal resets such as
+// Tailwind's `*, ::before, ::after { --tw-…: … }` redeclare the same values
+// on every element; sharing the parent's (read-only) table then avoids a
+// full copy per element. A value containing var() is resolved per element,
+// so it never counts as the same.
+func sameCustomProps(inherited, m map[string]string) bool {
+	for k, v := range m {
+		if !strings.HasPrefix(k, "--") {
+			continue
+		}
+		if strings.Contains(v, "var(") {
+			return false
+		}
+		if pv, ok := inherited[k]; !ok || pv != v {
+			return false
+		}
+	}
+	return true
 }

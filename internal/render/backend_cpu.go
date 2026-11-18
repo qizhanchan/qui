@@ -114,7 +114,7 @@ func (b *CPUBackend) PushLayer(physBounds, clip image.Rectangle, paint gfx.Paint
 		b.layers.push(layerFrame{paint: paint})
 		return
 	}
-	off := image.NewRGBA(physBounds)
+	off := gfx.GetRGBA(physBounds, true)
 	b.layers.push(layerFrame{outer: outer, img: off, paint: paint,
 		clip: clip.Intersect(outer.Bounds())})
 }
@@ -132,6 +132,9 @@ func (b *CPUBackend) PopLayer(mask *image.Alpha) {
 		return
 	}
 	src := f.img
+	// The layer image (and a filter's output) is per-frame scratch: back
+	// to the pool once composited.
+	defer gfx.PutRGBA(f.img)
 	if f.paint.ColorFilter != nil {
 		gfx.ApplyColorFilterInPlace(src, f.paint.ColorFilter)
 	}
@@ -139,6 +142,9 @@ func (b *CPUBackend) PopLayer(mask *image.Alpha) {
 		src = f.paint.ImageFilter.ApplyImage(src)
 		if src == nil {
 			return
+		}
+		if src != f.img {
+			defer gfx.PutRGBA(src)
 		}
 	}
 	// Confine the composite to the clip the layer was pushed under. A
@@ -844,10 +850,12 @@ func drawShadowImplRaw(img *image.RGBA, rect gfx.Rect, radius float32, spec gfx.
 	dstX0 += wx0
 	dstY0 += wy0
 
-	srcAlpha := make([]uint8, bufW*bufH)
+	srcAlpha := gfx.GetPix(bufW*bufH, false) // stampShadowAlpha clears it
+	defer gfx.PutPix(srcAlpha)
 	stampShadowAlpha(srcAlpha, bufW, bufH, dstX0, dstY0, shadowRect, shadowRadius)
 
-	dstAlpha := make([]uint8, bufW*bufH)
+	dstAlpha := gfx.GetPix(bufW*bufH, false) // blur scratch, fully written
+	defer gfx.PutPix(dstAlpha)
 	if blur > 0 {
 		gfx.BoxBlurH(srcAlpha, dstAlpha, bufW, bufH, boxR)
 		gfx.BoxBlurV(dstAlpha, srcAlpha, bufW, bufH, boxR)
@@ -858,7 +866,8 @@ func drawShadowImplRaw(img *image.RGBA, rect gfx.Rect, radius float32, spec gfx.
 	// CSS outset shadows are clipped to the outside of the original border
 	// box even when its background is transparent. Apply after blurring.
 	if spec.Knockout {
-		hole := make([]uint8, bufW*bufH)
+		hole := gfx.GetPix(bufW*bufH, false)
+		defer gfx.PutPix(hole)
 		stampShadowAlpha(hole, bufW, bufH, dstX0, dstY0, rect, radius)
 		for i, coverage := range hole {
 			srcAlpha[i] = uint8(uint32(srcAlpha[i]) * uint32(255-coverage) / 255)

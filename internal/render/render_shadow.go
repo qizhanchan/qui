@@ -1,7 +1,6 @@
 package render
 
 import (
-	"image"
 	"math"
 
 	"github.com/qizhanchan/qui/internal/gfx"
@@ -118,9 +117,75 @@ func stampRoundedAlphaAt(buf []uint8, bufW, bufH, left, top int, w, h, radius fl
 // Shadow edges and their knockout must share the exact fractional border
 // geometry. Rounding origins and dimensions independently can erase a thin
 // bottom ring, particularly at HiDPI scales.
+//
+// Coverage is analytic: a pixel's coverage of the straight parts is the
+// exact overlap of the pixel with the rect (so sub-pixel rings keep their
+// true weight); in the corner squares it is additionally limited by the
+// distance to the corner circle. Rows of the straight middle band only
+// evaluate their edge pixels. dst covers [x, x+w) × [y, y+h) in pixels.
 func stampShadowAlpha(dst []uint8, w, h, x, y int, rect gfx.Rect, radius float32) {
+	clear(dst[:w*h])
 	radius = max(0, min(radius, min(rect.W, rect.H)/2))
-	path := gfx.NewPath().AddRRect(rect, radius)
-	mask := rasterizePathToAlpha(path.Flatten(func(p gfx.Point) gfx.Point { return p }), image.Rect(x, y, x+w, y+h))
-	copy(dst, mask.Pix)
+	l, t := float64(rect.X), float64(rect.Y)
+	r, b := l+float64(rect.W), t+float64(rect.H)
+	if r <= l || b <= t {
+		return
+	}
+	rad := float64(radius)
+	overlap := func(p, lo, hi float64) float64 { // [p, p+1] ∩ [lo, hi]
+		return max(0, min(p+1, hi)-max(p, lo))
+	}
+	// Pixel columns that can be touched, in buffer coordinates.
+	cx0 := max(int(math.Floor(l))-x, 0)
+	cx1 := min(int(math.Ceil(r))-x, w)
+	cy0 := max(int(math.Floor(t))-y, 0)
+	cy1 := min(int(math.Ceil(b))-y, h)
+	if cx0 >= cx1 || cy0 >= cy1 {
+		return
+	}
+	// Columns strictly inside the straight horizontal span need no
+	// x-edge or corner work.
+	inX0 := max(int(math.Ceil(l+rad))-x, cx0)
+	inX1 := min(int(math.Floor(r-rad))-x, cx1)
+	for j := cy0; j < cy1; j++ {
+		py := float64(y + j)
+		covY := overlap(py, t, b)
+		if covY <= 0 {
+			continue
+		}
+		row := dst[j*w : (j+1)*w]
+		// Is the whole pixel row inside the straight vertical band?
+		midRow := py >= t+rad && py+1 <= b-rad
+		for i := cx0; i < cx1; i++ {
+			if midRow && i >= inX0 && i < inX1 && covY >= 1 {
+				row[i] = 0xff
+				continue
+			}
+			px := float64(x + i)
+			cov := overlap(px, l, r) * covY
+			if rad > 0 {
+				// Corner squares: limit by the circle's coverage estimate.
+				qx, qy := px+0.5, py+0.5
+				var ccx, ccy float64
+				inCorner := false
+				switch {
+				case qx < l+rad && qy < t+rad:
+					ccx, ccy, inCorner = l+rad, t+rad, true
+				case qx > r-rad && qy < t+rad:
+					ccx, ccy, inCorner = r-rad, t+rad, true
+				case qx < l+rad && qy > b-rad:
+					ccx, ccy, inCorner = l+rad, b-rad, true
+				case qx > r-rad && qy > b-rad:
+					ccx, ccy, inCorner = r-rad, b-rad, true
+				}
+				if inCorner {
+					cc := rad + 0.5 - math.Hypot(qx-ccx, qy-ccy)
+					cov = min(cov, max(0, min(1, cc)))
+				}
+			}
+			if cov > 0 {
+				row[i] = uint8(math.Round(cov * 255))
+			}
+		}
+	}
 }

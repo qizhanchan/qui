@@ -55,6 +55,8 @@ type (
 	// (radians, clockwise from 12 o'clock — CSS `conic-gradient(from …)`), one full
 	// turn mapping [0,1] over the stops.
 	ConicGradient = gfx.ConicGradient
+	// ConicLUT is a ConicGradient's stops sampled around the circle.
+	ConicLUT = gfx.ConicLUT
 
 	// DropShadowImageFilter renders a Gaussian-ish drop shadow of the
 	// layer's alpha silhouette behind the original content. The shadow
@@ -405,3 +407,7 @@ type (
 	// ShadowRecord captures a DrawShadow call.
 	ShadowRecord = gfx.ShadowRecord
 )
+
+// NewConicLUT samples a conic gradient's stops around the circle; set it
+// as ConicGradient.LUT on a gradient that is rebuilt every paint.
+func NewConicLUT(stops []GradientStop) *ConicLUT { return gfx.NewConicLUT(stops) }
