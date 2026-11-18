@@ -3640,10 +3640,10 @@ func inlineSpanStyle(e *El, cs, parent *ComputedStyle) widgets.InlineSpanStyle {
 		pfs = parent.FontSize
 	}
 	switch v := strings.ToLower(strings.TrimSpace(cs.raw["vertical-align"])); v {
-	case "super":
-		st.BaselineShift = pfs / 3
-	case "sub":
-		st.BaselineShift = -pfs / 5
+	case "super": // Blink: the parent's font size / 3 + 1
+		st.BaselineShift = pfs/3 + 1
+	case "sub": // Blink: the parent's font size / 5 + 1
+		st.BaselineShift = -(pfs/5 + 1)
 	case "", "baseline", "middle", "top", "bottom", "text-top", "text-bottom":
 	default:
 		if px, ok := parseLength(v, cs.FontSize, cs.LineHeight*cs.FontSize); ok {

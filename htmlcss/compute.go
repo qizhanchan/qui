@@ -42,6 +42,13 @@ type ComputedStyle struct {
 	FontWeight qui.FontWeight
 	Italic     bool
 	FontFamily string
+	// FontSizeKeyword is the absolute-size keyword the font size comes
+	// from (1 xx-small … 4 medium … 8 xxx-large; 0 = a length), and
+	// FontMonoOnly marks a font-family of just the generic `monospace`.
+	// Together they give Chrome's monospace default: a keyword size under
+	// `font-family: monospace` alone resolves against 13px, not 16px.
+	FontSizeKeyword int8
+	FontMonoOnly    bool
 	LineHeight float32 // multiplier over font size
 	// LineHeightPx is the computed line height in px when it was declared
 	// with a length or percentage (0 for a unitless number). CSS inherits
@@ -709,6 +716,8 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 		cs.FontWeight = parent.FontWeight
 		cs.Italic = parent.Italic
 		cs.FontFamily = parent.FontFamily
+		cs.FontSizeKeyword = parent.FontSizeKeyword
+		cs.FontMonoOnly = parent.FontMonoOnly
 		cs.LineHeight = parent.LineHeight
 		cs.LineHeightPx = parent.LineHeightPx
 		cs.TextAlign = parent.TextAlign
@@ -745,6 +754,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	} else {
 		cs.Color = qui.Color{A: 1} // CSS initial (canvastext): black
 		cs.FontSize = 16
+		cs.FontSizeKeyword = 4 // initial: medium
 		cs.FontWeight = qui.FontWeightNormal
 		cs.LineHeight = 0 // CSS initial `normal`: the face's own line height, as in a browser
 		cs.TextAlign = qui.TextAlignStart
@@ -825,10 +835,27 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle) *ComputedSty
 	}
 
 	// --- font-size (before em-relative lengths) ---
+	if v, ok := m["font-family"]; ok {
+		cs.FontMonoOnly = strings.EqualFold(strings.Trim(strings.TrimSpace(v), `'"`), "monospace")
+	}
 	if v, ok := m["font-size"]; ok {
-		if px, ok := parseLength(v, cs.FontSize, cs.FontSize); ok {
+		kw := strings.ToLower(strings.TrimSpace(v))
+		if k := fontSizeKeywordIndex(kw); k > 0 {
+			cs.FontSizeKeyword = k
+		} else if kw == "smaller" || kw == "larger" {
+			f := float32(1.2)
+			if kw == "smaller" {
+				f = 1 / f
+			}
+			cs.FontSize *= f
+			cs.FontSizeKeyword = 0
+		} else if px, ok := parseLength(v, cs.FontSize, cs.FontSize); ok {
 			cs.FontSize = px
+			cs.FontSizeKeyword = 0
 		}
+	}
+	if cs.FontSizeKeyword > 0 {
+		cs.FontSize = fontSizeForKeyword(cs.FontSizeKeyword, webCompat && cs.FontMonoOnly)
 	}
 	fs := cs.FontSize
 
@@ -1871,6 +1898,43 @@ func parseFontWeight(v string, cur qui.FontWeight) qui.FontWeight {
 // anyway. When nothing in the list is installed the first entry is
 // returned unchanged, so the computed value still names what the author
 // asked for (and renders with the default face).
+// fontSizeKeywordIndex maps an absolute-size keyword to 1…8 (0: none).
+func fontSizeKeywordIndex(v string) int8 {
+	switch v {
+	case "xx-small":
+		return 1
+	case "x-small":
+		return 2
+	case "small":
+		return 3
+	case "medium":
+		return 4
+	case "large":
+		return 5
+	case "x-large":
+		return 6
+	case "xx-large":
+		return 7
+	case "xxx-large":
+		return 8
+	}
+	return 0
+}
+
+// fontSizeForKeyword is Chrome's absolute-size table for a 16px default
+// font (13px for a monospace-only font-family).
+func fontSizeForKeyword(k int8, mono bool) float32 {
+	sans := [...]float32{9, 10, 13, 16, 18, 24, 32, 48}
+	monoT := [...]float32{9, 9, 10, 13, 16, 20, 26, 39}
+	if k < 1 || k > 8 {
+		return 16
+	}
+	if mono {
+		return monoT[k-1]
+	}
+	return sans[k-1]
+}
+
 func firstFontFamily(v string) string {
 	parts := strings.Split(v, ",")
 	first := ""

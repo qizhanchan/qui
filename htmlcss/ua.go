@@ -258,6 +258,10 @@ func uaDeclarations(tag string) []Declaration {
 		return decls("font-family", "monospace")
 	case "big":
 		return decls("font-size", "1.2em")
+	case "sup":
+		return decls("vertical-align", "super", "font-size", "smaller")
+	case "sub":
+		return decls("vertical-align", "sub", "font-size", "smaller")
 	case "nobr":
 		return decls("white-space", "nowrap")
 	case "small":

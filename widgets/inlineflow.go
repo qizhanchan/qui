@@ -967,6 +967,10 @@ func (b *InlineBox) Text() string {
 	return string(sb)
 }
 
+// LaidOut returns the run's current line layout (fragments in the box's
+// content coordinates) — for hit-testing, client rects and debugging.
+func (b *InlineBox) LaidOut() InlineLayout { return b.layout }
+
 // LinkAt returns the hyperlink target under window-space point p when p falls
 // on a text fragment carrying a non-empty Href.
 func (b *InlineBox) LinkAt(p Point) (string, bool) {

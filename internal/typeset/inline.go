@@ -1335,7 +1335,7 @@ func placeInlineLine(toks []inlineTok, idxs []int, baseline, asc, desc, mid, jus
 			frags[n-1].Href == t.href &&
 			frags[n-1].LinkSource == t.linkSrc &&
 			frags[n-1].Background == t.background &&
-			frags[n-1].Span == t.span && !padAfter && t.padL == 0 &&
+			frags[n-1].Span == t.span && !padAfter && t.padL == 0 && gap == 0 &&
 			frags[n-1].BaselineShift == t.shift {
 			contig := frags[n-1].SrcItem == t.srcItem && frags[n-1].SrcEnd == t.srcStart
 			if (!preserve && !reordered) || contig {
@@ -1354,6 +1354,29 @@ func placeInlineLine(toks []inlineTok, idxs []int, baseline, asc, desc, mid, jus
 			// The space belongs outside the element whose edge follows.
 			x += gap
 			gap = 0
+		}
+		if gap > 0 && !gfx.FontStyleEqual(t.spaceFont, t.font) {
+			// A space from a run in another font (the plain space before
+			// a <code>): its own fragment in its own font — prefixed to
+			// the word it would be drawn, and advance, in the word's font.
+			frags = append(frags, InlineFrag{
+				Text:            " ",
+				Font:            t.spaceFont,
+				Color:           t.spaceColor,
+				Decoration:      t.spaceDeco,
+				DecorationPaint: t.spaceDecoPaint,
+				Href:            t.spaceHref,
+				LinkSource:      t.spaceLinkSrc,
+				Background:      t.spaceBg,
+				Span:            t.spaceSpan,
+				Rect:            gfx.Rect{X: x, Y: baseline - inlineAscent(t.spaceFont), W: gap, H: inlineAscent(t.spaceFont) + inlineDescent(t.spaceFont)},
+				SrcItem:         t.spaceSrcItem,
+				SrcStart:        t.spaceSrcStart,
+				SrcEnd:          t.spaceSrcEnd,
+			})
+			x += gap
+			gap = 0
+			padAfter = false
 		}
 		x += t.padL
 		text := t.text
