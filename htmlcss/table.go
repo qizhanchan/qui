@@ -158,6 +158,13 @@ func (e *El) buildTable(cs *ComputedStyle) {
 
 	e.flowKids = nil
 	applyBox(&e.Box, cs, e.isStyleRoot()) // the table's own background / border / etc.
+	// A table's specified height is a minimum; its rows may need more room.
+	// In particular height:0 must not erase the table's content contribution
+	// or clamp its laid-out box while the rows still extend underneath it.
+	qui.UpdateStyle(e, func(st *qui.Style) {
+		st.MinHeight = max(st.MinHeight, st.Height)
+		st.Height, st.HeightSet = 0, false
+	})
 	if webCompat && e.borderCollapse {
 		st := e.Style()
 		st.BorderSize /= 2

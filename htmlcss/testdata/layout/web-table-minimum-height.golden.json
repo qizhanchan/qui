@@ -1,0 +1,13 @@
+{
+ "fixture": "web-table-minimum-height",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "zero": [0,0,640,66],
+  "after-zero": [0,66,640,24],
+  "short": [0,90,640,57],
+  "after-short": [0,147,640,24],
+  "spare": [0,171,640,100],
+  "after-spare": [0,271,640,24]
+ }
+}

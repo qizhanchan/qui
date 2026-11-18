@@ -5111,7 +5111,7 @@ func (e *El) Measure(available qui.Size) qui.Size {
 // zero for auto, so retain CSS's distinction at the element boundary.
 func (e *El) zeroHeight() (float32, bool) {
 	cs := e.lastCS
-	if !webCompat || cs == nil || !cs.HasHeight || cs.Height != 0 {
+	if !webCompat || cs == nil || !e.Style().HeightSet || cs.Height != 0 {
 		return 0, false
 	}
 	_, extra := cs.boxSizingExtra()
@@ -5176,6 +5176,9 @@ func (e *El) naturalImageSize() (qui.Size, bool) {
 // fills whatever width it is given, so it asks for none — Chrome lays a
 // row of such logos into narrow cells without widening them.
 func (e *El) MinContentOverride() (float32, bool) {
+	if webCompat && e.overflowScroll && e.scrollInner != nil {
+		return qui.MinContentWidth(e.scrollInner) + e.Style().ContentInsets().Horizontal(), true
+	}
 	cs := e.lastCS
 	if w, ok := e.replacedIntrinsicWidth(); ok {
 		return w, true
@@ -5197,9 +5200,12 @@ func (e *El) MinContentOverride() (float32, bool) {
 	return e.Style().ContentInsets().Horizontal(), true
 }
 
-// MaxContentOverride keeps replaced boxes intrinsic even though their
-// backing layout fills the final content box.
+// MaxContentOverride measures CSS content through the internal scrolling
+// viewport, and keeps replaced boxes intrinsic despite their filling layout.
 func (e *El) MaxContentOverride() (float32, bool) {
+	if webCompat && e.overflowScroll && e.scrollInner != nil {
+		return qui.MaxContentWidth(e.scrollInner) + e.Style().ContentInsets().Horizontal(), true
+	}
 	return e.replacedIntrinsicWidth()
 }
 

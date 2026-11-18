@@ -1,0 +1,12 @@
+{
+ "fixture": "web-search-result-snippets",
+ "chrome": "Chrome/157.0.8103.79",
+ "viewport": [640, 480],
+ "boxes": {
+  "results": [0,7.19,590,384.59],
+  "first": [0,7.19,590,73.02],
+  "second": [0,97.47,590,114.77],
+  "third": [0,229.5,590,73.02],
+  "after": [0,420.58,640,17]
+ }
+}
