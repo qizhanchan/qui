@@ -1,7 +1,6 @@
 package typeset
 
 import (
-	"bytes"
 	"math"
 	"slices"
 	"sort"
@@ -11,11 +10,11 @@ import (
 	"sync/atomic"
 	"unicode"
 
-	"github.com/go-text/typesetting/di"
-	gtfont "github.com/go-text/typesetting/font"
-	gtot "github.com/go-text/typesetting/font/opentype"
-	"github.com/go-text/typesetting/segmenter"
-	"github.com/go-text/typesetting/shaping"
+	"github.com/qizhanchan/qui/third_party/typesetting/di"
+	gtfont "github.com/qizhanchan/qui/third_party/typesetting/font"
+	gtot "github.com/qizhanchan/qui/third_party/typesetting/font/opentype"
+	"github.com/qizhanchan/qui/third_party/typesetting/segmenter"
+	"github.com/qizhanchan/qui/third_party/typesetting/shaping"
 	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/font/sfnt"
 	"golang.org/x/image/math/fixed"
@@ -165,6 +164,13 @@ var TextShapingState struct {
 	variable map[*gtfont.Font]bool
 	faces    map[shapingFaceKey]*gtfont.Face
 	sfntBuf  sfnt.Buffer
+	// prevFonts / prevVariable hold the parses from before the last
+	// registry change. A parse depends only on its source's bytes, so a
+	// source that survives the change reuses it instead of re-parsing (a
+	// CJK fallback is 20+ MB); entries not reused are released at the
+	// following change.
+	prevFonts    map[*opentype.Font]*gtfont.Font
+	prevVariable map[*gtfont.Font]bool
 }
 
 func init() {
@@ -178,6 +184,8 @@ func init() {
 func invalidateShapingFontCache() {
 	textGlyphCache.Clear()
 	TextShapingState.Lock()
+	TextShapingState.prevFonts = TextShapingState.fonts
+	TextShapingState.prevVariable = TextShapingState.variable
 	TextShapingState.fonts = make(map[*opentype.Font]*gtfont.Font)
 	TextShapingState.variable = nil
 	TextShapingState.sources = make(map[*gtfont.Font]*opentype.Font)
@@ -739,13 +747,32 @@ func shapingFaceLocked(source *opentype.Font, spec gfx.Font) (*gtfont.Face, bool
 	}
 	parsed := TextShapingState.fonts[source]
 	if parsed == nil {
+		if prev := TextShapingState.prevFonts[source]; prev != nil {
+			parsed = prev
+			TextShapingState.fonts[source] = parsed
+			TextShapingState.sources[parsed] = source
+			if TextShapingState.prevVariable[parsed] {
+				if TextShapingState.variable == nil {
+					TextShapingState.variable = map[*gtfont.Font]bool{}
+				}
+				TextShapingState.variable[parsed] = true
+				if !explicitWght {
+					key.wght = float32(effectiveWeight(spec))
+				}
+			}
+			if face, ok := TextShapingState.faces[key]; ok {
+				return face, true
+			}
+		}
+	}
+	if parsed == nil {
 		raw := RawFontBytesFor(source)
 		if len(raw) == 0 {
 			return nil, false
 		}
 		// Face 0 only: qui never uses the others, and ParseTTC would
 		// parse every face of a (possibly memory-mapped) collection.
-		loaders, err := gtot.NewLoaders(bytes.NewReader(raw))
+		loaders, err := gtot.NewLoaders(gtot.NewBytesResource(raw))
 		if err != nil || len(loaders) == 0 {
 			return nil, false
 		}

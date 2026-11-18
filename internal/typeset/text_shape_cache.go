@@ -6,7 +6,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
-	"github.com/go-text/typesetting/shaping"
+	"github.com/qizhanchan/qui/third_party/typesetting/shaping"
 
 	"github.com/qizhanchan/qui/internal/gfx"
 )

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync"
 
-	gtfont "github.com/go-text/typesetting/font"
-	"github.com/go-text/typesetting/fontscan"
+	gtfont "github.com/qizhanchan/qui/third_party/typesetting/font"
+	"github.com/qizhanchan/qui/third_party/typesetting/fontscan"
 	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/font/sfnt"
 

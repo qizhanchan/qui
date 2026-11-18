@@ -4,7 +4,7 @@ import (
 	"image"
 	"image/color"
 
-	"github.com/go-text/typesetting/shaping"
+	"github.com/qizhanchan/qui/third_party/typesetting/shaping"
 
 	"github.com/qizhanchan/qui/internal/gfx"
 	"github.com/qizhanchan/qui/internal/typeset"

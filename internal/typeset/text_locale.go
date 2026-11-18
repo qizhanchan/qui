@@ -3,7 +3,7 @@ package typeset
 import (
 	"sync"
 
-	shapinglang "github.com/go-text/typesetting/language"
+	shapinglang "github.com/qizhanchan/qui/third_party/typesetting/language"
 )
 
 // The engine's locale lives above the text engine. It hands in how to read

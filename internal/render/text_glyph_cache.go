@@ -41,8 +41,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	gtfont "github.com/go-text/typesetting/font"
-	"github.com/go-text/typesetting/shaping"
+	gtfont "github.com/qizhanchan/qui/third_party/typesetting/font"
+	"github.com/qizhanchan/qui/third_party/typesetting/shaping"
 	"golang.org/x/image/math/fixed"
 
 	"github.com/qizhanchan/qui/internal/gfx"

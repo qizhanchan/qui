@@ -3,9 +3,9 @@ package typeset
 import (
 	"sort"
 
-	gtfont "github.com/go-text/typesetting/font"
-	gtot "github.com/go-text/typesetting/font/opentype"
-	"github.com/go-text/typesetting/shaping"
+	gtfont "github.com/qizhanchan/qui/third_party/typesetting/font"
+	gtot "github.com/qizhanchan/qui/third_party/typesetting/font/opentype"
+	"github.com/qizhanchan/qui/third_party/typesetting/shaping"
 
 	"github.com/qizhanchan/qui/internal/gfx"
 )

@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"unicode"
 
-	gtfont "github.com/go-text/typesetting/font"
-	"github.com/go-text/typesetting/shaping"
+	gtfont "github.com/qizhanchan/qui/third_party/typesetting/font"
+	"github.com/qizhanchan/qui/third_party/typesetting/shaping"
 
 	"github.com/qizhanchan/qui/internal/gfx"
 	"github.com/qizhanchan/qui/internal/platform/contract"

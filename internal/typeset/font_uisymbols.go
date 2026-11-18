@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"sync/atomic"
 
-	gtfont "github.com/go-text/typesetting/font"
+	gtfont "github.com/qizhanchan/qui/third_party/typesetting/font"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/math/fixed"

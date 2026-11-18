@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-text/typesetting/di"
+	"github.com/qizhanchan/qui/third_party/typesetting/di"
 	"golang.org/x/image/font/gofont/goregular"
 
 	"github.com/qizhanchan/qui/internal/gfx"

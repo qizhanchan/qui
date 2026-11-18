@@ -1,7 +1,7 @@
 package typeset
 
 import (
-	gtfont "github.com/go-text/typesetting/font"
+	gtfont "github.com/qizhanchan/qui/third_party/typesetting/font"
 
 	"github.com/qizhanchan/qui/internal/gfx"
 )

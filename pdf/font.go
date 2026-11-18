@@ -7,9 +7,9 @@ import (
 	"strings"
 	"unicode/utf16"
 
-	"github.com/go-text/typesetting/di"
-	gtfont "github.com/go-text/typesetting/font"
-	"github.com/go-text/typesetting/shaping"
+	"github.com/qizhanchan/qui/third_party/typesetting/di"
+	gtfont "github.com/qizhanchan/qui/third_party/typesetting/font"
+	"github.com/qizhanchan/qui/third_party/typesetting/shaping"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/font/sfnt"

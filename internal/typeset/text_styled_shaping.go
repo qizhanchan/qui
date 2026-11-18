@@ -5,8 +5,8 @@ import (
 	"sort"
 	"unicode"
 
-	"github.com/go-text/typesetting/di"
-	"github.com/go-text/typesetting/shaping"
+	"github.com/qizhanchan/qui/third_party/typesetting/di"
+	"github.com/qizhanchan/qui/third_party/typesetting/shaping"
 	"golang.org/x/image/font/opentype"
 
 	"github.com/qizhanchan/qui/internal/gfx"

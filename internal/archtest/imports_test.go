@@ -26,45 +26,48 @@ var allowed = map[string][]string{
 
 	// The internal layers, bottom up.
 	"internal/gfx":          {},
-	"internal/typeset":      {"internal/gfx", "internal/platform/contract", "internal/platform/macos"},
-	"internal/render":       {"internal/gfx", "internal/typeset", "internal/wgpu"},
+	"internal/typeset":      {"internal/gfx", "internal/platform/contract", "internal/platform/macos", "third_party/typesetting/..."},
+	"internal/render":       {"internal/gfx", "internal/typeset", "internal/wgpu", "third_party/typesetting/..."},
 	"internal/wgpu":         {},
 	"internal/platform/...": {"internal/platform/..."},
 	"internal/archtest":     {},
 
 	// Exporters build on the internal layers directly.
-	"pdf": {"internal/gfx", "internal/typeset", "internal/platform/macos"},
+	"pdf": {"internal/gfx", "internal/typeset", "internal/platform/macos", "third_party/typesetting/..."},
 	"svg": {"", "internal/gfx", "internal/typeset"},
 	// gpu is the public face of the WebGPU binding (docs/rfc/0003-webgpu.zh.md).
 	"gpu": {"internal/wgpu"},
 
 	// Everything else goes through root's public API.
-	"widgets":          {""},
-	"reactive":         {""},
-	"reactive/html":    {"", "reactive", "htmlcss", "widgets"},
-	"htmlcss":          {"", "svg", "widgets"},
-	"scene3d":          {"", "widgets", "gpu"},
-	"icons":            {"svg"},
-	"i18n":             {""},
-	"anim":             {""},
-	"fonts/...":        {""},
-	"webview":          {""},
-	"graphs":           {},
-	"graphs/chart":     {"", "graphs"},
-	"graphs/diagram":   {"", "pdf", "svg"},
-	"physics":          {},
-	"physics/...":      {"physics"},
-	"media":            {"", "media/internal/..."},
-	"media/...":        {"media/internal/..."},
+	"widgets":        {""},
+	"reactive":       {""},
+	"reactive/html":  {"", "reactive", "htmlcss", "widgets"},
+	"htmlcss":        {"", "svg", "widgets"},
+	"scene3d":        {"", "widgets", "gpu"},
+	"icons":          {"svg"},
+	"i18n":           {""},
+	"anim":           {""},
+	"fonts/...":      {""},
+	"webview":        {""},
+	"graphs":         {},
+	"graphs/chart":   {"", "graphs"},
+	"graphs/diagram": {"", "pdf", "svg"},
+	"physics":        {},
+	"physics/...":    {"physics"},
+	"media":          {"", "media/internal/..."},
+	"media/...":      {"media/internal/..."},
 	// htmlmedia renders <video> / <audio> in htmlcss on top of media.
-	"media/htmlmedia": {"", "htmlcss", "media", "widgets", "svg"},
+	"media/htmlmedia":  {"", "htmlcss", "media", "widgets", "svg"},
 	"htmlcss/canvas2d": {"", "htmlcss", "svg"},
 	"agent":            {"", "agent/internal/..."},
 	"agent/...":        {"agent/internal/..."},
-	"cmd/...":          nil, // binaries and examples may import anything
-	"examples/...":     nil,
-	"tools/...":        nil,
-	"graphs/*/cmd/...": nil,
+	// Our maintained copy of github.com/go-text/typesetting (ORIGIN.md):
+	// self-contained, imported only by the text layers above.
+	"third_party/typesetting/...": {"third_party/typesetting/..."},
+	"cmd/...":                     nil, // binaries and examples may import anything
+	"examples/...":                nil,
+	"tools/...":                   nil,
+	"graphs/*/cmd/...":            nil,
 }
 
 // configs are the environments whose build-tagged imports are checked.

@@ -3,7 +3,7 @@ package typeset
 import (
 	"sync"
 
-	gtfont "github.com/go-text/typesetting/font"
+	gtfont "github.com/qizhanchan/qui/third_party/typesetting/font"
 	"golang.org/x/image/font/opentype"
 
 	"github.com/qizhanchan/qui/internal/gfx"
