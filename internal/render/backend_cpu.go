@@ -807,22 +807,6 @@ func drawShadowImplRaw(img *image.RGBA, rect gfx.Rect, radius float32, spec gfx.
 		return
 	}
 
-	srcAlpha := make([]uint8, bufW*bufH)
-	stampRoundedAlpha(srcAlpha, bufW, bufH, margin, shadowRect.W, shadowRect.H, shadowRadius)
-
-	dstAlpha := make([]uint8, bufW*bufH)
-	if blur > 0 {
-		sigma := float64(blur) / 2.0
-		boxR := int(math.Round((math.Sqrt(1+3*sigma*sigma) - 1) / 2))
-		if boxR < 1 {
-			boxR = 1
-		}
-		gfx.BoxBlurH(srcAlpha, dstAlpha, bufW, bufH, boxR)
-		gfx.BoxBlurV(dstAlpha, srcAlpha, bufW, bufH, boxR)
-		gfx.BoxBlurH(srcAlpha, dstAlpha, bufW, bufH, boxR)
-		gfx.BoxBlurV(dstAlpha, srcAlpha, bufW, bufH, boxR)
-	}
-
 	imgBounds := img.Bounds()
 	effBounds := imgBounds.Intersect(clipPix)
 	if effBounds.Empty() {
@@ -830,6 +814,42 @@ func drawShadowImplRaw(img *image.RGBA, rect gfx.Rect, radius float32, spec gfx.
 	}
 	dstX0 := int(math.Round(float64(shadowRect.X) - float64(margin)))
 	dstY0 := int(math.Round(float64(shadowRect.Y) - float64(margin)))
+
+	// Only the part of the shadow that can reach the visible pixels is
+	// rasterized: a window onto the full buffer, padded by the blur's
+	// reach so the blur sees the same neighborhood it would in the full
+	// buffer. A tall page box (a whole document's card) would otherwise
+	// allocate and blur its entire height every frame.
+	boxR := 0
+	if blur > 0 {
+		sigma := float64(blur) / 2.0
+		boxR = int(math.Round((math.Sqrt(1+3*sigma*sigma) - 1) / 2))
+		if boxR < 1 {
+			boxR = 1
+		}
+	}
+	pad := 2*boxR + 2
+	wx0 := max(effBounds.Min.X-dstX0-pad, 0)
+	wy0 := max(effBounds.Min.Y-dstY0-pad, 0)
+	wx1 := min(effBounds.Max.X-dstX0+pad, bufW)
+	wy1 := min(effBounds.Max.Y-dstY0+pad, bufH)
+	if wx1 <= wx0 || wy1 <= wy0 {
+		return
+	}
+	bufW, bufH = wx1-wx0, wy1-wy0
+	dstX0 += wx0
+	dstY0 += wy0
+
+	srcAlpha := make([]uint8, bufW*bufH)
+	stampRoundedAlphaAt(srcAlpha, bufW, bufH, margin-wx0, margin-wy0, shadowRect.W, shadowRect.H, shadowRadius)
+
+	dstAlpha := make([]uint8, bufW*bufH)
+	if blur > 0 {
+		gfx.BoxBlurH(srcAlpha, dstAlpha, bufW, bufH, boxR)
+		gfx.BoxBlurV(dstAlpha, srcAlpha, bufW, bufH, boxR)
+		gfx.BoxBlurH(srcAlpha, dstAlpha, bufW, bufH, boxR)
+		gfx.BoxBlurV(dstAlpha, srcAlpha, bufW, bufH, boxR)
+	}
 
 	r := uint32(shadowColor.R * 255)
 	g := uint32(shadowColor.G * 255)

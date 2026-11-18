@@ -35,6 +35,13 @@ func (c imageCanvas) DrawShadow(rect gfx.Rect, radius float32, spec gfx.Elevatio
 // with AA coverage at the four corners. Shared by the CPU DrawShadow
 // implementation and other blur-based effects.
 func stampRoundedAlpha(buf []uint8, bufW, bufH, margin int, w, h, radius float32) {
+	stampRoundedAlphaAt(buf, bufW, bufH, margin, margin, w, h, radius)
+}
+
+// stampRoundedAlphaAt is stampRoundedAlpha with the rect's top-left at
+// (left, top) in the buffer — which may be negative when the buffer is a
+// window onto a larger shadow.
+func stampRoundedAlphaAt(buf []uint8, bufW, bufH, left, top int, w, h, radius float32) {
 	if radius < 0 {
 		radius = 0
 	}
@@ -45,10 +52,8 @@ func stampRoundedAlpha(buf []uint8, bufW, bufH, margin int, w, h, radius float32
 	if radius > maxR {
 		radius = maxR
 	}
-	left := margin
-	top := margin
-	right := margin + int(math.Round(float64(w)))
-	bottom := margin + int(math.Round(float64(h)))
+	right := left + int(math.Round(float64(w)))
+	bottom := top + int(math.Round(float64(h)))
 	rInt := int(math.Round(float64(radius)))
 	if maxRX := (right - left) / 2; rInt > maxRX {
 		rInt = maxRX
