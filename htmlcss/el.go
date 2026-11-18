@@ -422,6 +422,9 @@ func (e *El) Tag() string { return e.tag }
 // content (CSS table shrink-to-fit) rather than filling its flow band like a
 // normal block. A table with a declared width fills/uses that width instead.
 func (e *El) ShrinkToFitWidth() bool {
+	if e.lastCS != nil && webCompat && e.tag == "img" && e.iconSrc == nil {
+		return true // a replaced element is its own size, never the line's
+	}
 	return e.lastCS != nil && e.lastCS.Display == "table" && !e.lastCS.HasWidth
 }
 
@@ -2852,7 +2855,16 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	// and fixed/max height and clips. Text leaves never scroll.
 	e.overflowScroll = cs.OverflowScroll && e.text == ""
 	if e.overflowScroll {
-		e.flowKids = nil
+		// The scrolled content box lays out the same inline runs a plain
+		// block would (a <pre style="overflow:auto"> keeps its lines).
+		e.flowKids = e.buildFlow(cs)
+		if e.flowKids == nil && webCompat && e.text != "" && len(e.elementKids) == 0 &&
+			e.iconSrc == nil && e.tag != "img" && !e.isControl() && e.backing == nil {
+			e.flowKids = e.buildPseudoLeaf(cs)
+		}
+		if e.flowKids != nil {
+			contentLayout = qui.FlowLayout{Floats: e.floatState(cs)}
+		}
 		e.ensureScroll()
 		// ScrollView paints an opaque viewport (theme Surface when its own
 		// Style().Background is zero-alpha). Match it to THIS element's
@@ -2921,6 +2933,11 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 			e.ensureImg(cs)
 			if e.imgWidget != nil {
 				applyCommon(e.imgWidget, cs)
+				if webCompat {
+					// The picture fills the element's content box, which
+					// replaced-element sizing (replacedSize) decides.
+					e.LayoutEngine = fillLayout{}
+				}
 			}
 		case e.iconSrc != nil:
 			// Icon leaf: an svgImage sized from CSS width/height (default 20px
@@ -4022,7 +4039,12 @@ func (e *El) syncChildren() {
 	case e.overflowScroll && e.scrollView != nil:
 		// Element children live in the inner box; the ScrollView (this
 		// element's only child) scrolls it.
-		e.attachInto(e.scrollInner, renderableKids(e.elementKids))
+		if len(e.flowKids) > 0 {
+			e.attachInto(e.scrollInner, e.flowKids)
+		} else {
+			flat, _ := e.flatKids(e.lastCS)
+			e.attachInto(e.scrollInner, renderableKids(flat))
+		}
 		e.updateScrollContent()
 		kids = []qui.Widget{e.scrollView}
 	case len(e.flowKids) > 0:
@@ -4205,6 +4227,11 @@ func (e *El) Measure(available qui.Size) qui.Size {
 	if e.displayNone {
 		return qui.Size{}
 	}
+	if webCompat && e.tag == "img" && e.iconSrc == nil {
+		if sz, ok := e.replacedSize(available); ok {
+			return sz
+		}
+	}
 	m := e.Box.Measure(available)
 	if e.overflowScroll && e.scrollView != nil {
 		// The ScrollView grows into the element's box, so the flex column
@@ -4223,6 +4250,115 @@ func (e *El) Measure(available qui.Size) qui.Size {
 		}
 	}
 	return m
+}
+
+// fillLayout stretches an element's single child over its content box.
+type fillLayout struct{}
+
+func (fillLayout) Apply(children []qui.Widget, bounds qui.Rect) {
+	for _, c := range children {
+		c.Layout(bounds)
+	}
+}
+
+func (fillLayout) Measure(children []qui.Widget, avail qui.Size) qui.Size {
+	var out qui.Size
+	for _, c := range children {
+		m := c.Measure(avail)
+		out.W, out.H = max(out.W, m.W), max(out.H, m.H)
+	}
+	return out
+}
+
+// naturalImageSize is the loaded picture's intrinsic size.
+func (e *El) naturalImageSize() (qui.Size, bool) {
+	switch w := e.imgWidget.(type) {
+	case *widgets.Image:
+		if w.Image != nil {
+			b := w.Image.Bounds()
+			if b.Dx() > 0 && b.Dy() > 0 {
+				return qui.Size{W: float32(b.Dx()), H: float32(b.Dy())}, true
+			}
+		}
+	case *svgImage:
+		if d, ok := w.src.(*svg.Document); ok && d.Width > 0 && d.Height > 0 {
+			return qui.Size{W: float32(d.Width), H: float32(d.Height)}, true
+		}
+	}
+	return qui.Size{}, false
+}
+
+// replacedSize is CSS replaced-element sizing for an <img> (CSS 2.1
+// § 10.3.2 / 10.6.2): a specified width or height scales the other by the
+// picture's intrinsic ratio, and min / max-width clamps keep that ratio
+// when the height is auto. Returns the border-box size.
+func (e *El) replacedSize(avail qui.Size) (qui.Size, bool) {
+	cs := e.lastCS
+	nat, ok := e.naturalImageSize()
+	if cs == nil || !ok {
+		return qui.Size{}, false
+	}
+	ins := e.Style().ContentInsets()
+	box := func(px float32) float32 { // a declared border-box size → content
+		if cs.BoxSizing == "border-box" {
+			return max(px-ins.Horizontal(), 0)
+		}
+		return px
+	}
+	boxH := func(px float32) float32 {
+		if cs.BoxSizing == "border-box" {
+			return max(px-ins.Vertical(), 0)
+		}
+		return px
+	}
+	cbW := max(avail.W-ins.Horizontal(), 0)
+	var w, h float32
+	hasW, hasH := false, false
+	switch {
+	case cs.HasWidth:
+		w, hasW = box(cs.Width), true
+	case cs.WidthPct > 0 && avail.W > 0:
+		w, hasW = box(cs.WidthPct*avail.W), true
+	}
+	if cs.HasHeight {
+		h, hasH = boxH(cs.Height), true
+	}
+	ratio := nat.W / nat.H
+	switch {
+	case hasW && hasH:
+	case hasW:
+		h = w / ratio
+	case hasH:
+		w = h * ratio
+	default:
+		w, h = nat.W, nat.H
+	}
+	maxW := float32(0)
+	if cs.MaxWidth > 0 {
+		maxW = box(cs.MaxWidth)
+	} else if cs.MaxWidthPct > 0 && avail.W > 0 {
+		maxW = box(cs.MaxWidthPct * avail.W)
+	}
+	if maxW > 0 && w > maxW {
+		w = maxW
+		if !hasH {
+			h = w / ratio
+		}
+	}
+	if cs.MinWidth > 0 && w < box(cs.MinWidth) {
+		w = box(cs.MinWidth)
+		if !hasH {
+			h = w / ratio
+		}
+	}
+	if cs.MaxHeight > 0 && h > boxH(cs.MaxHeight) {
+		h = boxH(cs.MaxHeight)
+		if !hasW {
+			w = h * ratio
+		}
+	}
+	_ = cbW
+	return qui.Size{W: w + ins.Horizontal(), H: h + ins.Vertical()}, true
 }
 
 // triggerMask returns one bit per (trigger, state) pair that is currently

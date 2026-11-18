@@ -4,6 +4,7 @@ import (
 	"maps"
 	"sort"
 	"strconv"
+	"unicode"
 	"strings"
 
 	"github.com/qizhanchan/qui"
@@ -496,6 +497,50 @@ func pseudoStyle(n *Node, sheet *Stylesheet, which string, parent *ComputedStyle
 	return interpret(n, merged, parent), unquoteContent(content, n)
 }
 
+// UnescapeCSS resolves CSS escapes in an identifier or string body: a
+// backslash and 1–6 hex digits (plus one optional whitespace) is that code
+// point, an escaped newline vanishes, and any other escaped character is
+// itself.
+func UnescapeCSS(s string) string {
+	if !strings.Contains(s, "\\") {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c != '\\' || i+1 >= len(s) {
+			b.WriteByte(c)
+			continue
+		}
+		i++
+		j := i
+		for j < len(s) && j-i < 6 && isHexDigit(s[j]) {
+			j++
+		}
+		if j > i {
+			cp, _ := strconv.ParseUint(s[i:j], 16, 32)
+			if cp == 0 || cp > unicode.MaxRune || (cp >= 0xD800 && cp <= 0xDFFF) {
+				cp = 0xFFFD
+			}
+			b.WriteRune(rune(cp))
+			if j < len(s) && (s[j] == ' ' || s[j] == '\t' || s[j] == '\n') {
+				j++
+			}
+			i = j - 1
+			continue
+		}
+		if s[i] == '\n' {
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+func isHexDigit(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
+}
+
 // unquoteContent resolves a CSS `content` value to literal text. A value is a
 // concatenation of components: quoted strings ("foo"/'foo') and attr(<name>)
 // references, which resolve to the element's attribute value (empty when the
@@ -515,14 +560,17 @@ func unquoteContent(v string, n *Node) string {
 		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
 			i++
 		case c == '"' || c == '\'':
-			end := strings.IndexByte(v[i+1:], c)
-			if end < 0 {
-				sb.WriteString(v[i+1:]) // unterminated: take the rest
-				i = len(v)
-			} else {
-				sb.WriteString(v[i+1 : i+1+end])
-				i += end + 2
+			// A string runs to its unescaped closing quote; its escapes
+			// (\a0, \f002, \") resolve to characters.
+			j := i + 1
+			for j < len(v) && v[j] != c {
+				if v[j] == '\\' {
+					j++
+				}
+				j++
 			}
+			sb.WriteString(UnescapeCSS(v[i+1 : min(j, len(v))]))
+			i = j + 1
 			matched = true
 		default:
 			// attr(<name>) — resolve against the node's attributes.
@@ -1939,7 +1987,7 @@ func firstFontFamily(v string) string {
 	parts := strings.Split(v, ",")
 	first := ""
 	for i, p := range parts {
-		name := strings.Trim(strings.TrimSpace(p), "'\"")
+		name := UnescapeCSS(strings.Trim(strings.TrimSpace(p), "'\""))
 		if i == 0 {
 			first = name
 		}

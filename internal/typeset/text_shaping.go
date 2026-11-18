@@ -78,6 +78,7 @@ type shapingFaceKey struct {
 	font       *opentype.Font
 	variations string
 	ppem       uint16
+	wght       float32 // implied weight axis value (variable fonts only)
 }
 
 // shapingFontmap is the shaper's view of a font chain. Only the first entry
@@ -159,6 +160,8 @@ var TextShapingState struct {
 	seg     shaping.Segmenter
 	fonts   map[*opentype.Font]*gtfont.Font
 	sources map[*gtfont.Font]*opentype.Font
+	// variable records which parsed fonts have a 'wght' axis.
+	variable map[*gtfont.Font]bool
 	faces   map[shapingFaceKey]*gtfont.Face
 	sfntBuf sfnt.Buffer
 }
@@ -655,6 +658,12 @@ func shapingFaceLocked(source *opentype.Font, spec gfx.Font) (*gtfont.Face, bool
 		variations: canonicalVariationKey(spec.Variations),
 		ppem:       ppem,
 	}
+	// A variable font's weight axis follows the requested weight (CSS
+	// font-weight drives 'wght' unless font-variation-settings sets it).
+	_, explicitWght := spec.Variations["wght"]
+	if parsed := TextShapingState.fonts[source]; parsed != nil && !explicitWght && TextShapingState.variable[parsed] {
+		key.wght = float32(effectiveWeight(spec))
+	}
 	if face, ok := TextShapingState.faces[key]; ok {
 		return face, true
 	}
@@ -676,13 +685,28 @@ func shapingFaceLocked(source *opentype.Font, spec gfx.Font) (*gtfont.Face, bool
 		}
 		TextShapingState.fonts[source] = parsed
 		TextShapingState.sources[parsed] = source
+		probe := gtfont.NewFace(parsed)
+		probe.SetVariations([]gtfont.Variation{{Tag: gtot.MustNewTag("wght"), Value: 400}})
+		if len(probe.Coords()) > 0 {
+			if TextShapingState.variable == nil {
+				TextShapingState.variable = map[*gtfont.Font]bool{}
+			}
+			TextShapingState.variable[parsed] = true
+			if !explicitWght {
+				key.wght = float32(effectiveWeight(spec))
+			}
+		}
 	}
 	if source == UISymbolFallback.Load() {
 		uiSymbolShapingFont.Store(parsed)
 	}
 	face := gtfont.NewFace(parsed)
 	face.SetPpem(ppem, ppem)
-	face.SetVariations(shapingVariations(spec.Variations))
+	vars := shapingVariations(spec.Variations)
+	if key.wght > 0 {
+		vars = append(vars, gtfont.Variation{Tag: gtot.MustNewTag("wght"), Value: key.wght})
+	}
+	face.SetVariations(vars)
 	TextShapingState.faces[key] = face
 	return face, true
 }

@@ -456,6 +456,42 @@ func LoadFontVariantFromBytes(family string, weight gfx.FontWeight, italic bool,
 	return nil
 }
 
+// LoadFontVariantsFromBytes registers one font under several weights of a
+// family (a variable font serving a CSS font-weight range), parsing it
+// once. The weight axis then follows each requested weight.
+func LoadFontVariantsFromBytes(family string, weights []gfx.FontWeight, italic bool, data []byte) error {
+	display := strings.TrimSpace(family)
+	famKey := strings.ToLower(display)
+	if famKey == "" {
+		return errors.New("qui: variant family must not be empty")
+	}
+	if len(weights) == 0 {
+		weights = []gfx.FontWeight{gfx.FontWeightNormal}
+	}
+	f, err := parseFirstFont(data)
+	if err != nil {
+		return err
+	}
+	FontCacheMu.Lock()
+	defer FontCacheMu.Unlock()
+	for _, w := range weights {
+		if w == 0 {
+			w = gfx.FontWeightNormal
+		}
+		key := fontVariantKey{family: famKey, weight: w, italic: italic}
+		if old := fontVariantSources[key]; old != nil {
+			CloseCloser(old)
+			delete(fontVariantSources, key)
+		}
+		FontVariants[key] = f
+	}
+	if _, ok := fontFamilyNames[famKey]; !ok {
+		fontFamilyNames[famKey] = display
+	}
+	ClearFontFaceCachesUnlocked()
+	return nil
+}
+
 // LoadFontVariantFromFile registers a family variant straight from a font
 // file on disk (TTF/OTF/TTC — the first font of a collection is used).
 // Use it to expose system-installed families to Font{Family: ...} without

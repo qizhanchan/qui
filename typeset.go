@@ -350,6 +350,12 @@ func LoadFontVariantFromBytes(family string, weight FontWeight, italic bool, dat
 	return typeset.LoadFontVariantFromBytes(family, weight, italic, data)
 }
 
+// LoadFontVariantsFromBytes registers one font (parsed once) under several
+// weights of a family — a variable font serving a CSS font-weight range.
+func LoadFontVariantsFromBytes(family string, weights []FontWeight, italic bool, data []byte) error {
+	return typeset.LoadFontVariantsFromBytes(family, weights, italic, data)
+}
+
 // LoadFontVariantFromFile registers a family variant straight from a font
 // file on disk (TTF/OTF/TTC — the first font of a collection is used).
 // Use it to expose system-installed families to Font{Family: ...} without

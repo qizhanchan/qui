@@ -43,3 +43,22 @@ func TestPseudoElementBoxesKeepChildren(t *testing.T) {
 	}
 	SetWebCompat(false)
 }
+
+func TestUnescapeCSS(t *testing.T) {
+	for in, want := range map[string]string{
+		`\a0`:               " ",
+		`\f002`:             "",
+		`Font Awesome\ 5`:   "Font Awesome 5",
+		`\26 B`:             "&B",
+		`a\"b`:              `a"b`,
+		`no escapes`:        "no escapes",
+		`\0`:                "�",
+	} {
+		if got := UnescapeCSS(in); got != want {
+			t.Errorf("UnescapeCSS(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := unquoteContent(`"\201C" attr(x) "\"q\""`, &Node{Attrs: map[string]string{"x": "X"}}); got != "“X\"q\"" {
+		t.Errorf("content with escapes = %q", got)
+	}
+}
