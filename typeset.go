@@ -293,6 +293,20 @@ func EmojiClusterEnd(runes []rune, start int) int { return typeset.EmojiClusterE
 // default — an unknown name would silently render as the default anyway.
 func FontFamilyRegistered(name string) bool { return typeset.FontFamilyRegistered(name) }
 
+// EnableSystemFonts makes family names the app never registered resolve
+// to fonts installed on the machine (every weight and style of the
+// family is registered on first use). Off by default: an app renders
+// exactly the fonts it registered. A browser turns it on.
+func EnableSystemFonts(on bool) { typeset.EnableSystemFonts(on) }
+
+// PreloadSystemFontIndex scans (or loads the cached index of) installed
+// fonts now — call it at startup, off the UI thread, to keep the first
+// lookup instant.
+func PreloadSystemFontIndex() { typeset.PreloadSystemFontIndex() }
+
+// SystemFontFamilyInstalled reports whether family is installed.
+func SystemFontFamilyInstalled(family string) bool { return typeset.SystemFontFamilyInstalled(family) }
+
 // FontRegistryGeneration returns a counter that changes every time the font
 // registry is mutated (SetDefaultFont, fallback registration, a GL renderer
 // reset). Cheap enough to read on every cache lookup.

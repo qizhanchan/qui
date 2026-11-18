@@ -477,10 +477,15 @@ func FontFamilyRegistered(name string) bool {
 	if name == "" {
 		return false
 	}
+	if SystemFontsEnabled() {
+		loadSystemFontIndex()
+	}
 	FontCacheMu.Lock()
 	defer FontCacheMu.Unlock()
-	_, ok := fontFamilyNames[strings.ToLower(name)]
-	return ok
+	if _, ok := fontFamilyNames[strings.ToLower(name)]; ok {
+		return true
+	}
+	return ensureSystemFamilyUnlocked(name)
 }
 
 // ClearFontVariants removes all registered style variants.

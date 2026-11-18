@@ -383,6 +383,11 @@ func SelectPrimaryFontUnlocked(spec gfx.Font) *opentype.Font {
 	if f, ok := FontVariants[want]; ok && f != nil {
 		return f
 	}
+	if _, known := fontFamilyNames[want.family]; !known && ensureSystemFamilyUnlocked(family) {
+		if f, ok := FontVariants[want]; ok && f != nil {
+			return f
+		}
+	}
 	// Nearest fallback: same family and closest weight, prefer exact italic.
 	// A family with no registered faces at all (a CSS generic like
 	// sans-serif, a font the app never loaded) is the default family, so
