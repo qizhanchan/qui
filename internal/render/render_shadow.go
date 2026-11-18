@@ -24,7 +24,7 @@ func (c imageCanvas) DrawShadow(rect gfx.Rect, radius float32, spec gfx.Elevatio
 	scaledSpec := gfx.ElevationSpec{
 		X: spec.X * s, Y: spec.Y * s,
 		Blur: spec.Blur * s, Spread: spec.Spread * s,
-		Opacity: spec.Opacity,
+		Opacity: spec.Opacity, Knockout: spec.Knockout, Inset: spec.Inset,
 	}
 	physRect, physRadius := projectAARoundedShape(top.Matrix, rect, radius)
 	c.Backend.DrawShadow(physRect, physRadius, scaledSpec, shadowColor, top.Clip)

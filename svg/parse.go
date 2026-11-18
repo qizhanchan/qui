@@ -308,6 +308,10 @@ func applyPresentationAttr(s *Style, name, value string) {
 		return
 	}
 	switch name {
+	case "color":
+		if c, err := parseColor(value); err == nil {
+			s.Color = SolidPaint(c)
+		}
 	case "fill":
 		if p, err := parsePaint(value); err == nil {
 			s.Fill = p

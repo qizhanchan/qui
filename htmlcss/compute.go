@@ -1591,47 +1591,42 @@ func resolveHeightDefiniteness(n *Node, cs, parent *ComputedStyle) {
 		stretched || (outOfFlow && cs.HasTop && cs.HasBottom)
 }
 
-// parseOutline resolves the `outline` shorthand plus outline-width/-color.
-// Width defaults to 1px when a color is present without an explicit width.
+// parseOutline resolves the outline shorthand and longhands. The initial
+// style is none: a color or width alone does not enable an outline.
 func parseOutline(m map[string]string, cs *ComputedStyle, fs float32) {
-	var width float32
-	var color qui.Color
-	haveW, haveC := false, false
-	if v, ok := m["outline"]; ok && strings.TrimSpace(v) != "" {
-		if strings.EqualFold(strings.TrimSpace(v), "none") {
-			cs.OutlineNone = true
-			return
-		}
-		for _, f := range strings.Fields(v) {
-			if c, ok := parseColor(f); ok {
-				color, haveC = c, true
+	width := float32(3) // medium
+	color := cs.Color
+	style := "none"
+	if v, ok := m["outline"]; ok {
+		for _, f := range fieldsTopLevel(v) {
+			if _, ok := borderStyleKeyword(f); ok || f == "auto" {
+				style = f
+			} else if c, ok := parseColor(f); ok {
+				color = c
 			} else if px, ok := parseLength(f, fs, 0); ok {
-				width, haveW = px, true
+				width = px
 			}
 		}
 	}
+	if v, ok := m["outline-style"]; ok {
+		style = strings.TrimSpace(v)
+	}
 	if v, ok := m["outline-width"]; ok {
 		if px, ok := parseLength(v, fs, 0); ok {
-			width, haveW = px, true
+			width = px
 		}
 	}
 	if v, ok := m["outline-color"]; ok {
 		if c, ok := parseColor(v); ok {
-			color, haveC = c, true
+			color = c
 		}
 	}
-	if !haveW && !haveC {
+	if style == "none" || style == "hidden" || width <= 0 {
+		// Color-only rules must not suppress a native control's focus ring.
+		_, shorthand := m["outline"]
+		_, longhand := m["outline-style"]
+		cs.OutlineNone = shorthand || longhand || width <= 0
 		return
-	}
-	if haveW && width == 0 {
-		cs.OutlineNone = true
-		return
-	}
-	if !haveW {
-		width = 1
-	}
-	if !haveC {
-		color = qui.Color{R: 0, G: 0, B: 0, A: 1}
 	}
 	cs.OutlineWidth, cs.OutlineColor, cs.HasOutline = width, color, true
 }

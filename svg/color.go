@@ -13,9 +13,8 @@ import (
 // declaration value) and turns it into a Paint. Recognised forms:
 //
 //	"none"                       → PaintNone
-//	"inherit" / "currentColor"   → PaintInherit (we treat currentColor
-//	                                as inherit because v1 has no
-//	                                "current color" concept)
+//	"inherit"                    → PaintInherit
+//	"currentColor"               → PaintCurrentColor
 //	"#rgb" / "#rrggbb"           → PaintSolid
 //	"rgb(R,G,B)" / "rgba(R,G,B,A)" with int / float / percent components
 //	any name from CSS named colors (via golang.org/x/image/colornames)
@@ -30,7 +29,9 @@ func parsePaint(s string) (Paint, error) {
 	switch strings.ToLower(s) {
 	case "none":
 		return Paint{Kind: PaintNone}, nil
-	case "inherit", "currentcolor":
+	case "currentcolor":
+		return Paint{Kind: PaintCurrentColor}, nil
+	case "inherit":
 		return Paint{Kind: PaintInherit}, nil
 	}
 	c, err := parseColor(s)

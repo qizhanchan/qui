@@ -88,9 +88,9 @@ func TestParseBoxShadowMultiLayer(t *testing.T) {
 	if layers[1].Y != 4 || layers[1].Blur != 8 {
 		t.Errorf("second layer = %+v, want Y=4 Blur=8", layers[1])
 	}
-	// inset layers are dropped.
-	if got := parseBoxShadows("inset 0 0 4px #000", 16); len(got) != 0 {
-		t.Errorf("inset shadow should be dropped, got %d", len(got))
+	// Inset layers retain their placement for the painter.
+	if got := parseBoxShadows("inset 0 0 4px #000", 16); len(got) != 1 || !got[0].Inset {
+		t.Errorf("inset shadow lost: %+v", got)
 	}
 }
 

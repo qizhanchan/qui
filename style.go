@@ -461,6 +461,7 @@ const (
 // Theme.Elevation as ElevationLevel pairs.
 type ShadowStyle struct {
 	X, Y, Blur, Spread float32
+	Inset              bool
 	Color              Color
 }
 

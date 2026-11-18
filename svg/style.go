@@ -26,9 +26,10 @@ func SetLength(v float32) Length { return Length{V: v, Set: true} }
 type PaintKind uint8
 
 const (
-	PaintInherit PaintKind = iota // zero value — pull from parent / default
-	PaintNone                     // SVG fill="none" / stroke="none"
-	PaintSolid                    // Color is a solid RGBA paint
+	PaintInherit      PaintKind = iota // zero value — pull from parent / default
+	PaintNone                          // SVG fill="none" / stroke="none"
+	PaintSolid                         // Color is a solid RGBA paint
+	PaintCurrentColor                  // resolve against the element color, independent of fill/stroke
 )
 
 // Paint describes how to fill or stroke a region. v1 only supports the
@@ -87,6 +88,7 @@ const (
 // and len==0 carry different meanings ("inherit" vs "explicitly no
 // dash"); use SetNoDash / SetDash helpers to avoid getting that wrong.
 type Style struct {
+	Color         Paint // inherited CSS color (initial black)
 	Fill          Paint
 	Stroke        Paint
 	StrokeWidth   Length
@@ -120,6 +122,7 @@ func (s *Style) SetNoDash() {
 // inheritance has been collapsed, and defaults have been applied. Only
 // the renderer touches it.
 type resolvedStyle struct {
+	Color         qui.Color
 	Fill          Paint
 	Stroke        Paint
 	StrokeWidth   float32
@@ -140,6 +143,7 @@ type resolvedStyle struct {
 // fill-rule=nonzero. Dash is empty.
 func defaultResolvedStyle() resolvedStyle {
 	return resolvedStyle{
+		Color:         qui.Color{A: 1},
 		Fill:          Paint{Kind: PaintSolid, Color: qui.Color{R: 0, G: 0, B: 0, A: 1}},
 		Stroke:        Paint{Kind: PaintNone},
 		StrokeWidth:   1,
@@ -159,6 +163,9 @@ func defaultResolvedStyle() resolvedStyle {
 // are set, the child still inherits the parent's group opacity.
 func resolveStyle(parent resolvedStyle, child Style) resolvedStyle {
 	r := parent
+	if child.Color.Kind == PaintSolid {
+		r.Color = child.Color.Color
+	}
 	if child.Fill.Kind != PaintInherit {
 		r.Fill = child.Fill
 	}

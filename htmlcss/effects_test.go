@@ -18,7 +18,7 @@ func TestParseBoxShadow(t *testing.T) {
 		{"1px 1px 0 #000", true, 1, 1, 0, 0, 1},
 		{"2px 4px 12px 3px #333", true, 2, 4, 12, 3, 1},
 		{"none", false, 0, 0, 0, 0, 0},
-		{"inset 0 0 4px #000", false, 0, 0, 0, 0, 0},
+		{"inset 0 0 4px #000", true, 0, 0, 4, 0, 1},
 		{"5px", false, 0, 0, 0, 0, 0}, // needs at least x+y
 	}
 	for _, c := range cases {

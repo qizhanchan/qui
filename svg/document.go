@@ -71,6 +71,16 @@ func (d *Document) invalidateCache() {
 	d.mu.Unlock()
 }
 
+// SetColor supplies the embedding element's inherited CSS color for currentColor.
+// Authored colors on SVG descendants still override this inherited value.
+func (d *Document) SetColor(c qui.Color) {
+	if d.Root.Style.Color == SolidPaint(c) {
+		return
+	}
+	d.Root.Style.Color = SolidPaint(c)
+	d.invalidateCache()
+}
+
 // Rasterize renders the document at the requested pixel size and tint.
 // Repeat calls with the same arguments return the same cached
 // *image.RGBA — callers must not mutate the returned image.
@@ -100,11 +110,9 @@ func (d *Document) Rasterize(width, height int, tint qui.Color) image.Image {
 	// not wait on this one. Two callers racing on the same key both
 	// render; the first to store wins.
 	img := rasterizeDocument(d, width, height)
-	if key.a == 0 {
-		// Untinted path — keep the SVG's authored colors. Still need
-		// to premultiply for image/draw composition.
-		premultiplyInPlace(img)
-	} else {
+	// Both rasterizers produce premultiplied image.RGBA. Multiplying a
+	// second time darkens translucent authored colors and antialiased edges.
+	if key.a != 0 {
 		applyTint(img, color.RGBA{R: key.r, G: key.g, B: key.b, A: key.a})
 	}
 

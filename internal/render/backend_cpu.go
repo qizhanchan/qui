@@ -775,6 +775,10 @@ func pixelRectToRect(r image.Rectangle) gfx.Rect {
 // ImageCanvas.drawShadowImpl — pulled out so the CPU backend can call
 // it without going through the old ImageCanvas receiver.
 func drawShadowImplRaw(img *image.RGBA, rect gfx.Rect, radius float32, spec gfx.ElevationSpec, shadowColor gfx.Color, clipPix image.Rectangle) {
+	if spec.Inset {
+		drawInsetShadowRaw(img, rect, radius, spec, shadowColor, clipPix)
+		return
+	}
 	if img == nil || spec.Opacity <= 0 {
 		return
 	}
@@ -851,6 +855,15 @@ func drawShadowImplRaw(img *image.RGBA, rect gfx.Rect, radius float32, spec gfx.
 		gfx.BoxBlurV(dstAlpha, srcAlpha, bufW, bufH, boxR)
 	}
 
+	// CSS outset shadows are clipped to the outside of the original border
+	// box even when its background is transparent. Apply after blurring.
+	if spec.Knockout {
+		hole := make([]uint8, bufW*bufH)
+		stampRoundedAlphaAt(hole, bufW, bufH, int(math.Round(float64(rect.X)))-dstX0, int(math.Round(float64(rect.Y)))-dstY0, rect.W, rect.H, radius)
+		for i, coverage := range hole {
+			srcAlpha[i] = uint8(uint32(srcAlpha[i]) * uint32(255-coverage) / 255)
+		}
+	}
 	r := uint32(shadowColor.R * 255)
 	g := uint32(shadowColor.G * 255)
 	bch := uint32(shadowColor.B * 255)
@@ -973,3 +986,58 @@ var (
 	_ = color.RGBA{}
 	_ = stddraw.Src
 )
+
+// drawInsetShadowRaw blurs the complement of the offset, spread-inset
+// shape, then clips it to the original rounded border box.
+func drawInsetShadowRaw(img *image.RGBA, rect gfx.Rect, radius float32, spec gfx.ElevationSpec, color gfx.Color, clip image.Rectangle) {
+	if img == nil || spec.Opacity <= 0 || color.A <= 0 {
+		return
+	}
+	bounds := img.Bounds().Intersect(clip).Intersect(rectToPixelRect(rect))
+	if bounds.Empty() {
+		return
+	}
+	blur := max(spec.Blur, 0)
+	boxR := 0
+	if blur > 0 {
+		sigma := float64(blur) / 2
+		boxR = max(1, int(math.Round((math.Sqrt(1+3*sigma*sigma)-1)/2)))
+	}
+	pad := 2*boxR + 2
+	area := bounds.Inset(-pad)
+	w, h := area.Dx(), area.Dy()
+	mask := make([]uint8, w*h)
+	inner := gfx.Rect{X: rect.X + spec.X + spec.Spread, Y: rect.Y + spec.Y + spec.Spread, W: rect.W - 2*spec.Spread, H: rect.H - 2*spec.Spread}
+	if inner.W > 0 && inner.H > 0 {
+		stampRoundedAlphaAt(mask, w, h, int(math.Round(float64(inner.X)))-area.Min.X, int(math.Round(float64(inner.Y)))-area.Min.Y, inner.W, inner.H, max(0, radius-spec.Spread))
+	}
+	for i := range mask {
+		mask[i] = 255 - mask[i]
+	}
+	if boxR > 0 {
+		tmp := make([]uint8, len(mask))
+		gfx.BoxBlurH(mask, tmp, w, h, boxR)
+		gfx.BoxBlurV(tmp, mask, w, h, boxR)
+		gfx.BoxBlurH(mask, tmp, w, h, boxR)
+		gfx.BoxBlurV(tmp, mask, w, h, boxR)
+	}
+	inside := make([]uint8, len(mask))
+	stampRoundedAlphaAt(inside, w, h, int(math.Round(float64(rect.X)))-area.Min.X, int(math.Round(float64(rect.Y)))-area.Min.Y, rect.W, rect.H, radius)
+	alpha := color.A * spec.Opacity
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			i := (y-area.Min.Y)*w + x - area.Min.X
+			a := uint32(float32(uint32(mask[i])*uint32(inside[i])) / 255 * alpha)
+			if a == 0 {
+				continue
+			}
+			inv := 255 - a
+			idx := img.PixOffset(x, y)
+			p := img.Pix[idx : idx+4]
+			p[0] = uint8((uint32(color.R*255)*a + uint32(p[0])*inv) / 255)
+			p[1] = uint8((uint32(color.G*255)*a + uint32(p[1])*inv) / 255)
+			p[2] = uint8((uint32(color.B*255)*a + uint32(p[2])*inv) / 255)
+			p[3] = uint8(a + uint32(p[3])*inv/255)
+		}
+	}
+}

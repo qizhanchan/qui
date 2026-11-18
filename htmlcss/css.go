@@ -1287,7 +1287,7 @@ func parseDeclarations(body string) []Declaration {
 				val = strings.TrimSpace(head[:len(head)-1])
 			}
 		}
-		if prop != "" && val != "" {
+		if prop != "" && (val != "" || strings.HasPrefix(prop, "--")) {
 			val = resolveViewportUnits(val)
 			if strings.Contains(val, "light-dark(") || strings.Contains(val, "LIGHT-DARK(") {
 				val = resolveLightDark(val)

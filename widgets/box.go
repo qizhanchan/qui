@@ -510,6 +510,8 @@ func (b *Box) drawContent(canvas Canvas, bounds Rect) {
 		defer canvas.RestoreTo(depth)
 		if st := b.Style(); !st.Corners.IsZero() {
 			canvas.ClipPath(cornerPath(bounds, st.Corners.Resolved(st.Radius)))
+		} else if st.Radius > 0 {
+			canvas.ClipPath(NewPath().AddRRect(bounds, st.Radius))
 		} else {
 			canvas.ClipRect(bounds)
 		}
@@ -603,7 +605,7 @@ func (b *Box) paintTransformMatrix() Matrix {
 }
 
 func shadowPaintBounds(bounds Rect, shadow ShadowStyle) Rect {
-	if shadow.IsZero() || shadow.Color.A <= 0 {
+	if shadow.IsZero() || shadow.Color.A <= 0 || shadow.Inset {
 		return Rect{}
 	}
 	halo := shadow.Blur*3 + shadow.Spread
@@ -675,21 +677,31 @@ func (b *Box) paintDecorations(canvas Canvas, bounds Rect) {
 	// Drop shadow paints behind everything (CSS box-shadow, outset only).
 	// Extra layers (CSS comma-separated shadows) paint first (farthest back).
 	for i := len(st.ExtraShadows) - 1; i >= 0; i-- {
-		if sh := st.ExtraShadows[i]; !sh.IsZero() {
+		if sh := st.ExtraShadows[i]; !sh.IsZero() && !sh.Inset {
 			canvas.DrawShadow(bounds, radius, ElevationSpec{
-				X: sh.X, Y: sh.Y, Blur: sh.Blur, Spread: sh.Spread, Opacity: 1,
+				X: sh.X, Y: sh.Y, Blur: sh.Blur, Spread: sh.Spread, Opacity: 1, Knockout: true,
 			}, sh.Color)
 		}
 	}
-	if sh := st.Shadow; !sh.IsZero() {
+	if sh := st.Shadow; !sh.IsZero() && !sh.Inset {
 		canvas.DrawShadow(bounds, radius, ElevationSpec{
-			X: sh.X, Y: sh.Y, Blur: sh.Blur, Spread: sh.Spread, Opacity: 1,
+			X: sh.X, Y: sh.Y, Blur: sh.Blur, Spread: sh.Spread, Opacity: 1, Knockout: true,
 		}, sh.Color)
 	}
 	// Per-corner radii (CSS border-*-radius) route background + solid border
 	// through the path rasterizer; the uniform fast path stays otherwise.
 	perCorner := !st.Corners.IsZero()
-	// Background: a shader (gradient) takes precedence over the solid fill.
+	// CSS background-color is below the background image, including its
+	// transparent pixels and the area outside a non-repeated image.
+	if bg.A > 0 {
+		if perCorner {
+			canvas.DrawShape(ShapePath{Path: cornerPath(bounds, st.Corners.Resolved(radius))}, Paint{Color: bg, AntiAlias: true})
+		} else if radius > 0 {
+			canvas.FillRoundedRect(bounds, radius, bg)
+		} else {
+			canvas.FillRect(bounds, bg)
+		}
+	}
 	if b.BackgroundShader != nil {
 		if shader := b.BackgroundShader(bounds); shader != nil {
 			var shape Shape = ShapeRect(bounds)
@@ -700,16 +712,18 @@ func (b *Box) paintDecorations(canvas Canvas, bounds Rect) {
 			}
 			canvas.DrawShape(shape, Paint{Style: PaintFill, Shader: shader, AntiAlias: true})
 		}
-	} else if bg.A > 0 {
-		if perCorner {
-			canvas.DrawShape(ShapePath{Path: cornerPath(bounds, st.Corners.Resolved(radius))},
-				Paint{Style: PaintFill, Color: bg, AntiAlias: true})
-		} else if radius > 0 {
-			canvas.FillRoundedRect(bounds, radius, bg)
-		} else {
-			canvas.FillRect(bounds, bg)
+	}
+	// Inset shadows sit above the background and below the border/content.
+	drawInset := func(sh ShadowStyle) {
+		if sh.Inset && !sh.IsZero() {
+			canvas.DrawShadow(bounds, radius, ElevationSpec{X: sh.X, Y: sh.Y, Blur: sh.Blur, Spread: sh.Spread, Opacity: 1, Inset: true}, sh.Color)
 		}
 	}
+	for i := len(st.ExtraShadows) - 1; i >= 0; i-- {
+		drawInset(st.ExtraShadows[i])
+	}
+	drawInset(st.Shadow)
+
 	switch {
 	case hasPerSideBorders(st):
 		paintPerSideBorders(canvas, bounds, st)

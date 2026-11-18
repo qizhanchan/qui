@@ -85,6 +85,12 @@ func (d *Document) effectiveViewBox() ViewBox {
 // same closure is invoked twice (once for fill, once for stroke) so
 // it must not depend on outer mutable state.
 func drawShape(d *rasterx.Dasher, m rasterx.Matrix2D, s resolvedStyle, opacity float64, addPath func(rasterx.Adder)) {
+	if s.Fill.Kind == PaintCurrentColor {
+		s.Fill = SolidPaint(s.Color)
+	}
+	if s.Stroke.Kind == PaintCurrentColor {
+		s.Stroke = SolidPaint(s.Color)
+	}
 	if s.Fill.Kind == PaintSolid && s.FillOpacity > 0 && s.Fill.Color.A > 0 {
 		fillPass(d, m, s, opacity, addPath)
 	}
@@ -94,17 +100,45 @@ func drawShape(d *rasterx.Dasher, m rasterx.Matrix2D, s resolvedStyle, opacity f
 }
 
 func fillPass(d *rasterx.Dasher, m rasterx.Matrix2D, s resolvedStyle, opacity float64, addPath func(rasterx.Adder)) {
+	if s.FillRule == FillRuleEvenOdd {
+		// ScannerGV's SetWinding is a no-op. Use qui's winding-aware path
+		// rasterizer for even-odd fills, retaining rasterx for SVG strokes.
+		if scanner, ok := d.Scanner.(*rasterx.ScannerGV); ok {
+			if img, ok := scanner.Dest.(*image.RGBA); ok {
+				ad := &fillPathAdder{path: qui.NewPath()}
+				addPath(newMatrixAdder(ad, m))
+				color := s.Fill.Color
+				color.A *= s.FillOpacity * float32(opacity)
+				qui.NewImageCanvas(img).DrawShape(qui.ShapePath{Path: ad.path}, qui.Paint{Color: color, FillRule: qui.FillEvenOdd, AntiAlias: true})
+				return
+			}
+		}
+	}
+
 	d.Clear()
 	f := &d.Filler
 	f.SetWinding(s.FillRule != FillRuleEvenOdd)
 	ad := newMatrixAdder(f, m)
 	addPath(ad)
-	f.SetColor(rasterx.ApplyOpacity(toNRGBA(s.Fill.Color), float64(s.FillOpacity)*opacity))
+	f.SetColor(svgPaintColor(s.Fill.Color, float64(s.FillOpacity)*opacity))
 	f.Draw()
 	// rasterx leaves winding sticky on the scanner; reset to default
 	// nonzero so the next fill on a different element starts clean.
 	f.SetWinding(true)
 }
+
+// fillPathAdder collects transformed rasterx path commands for a fill.
+type fillPathAdder struct{ path *qui.Path }
+
+func (a *fillPathAdder) Start(p fixed.Point26_6) { a.path.MoveTo(float32(p.X)/64, float32(p.Y)/64) }
+func (a *fillPathAdder) Line(p fixed.Point26_6)  { a.path.LineTo(float32(p.X)/64, float32(p.Y)/64) }
+func (a *fillPathAdder) QuadBezier(p, q fixed.Point26_6) {
+	a.path.QuadTo(float32(p.X)/64, float32(p.Y)/64, float32(q.X)/64, float32(q.Y)/64)
+}
+func (a *fillPathAdder) CubeBezier(p, q, r fixed.Point26_6) {
+	a.path.CubicTo(float32(p.X)/64, float32(p.Y)/64, float32(q.X)/64, float32(q.Y)/64, float32(r.X)/64, float32(r.Y)/64)
+}
+func (a *fillPathAdder) Stop(bool) { a.path.Close() }
 
 func strokePass(d *rasterx.Dasher, m rasterx.Matrix2D, s resolvedStyle, opacity float64, addPath func(rasterx.Adder)) {
 	d.Clear()
@@ -135,7 +169,7 @@ func strokePass(d *rasterx.Dasher, m rasterx.Matrix2D, s resolvedStyle, opacity 
 
 	ad := newMatrixAdder(d, m)
 	addPath(ad)
-	d.SetColor(rasterx.ApplyOpacity(toNRGBA(s.Stroke.Color), float64(s.StrokeOpacity)*opacity))
+	d.SetColor(svgPaintColor(s.Stroke.Color, float64(s.StrokeOpacity)*opacity))
 	d.Draw()
 }
 
@@ -150,6 +184,14 @@ func matrixScale(m rasterx.Matrix2D) float64 {
 }
 
 func length2(a, b float64) float64 { return math.Sqrt(a*a + b*b) }
+
+// svgPaintColor multiplies paint alpha by element/fill/stroke opacity.
+// rasterx.ApplyOpacity replaces alpha and converts through premultiplied
+// RGBA, which darkens translucent colors and discards their original alpha.
+func svgPaintColor(c qui.Color, opacity float64) color.NRGBA {
+	c.A *= clampUnit(float32(opacity))
+	return toNRGBA(c)
+}
 
 // toNRGBA converts a qui.Color (float32, premultiplied-agnostic) into
 // the straight-alpha NRGBA form rasterx expects.
@@ -220,11 +262,11 @@ func (a *matrixAdder) CubeBezier(b, c, d fixed.Point26_6) {
 }
 func (a *matrixAdder) Stop(closeLoop bool) { a.dst.Stop(closeLoop) }
 
-// --- tint / premultiply (carried over verbatim from the old svg.go) -
+// --- tint ---
 
 // applyTint rewrites every output pixel as (tint.RGB, tint.A * coverage)
-// in premultiplied form. The input is the rasterizer's straight-alpha
-// monochrome output; we collapse RGB to "covered or not" via the alpha
+// in premultiplied form. The input is the rasterizer's premultiplied
+// output; we collapse RGB to "covered or not" via the alpha
 // channel since the SVG is single-color. This is the same routine the
 // old svg.go shipped with — kept identical so existing icon palettes
 // produce byte-identical bitmaps.
@@ -247,22 +289,6 @@ func applyTint(img *image.RGBA, tint color.RGBA) {
 		pix[i+0] = uint8((tr16 * outA) / 255)
 		pix[i+1] = uint8((tg16 * outA) / 255)
 		pix[i+2] = uint8((tb16 * outA) / 255)
-	}
-}
-
-// premultiplyInPlace turns straight RGBA into premultiplied RGBA.
-// Used for the no-tint path so multi-color SVGs composite correctly
-// when blitted through draw.Over.
-func premultiplyInPlace(img *image.RGBA) {
-	pix := img.Pix
-	for i := 0; i+3 < len(pix); i += 4 {
-		a := uint16(pix[i+3])
-		if a == 0 || a == 255 {
-			continue
-		}
-		pix[i+0] = uint8((uint16(pix[i+0]) * a) / 255)
-		pix[i+1] = uint8((uint16(pix[i+1]) * a) / 255)
-		pix[i+2] = uint8((uint16(pix[i+2]) * a) / 255)
 	}
 }
 

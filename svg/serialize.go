@@ -103,6 +103,9 @@ func emitFloatAttr(start *xml.StartElement, name string, v float32, allowZero bo
 // off the wire so round-tripped cascades preserve their structure.
 func formatStyle(s Style) string {
 	var parts []string
+	if s.Color.Kind == PaintSolid {
+		parts = append(parts, "color:"+formatColor(s.Color.Color))
+	}
 	if s.Fill.Kind != PaintInherit {
 		parts = append(parts, "fill:"+formatPaint(s.Fill))
 	}
@@ -158,6 +161,8 @@ func formatStyle(s Style) string {
 
 func formatPaint(p Paint) string {
 	switch p.Kind {
+	case PaintCurrentColor:
+		return "currentColor"
 	case PaintNone:
 		return "none"
 	case PaintSolid:

@@ -244,6 +244,10 @@ func (ShapePolyline) isShape() {}
 // outlined.
 type ElevationSpec struct {
 	X, Y, Blur, Spread, Opacity float32
+	// Knockout excludes the original rounded rectangle from an outset CSS shadow.
+	Knockout bool
+	// Inset casts the inverse shadow inside the original rounded rectangle.
+	Inset bool
 }
 
 // BlendMode selects the Porter-Duff / blend operator used to composite

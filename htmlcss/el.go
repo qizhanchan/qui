@@ -3049,17 +3049,10 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 			contentLayout = qui.FlowLayout{Floats: e.floatState(cs)}
 		}
 		e.ensureScroll()
-		// ScrollView paints an opaque viewport (theme Surface when its own
-		// Style().Background is zero-alpha). Match it to THIS element's
-		// background so the viewport is seamless with the element instead of
-		// showing a differently-colored inset card inside the padding.
-		qui.UpdateStyle(e.scrollView, func(style *qui.Style) {
-			if cs.HasBackground {
-				style.Background = cs.Background
-			} else {
-				style.Background = qui.Color{}
-			}
-		})
+		// The element paints its CSS background and shadows once. A second
+		// opaque scroll viewport would cover inset shadows and gradients.
+		qui.UpdateStyle(e.scrollView, func(style *qui.Style) { style.Background = qui.Color{} })
+
 		e.scrollInner.LayoutEngine = contentLayout
 		// With a tabindex the element itself is the focus target; its
 		// ScrollView steps aside and gets the scrolling keys forwarded.
@@ -4198,6 +4191,7 @@ func (e *El) ensureImg(cs *ComputedStyle) {
 		return
 	}
 	if e.inlineSVG != nil {
+		e.inlineSVG.SetColor(cs.Color)
 		// Intrinsic size: numeric width / height attributes; ratio: the
 		// viewBox (else that size); CSS sizes win (an <svg> with neither
 		// is 300×150, the replaced-element default).
@@ -5221,6 +5215,9 @@ func (e *El) applyStateText(av *ancestorVariant) {
 	}
 	if si, ok := e.imgWidget.(*svgImage); ok {
 		si.tint = color
+		if e.inlineSVG != nil {
+			e.inlineSVG.SetColor(color)
+		}
 	}
 }
 

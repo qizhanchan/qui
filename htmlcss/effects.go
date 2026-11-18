@@ -86,10 +86,12 @@ func lengthOrPct(tok string, fs float32) (px, pct float32, ok bool) {
 // gradientSpec is a parsed `linear-gradient(...)`: a direction angle
 // (CSS convention: 0deg = to top, growing clockwise) plus color stops.
 type gradientSpec struct {
-	angleDeg float32
-	stops    []qui.GradientStop
-	radial   bool // radial-gradient (angleDeg unused)
-	conic    bool // conic-gradient (angleDeg = start angle)
+	angleDeg         float32
+	stops            []qui.GradientStop
+	radial           bool // radial-gradient (angleDeg unused)
+	conic            bool // conic-gradient (angleDeg = start angle)
+	centerX, centerY lenPct
+	hasCenter        bool
 }
 
 // shaderFor builds a qui.LinearGradient whose endpoints span the box
@@ -110,6 +112,10 @@ func (g *gradientSpec) shaderFor(bounds qui.Rect) qui.Shader {
 	if g.conic {
 		cx := bounds.X + bounds.W/2
 		cy := bounds.Y + bounds.H/2
+		if g.hasCenter {
+			cx = bounds.X + g.centerX.resolve(bounds.W)
+			cy = bounds.Y + g.centerY.resolve(bounds.H)
+		}
 		return qui.ConicGradient{Center: qui.Point{X: cx, Y: cy}, Angle: g.angleDeg * float32(math.Pi) / 180, Stops: g.stops}
 	}
 	rad := float64(g.angleDeg) * math.Pi / 180
@@ -134,9 +140,8 @@ func absf(v float32) float32 {
 }
 
 // parseBoxShadow parses a single-layer `box-shadow` value:
-// `<offX> <offY> [blur] [spread] <color>`. `inset` layers are skipped (no
-// inner-shadow primitive). Returns ok=false when the value has no drawable
-// outset layer.
+// `<offX> <offY> [blur] [spread] <color>`. `inset` selects an inner
+// shadow. Returns ok=false when the value has no drawable layer.
 func parseBoxShadow(v string, fs float32) (qui.ShadowStyle, bool) {
 	shadows := parseBoxShadows(v, fs)
 	if len(shadows) == 0 {
@@ -146,7 +151,7 @@ func parseBoxShadow(v string, fs float32) (qui.ShadowStyle, bool) {
 }
 
 // parseBoxShadows parses a possibly-multi-layer `box-shadow` value into its
-// outset layers (in source order). inset layers are dropped (unsupported).
+// layers (in source order), including inset shadows.
 func parseBoxShadows(v string, fs float32) []qui.ShadowStyle {
 	v = strings.TrimSpace(v)
 	if v == "" || strings.EqualFold(v, "none") {
@@ -155,13 +160,17 @@ func parseBoxShadows(v string, fs float32) []qui.ShadowStyle {
 	var out []qui.ShadowStyle
 	for _, layer := range splitTopLevel(v, ',') {
 		layer = strings.TrimSpace(layer)
-		if layer == "" || strings.Contains(strings.ToLower(layer), "inset") {
-			continue // inner shadows aren't supported by the primitive
+		if layer == "" {
+			continue
 		}
 		var sh qui.ShadowStyle
 		var lens []float32
 		haveColor := false
 		for _, tok := range fieldsTopLevel(layer) {
+			if strings.EqualFold(tok, "inset") {
+				sh.Inset = true
+				continue
+			}
 			if c, ok := parseColor(tok); ok {
 				sh.Color, haveColor = c, true
 				continue
@@ -460,7 +469,7 @@ func parseGradient(v string) (*gradientSpec, bool) {
 }
 
 // parseConicGradient parses `conic-gradient([from <angle>]? [at …]?, stops…)`.
-// Only the `from <angle>` prefix is honored (position ignored → center).
+// Position percentages are relative to the background positioning area.
 func parseConicGradient(v string) (*gradientSpec, bool) {
 	v = strings.TrimSpace(v)
 	if !strings.HasPrefix(strings.ToLower(v), "conic-gradient(") || !strings.HasSuffix(v, ")") {
@@ -475,16 +484,25 @@ func parseConicGradient(v string) (*gradientSpec, bool) {
 	idx := 0
 	first := strings.ToLower(strings.TrimSpace(parts[0]))
 	if strings.HasPrefix(first, "from") || strings.HasPrefix(first, "at") {
-		for _, f := range strings.Fields(first) {
-			if strings.HasSuffix(f, "deg") || strings.HasSuffix(f, "turn") || strings.HasSuffix(f, "rad") {
-				g.angleDeg = parseAngle(f) * 180 / float32(3.14159265)
+		fields := strings.Fields(first)
+		for i, f := range fields {
+			if f == "from" && i+1 < len(fields) {
+				g.angleDeg = parseAngle(fields[i+1]) * 180 / float32(math.Pi)
+			}
+			if f == "at" {
+				x, y, ok := parsePosition(fields[i+1:], 16)
+				if !ok {
+					return nil, false
+				}
+				g.centerX, g.centerY, g.hasCenter = x, y, true
+				break
 			}
 		}
 		idx = 1
 	} else if _, ok := parseColor(fieldsTopLevel(parts[0])[0]); !ok {
 		idx = 1 // unrecognized non-color prefix
 	}
-	g.stops = parseGradientStops(parts[idx:])
+	g.stops = parseGradientStopsMode(parts[idx:], true)
 	if len(g.stops) < 2 {
 		return nil, false
 	}
@@ -523,6 +541,10 @@ func parseRadialGradient(v string) (*gradientSpec, bool) {
 // parseGradientStops parses a list of `<color> [<pos%>]` stop tokens into
 // evenly-spaced stops (overridden by any explicit percentage).
 func parseGradientStops(stopToks []string) []qui.GradientStop {
+	return parseGradientStopsMode(stopToks, false)
+}
+
+func parseGradientStopsMode(stopToks []string, angular bool) []qui.GradientStop {
 	var stops []qui.GradientStop
 	n := len(stopToks)
 	for i, tok := range stopToks {
@@ -546,6 +568,15 @@ func parseGradientStops(stopToks []string) []qui.GradientStop {
 			if p, ok := parseFloat(strings.TrimSuffix(fields[1], "%")); ok {
 				offset = clamp01(p / 100)
 			}
+		}
+		if angular && len(fields) >= 2 {
+			v := fields[1]
+			if strings.HasSuffix(v, "deg") || strings.HasSuffix(v, "turn") || strings.HasSuffix(v, "rad") || strings.HasSuffix(v, "grad") || v == "0" {
+				offset = parseAngle(v) / (2 * float32(math.Pi))
+			}
+		}
+		if len(stops) > 0 {
+			offset = max(offset, stops[len(stops)-1].Offset)
 		}
 		stops = append(stops, qui.GradientStop{Offset: offset, Color: col})
 	}
@@ -593,6 +624,10 @@ func parseAngle(tok string) float32 {
 	case strings.HasSuffix(low, "deg"):
 		if f, ok := parseFloat(strings.TrimSuffix(low, "deg")); ok {
 			return f * float32(math.Pi) / 180
+		}
+	case strings.HasSuffix(low, "grad"):
+		if f, ok := parseFloat(strings.TrimSuffix(low, "grad")); ok {
+			return f * float32(math.Pi) / 200
 		}
 	case strings.HasSuffix(low, "rad"):
 		if f, ok := parseFloat(strings.TrimSuffix(low, "rad")); ok {
@@ -681,7 +716,7 @@ func splitFunctions(s string) []cssFunction {
 			i++ // consume ')'
 		}
 		var args []string
-		for _, a := range strings.Split(argStr, ",") {
+		for _, a := range splitTopLevel(argStr, ',') {
 			if a = strings.TrimSpace(a); a != "" {
 				args = append(args, a)
 			}
