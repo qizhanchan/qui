@@ -3,6 +3,7 @@ package widgets
 import (
 	"image"
 	"math"
+	"slices"
 
 	. "github.com/qizhanchan/qui"
 )
@@ -39,11 +40,12 @@ type scrollCache struct {
 	disabled bool   // content needed the window canvas (GPU draws)
 	seq      uint64 // window paint the damage was last applied for
 	seqSet   bool
+	layers   []*Box // animated layers kept out of it (anim_layer.go)
 }
 
 // cacheWanted reports whether the content cache applies to this view now.
-func (s *ScrollView) cacheWanted() bool {
-	if !s.PixelScroll || !s.FixedViewport || len(s.vpBoxes) == 0 || s.Content == nil {
+func (s *ScrollView) cacheWanted(layers []cacheLayer) bool {
+	if !s.PixelScroll || !s.FixedViewport || (len(s.vpBoxes) == 0 && len(layers) == 0) || s.Content == nil {
 		return false
 	}
 	if s.cache != nil && s.cache.disabled && s.cache.content == s.Content {
@@ -90,7 +92,8 @@ func plainPathToContent(w, content Widget) bool {
 // part of the viewport this frame paints (already clipped on canvas), vp
 // the viewport. False means the caller draws the content directly.
 func (s *ScrollView) drawCached(canvas Canvas, effClip, vp Rect) bool {
-	if !s.cacheWanted() {
+	layers := s.cacheLayers()
+	if !s.cacheWanted(layers) {
 		s.cache = nil
 		return false
 	}
@@ -113,6 +116,11 @@ func (s *ScrollView) drawCached(canvas Canvas, effClip, vp Rect) bool {
 		c = &scrollCache{content: s.Content}
 		s.cache = c
 	}
+	if sig := layerSignature(layers); !slices.Equal(sig, c.layers) {
+		// A box that joined or left the layers is missing from (or still
+		// in) the cached pixels.
+		c.layers, c.valid = sig, false
+	}
 	if c.img == nil || c.phys != phys || c.scaleX != m.A || c.scaleY != m.D {
 		if c.img == nil || c.img.Rect.Dx() != phys.Dx() || c.img.Rect.Dy() != phys.Dy() {
 			c.img = image.NewRGBA(image.Rect(0, 0, phys.Dx(), phys.Dy()))
@@ -134,7 +142,7 @@ func (s *ScrollView) drawCached(canvas Canvas, effClip, vp Rect) bool {
 		c.seq, c.seqSet = seq, true
 	}
 	if !c.valid || all {
-		gpu = s.renderCache(canvas, m, vp)
+		gpu = s.renderCache(canvas, m, vp, layers)
 		c.valid = !gpu
 	} else {
 		for _, r := range rects {
@@ -142,7 +150,7 @@ func (s *ScrollView) drawCached(canvas Canvas, effClip, vp Rect) bool {
 			if lr.IsEmpty() {
 				continue
 			}
-			if gpu = s.renderCache(canvas, m, lr); gpu {
+			if gpu = s.renderCache(canvas, m, lr, layers); gpu {
 				break
 			}
 		}
@@ -165,7 +173,9 @@ func (s *ScrollView) drawCached(canvas Canvas, effClip, vp Rect) bool {
 		canvas.DrawImage(sub, logical)
 	}
 
-	// The fixed / sticky boxes on top, as the content would paint them.
+	// The animated layers, then the fixed / sticky boxes on top, as the
+	// content would paint them.
+	s.drawLayers(canvas, effClip, layers, win.PaintSeq())
 	depth := canvas.Save()
 	canvas.ClipRect(effClip)
 	s.applyContentTransform(canvas)
@@ -181,7 +191,7 @@ func (s *ScrollView) drawCached(canvas Canvas, effClip, vp Rect) bool {
 // renderCache renders the content (without the viewport boxes) into the
 // cache over the logical rect r. It reports true when the content asked
 // for the window's GPU canvas, which the cache cannot stand in for.
-func (s *ScrollView) renderCache(window Canvas, m Matrix, r Rect) (usedGPU bool) {
+func (s *ScrollView) renderCache(window Canvas, m Matrix, r Rect, layers []cacheLayer) (usedGPU bool) {
 	c := s.cache
 	var cc Canvas = NewImageCanvas(c.img)
 	probe := &gpuProbe{}
@@ -195,7 +205,14 @@ func (s *ScrollView) renderCache(window Canvas, m Matrix, r Rect) (usedGPU bool)
 	cc.ClipRect(r)
 	cc.ClearRect(r)
 	s.applyContentTransform(cc)
-	SuppressDraw(s.vpBoxes)
+	suppressed := s.vpBoxes
+	if len(layers) > 0 {
+		suppressed = slices.Clone(s.vpBoxes)
+		for _, l := range layers {
+			suppressed = append(suppressed, l.box.Self())
+		}
+	}
+	SuppressDraw(suppressed)
 	if !boxChildHidden(s.Content) {
 		s.Content.Draw(cc)
 	}

@@ -97,6 +97,11 @@ type Box struct {
 	// (CSS overflow: hidden). Content that exceeds the box is not painted.
 	ClipChildren bool
 
+	// Animated layer state (anim_layer.go).
+	layerSeq     uint64 // window paint it was last drawn as a layer
+	layerDrawing bool   // being drawn as a layer right now
+	childRasters map[Widget]*childRaster
+
 	// PosOffset shifts the box (and its whole subtree) from its normal
 	// laid-out position without disturbing siblings — CSS
 	// position:relative with top/left offsets. Applied in Layout so bounds
@@ -423,6 +428,9 @@ func (b *Box) Draw(canvas Canvas) {
 	defer canvas.RestoreTo(base)
 	if b.Transform != nil || b.VisualTransform != nil {
 		canvas.Concat(b.paintTransformMatrix())
+		if b.layerDrawing {
+			snapLayerTranslation(canvas)
+		}
 	}
 	var clipPath *Path
 	if b.ClipPath != nil {
@@ -568,6 +576,10 @@ func (b *Box) drawContent(canvas Canvas, bounds Rect) {
 			if !clip.IsEmpty() && !PaintBoundsOf(w).Intersects(clip) {
 				continue
 			}
+			if b.layerDrawing {
+				b.drawChildRaster(canvas, w)
+				continue
+			}
 			w.Draw(canvas)
 		}
 	}
@@ -577,6 +589,10 @@ func (b *Box) drawContent(canvas Canvas, bounds Rect) {
 			continue // positioned children paint with their stacking context
 		}
 		if !clip.IsEmpty() && !PaintBoundsOf(child).Intersects(clip) {
+			continue
+		}
+		if b.layerDrawing {
+			b.drawChildRaster(canvas, child)
 			continue
 		}
 		child.Draw(canvas)
@@ -641,7 +657,10 @@ func shadowPaintBounds(bounds Rect, shadow ShadowStyle) Rect {
 	if shadow.IsZero() || shadow.Color.A <= 0 || shadow.Inset {
 		return Rect{}
 	}
-	halo := shadow.Blur*3 + shadow.Spread
+	// The rasterizer draws an outer shadow into a buffer that reaches blur
+	// + 2 pixels past the spread rect (render.drawShadowImplRaw); nothing
+	// paints beyond it. (3× blur doubled every animated card's bitmap.)
+	halo := max(shadow.Blur, 0) + 2 + shadow.Spread
 	if halo < 0 {
 		halo = 0
 	}

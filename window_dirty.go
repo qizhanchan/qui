@@ -94,6 +94,15 @@ func (w *Window) InvalidateCompositeRect(r Rect) {
 	w.compositeOnlyInv--
 }
 
+// CompositeAnimator is an Animator whose damage may be composite-only: it
+// moves pixels a retained layer already holds (a translated layer drawn
+// over a content cache) without changing any content. The window asks
+// after each Tick.
+type CompositeAnimator interface {
+	Animator
+	CompositeOnlyDamage() bool
+}
+
 // CompositeOnly runs fn with every invalidation it makes counted as
 // composite-only (see InvalidateCompositeRect): re-placing fixed / sticky
 // boxes for a new scroll offset moves them without changing any content.

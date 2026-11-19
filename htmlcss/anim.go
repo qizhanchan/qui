@@ -489,6 +489,38 @@ type elAnimations struct {
 	registered bool
 	cur        map[string]animVal // what is on screen for animated props
 	quiet      bool               // sampling without events or state changes
+	layer      bool               // marked as an animated layer (widgets)
+	lastDirty  qui.Rect           // the animator's last damage, window space
+}
+
+// layerMinDuration: an animation shorter than this is not worth a layer
+// (joining and leaving one re-renders the content cache).
+const layerMinDuration = 2 * time.Second
+
+// isLayerAnimation reports a long-running, playing animation that moves
+// the element's transform: the element is drawn as an animated layer.
+func isLayerAnimation(a *runAnimation) bool {
+	if a.ended || a.spec.paused {
+		return false
+	}
+	if !math.IsInf(a.spec.iterations, 1) && float64(a.spec.dur)*a.spec.iterations < float64(layerMinDuration) {
+		return false
+	}
+	for _, f := range a.frames {
+		if _, ok := f.decls["transform"]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// setLayer marks or unmarks the element as an animated layer.
+func (e *El) setLayer(on bool) {
+	if e.anim == nil || e.anim.layer == on {
+		return
+	}
+	e.anim.layer = on
+	e.Box.SetAnimatedLayer(on)
 }
 
 func (st *elAnimations) animsOrNil() []*runAnimation {
@@ -631,6 +663,7 @@ func (e *El) cancelAnimations() {
 			e.animEvent("animationcancel", a.spec.name, 0)
 		}
 	}
+	e.setLayer(false)
 	e.anim = nil
 }
 
@@ -648,8 +681,18 @@ func (a *elAnimator) Tick(now time.Time) (qui.Rect, bool) {
 	}
 	// The window wants the dirty rect in window space: inside a scrolled
 	// view the element's own bounds are content coordinates, and repainting
-	// there leaves the animated element stale on screen.
-	return qui.PaintBoundsInWindow(e), done
+	// there leaves the animated element stale on screen. The old place is
+	// damaged too: a moving transform leaves it.
+	r := qui.PaintBoundsInWindow(e)
+	dirty := r.Union(e.anim.lastDirty)
+	e.anim.lastDirty = r
+	return dirty, done
+}
+
+// CompositeOnlyDamage: drawn as an animated layer over a content cache,
+// the element's movement is a recomposition (qui.CompositeAnimator).
+func (a *elAnimator) CompositeOnlyDamage() bool {
+	return a.e.anim != nil && a.e.anim.layer && a.e.Box.CompositeLayerActive()
 }
 
 func (a *elAnimator) Stop() {}
@@ -720,6 +763,11 @@ func (e *El) tickAnimations(now time.Time) bool {
 		running = true
 	}
 	e.applyAnimated(over)
+	layer := false
+	for _, a := range st.anims {
+		layer = layer || isLayerAnimation(a)
+	}
+	e.setLayer(layer && running)
 	return !running
 }
 
@@ -878,6 +926,14 @@ func (e *El) applyAnimated(over map[string]animVal) {
 				t.Resolve = func(w, h float32) qui.Matrix { return resolveTransformOps(ops, w, h) }
 				e.Box.Transform = t
 			}
+		}
+	}
+	// Drawn as an animated layer, the element only moves: its pixels are
+	// kept (widgets/anim_layer.go), so the repaint is a recomposition.
+	if st.layer && e.Box.CompositeLayerActive() {
+		if w := e.Window(); w != nil {
+			w.CompositeOnly(e.Invalidate)
+			return
 		}
 	}
 	e.Invalidate()

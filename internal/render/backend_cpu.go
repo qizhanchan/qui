@@ -645,14 +645,18 @@ func transformedEdgeCoverage(inv gfx.Matrix, x, y int, sw, sh float32) float32 {
 // texels — the silhouette itself comes from the coverage mask instead.
 type premulSampler struct {
 	rgba    *image.RGBA
+	ycc     *image.YCbCr // decoded JPEGs: opaque, read without boxing a color per texel
 	generic image.Image
 	b       image.Rectangle
 }
 
 func newPremulSampler(img image.Image) premulSampler {
 	s := premulSampler{generic: img, b: img.Bounds()}
-	if r, ok := img.(*image.RGBA); ok {
-		s.rgba = r
+	switch t := img.(type) {
+	case *image.RGBA:
+		s.rgba = t
+	case *image.YCbCr:
+		s.ycc = t
 	}
 	return s
 }
@@ -676,6 +680,13 @@ func (s premulSampler) texel(ix, iy int) (r, g, b, a float32) {
 		o := s.rgba.PixOffset(s.b.Min.X+ix, s.b.Min.Y+iy)
 		p := s.rgba.Pix[o : o+4 : o+4]
 		return float32(p[0]), float32(p[1]), float32(p[2]), float32(p[3])
+	}
+	if s.ycc != nil {
+		x, y := s.b.Min.X+ix, s.b.Min.Y+iy
+		yy := s.ycc.Y[s.ycc.YOffset(x, y)]
+		co := s.ycc.COffset(x, y)
+		r, g, b := color.YCbCrToRGB(yy, s.ycc.Cb[co], s.ycc.Cr[co])
+		return float32(r), float32(g), float32(b), 255
 	}
 	cr, cg, cb, ca := s.generic.At(s.b.Min.X+ix, s.b.Min.Y+iy).RGBA()
 	// RGBA() yields premultiplied 16-bit; scale to 0–255.

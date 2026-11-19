@@ -147,7 +147,13 @@ func (w *Window) tickAnimators(now time.Time) {
 			continue
 		}
 		dirty, done := a.Tick(now)
-		w.unionDirty(dirty)
+		if ca, ok := a.(CompositeAnimator); ok && ca.CompositeOnlyDamage() {
+			w.compositeOnlyInv++
+			w.unionDirty(dirty)
+			w.compositeOnlyInv--
+		} else {
+			w.unionDirty(dirty)
+		}
 		if done {
 			w.animators[i] = nil
 		}

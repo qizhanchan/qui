@@ -320,7 +320,11 @@ func applyPositioning(box positionedBox, cs *ComputedStyle, forceContainingBlock
 	// would otherwise create spurious layout invalidations on every restyle.
 	positionOffset := qui.Point{}
 	outOfFlow := false
-	establishesContainingBlock := forceContainingBlock
+	// A transform or a filter makes the box the containing block of its
+	// absolute (and fixed) descendants, positioned or not (CSS Transforms 1
+	// §2, Filter Effects 1 §4): react.dev's rotated photo cards hang an
+	// `absolute inset-0` shadow layer on themselves.
+	establishesContainingBlock := forceContainingBlock || cs.Transform != nil || cs.Filter != nil
 	absolutePosition := qui.AbsolutePosition{}
 	switch cs.Position {
 	case "relative":
