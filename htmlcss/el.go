@@ -1979,6 +1979,7 @@ func (e *El) ensureBacking() {
 				in.SetText(v)
 			}
 			e.backing = in
+			e.applySearchCancelButton()
 		}
 	}
 	// HTML `disabled` attribute → disable the backing control.
@@ -2545,10 +2546,55 @@ func (e *El) submitForm() {
 	e.onFormSubmit(data)
 }
 
+// ScrollContainer reports whether the element is a CSS scroll container
+// (overflow auto / scroll / hidden on an axis), the scrollport of its
+// sticky descendants even while nothing overflows (qui.ScrollContainerer).
+func (e *El) ScrollContainer() bool {
+	cs := e.lastCS
+	if cs == nil || e.tag == "html" || e.tag == "body" {
+		return false // their overflow propagates to the viewport
+	}
+	if cs.OverflowScroll {
+		return true
+	}
+	return cs.OverflowClip && !strings.Contains(cs.raw["overflow"]+" "+cs.raw["overflow-x"]+" "+cs.raw["overflow-y"], "clip")
+}
+
+// ViewportScrollLocked reports, for the document's root <html>, whether the
+// overflow propagated to the viewport is hidden / clip on the block axis:
+// <html>'s own when not visible, else <body>'s (CSS Overflow 3 §3.3). A
+// browser then ignores the user's wheel and keys on the page (modals lock
+// the page this way) while scripts can still scroll it.
+func (e *El) ViewportScrollLocked() bool {
+	if e.tag != "html" || e.lastCS == nil {
+		return false
+	}
+	src := e.lastCS
+	if !src.OverflowClip && !src.OverflowScroll {
+		src = nil
+		for _, k := range e.elementKids {
+			if b, ok := k.(*El); ok && b.tag == "body" {
+				src = b.lastCS
+				break
+			}
+		}
+	}
+	return src != nil && src.OverflowClipY && !src.OverflowScroll
+}
+
+// SetFormResetHandler installs fn, asked before a reset button resets its
+// form: it fires the form's cancelable reset event, and false (a listener
+// called preventDefault) leaves the controls alone. nil removes it.
+func (eng *StyleEngine) SetFormResetHandler(fn func(form *El) bool) { eng.formReset = fn }
+
 // resetForm restores the enclosing <form>'s controls to their initial
-// (default) values — the behavior of an <input type=reset> button.
+// (default) values — the behavior of a reset button — unless the form's
+// reset event is canceled.
 func (e *El) resetForm() {
 	if f := e.enclosingForm(); f != nil {
+		if f.engine != nil && f.engine.formReset != nil && !f.engine.formReset(f) {
+			return
+		}
 		var walk func(el *El)
 		walk = func(el *El) {
 			el.resetControl()
@@ -2563,6 +2609,35 @@ func (e *El) resetForm() {
 				walk(ke)
 			}
 		}
+	}
+}
+
+// applySearchCancelButton shows a search field's UA clear button (a number
+// field's spinner) unless the page hides it with
+// ::-webkit-search-cancel-button (::-webkit-inner-spin-button)
+// { display: none }, as DocSearch does — it draws its own reset button.
+func (e *El) applySearchCancelButton() {
+	in, ok := e.backing.(*widgets.Input)
+	if !ok || e.tag != "input" || e.engine == nil || e.engine.sheet == nil {
+		return
+	}
+	var want widgets.InputTrailingButton
+	var pseudo string
+	switch e.attrs["type"] {
+	case "search":
+		want, pseudo = widgets.InputTrailingClear, "-webkit-search-cancel-button"
+	case "number":
+		want, pseudo = widgets.InputTrailingStepper, "-webkit-inner-spin-button"
+	default:
+		return
+	}
+	if d := pseudoDecls(e.node, e.engine.sheet, pseudo); d != nil &&
+		strings.EqualFold(strings.TrimSpace(d["display"]), "none") {
+		want = widgets.InputTrailingNone
+	}
+	if in.TrailingButton != want {
+		in.TrailingButton = want
+		in.Invalidate()
 	}
 }
 
@@ -2801,6 +2876,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 			e.SetOutOfFlow(false)
 		}
 	}()
+	e.applySearchCancelButton()
 	prev := e.lastCS
 	e.lastCS = cs
 	if cs != nil {
@@ -4847,6 +4923,7 @@ func (e *El) ensureScroll() {
 	sv.BoxModel = false
 	sv.OverlayBar = true                // a browser's (macOS) overlay scrollbar: no gutter
 	sv.FitContent = true                // auto height = content height, capped by max-height
+	sv.StickyScrollport = true          // position: sticky descendants stick to this box
 	sv.Style().Background = qui.Color{} // transparent viewport
 	st := sv.Style()
 	st.Grow = 1
@@ -6685,7 +6762,7 @@ func (e *El) runBuiltinClick() bool {
 		t := e.attrs["type"]
 		isSubmit := (e.tag == "button" && (t == "submit" || t == "")) ||
 			(e.tag == "input" && t == "submit")
-		isReset := e.tag == "input" && t == "reset"
+		isReset := t == "reset"
 		if (isSubmit || isReset) && e.enclosingForm() != nil {
 			if isReset {
 				e.resetForm()

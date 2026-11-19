@@ -42,32 +42,50 @@ func ViewportPositioningOf(w Widget) ViewportPositioning {
 	return ViewportNone
 }
 
+// ScrollContainerer is implemented by widgets that are CSS scroll
+// containers (overflow other than visible / clip) whether or not their
+// content overflows right now: a sticky descendant sticks to that box,
+// never to the document viewport.
+type ScrollContainerer interface{ ScrollContainer() bool }
+
 // ViewportPositioned lists the fixed and sticky widgets in root's subtree
 // (root excluded), in tree order. Collapsed subtrees are skipped. The walk
 // does not enter widgets that clip their children's coordinates (another
-// scroll view): their sticky descendants stick to that scroller.
+// scroll view): their sticky descendants stick to that scroller. A sticky
+// box below a scroll container or a fixed box is not the viewport's
+// either: its scrollport is that container, or (inside a fixed box) one
+// that never moves with the document scroll, so it stays in flow.
 func ViewportPositioned(root Widget) []Widget {
 	var out []Widget
-	var walk func(w Widget, top bool)
-	walk = func(w Widget, top bool) {
+	var walk func(w Widget, top, stickyOK bool)
+	walk = func(w Widget, top, stickyOK bool) {
 		if !top {
 			if isCollapsed(w) {
 				return
 			}
-			if ViewportPositioningOf(w) != ViewportNone {
+			switch ViewportPositioningOf(w) {
+			case ViewportFixed:
 				out = append(out, w)
+				stickyOK = false
+			case ViewportSticky:
+				if stickyOK {
+					out = append(out, w)
+				}
 			}
 			if _, ok := w.(interface{ ChildInteractionTransform() Matrix }); ok {
 				return // a nested scroll view: its own viewport
 			}
+			if sc, ok := w.(ScrollContainerer); ok && sc.ScrollContainer() {
+				stickyOK = false
+			}
 		}
 		if cl, ok := w.(ChildLister); ok {
 			for _, ch := range cl.ChildList() {
-				walk(ch, false)
+				walk(ch, false, stickyOK)
 			}
 		}
 	}
-	walk(root, true)
+	walk(root, true, true)
 	return out
 }
 

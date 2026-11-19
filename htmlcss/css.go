@@ -1000,7 +1000,9 @@ func isSimpleBoundary(b byte) bool {
 // pseudo-class). Only ::before/::after carry generated content in this engine.
 func isPseudoElement(name string) bool {
 	switch strings.ToLower(name) {
-	case "before", "after", "first-line", "first-letter", "placeholder", "marker", "selection", "backdrop":
+	case "before", "after", "first-line", "first-letter", "placeholder", "marker", "selection", "backdrop",
+		"-webkit-search-cancel-button", "-webkit-search-decoration", "-webkit-search-results-button",
+		"-webkit-search-results-decoration", "-webkit-inner-spin-button", "-webkit-outer-spin-button":
 		return true
 	}
 	return false

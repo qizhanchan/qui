@@ -162,3 +162,62 @@ func TestFormSubmitOnEnter(t *testing.T) {
 		t.Error("Enter in a form field did not submit the form")
 	}
 }
+
+// A <button type=reset> resets its form like <input type=reset>, after
+// asking the engine's reset handler (the page's cancelable reset event);
+// DocSearch clears its query from that event and cancels the default.
+func TestButtonResetAsksHandlerFirst(t *testing.T) {
+	_, res := renderWeb(t, `<!doctype html><body>
+		<form id="f"><input id="q" type="search" value="start"><button id="r" type="reset">x</button></form>
+	</body>`)
+	q, r := res.ByID["q"].(*El), res.ByID["r"].(*El)
+	var asked *El
+	cancel := true
+	res.Engine.SetFormResetHandler(func(form *El) bool { asked = form; return !cancel })
+
+	q.SetInputValue("typed")
+	if !r.runBuiltinClick() {
+		t.Fatal("reset button did not act")
+	}
+	if asked != res.ByID["f"].(*El) {
+		t.Fatalf("reset handler asked with %v, want the form", asked)
+	}
+	if got := q.InputValue(); got != "typed" {
+		t.Fatalf("canceled reset changed the value to %q", got)
+	}
+	cancel = false
+	r.runBuiltinClick()
+	if got := q.InputValue(); got != "start" {
+		t.Fatalf("value after reset = %q, want start", got)
+	}
+}
+
+// ::-webkit-search-cancel-button / ::-webkit-inner-spin-button
+// { display: none } remove the UA clear button and spinner.
+func TestHiddenSearchCancelAndSpinButtons(t *testing.T) {
+	_, res := renderWeb(t, `<!doctype html><head><style>
+.bare::-webkit-search-cancel-button, .bare::-webkit-inner-spin-button { display: none }
+</style></head><body>
+<input id="s1" type="search"><input id="s2" class="bare" type="search">
+<input id="n1" type="number"><input id="n2" class="bare" type="number">
+</body>`)
+	want := map[string]widgets.InputTrailingButton{
+		"s1": widgets.InputTrailingClear, "s2": widgets.InputTrailingNone,
+		"n1": widgets.InputTrailingStepper, "n2": widgets.InputTrailingNone,
+	}
+	for id, w := range want {
+		in, ok := res.ByID[id].(*El).backing.(*widgets.Input)
+		if !ok {
+			t.Fatalf("%s has no Input backing", id)
+		}
+		if in.TrailingButton != w {
+			t.Errorf("%s trailing button = %v, want %v", id, in.TrailingButton, w)
+		}
+	}
+	// The class goes away: the clear button comes back.
+	res.ByID["s2"].(*El).SetClass("")
+	res.Engine.FlushPendingStyles()
+	if in := res.ByID["s2"].(*El).backing.(*widgets.Input); in.TrailingButton != widgets.InputTrailingClear {
+		t.Errorf("s2 after class removal = %v, want clear", in.TrailingButton)
+	}
+}

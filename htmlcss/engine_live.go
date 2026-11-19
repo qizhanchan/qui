@@ -40,6 +40,7 @@ type StyleEngine struct {
 	customEqual        map[customPropPair]bool
 	lazyImages         map[*El]bool          // script-enabled loading=lazy images awaiting a nearby viewport
 	animEvents         AnimationEventHandler // CSS animation / transition events (anim.go)
+	formReset          func(form *El) bool   // asked before a form reset; false cancels (el.go)
 	// linkHandler, when set, decides what a link click does (events.go).
 	linkHandler LinkHandler
 	// tooltipStyled: the stylesheet set the window's tooltip colors.

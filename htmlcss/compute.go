@@ -1879,7 +1879,7 @@ func parseOverflow(m map[string]string, cs *ComputedStyle) {
 		switch strings.ToLower(strings.TrimSpace(v)) {
 		case "hidden", "clip":
 			return true, false
-		case "scroll", "auto":
+		case "scroll", "auto", "overlay": // overlay: legacy alias of auto (Chrome)
 			return false, true
 		}
 		return false, false

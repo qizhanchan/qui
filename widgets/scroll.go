@@ -74,10 +74,18 @@ type ScrollView struct {
 	// scroll position (qui layout_viewport.go). A browser sets it on the
 	// view showing the page.
 	FixedViewport bool
-	vpBoxes       []Widget        // fixed / sticky boxes of the content
-	cache         *scrollCache    // content cache, see scroll_cache.go
-	stickyBase    map[Widget]Rect // sticky boxes' in-flow rects
-	stickyPlaced  map[Widget]Rect // where placeViewportBoxes last put them
+	// StickyScrollport makes this view the scrollport of the position:
+	// sticky boxes in its content (a CSS overflow: auto box): they stick
+	// to its visible area as it scrolls. FixedViewport implies it.
+	StickyScrollport bool
+	// UserScrollLocked, when set and reporting true, makes the view ignore
+	// the wheel (the page under a modal: overflow hidden on the document
+	// root); ScrollTo still moves it.
+	UserScrollLocked func() bool
+	vpBoxes          []Widget        // fixed / sticky boxes of the content
+	cache            *scrollCache    // content cache, see scroll_cache.go
+	stickyBase       map[Widget]Rect // sticky boxes' in-flow rects
+	stickyPlaced     map[Widget]Rect // where placeViewportBoxes last put them
 	// Orientation selects the scroll axis. Zero value = ScrollVertical.
 	Orientation ScrollOrientation
 	// ScrollStep is the pixel delta per wheel notch. 0 means the default.
@@ -333,8 +341,19 @@ func (s *ScrollView) Layout(rect Rect) {
 	r := s.contentRect()
 	MeasureChild(s.Content, Size{W: r.W, H: r.H})
 	s.Content.Layout(r)
-	if s.FixedViewport {
+	if s.FixedViewport || s.StickyScrollport {
 		s.vpBoxes = ViewportPositioned(s.Content)
+		if !s.FixedViewport {
+			// Fixed boxes belong to the document viewport, not to a
+			// nested scroller.
+			kept := s.vpBoxes[:0]
+			for _, w := range s.vpBoxes {
+				if ViewportPositioningOf(w) == ViewportSticky {
+					kept = append(kept, w)
+				}
+			}
+			s.vpBoxes = kept
+		}
 		old, placed := s.stickyBase, s.stickyPlaced
 		s.stickyBase = map[Widget]Rect{}
 		s.stickyPlaced = map[Widget]Rect{}
@@ -363,7 +382,7 @@ func (s *ScrollView) Layout(rect Rect) {
 // placeViewportBoxes lays the content's fixed and sticky boxes out for the
 // current scroll position.
 func (s *ScrollView) placeViewportBoxes() {
-	if !s.FixedViewport || len(s.vpBoxes) == 0 {
+	if (!s.FixedViewport && !s.StickyScrollport) || len(s.vpBoxes) == 0 {
 		return
 	}
 	cr := s.contentRect()
@@ -651,6 +670,9 @@ func (s *ScrollView) Handle(event Event) bool {
 // list inside a scrolling page used to eat every wheel over it. A trackpad
 // gesture latches to the view its first event scrolled (see wheelLatched).
 func (s *ScrollView) wheel(e MouseEvent) bool {
+	if s.UserScrollLocked != nil && s.UserScrollLocked() {
+		return false
+	}
 	if s.crossScrolls() {
 		return s.wheel2D(e)
 	}
