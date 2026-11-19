@@ -764,7 +764,10 @@ func (b *CPUBackend) DrawVector(src gfx.VectorSource, dst gfx.Rect, clip gfx.Rec
 	if target == nil || src == nil {
 		return
 	}
-	dstPix := rectToPixelRect(dst).Intersect(target.Bounds())
+	// Rasterize at the whole destination size and copy the visible part: a
+	// vector partly off the target (scrolled half into view, or painted
+	// into a strip of a cache) must not be squeezed into what shows.
+	dstPix := rectToPixelRect(dst)
 	if dstPix.Empty() {
 		return
 	}

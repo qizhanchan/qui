@@ -340,3 +340,27 @@ func nearRect(got, want image.Rectangle, tol int) bool {
 	return abs(got.Min.X-want.Min.X) <= tol && abs(got.Min.Y-want.Min.Y) <= tol &&
 		abs(got.Max.X-want.Max.X) <= tol && abs(got.Max.Y-want.Max.Y) <= tol
 }
+
+// A vector partly off the canvas rasterizes at its whole size and shows
+// only its visible part: react.dev's logo, scrolled halfway into view,
+// was squeezed into the visible strip, one squashed copy per scroll step.
+func TestDrawVectorPartlyOffCanvasIsNotSqueezed(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 40, 40))
+	c := NewImageCanvas(img)
+	// 40 tall, the top 20 above the canvas: only the transparent bottom
+	// half of the stripe shows.
+	c.DrawVector(stripeVector{}, gfx.Rect{X: 0, Y: -20, W: 40, H: 40}, gfx.Color{A: 1})
+	if a := alphaAt(img, 20, 5); a > 8 {
+		t.Errorf("alpha at y=5 is %d: the stripe (vector top half, off canvas) was squeezed into view", a)
+	}
+	// And the other way: the top half on the canvas, the rest below it.
+	img2 := image.NewRGBA(image.Rect(0, 0, 40, 40))
+	c2 := NewImageCanvas(img2)
+	c2.DrawVector(stripeVector{}, gfx.Rect{X: 0, Y: 20, W: 40, H: 40}, gfx.Color{A: 1})
+	if a := alphaAt(img2, 20, 30); a < 200 {
+		t.Errorf("alpha at y=30 is %d, want the opaque stripe", a)
+	}
+	if a := alphaAt(img2, 20, 10); a > 8 {
+		t.Errorf("alpha at y=10 is %d above the vector", a)
+	}
+}
