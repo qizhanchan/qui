@@ -314,9 +314,9 @@ P0 与架构无关，可以立刻做。P1 是后面所有阶段的地基，也�
     - `htmlcss` 的 `TestMarqueeOnPageThreadKeepsMovingWhilePageBlocked`：页面线程卡住时，宿主合成线程 150ms 内呈现多帧，走马灯持续移动。
     - 以上测试在 `-race` 下零报告。
   - 留到后续：
-    - 嵌套滚动区做成合成层（8.2 节）：需要元素背景色随层提交，并换算父层瓦片空间。
-    - 页面缩放的位图预览：需要 P5 中 q-browser 的缩放路径。
-    - 层里的视频保留绘制（`QueueRetainedDraw`）跨线程：需要先审计 `FrameView` 的线程安全。
+    - 嵌套滚动区做成合成层（8.2 节）：已完成，见文末“收尾后的补充”。
+    - 页面缩放的位图预览：已完成，见文末“收尾后的补充”。
+    - 层里的视频保留绘制跨线程：已完成，见文末“收尾后的补充”。
 - **P4**：
   - 提交里新增 `PageMeta`：页面焦点控件是否接受输入法组合，以及它的光标矩形。`PageView` 据此作为宿主窗口的 `IMEClient` / `IMEActivity` 代理：预编辑和上屏文本转发给页面，候选窗按页面光标加视图偏移定位；页面焦点不接受组合时，按键直接作为字符送达。
   - `PageView` 是文件拖放目标，OS 拖进来的文件按页面坐标交给页面窗口。
@@ -335,7 +335,7 @@ P0 与架构无关，可以立刻做。P1 是后面所有阶段的地基，也�
   - 后台标签页：`PageHost.SetHidden` 把帧率降到每秒 4 帧，任务照常运行；JS 定时器的节流沿用 `js.SetVisible`。
   - 绘制保持：导航时 PageView 一直显示上一帧，直到新文档提交，这是这个架构自然带来的。
   - `matchMedia` 改用文档自己的视口（`MediaMatchesSize`）。
-  - 用 `QB_PAGE_THREADS=0` 可以回到旧模式。DevTools 只在旧模式下可用，因为它从 shell 窗口直接读 DOM；页面线程模式下面板里给出说明。
+  - 用 `QB_PAGE_THREADS=0` 可以回到旧模式。DevTools 起初只在旧模式下可用，后来已支持页面线程模式（见文末“收尾后的补充”）。
   - 顺带修复：`position: fixed` 盒子位于 transform 等祖先之下时，内容瓦片缓存原来会拒绝整个文档（go.dev 因此从来没有用上瓦片）。现在这类盒子画进瓦片，它们的移动按内容损伤处理。
   - 验收（真实窗口）：
     - `QB_DEBUG_UILAT` 测 UI 线程排队延迟。打开 github.com/pricing 时，页面线程模式下除启动那一秒外每秒 p99 ≤ 20ms、最大约 31ms；旧模式下 UI 线程多次卡住 1–3.3 秒。
@@ -351,3 +351,28 @@ P0 与架构无关，可以立刻做。P1 是后面所有阶段的地基，也�
     - go-dev、rust-lang、rust-book、kernel、lobsters、cnn-lite 的 B 和 C 都通过。
     - 未解决：mdn-css、pkg-go、github-repo 的“点击链接导航”和 mdn-css、bbc-news 的“悬停样式”在页面线程模式下失败，旧模式下这些是通过的。
     - 单线程模式的对照这轮没跑。
+  - 后来查明，上面这些失败都与线程无关：页面线程的 Esc 加速键抢了页面的 Esc，下拉框目标找错了窗口，页面窗口占了 window-1 的 id。修复后，core 档两种模式的结果一致。
+- **收尾后的补充（2026-11-20 至 21）**：
+  - DevTools 在页面线程模式下可用：面板本身是同一页面线程上的第二个 PageHost（`devtools.NewEmbedded`），在页面线程上读 DOM；高亮是页面窗口里的覆盖层。
+  - `SetTheme` 不再有数据竞争：`CurrentTheme()` 读原子快照。
+  - 嵌套滚动区也提交为合成层（8.2 节）：
+    - 层的瓦片记录在父层的瓦片里，坐标按父层的 `commitOff` 换算。
+    - 背景色来自元素祖先链（`LayerBackground`）。渐变背景、图片背景和半透明背景不能这样处理，这些滚动区仍是慢区域。
+    - `SuppressDraw` 改为按窗口保存，并且可以嵌套。
+    - 验收：`TestNestedScrollerScrollsWhilePageBlocked`。
+  - 同站点共享线程（q-browser `browser/threads.go`）：
+    - 按 scheme 加 eTLD+1 归类，同一站点最多 2 个标签页共用一条页面线程，对应 Chromium 的 `kProcessPerSiteUpToMainFrameThreshold`。
+    - 线程在最后一个标签页关闭时结束。
+    - 不预留备用线程：锁定 OS 线程的 goroutine 启动只要微秒级。
+  - 缩放位图预览（`page_view_zoom.go`）：
+    - `PageView.PreviewZoom(ratio, apply)` 立即在 UI 线程按比例缩放当前帧。
+    - `apply` 在页面线程运行并打上标记（`PageMeta.Mark`）。带着这个标记的第一次提交替换掉预览。
+    - 连续调用会叠加。
+    - 验收：`TestPageViewZoomPreview`。
+  - 视频跨线程（8.4 节）：
+    - 页面窗口的画布实现 `CrossThreadRetainedCanvas`。`VideoView` 和 `FrameView` 优先用它，并在排队时捕获几何信息，不再和合成线程共享字段。
+    - 宿主在帧上重新挖洞，然后把绘制排到层下。
+    - 滚动缓存和动画层也识别这种画布，视频不会被画进瓦片。
+    - 验收：`TestFrameViewOnPageThreadCompositesInHost`，真实窗口里的 1080p60 H.264 视频也已确认。
+    - 已知限制：新视频帧要经过页面线程触发重绘，所以页面线程卡住时视频会停住。Chrome 由合成器直接取帧，不受这个影响。
+
