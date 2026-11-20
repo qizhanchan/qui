@@ -280,6 +280,10 @@ type Window struct {
 	// inPaint marks the widget Draw pass (see window_paint_debug.go). The paint
 	// pass must be read-only; QUI_DEBUG_DRAW=1 enforces it.
 	inPaint bool
+	// paintGen numbers the current paint pass (paint_pass.go).
+	paintGen uint64
+	// scrollLayers: the scrollers a page window commits (page_scroll_layer.go).
+	scrollLayers scrollLayerState
 
 	// inStep guards against synchronous redraws requested from platform
 	// event callbacks while a frame is already being produced. Resizing on
@@ -455,26 +459,32 @@ func newWindowFromConfig(plat platformApp, cfg platformWindowConfig) (*Window, e
 	// Overlay panels are excluded: one is typically created AFTER the real
 	// window and lives for the whole process, so letting it win would hand
 	// the app's clipboard to a window that has no text input at all.
-	if cfg.Kind != WindowOverlayPanel && cfg.Kind != WindowPopup {
+	// Page windows (embedded backend) use the host's provider.
+	if cfg.Kind != WindowOverlayPanel && cfg.Kind != WindowPopup && !isEmbeddedPlatform(pw) {
 		SetClipboardProvider(newOSClipboard(pw))
 	}
 
 	// Re-paint + re-layout on theme switch. Widgets read CurrentTheme()
 	// fresh at Draw time, so no per-widget bookkeeping is needed —
 	// we just need to flush the current cached frame.
-	w.unsubscribeTheme = SubscribeTheme(func() {
+	// Theme and locale changes are announced on the app's UI thread; a page
+	// window (RFC 0005) runs on a page thread of its own, so it takes the
+	// change as a job.
+	refresh := func() {
 		w.Invalidate()
 		w.InvalidateLayout()
-	})
+	}
+	onOwnThread := refresh
+	if isEmbeddedPlatform(pw) {
+		onOwnThread = func() { w.PostJob(refresh) }
+	}
+	w.unsubscribeTheme = SubscribeTheme(onOwnThread)
 
 	// Same for language switches. Widgets resolve message keys inside
 	// Draw/Measure, so a re-layout is all that is needed — but it MUST
 	// be a re-layout and not a bare repaint: translated strings have
 	// different widths, so every text box may resize.
-	w.unsubscribeLocale = SubscribeLocale(func() {
-		w.Invalidate()
-		w.InvalidateLayout()
-	})
+	w.unsubscribeLocale = SubscribeLocale(onOwnThread)
 
 	// Install the platform-specific IME backend.
 	w.installIMEBackend()

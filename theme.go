@@ -1,5 +1,10 @@
 package qui
 
+import (
+	"sync"
+	"sync/atomic"
+)
+
 // Theme is a bundle of design tokens (colors / spacing / radius / fonts)
 // that widgets reference instead of hard-coding values. Switching the
 // global theme via SetTheme triggers re-paint + re-layout on every
@@ -284,10 +289,13 @@ func newLightTheme() Theme {
 
 // Global theme state.
 var (
-	currentTheme     = LightTheme
+	currentTheme = LightTheme
+	// themeSubMu guards the subscriber list: page windows (RFC 0005)
+	// subscribe and unsubscribe from their own threads.
+	themeSubMu       sync.Mutex
 	themeSubscribers []themeSubscriber
 	themeSubID       int64
-	themeGeneration  uint64
+	themeGeneration  atomic.Uint64
 )
 
 type themeSubscriber struct {
@@ -298,7 +306,7 @@ type themeSubscriber struct {
 // ThemeGeneration increments on every SetTheme. Anything that caches values
 // derived from the theme (resolved colors, rasterized chrome) includes it in
 // its cache key, exactly like FontRegistryGeneration and LocaleGeneration.
-func ThemeGeneration() uint64 { return themeGeneration }
+func ThemeGeneration() uint64 { return themeGeneration.Load() }
 
 // CurrentTheme returns a pointer to the active Theme. Widgets use this
 // at Draw time to pick colors. The pointer is stable across SetTheme
@@ -310,8 +318,11 @@ func CurrentTheme() *Theme { return &currentTheme }
 // don't need to do anything — Draw reads CurrentTheme() afresh.
 func SetTheme(t Theme) {
 	currentTheme = t
-	themeGeneration++
-	for _, s := range append([]themeSubscriber(nil), themeSubscribers...) {
+	themeGeneration.Add(1)
+	themeSubMu.Lock()
+	subs := append([]themeSubscriber(nil), themeSubscribers...)
+	themeSubMu.Unlock()
+	for _, s := range subs {
 		s.fn()
 	}
 }
@@ -328,10 +339,14 @@ func SubscribeTheme(fn func()) func() {
 	if fn == nil {
 		return func() {}
 	}
+	themeSubMu.Lock()
+	defer themeSubMu.Unlock()
 	themeSubID++
 	id := themeSubID
 	themeSubscribers = append(themeSubscribers, themeSubscriber{id: id, fn: fn})
 	return func() {
+		themeSubMu.Lock()
+		defer themeSubMu.Unlock()
 		for i, s := range themeSubscribers {
 			if s.id == id {
 				themeSubscribers = append(themeSubscribers[:i:i], themeSubscribers[i+1:]...)

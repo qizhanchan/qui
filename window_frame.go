@@ -522,8 +522,7 @@ func (w *Window) Step() {
 		w.takeContentCarry()
 		w.inPaint = true
 		func() {
-			beginPaintPass()
-			defer endPaintPass()
+			w.beginPaintPass()
 			for _, c := range clips {
 				if dbgClips {
 					println("CLIP", int(c.X), int(c.Y), int(c.W), int(c.H))

@@ -274,3 +274,27 @@ P0 与架构无关，可以立刻做。P1 是后面所有阶段的地基，也�
 - P3 的验收增加一条：react.dev 和 GitHub 上快速嵌套滚动区（代码块、侧边栏）在页面线程阻塞 2s 时仍然可以滚动。
 - P5 增加 spare PageHost，以及 `window.open` 同站点共线程。
 - 新增 P5b：公开 `qui.PageHost` 给普通应用，以 go-code 预览面板作为第一个使用者。
+
+## 9. 实施记录
+
+- **P0**（7b7bdcd）：容器查询按宽度签名缓存样式结果，宽度切换不再整棵子树重算；`QUI_DEBUG_IDLE` 记录 >50ms 的任务（`qui/longtask`）。`/pricing` 首次布局 10.1s → 0.64s。
+- **P1**（53ceb85）：3.5 节的全局状态移入引擎或窗口（视口单位、rem、点击派发、`pctIndefinite`、`layoutEpoch`、DPR）。`htmlcss` 和 q-browser 语料的并发测试在 `-race` 下零报告。
+- **P2**：
+  - `page_host.go`：`PageThread`（一个锁定的 OS 线程驱动多个页面，即 8.1 节的调度层级）和 `PageHost`（嵌入式后端上的 `qui.Window`）。
+  - `page_host_platform.go`：嵌入式后端。它放在根包而不是 `internal/platform/embedded`，因为它要直接实现引擎内部的接口并访问 `PageHost`。
+  - `page_view.go`：宿主窗口里的 `PageView`，负责显示提交的帧、同步视口、转发输入和光标。
+  - 宿主侧的调用都不等待页面线程。页面帧里的 panic 只停掉这一个页面（`Crashed` / `OnCrash`），同线程的其他页面照常运行。
+  - 同步测试模式：`NewSyncPageThread` 加 `Pump` / `RunUntilIdle`。
+  - 顺带修复的共享状态：
+    - 绘制轮次 `PaintPass` 改为按窗口计数。原来是全局变量，两个窗口同时绘制时会互相覆盖。
+    - 主题订阅表加锁，`ThemeGeneration` 改为原子变量。
+    - 页面窗口的主题和语言变更改为以任务方式投递到页面线程。
+    - 页面窗口不再接管全局剪贴板提供者。
+  - 验收：
+    - `htmlcss` 的 116 个 web-* 样例在 3 个页面线程上并发渲染，同时 UI 线程在步进宿主窗口。
+    - q-browser 的全部冻结语料（`TestPageThreadCorpusPages`，`QB_CONCURRENT_PAGES=all`）同样在页面线程上渲染。
+    - 两者在 `-race` 下都零报告，渲染结果与串行渲染一致。允许 ±2 级的抗锯齿差异：字形掩码缓存把亚像素位置分桶，并按最先请求者的精确位置光栅化，绘制顺序不同时文字边缘会差一两级，见 `qui.FramesClose`。
+  - 已知未做（留给后续阶段）：
+    - `SetTheme` 在页面线程绘制时直接改写 `currentTheme`（P5 前处理）。
+    - 页面里的弹层窗口回退为窗口内浮层（P4）。
+    - `reactive` 的 `popupPool` 仍是全局变量（P4）。

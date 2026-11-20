@@ -409,7 +409,7 @@ func (b *Box) PaintBounds() Rect {
 }
 
 func (b *Box) untransformedPaintBounds() Rect {
-	gen, painting := PaintPass()
+	gen, painting := b.Window().PaintPass()
 	if !painting {
 		return b.computePaintBounds()
 	}
