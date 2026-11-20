@@ -35,6 +35,9 @@ type PageView struct {
 	// draws: the page's committed overlay draws (page_host_retained.go).
 	draws    []PageRetainedDraw
 	drawsSeq uint64
+
+	// meta: page state from the last commit (IME).
+	meta PageMeta
 }
 
 // NewPageView returns a view of h. One view per host.
@@ -76,6 +79,7 @@ func (v *PageView) pullFrame() {
 		return
 	}
 	v.frontSeq = u.Seq
+	v.meta = u.Meta
 	v.adoptDraws(u)
 	moved := v.adoptLayers(u.Layers)
 	if prev != v.front {
@@ -221,6 +225,13 @@ func (v *PageView) Handle(ev Event) bool {
 		}
 		v.host.SendChar(e.Rune)
 		return true
+	case DragEvent:
+		if e.Type() == EventDrop && e.Source == nil && e.Data != nil && len(e.Data.Files) > 0 {
+			x, y := v.local(e.X, e.Y)
+			v.host.SendFileDrop(e.Data.Files, x, y)
+			return true
+		}
+		return e.Source == nil && (e.Type() == EventDragEnter || e.Type() == EventDragOver)
 	case GestureEvent:
 		// Ctrl/Cmd+wheel pinches are synthesized from the wheel event the
 		// page already received; the page window makes its own.
@@ -231,4 +242,29 @@ func (v *PageView) Handle(ev Event) bool {
 		return true
 	}
 	return false
+}
+
+// Droppable: files dropped on the view go to the page.
+func (v *PageView) Droppable() bool { return true }
+
+// AcceptsDrop takes OS file drops only; drags inside the page stay there.
+func (v *PageView) AcceptsDrop(d *DragData) bool { return d != nil && len(d.Files) > 0 }
+
+// IME: the view stands in for the page's focused widget, using what the
+// last commit reported (PageMeta).
+
+// IMEActive implements IMEActivity.
+func (v *PageView) IMEActive() bool { return v.focused && v.meta.IMEActive }
+
+// SetPreedit implements IMEClient.
+func (v *PageView) SetPreedit(text string, cursor int) { v.host.SendPreedit(text, cursor) }
+
+// CommitIME implements IMEClient.
+func (v *PageView) CommitIME(text string) { v.host.SendCommitText(text) }
+
+// CaretRect implements IMEClient: the page's caret in the view's space.
+func (v *PageView) CaretRect() Rect {
+	b := v.Bounds()
+	c := v.meta.Caret
+	return Rect{X: b.X + c.X, Y: b.Y + c.Y, W: c.W, H: c.H}
 }

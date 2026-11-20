@@ -296,6 +296,7 @@ type PageHost struct {
 	layers    []ScrollLayerFrame
 	layersSig string
 	taken     uint64 // seq of the last TakeFrame
+	meta      PageMeta
 	// committedThisStep: presentCPU ran during the current Step.
 	committedThisStep bool
 	// Retained overlay draws (page_host_retained.go): the page thread's
@@ -561,6 +562,25 @@ func (h *PageHost) publishLayersLocked() {
 	}
 	h.layers = h.win.collectScrollLayers()
 	h.layersSig = scrollLayersSig(h.layers)
+	h.meta = h.win.pageMeta()
+}
+
+// PageMeta is page state the host acts on without asking the page.
+type PageMeta struct {
+	// IMEActive: the page's focused widget takes input-method composition;
+	// Caret is its caret, page-logical, for the candidate window.
+	IMEActive bool
+	Caret     Rect
+}
+
+// pageMeta snapshots w's PageMeta. Page thread.
+func (w *Window) pageMeta() PageMeta {
+	var m PageMeta
+	if _, ok := imeClientOf(w.focused); ok {
+		m.IMEActive = true
+		m.Caret = w.CaretRect()
+	}
+	return m
 }
 
 func (h *PageHost) notifyFrame() {
@@ -576,18 +596,19 @@ func (h *PageHost) notifyFrame() {
 // that painted nothing — tiles a raster worker finished, a scroller that
 // appeared — so the host can scroll into them. Page thread.
 func (h *PageHost) commitLayersIfChanged() {
-	st := &h.retained
-	if h.win == nil || len(h.win.scrollLayers.sources) == 0 && !st.changed && !st.redraw && len(st.forget) == 0 {
+	if h.win == nil {
 		return
 	}
+	st := &h.retained
 	layers := h.win.collectScrollLayers()
 	sig := scrollLayersSig(layers)
 	h.frameMu.Lock()
-	if h.store == nil || sig == h.layersSig && !st.changed && !st.redraw && len(st.forget) == 0 {
+	meta := h.win.pageMeta()
+	if h.store == nil || sig == h.layersSig && meta == h.meta && !st.changed && !st.redraw && len(st.forget) == 0 {
 		h.frameMu.Unlock()
 		return
 	}
-	h.layers, h.layersSig = layers, sig
+	h.layers, h.layersSig, h.meta = layers, sig, meta
 	h.takeRetainedLocked()
 	h.seq++
 	h.frameMu.Unlock()
@@ -634,6 +655,7 @@ type PageFrameUpdate struct {
 	DrawsSeq uint64
 	Redraw   bool
 	Forget   []any
+	Meta     PageMeta
 }
 
 // TakeFrame copies what changed since the last TakeFrame into dst (which
@@ -644,7 +666,7 @@ type PageFrameUpdate struct {
 func (h *PageHost) TakeFrame(dst *image.RGBA) (u PageFrameUpdate, ok bool) {
 	h.frameMu.Lock()
 	defer h.frameMu.Unlock()
-	u = PageFrameUpdate{Image: dst, Seq: h.seq, Layers: h.layers, Draws: h.draws, DrawsSeq: h.drawsSeq}
+	u = PageFrameUpdate{Image: dst, Seq: h.seq, Layers: h.layers, Draws: h.draws, DrawsSeq: h.drawsSeq, Meta: h.meta}
 	if h.store == nil || h.seq == h.taken {
 		return u, false
 	}

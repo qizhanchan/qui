@@ -43,28 +43,47 @@ type portalWindow struct {
 }
 
 // popupPool parks hidden popup windows per owner for reuse: an OS window
-// plus a GPU context per completion list is too slow.
-var popupPool = map[*qui.Window][]*qui.Window{}
+// plus a GPU context per completion list is too slow. It lives on the
+// owner (Window.LocalValue): owners may run on different threads (page
+// windows, RFC 0005).
+type popupPoolKey struct{}
+
+// popupPoolState is one owner's parked windows; hooked means the owner's
+// OnClose forgets them.
+type popupPoolState struct {
+	list   []*qui.Window
+	hooked bool
+}
+
+func popupPoolOf(owner *qui.Window) *popupPoolState {
+	st, _ := owner.LocalValue(popupPoolKey{}).(*popupPoolState)
+	if st == nil {
+		st = &popupPoolState{}
+		owner.SetLocalValue(popupPoolKey{}, st)
+	}
+	return st
+}
 
 // popupPoolMax bounds the windows parked per owner.
 const popupPoolMax = 4
 
 func acquirePopupWindow(owner *qui.Window) (*qui.Window, error) {
-	if list := popupPool[owner]; len(list) > 0 {
-		w := list[len(list)-1]
-		popupPool[owner] = list[:len(list)-1]
+	pool := popupPoolOf(owner)
+	if n := len(pool.list); n > 0 {
+		w := pool.list[n-1]
+		pool.list = pool.list[:n-1]
 		return w, nil
 	}
 	w, err := qui.NewPopupWindow(owner, 1, 1)
 	if err != nil {
 		return nil, err
 	}
-	if _, hooked := popupPool[owner]; !hooked {
-		popupPool[owner] = nil
+	if !pool.hooked {
+		pool.hooked = true
 		// Owned windows close with their owner; forget the parked ones.
 		owner.OnClose(func() {
-			delete(popupPool, owner)
-			delete(popupCapable, owner)
+			owner.SetLocalValue(popupPoolKey{}, nil)
+			owner.SetLocalValue(popupCapableKey{}, nil)
 		})
 	}
 	return w, nil
@@ -73,12 +92,12 @@ func acquirePopupWindow(owner *qui.Window) (*qui.Window, error) {
 func releasePopupWindow(owner, w *qui.Window) {
 	w.Hide()
 	w.SetRoot(nil)
-	list, ok := popupPool[owner]
-	if !ok || len(list) >= popupPoolMax {
+	pool, _ := owner.LocalValue(popupPoolKey{}).(*popupPoolState)
+	if pool == nil || !pool.hooked || len(pool.list) >= popupPoolMax {
 		w.Close()
 		return
 	}
-	popupPool[owner] = append(list, w)
+	pool.list = append(pool.list, w)
 }
 
 // newPortalWindow mounts host as the root of a popup window owned by
@@ -316,9 +335,9 @@ func clampInto(r, area qui.Rect) qui.Rect {
 	return r
 }
 
-// popupCapable memoizes, per owner, whether OwnWindow portals get a
-// window there.
-var popupCapable = map[*qui.Window]bool{}
+// popupCapableKey memoizes on an owner (LocalValue) whether OwnWindow
+// portals get a window there.
+type popupCapableKey struct{}
 
 // OwnWindowAvailable reports whether an OwnWindow portal of the runtime
 // rendering now (or of window, when given) gets its own popup window, as
@@ -334,7 +353,7 @@ func OwnWindowAvailable(window *qui.Window) bool {
 	if window == nil {
 		return false
 	}
-	if ok, known := popupCapable[window]; known {
+	if ok, known := window.LocalValue(popupCapableKey{}).(bool); known {
 		return ok
 	}
 	w, err := acquirePopupWindow(window)
@@ -342,6 +361,6 @@ func OwnWindowAvailable(window *qui.Window) bool {
 	if ok {
 		releasePopupWindow(window, w)
 	}
-	popupCapable[window] = ok
+	window.SetLocalValue(popupCapableKey{}, ok)
 	return ok
 }

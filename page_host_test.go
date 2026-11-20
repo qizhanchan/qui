@@ -264,3 +264,89 @@ func (p *pagePad) Draw(c Canvas) {
 	c.FillRect(p.Bounds(), ColorWhite)
 	p.child.Draw(c)
 }
+
+// pageIMEBox is a focusable IME client recording what reaches it.
+type pageIMEBox struct {
+	pageTestBox
+	preedit atomic.Value
+	commit  atomic.Value
+}
+
+func newPageIMEBox() *pageIMEBox {
+	b := &pageIMEBox{pageTestBox: pageTestBox{BaseWidget: NewBaseWidget()}}
+	b.SetSelf(b)
+	return b
+}
+func (b *pageIMEBox) SetPreedit(text string, _ int) { b.preedit.Store(text) }
+func (b *pageIMEBox) CommitIME(text string)         { b.commit.Store(text) }
+func (b *pageIMEBox) CaretRect() Rect               { return Rect{X: 30, Y: 40, W: 2, H: 16} }
+
+// TestPageViewIMEAndFileDrop: the view stands in for the page's IME client
+// (state and caret from the commit) and hands OS file drops to the page.
+func TestPageViewIMEAndFileDrop(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	host, err := NewHeadlessWindowForTest(200, 150)
+	if err != nil {
+		t.Skip(err)
+	}
+	defer host.Destroy()
+	th := NewPageThread("test")
+	defer th.Close()
+	box := newPageIMEBox()
+	dropped := make(chan []string, 1)
+	var dropAt atomic.Value
+	h := th.NewPageHost(PageHostConfig{Width: 1, Height: 1, Setup: func(w *Window) {
+		w.SetRoot(box)
+		w.SetOnFileDrop(func(paths []string, x, y float32) {
+			dropAt.Store(Point{X: x, Y: y})
+			dropped <- paths
+		})
+	}})
+	view := NewPageView(h)
+	pad := &pagePad{Container: NewContainer(nil, view), child: view}
+	pad.SetSelf(pad)
+	host.SetRoot(pad)
+	wait := func(cond func() bool, what string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for !cond() {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %s", what)
+			}
+			host.Step()
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+	wait(func() bool { return view.FrameSeq() > 0 }, "first frame")
+	if view.IMEActive() {
+		t.Fatal("IME active before anything is focused")
+	}
+	// A click focuses the view on the host and the box in the page.
+	host.DispatchTestEvent(NewMouseEvent(EventMouseDown, 50, 50, MouseButtonLeft, 0))
+	host.DispatchTestEvent(NewMouseEvent(EventMouseUp, 50, 50, MouseButtonLeft, 0))
+	h.Do(func(w *Window) { w.SetFocus(box) })
+	wait(func() bool { return view.IMEActive() }, "the page to report an active IME client")
+	if got, want := host.CaretRect(), (Rect{X: 50, Y: 60, W: 2, H: 16}); got != want {
+		t.Fatalf("host caret rect = %v, want %v (page caret + view offset)", got, want)
+	}
+	host.SetPreedit("ni", 2)
+	host.CommitIME("你")
+	wait(func() bool { s, _ := box.commit.Load().(string); return s == "你" }, "the IME commit to reach the page")
+	if s, _ := box.preedit.Load().(string); s != "ni" {
+		t.Fatalf("preedit = %q, want ni", s)
+	}
+
+	host.onFileDrop([]string{"/tmp/a.txt"}, 70, 80)
+	select {
+	case paths := <-dropped:
+		if len(paths) != 1 || paths[0] != "/tmp/a.txt" {
+			t.Fatalf("dropped %v", paths)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("file drop did not reach the page")
+	}
+	if p := dropAt.Load().(Point); p != (Point{X: 50, Y: 60}) {
+		t.Fatalf("drop at %v, want page-local (50, 60)", p)
+	}
+}
