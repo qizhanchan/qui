@@ -1,6 +1,9 @@
 package htmlcss
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // expandShorthands rewrites a few CSS shorthands into the longhand
 // properties the interpreter already understands, so the rest of interpret
@@ -157,16 +160,32 @@ func setIfAbsent(m map[string]string, key, val string) {
 	}
 }
 
+var reFontSlash = regexp.MustCompile(`\s*/\s*`)
+
+var fontSizeKeywords = map[string]bool{"xx-small": true, "x-small": true, "small": true, "medium": true, "large": true,
+	"x-large": true, "xx-large": true, "xxx-large": true, "smaller": true, "larger": true}
+
 // expandFont expands `font: [style] [weight] size[/line-height] family`.
 // The size token is the first field that parses as a length; fields before
 // it are style/weight, fields after it are the family.
 func expandFont(v string, m map[string]string) {
-	fields := strings.Fields(v)
+	// `600 1rem / 1.5 "Mona Sans"` (GitHub's Primer tokens) spaces the
+	// slash: glue size and line-height back into one field.
+	fields := fieldsTopLevel(reFontSlash.ReplaceAllString(strings.TrimSpace(v), "/"))
 	sizeIdx := -1
 	for i, f := range fields {
 		base := f
 		if idx := strings.IndexByte(f, '/'); idx >= 0 {
 			base = f[:idx]
+		}
+		if fontSizeKeywords[strings.ToLower(base)] {
+			sizeIdx = i
+			break
+		}
+		// A bare number is a weight (`600`), never the size: the size
+		// is a length (or 0), a percentage or a math function.
+		if _, bare := parseFloat(base); bare && base != "0" {
+			continue
 		}
 		if _, ok := parseLength(base, 16, 0); ok && strings.ContainsAny(base, "0123456789") {
 			sizeIdx = i

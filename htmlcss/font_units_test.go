@@ -27,3 +27,22 @@ func TestFontRelativeUnitsUseTheFace(t *testing.T) {
 		t.Errorf("width: 4ex = %v, want a fraction of 4em", b.Width)
 	}
 }
+
+// The font shorthand: a bare number is the weight, the size needs a unit,
+// and the slash may be spaced (GitHub's Primer title tokens).
+func TestFontShorthandWeightAndSpacedSlash(t *testing.T) {
+	for v, want := range map[string][3]string{
+		`600 1rem / 1.5 "Mona Sans VF", -apple-system, sans-serif`: {"600", "1rem", "1.5"},
+		`600 1rem/1.5 Arial`:                   {"600", "1rem", "1.5"},
+		`italic bold 12px/30px Georgia, serif`: {"bold", "12px", "30px"},
+		`700 calc(1rem + 2px) / 1.2 system-ui`: {"700", "calc(1rem + 2px)", "1.2"},
+		`small serif`:                          {"normal", "small", "normal"},
+		`0 Arial`:                              {"normal", "0", "normal"},
+	} {
+		m := map[string]string{}
+		expandFont(v, m)
+		if got := [3]string{m["font-weight"], m["font-size"], m["line-height"]}; got != want {
+			t.Errorf("font: %s → weight/size/line-height %q, want %q", v, got, want)
+		}
+	}
+}
