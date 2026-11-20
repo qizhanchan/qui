@@ -109,7 +109,10 @@ func floorDiv(a, b int) int {
 
 // cacheWanted reports whether the content cache applies to this view now.
 func (s *ScrollView) cacheWanted(layers []cacheLayer) bool {
-	if !s.PixelScroll || !s.FixedViewport || s.Content == nil || tiledCacheOff && len(s.vpBoxes) == 0 && len(layers) == 0 {
+	if s.Content == nil || tiledCacheOff && len(s.vpBoxes) == 0 && len(layers) == 0 {
+		return false
+	}
+	if !(s.PixelScroll && s.FixedViewport) && !s.nestedLayerWanted() {
 		return false
 	}
 	if s.cache != nil && s.cache.disabled && s.cache.content == s.Content {
@@ -623,11 +626,11 @@ func (s *ScrollView) drawContentInto(window, cc Canvas, m Matrix, off image.Poin
 			suppressed = append(suppressed, l.box.Self())
 		}
 	}
-	SuppressDraw(suppressed)
+	restore := s.Window().SuppressDraw(suppressed)
 	if !boxChildHidden(s.Content) {
 		s.Content.Draw(cc)
 	}
-	ResumeDraw()
+	restore()
 	return probe.used
 }
 

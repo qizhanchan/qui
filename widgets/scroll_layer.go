@@ -16,6 +16,35 @@ import (
 
 var _ ScrollLayerSource = (*ScrollView)(nil)
 
+// nestedLayerWanted reports whether a nested scroller gets a content cache:
+// in a page window, opted in, with a solid background to fill under moved
+// tiles.
+func (s *ScrollView) nestedLayerWanted() bool {
+	if !s.NestedLayer || s.LayerBackground == nil {
+		return false
+	}
+	w := s.Window()
+	if w == nil || !w.WantsScrollLayers() {
+		return false
+	}
+	_, ok := s.LayerBackground()
+	return ok
+}
+
+// enclosingLayer is the nearest ancestor ScrollView whose cache the last
+// frame composited: the space a nested layer's tiles were recorded in.
+func (s *ScrollView) enclosingLayer() *ScrollView {
+	for p := s.Parent(); p != nil; p = p.Parent() {
+		if sv, ok := p.(*ScrollView); ok {
+			if sv.cache != nil && sv.cache.committed {
+				return sv
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
 // registerScrollLayer enrols s with a page window. Layout calls it.
 func (s *ScrollView) registerScrollLayer() {
 	if w := s.Window(); w != nil && w.WantsScrollLayers() {
@@ -65,10 +94,25 @@ func (s *ScrollView) ScrollLayer() (ScrollLayerFrame, bool) {
 	}
 	c := s.cache
 	// Composited only when the frame being committed showed the tiles at
-	// the current offset, drawn straight to the window (not into an
-	// enclosing scroller's recording, whose device space is another).
+	// the current offset. Drawn straight to the window, the tiles are in
+	// window device space; drawn into an enclosing scroller's recording (a
+	// nested layer), they are in that scroller's content device space and
+	// map to the window through its origin.
+	phys, origin := image.Rectangle{}, image.Point{}
+	if c != nil {
+		phys, origin = c.commitPhys, c.commitOff
+		if !nearRect(phys, f.Viewport, 1) && s.NestedLayer {
+			if p := s.enclosingLayer(); p != nil {
+				phys = phys.Sub(p.cache.commitOff)
+				origin = origin.Add(p.cache.commitOff)
+				if bg, ok := s.LayerBackground(); ok {
+					f.Background = bg
+				}
+			}
+		}
+	}
 	if c == nil || !c.committed || c.disabled || c.content != s.Content || c.commitScroll != f.Offset ||
-		!nearRect(c.commitPhys, f.Viewport, 1) {
+		!nearRect(phys, f.Viewport, 1) {
 		if debugScrollLayers {
 			if c == nil {
 				log.Printf("qui/scroll-layer: %p not composited: no cache", s)
@@ -80,8 +124,8 @@ func (s *ScrollView) ScrollLayer() (ScrollLayerFrame, bool) {
 		return f, true
 	}
 	f.Composited = true
-	f.Viewport = c.commitPhys
-	f.Origin = c.commitOff
+	f.Viewport = phys
+	f.Origin = origin
 	f.Tiles = make(map[image.Point]*image.RGBA, len(c.tiles))
 	for k, t := range c.tiles {
 		if t.img == nil || t.stale {

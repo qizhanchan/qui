@@ -84,6 +84,16 @@ type ScrollView struct {
 	UserScrollLocked func() bool
 	vpBoxes          []Widget        // fixed / sticky boxes of the content
 	tileBoxes        []Widget        // vpBoxes painted into the content tiles (scroll_cache.go)
+
+	// NestedLayer asks for a content cache in a page window (RFC 0005) for
+	// a scroller that is not the document's — a code block, a sidebar — so
+	// the host's UI thread can scroll it while the page thread is busy. Its
+	// tiles are recorded inside the enclosing scroller's. It needs
+	// LayerBackground: the solid colour behind its content (the UI thread
+	// fills the viewport with it under moved tiles); without one it stays
+	// scrolled by the page.
+	NestedLayer     bool
+	LayerBackground func() (Color, bool)
 	cache            *scrollCache    // content cache, see scroll_cache.go
 	gpuSet           *gpuLayerSet    // layers composited on the GPU (anim_layer_gpu.go)
 	stickyBase       map[Widget]Rect // sticky boxes' in-flow rects

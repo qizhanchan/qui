@@ -288,6 +288,8 @@ type Window struct {
 	locals map[any]any
 	// isPageWindow: a PageHost's window (set before it is registered).
 	isPageWindow bool
+	// drawSuppressed: boxes a layer composites separately (draw_suppress.go).
+	drawSuppressed map[Widget]struct{}
 
 	// inStep guards against synchronous redraws requested from platform
 	// event callbacks while a frame is already being produced. Resizing on

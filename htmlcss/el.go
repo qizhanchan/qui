@@ -4921,10 +4921,36 @@ func (e *El) ensureScroll() {
 	sv.FitContent = true                // auto height = content height, capped by max-height
 	sv.StickyScrollport = true          // position: sticky descendants stick to this box
 	sv.Style().Background = qui.Color{} // transparent viewport
+	// In a page window the host's UI thread may scroll it (RFC 0005).
+	sv.NestedLayer = true
+	sv.LayerBackground = e.layerBackground
 	st := sv.Style()
 	st.Grow = 1
 	st.Basis = 0
 	e.scrollView = sv
+}
+
+// layerBackground is the solid colour behind this scroll container's
+// content: its own background, else the nearest ancestor's, else the
+// canvas white. A gradient or image on the way means there is none (the
+// UI thread could not repaint it under moved tiles).
+func (e *El) layerBackground() (qui.Color, bool) {
+	for el := e; el != nil; el = el.elParent {
+		cs := el.lastCS
+		if cs == nil {
+			continue
+		}
+		if cs.Gradient != nil || cs.BackgroundImageURL != "" {
+			return qui.Color{}, false
+		}
+		if cs.HasBackground && cs.Background.A > 0 {
+			if cs.Background.A < 1 {
+				return qui.Color{}, false
+			}
+			return cs.Background, true
+		}
+	}
+	return qui.ColorWhite, true
 }
 
 // attachInto wires kids as children of an arbitrary container box (used for
