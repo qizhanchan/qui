@@ -108,7 +108,7 @@ func (w *Window) beginTextSelectionDrag(target Widget, me MouseEvent) {
 				return
 			}
 		}
-		idx, off := resolveSelectionFocusIn(flat, p)
+		idx, off := resolveSelectionFocusIn(flat, p, target, w.visibleRect())
 		if idx < 0 {
 			w.textSel = textSelectionDrag{}
 			return
@@ -342,21 +342,63 @@ func ascendAutoScrollable(w Widget) AutoScrollable {
 // through inter-block gaps still extends the selection naturally.
 func (w *Window) resolveSelectionFocus(p Point) (int, int) {
 	d := &w.textSel
-	if ts := ascendTextSelectable(w.hitTestAll(p)); ts != nil {
+	hit := w.hitTestAll(p)
+	if ts := ascendTextSelectable(hit); ts != nil {
 		if i := indexOfSelectable(d.flat, ts); i >= 0 {
 			return i, ts.SelectionOffsetAt(WindowPointToLocal(ts, p))
 		}
 	}
-	return resolveSelectionFocusIn(d.flat, p)
+	return resolveSelectionFocusIn(d.flat, p, hit, w.visibleRect())
+}
+
+// visibleRect is the window's own area in window coordinates; selectables
+// entirely outside it (an off-canvas drawer pushed out by a transform)
+// are not snap targets for a drag through a gap.
+func (w *Window) visibleRect() Rect {
+	sz := w.lastSize
+	return Rect{W: sz.W, H: sz.H}
 }
 
 // resolveSelectionFocusIn snaps a point with no selectable under it to
-// the vertically nearest selectable in flat, clamping the offset to that
-// widget's start or end. Shared by drag extension (sweeping through
-// gaps) and blank-press anchoring (starting a drag in a margin).
-func resolveSelectionFocusIn(flat []TextSelectable, p Point) (int, int) {
-	bestIdx, bestDist := -1, float32(1e18)
+// the nearest selectable in flat, clamping the offset to that widget's
+// start or end. Shared by drag extension (sweeping through gaps) and
+// blank-press anchoring (starting a drag in a margin).
+//
+// Like a browser's position-for-point, the search stays inside the
+// element under the cursor: candidates sharing the deepest common
+// ancestor with hit win (the gap between two list items resolves within
+// that list, not to some other text at the same height elsewhere in the
+// document). Among those the nearest by 2D distance wins, and candidates
+// wholly outside view (an off-canvas drawer) only count when nothing
+// visible is left.
+func resolveSelectionFocusIn(flat []TextSelectable, p Point, hit Widget, view Rect) (int, int) {
+	// Depth of each ancestor of hit, nearest first: hit itself is 0.
+	var level map[Widget]int
+	if hit != nil {
+		level = make(map[Widget]int, 32)
+		n := 0
+		for cur := hit; cur != nil; cur = cur.Parent() {
+			level[cur] = n
+			n++
+		}
+	}
+	const noCommon = 1 << 30
+	commonLevel := func(ts TextSelectable) int {
+		if level == nil {
+			return noCommon
+		}
+		for cur := Widget(ts); cur != nil; cur = cur.Parent() {
+			if l, ok := level[cur]; ok {
+				return l
+			}
+		}
+		return noCommon
+	}
+	checkView := view.W > 0 && view.H > 0
+	bestIdx := -1
 	var best TextSelectable
+	var bestB Rect
+	bestHidden, bestLevel, bestDist := true, noCommon+1, float32(1e30)
 	for i, ts := range flat {
 		// On-screen bounds: p is a window point and the candidates may live
 		// in different coordinate spaces (inside a scroll container, under a
@@ -365,23 +407,43 @@ func resolveSelectionFocusIn(flat []TextSelectable, p Point) (int, int) {
 		if b.W <= 0 || b.H <= 0 {
 			continue
 		}
-		var dist float32
+		hidden := checkView && !rectsOverlap(b, view)
+		if hidden && !bestHidden {
+			continue
+		}
+		var dx, dy float32
 		switch {
 		case p.Y < b.Y:
-			dist = b.Y - p.Y
+			dy = b.Y - p.Y
 		case p.Y > b.Y+b.H:
-			dist = p.Y - (b.Y + b.H)
-		default:
-			dist = 0
+			dy = p.Y - (b.Y + b.H)
 		}
-		if dist < bestDist {
-			bestDist, bestIdx, best = dist, i, ts
+		switch {
+		case p.X < b.X:
+			dx = b.X - p.X
+		case p.X > b.X+b.W:
+			dx = p.X - (b.X + b.W)
+		}
+		dist := dx*dx + dy*dy
+		lv := commonLevel(ts)
+		better := false
+		switch {
+		case bestIdx < 0, bestHidden && !hidden:
+			better = true
+		case lv != bestLevel:
+			better = lv < bestLevel
+		default:
+			better = dist < bestDist
+		}
+		if better {
+			bestIdx, best, bestB = i, ts, b
+			bestHidden, bestLevel, bestDist = hidden, lv, dist
 		}
 	}
 	if bestIdx < 0 {
 		return -1, 0
 	}
-	b := InteractionBoundsOf(best)
+	b := bestB
 	if p.Y < b.Y {
 		return bestIdx, 0
 	}
@@ -389,6 +451,10 @@ func resolveSelectionFocusIn(flat []TextSelectable, p Point) (int, int) {
 		return bestIdx, best.SelectableLength()
 	}
 	return bestIdx, best.SelectionOffsetAt(WindowPointToLocal(best, p))
+}
+
+func rectsOverlap(a, b Rect) bool {
+	return a.X < b.X+b.W && b.X < a.X+a.W && a.Y < b.Y+b.H && b.Y < a.Y+a.H
 }
 
 // disarmTextSelection cancels a provisional (blank-press) drag after a

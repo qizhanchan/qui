@@ -188,3 +188,78 @@ type fakeClip struct{ buf string }
 
 func (f *fakeClip) Get() string     { return f.buf }
 func (f *fakeClip) Set(text string) { f.buf = text }
+
+// stubGroup is a plain container: children laid out by the test, hits
+// fall through to the children first, then to the group's own bounds.
+type stubGroup struct {
+	BaseWidget
+	kids []Widget
+}
+
+func newStubGroup(bounds Rect, kids ...Widget) *stubGroup {
+	g := &stubGroup{kids: kids}
+	g.SetSelf(g)
+	g.Layout(bounds)
+	for _, k := range kids {
+		k.SetParent(g)
+	}
+	return g
+}
+
+func (g *stubGroup) ChildList() []Widget { return g.kids }
+
+func (g *stubGroup) HitTest(p Point) Widget {
+	for _, k := range g.kids {
+		if h := k.HitTest(p); h != nil {
+			return h
+		}
+	}
+	if g.Bounds().Contains(p) {
+		return g
+	}
+	return nil
+}
+
+func placedSel(text string, r Rect) *stubSel {
+	s := newStubSel(text)
+	s.Layout(r)
+	return s
+}
+
+// A drag that leaves a line into the gap below it keeps resolving inside
+// the element under the cursor (the list), like a browser — not to other
+// text at the same height elsewhere. go.dev regression: an off-canvas
+// nav drawer (earlier in document order, pushed right of the viewport)
+// sat level with the gap, so the drag focused it and selected the whole
+// page heading in between.
+func TestSelectionGapStaysInHitElement(t *testing.T) {
+	w := NewTestWindow(Size{W: 400, H: 200})
+	drawerItem := placedSel("drawer link", Rect{X: 500, Y: 50, W: 200, H: 20})
+	drawer := newStubGroup(Rect{X: 500, Y: 0, W: 200, H: 200}, drawerItem)
+	heading := placedSel("heading", Rect{X: 0, Y: 0, W: 400, H: 30})
+	item1 := placedSel("item one", Rect{X: 20, Y: 40, W: 380, H: 18})
+	item2 := placedSel("item two", Rect{X: 20, Y: 66, W: 380, H: 18})
+	list := newStubGroup(Rect{X: 0, Y: 40, W: 400, H: 44}, item1, item2)
+	w.SetRoot(newStubGroup(Rect{W: 400, H: 200}, drawer, heading, list))
+
+	w.beginTextSelectionDrag(item1, NewMouseEvent(EventMouseDown, 30, 45, MouseButtonLeft, 0))
+	w.updateTextSelectionDrag(NewMouseEvent(EventMouseMove, 30, 60, MouseButtonLeft, 0))
+
+	for _, s := range []*stubSel{drawerItem, heading, item2} {
+		if got := s.SelectedText(); got != "" {
+			t.Errorf("%q got selected (%q); the gap is inside the list", s.text, got)
+		}
+	}
+	if got := item1.SelectedText(); got != "item one" {
+		t.Errorf("item one selection = %q, want the whole line", got)
+	}
+
+	// A press in a margin outside every element still snaps to visible
+	// text, never to the off-canvas drawer level with it.
+	w.endTextSelectionDrag()
+	w.clearAllTextSelection()
+	idx, _ := resolveSelectionFocusIn(w.collectTextSelectables(), Point{X: 10, Y: 60}, nil, w.visibleRect())
+	if flat := w.collectTextSelectables(); idx < 0 || flat[idx] == TextSelectable(drawerItem) {
+		t.Errorf("margin press resolved to the off-canvas drawer")
+	}
+}
