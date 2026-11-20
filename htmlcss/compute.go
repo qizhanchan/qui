@@ -1629,14 +1629,14 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle, aliases ...m
 		if pct, ok := parsePercentFraction(v); ok {
 			cs.MaxWidthPct = pct
 		} else if px, ok := parseLength(v, fs, 0); ok {
-			cs.MaxWidth = px
+			cs.MaxWidth = explicitMax(px)
 		}
 	}
 	if v, ok := m["max-height"]; ok {
 		if pct, ok := parsePercentFraction(v); ok {
 			cs.MaxHeightPct = pct
 		} else if px, ok := parseLength(v, fs, 0); ok {
-			cs.MaxHeight = px
+			cs.MaxHeight = explicitMax(px)
 		}
 	}
 
@@ -2887,4 +2887,17 @@ func ruleContext(rule *Rule) int {
 		return shadowDepth(rule.Selectors[0].scope)
 	}
 	return 0
+}
+
+// zeroMax stands for an explicit max-width / max-height of 0: qui reads a
+// zero maximum as "none", and collapsing a panel with `max-height: 0;
+// overflow: hidden` (stripe.com's customer stories) must still collapse.
+// It lays out as 0 — far below a device pixel.
+const zeroMax = 1.0 / 1024
+
+func explicitMax(px float32) float32 {
+	if px <= 0 {
+		return zeroMax
+	}
+	return px
 }

@@ -151,3 +151,13 @@ func TestFlexZeroBasisIgnoresPercentWidthWhenWrapping(t *testing.T) {
 		t.Fatalf("content %v, pane %v: want one line, content 300 wide, pane at x 300", c, p)
 	}
 }
+
+// max-height: 0 collapses (an accordion panel); qui's own zero maximum
+// means "none", so the explicit zero must survive.
+func TestExplicitZeroMaxHeightCollapses(t *testing.T) {
+	_, res := renderWeb(t, `<body style="margin:0"><div id=p style="max-height:0;overflow:hidden"><div style="height:200px">panel</div></div><div id=n>next</div></body>`)
+	p, n := res.ByID["p"].Bounds(), res.ByID["n"].Bounds()
+	if p.H > 0.5 || n.Y > 0.5 {
+		t.Fatalf("panel %v, next %v: want a collapsed panel", p, n)
+	}
+}
