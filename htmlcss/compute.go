@@ -1247,6 +1247,22 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle, aliases ...m
 	if v, ok := m["font-family"]; ok {
 		cs.FontFamily = firstFontFamily(v, aliases...)
 	}
+	// ch / ex need the face: resolve them now that it is known
+	// (font_units.go). font-size's own are the parent's — left alone.
+	var unitFont *qui.Font
+	for k, v := range m {
+		if k == "font-size" || strings.HasPrefix(k, "--") || !strings.ContainsAny(v, "cCeEiI") {
+			continue
+		}
+		if !reFontUnit.MatchString(v) {
+			continue
+		}
+		if unitFont == nil {
+			f := qui.Font{Family: cs.FontFamily, Size: fs, Weight: cs.FontWeight, Italic: cs.Italic}
+			unitFont = &f
+		}
+		m[k] = resolveFontUnits(v, *unitFont)
+	}
 	cs.LineHeightOwn = lineHeightInherited
 	if cs.LineHeightPx > 0 && fs > 0 {
 		// Inherited as a length: re-express it over this element's font.

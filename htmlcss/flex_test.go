@@ -140,3 +140,14 @@ func TestFlexAutoMarginCenter(t *testing.T) {
 		t.Errorf("margin:0 auto centered X=%v, want ~%v", mid.X, wantX)
 	}
 }
+
+// `flex: 1 1 0px; width: 100%` starts from a zero basis: the percentage
+// width is only the basis of an auto basis. GitHub's page layout wrapped
+// its sidebar under the content when the width won.
+func TestFlexZeroBasisIgnoresPercentWidthWhenWrapping(t *testing.T) {
+	_, res := renderWeb(t, `<body style="margin:0"><div style="display:flex;flex-wrap:wrap;width:400px"><div id=c style="flex:1 1 0px;width:100%;min-width:1px;display:flex;flex-direction:column"><div style="width:900px">wide</div></div><div id=p style="flex:0 1 auto;display:flex"><div style="width:100px">pane</div></div></div></body>`)
+	c, p := res.ByID["c"].Bounds(), res.ByID["p"].Bounds()
+	if p.Y != c.Y || c.W != 300 || p.X != 300 {
+		t.Fatalf("content %v, pane %v: want one line, content 300 wide, pane at x 300", c, p)
+	}
+}

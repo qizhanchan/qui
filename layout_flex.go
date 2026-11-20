@@ -252,16 +252,21 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 		// content box (CSS width/height % on flex items). Main-axis pct
 		// becomes the basis (like an explicit width with flex-basis:auto);
 		// cross-axis pct replaces the natural size resolveCross aligns with.
+		// An explicit zero basis (grow without BasisAuto) stays zero.
+		autoBasis := fx.Grow == 0 || fx.BasisAuto
 		if s := ch.Style(); s != nil {
 			if s.Width == 0 && s.WidthPct > 0 && widthPctDefinite(ch) {
 				nat.W = s.pctWidth(s.WidthPct, bounds.W)
-				if l.Direction == Horizontal && basis <= 0 {
+				// Only an auto basis takes the width: `flex: 1 1 0px;
+				// width: 100%` (GitHub's page layout) starts from 0, or
+				// a wrapping row breaks before its sidebar.
+				if l.Direction == Horizontal && basis <= 0 && autoBasis {
 					basis = nat.W
 				}
 			}
 			if s.Height == 0 && s.HeightPct > 0 {
 				nat.H = s.pctHeight(s.HeightPct, bounds.H)
-				if l.Direction == Vertical && basis <= 0 {
+				if l.Direction == Vertical && basis <= 0 && autoBasis {
 					basis = nat.H
 				}
 			}
