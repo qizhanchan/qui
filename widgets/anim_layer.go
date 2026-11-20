@@ -383,6 +383,8 @@ func (b *Box) drawChildRaster(canvas Canvas, child Widget) {
 			cc = gpuProbeCanvas{Canvas: cc, probe: probe}
 		} else if _, isRetained := probeBase.(RetainedCompositorCanvas); isRetained {
 			cc = retainedProbeCanvas{Canvas: cc, probe: probe}
+		} else if _, isPage := probeBase.(CrossThreadRetainedCanvas); isPage {
+			cc = crossThreadProbeCanvas{Canvas: cc, probe: probe}
 		}
 		cc.Translate(-float32(x0), -float32(y0))
 		cc.Concat(m)

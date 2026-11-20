@@ -62,6 +62,16 @@ type RetainedCompositorCanvas interface {
 	QueueRetainedDraw(key any, physBounds gfx.Rect, fn func(Compositor))
 }
 
+// CrossThreadRetainedCanvas is implemented by a page window's canvas
+// (RFC 0005): retained draws queued here are composited UNDER the 2D layer
+// by the host window, on the host's threads, concurrently with the owner's
+// own thread. fn must therefore read only state it synchronizes itself (or
+// captured at queue time). Owners that can promise that (media.VideoView,
+// media.FrameView) prefer it over RetainedCompositorCanvas.
+type CrossThreadRetainedCanvas interface {
+	QueueCrossThreadRetainedDraw(key any, physBounds gfx.Rect, fn func(Compositor))
+}
+
 // RetainedOverlayCanvas is implemented by the canvases of renderers that
 // can composite retained draws OVER the 2D layer, the way a browser's
 // compositor draws a layer it holds as a texture over the page: an

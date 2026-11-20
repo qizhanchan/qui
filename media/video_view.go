@@ -129,11 +129,8 @@ type VideoView struct {
 	// retained is set once Draw has registered a retained draw (see
 	// qui.RetainedCompositorCanvas). From then on a new frame costs a
 	// redraw-only frame and the picture survives repaints of the rest of
-	// the window without the view repainting itself. drawSrc / physDst are
-	// what the draw composites. UI thread.
+	// the window without the view repainting itself. UI thread.
 	retained bool
-	drawSrc  qui.Rect
-	physDst  qui.Rect
 
 	scrub ScrubDecoder // lazy
 
@@ -1102,7 +1099,7 @@ func (v *VideoView) SetTransparentBackground(on bool) {
 // compositor draw showing the current frame. Without a GPU-presenting
 // canvas (tests, CPU presentation) only the background is painted.
 func (v *VideoView) Draw(canvas qui.Canvas) {
-	rc, ok := canvas.(qui.RetainedCompositorCanvas)
+	queue, ok := retainedQueue(canvas)
 	if !ok {
 		if vvSample("draw_nogpu", 60) {
 			vvDebugf("Draw: canvas has no compositor (CPU presentation)")
@@ -1154,16 +1151,18 @@ func (v *VideoView) Draw(canvas qui.Canvas) {
 	}
 	canvas.ClearRect(bounds)
 	m := canvas.CurrentMatrix()
-	v.drawSrc, v.physDst = src, m.TransformRect(dst)
-	rc.QueueRetainedDraw(v, m.TransformRect(bounds), v.composite)
+	// The geometry is captured: on a page thread the draw runs on the
+	// host's threads while this one goes on (CrossThreadRetainedCanvas).
+	pdst := m.TransformRect(dst)
+	queue(v, m.TransformRect(bounds), func(c qui.Compositor) { v.composite(c, src, pdst) })
 	v.retained = true
 }
 
 // composite is the retained draw: it shows whatever frame is current when
 // the window's frame is produced, so a RequestGPURedraw picks up a new one.
-func (v *VideoView) composite(c qui.Compositor) {
+func (v *VideoView) composite(c qui.Compositor, src, dst qui.Rect) {
 	v.mu.Lock()
-	frame, src, dst := v.currentFrame, v.drawSrc, v.physDst
+	frame := v.currentFrame
 	// Hold a reference across the draw: Destroy / SeekTo may release the
 	// current frame from another goroutine while it is being uploaded.
 	if frame != nil {

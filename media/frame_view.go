@@ -64,7 +64,6 @@ type FrameView struct {
 	curSeq   uint64
 	curAt    time.Time
 	shownSeq uint64 // last seq reported as presented
-	physBox  qui.Rect
 	onEvent  func(qui.Event) bool
 
 	focusable bool
@@ -421,7 +420,7 @@ func (v *FrameView) Draw(canvas qui.Canvas) {
 	canvas.FillRect(bounds, bg)
 
 	content := v.ContentRect()
-	rc, ok := canvas.(qui.RetainedCompositorCanvas)
+	queue, ok := retainedQueue(canvas)
 	if !ok {
 		v.retained.Store(false)
 		if f := v.promote(); f != nil && !content.IsEmpty() {
@@ -443,8 +442,10 @@ func (v *FrameView) Draw(canvas qui.Canvas) {
 	if hole := content.Intersect(bounds); !hole.IsEmpty() {
 		canvas.ClearRect(hole)
 	}
-	v.physBox = canvas.CurrentMatrix().TransformRect(bounds)
-	rc.QueueRetainedDraw(v, v.physBox, v.composite)
+	// The geometry is captured: on a page thread the draw runs on the
+	// host's threads while this one goes on (CrossThreadRetainedCanvas).
+	box, fit := canvas.CurrentMatrix().TransformRect(bounds), v.FitMode()
+	queue(v, box, func(c qui.Compositor) { v.composite(c, box, fit) })
 	v.retained.Store(true)
 }
 
@@ -452,14 +453,14 @@ func (v *FrameView) Draw(canvas qui.Canvas) {
 // it. Geometry is recomputed from the frame's own size so a redraw-only
 // frame of a resized frame (before the relayout lands) is still
 // proportioned.
-func (v *FrameView) composite(c qui.Compositor) {
+func (v *FrameView) composite(c qui.Compositor, box qui.Rect, fit FitMode) {
 	f := v.promote()
 	if f == nil {
 		return
 	}
 	fw, fh := f.size()
-	dst := fitDstRect(v.FitMode(), v.physBox, float32(fw), float32(fh))
-	src, dst, ok := cropToVisible(dst, v.physBox, float32(fw), float32(fh))
+	dst := fitDstRect(fit, box, float32(fw), float32(fh))
+	src, dst, ok := cropToVisible(dst, box, float32(fw), float32(fh))
 	if !ok {
 		return
 	}
@@ -503,4 +504,17 @@ func (f *rgbaFrame) draw(v *FrameView, c qui.Compositor, src, dst qui.Rect) bool
 	}
 	return c.DrawPixels(v, v.curSeq, unsafe.Pointer(&img.Pix[img.PixOffset(img.Rect.Min.X, img.Rect.Min.Y)]),
 		img.Stride, img.Rect.Dx(), img.Rect.Dy(), false, src, dst)
+}
+
+// retainedQueue is how canvas takes a retained draw: a page window's
+// cross-thread queue (RFC 0005) first, else the window's own. ok is false
+// for a canvas without a compositor.
+func retainedQueue(canvas qui.Canvas) (queue func(key any, physBounds qui.Rect, fn func(qui.Compositor)), ok bool) {
+	if ct, ok := canvas.(qui.CrossThreadRetainedCanvas); ok {
+		return ct.QueueCrossThreadRetainedDraw, true
+	}
+	if rc, ok := canvas.(qui.RetainedCompositorCanvas); ok {
+		return rc.QueueRetainedDraw, true
+	}
+	return nil, false
 }

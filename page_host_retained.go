@@ -2,6 +2,7 @@ package qui
 
 import (
 	"image"
+	"log"
 	"math"
 	"sync/atomic"
 	"time"
@@ -27,6 +28,9 @@ type PageRetainedDraw struct {
 	Key    any
 	Bounds gfx.Rect
 	Draw   func(Compositor)
+	// Under: composited under the frame, through a hole the page cleared
+	// (a video); otherwise an overlay over it.
+	Under bool
 }
 
 // retainedState is the page thread's side of the sink.
@@ -54,6 +58,10 @@ func (s pageSink) RetainedBegin(damage image.Rectangle) {
 
 func (s pageSink) QueueOverlay(key any, b gfx.Rect, fn func(render.Compositor)) {
 	s.h.retained.queued[key] = PageRetainedDraw{Key: key, Bounds: b, Draw: fn}
+}
+
+func (s pageSink) QueueUnder(key any, b gfx.Rect, fn func(render.Compositor)) {
+	s.h.retained.queued[key] = PageRetainedDraw{Key: key, Bounds: b, Draw: fn, Under: true}
 }
 
 func (s pageSink) RetainedEnd() {
@@ -214,6 +222,12 @@ func drawRect(b gfx.Rect) image.Rectangle {
 // overlays tells the page to draw everything itself.
 func (v *PageView) queueDraws(c Canvas) {
 	cc, ok := c.(CompositorOverlayCanvas)
+	rc, rok := c.(RetainedCompositorCanvas)
+	// Every GPU-presenting canvas offers both; a canvas with overlays
+	// only (tests) leaves the page's under draws out.
+	if debugPageView && v.host.retained.hostOK.Load() != ok {
+		log.Printf("qui/pageview: host canvas %T composites overlays: %v, under draws: %v", c, ok, rok)
+	}
 	v.host.SetHostCompositing(ok)
 	if !ok || len(v.draws) == 0 {
 		return
@@ -222,13 +236,28 @@ func (v *PageView) queueDraws(c Canvas) {
 	m := c.CurrentMatrix()
 	dx := float32(math.Round(float64(m.A*b.X + m.TX)))
 	dy := float32(math.Round(float64(m.D*b.Y + m.TY)))
+	s := v.pageScale()
 	for _, d := range v.draws {
 		fn := d.Draw
 		bounds := d.Bounds
 		bounds.X += dx
 		bounds.Y += dy
-		cc.QueueCompositorOverlayDraw(pageDrawKey{view: v, key: d.Key}, bounds, func(c Compositor) {
-			fn(offsetCompositor{c: c, dx: dx, dy: dy})
-		})
+		draw := func(c Compositor) { fn(offsetCompositor{c: c, dx: dx, dy: dy}) }
+		key := pageDrawKey{view: v, key: d.Key}
+		if !d.Under {
+			cc.QueueCompositorOverlayDraw(key, bounds, draw)
+			continue
+		}
+		if !rok {
+			continue
+		}
+		// The page punched a hole for it, but the host painted the
+		// frame over white: punch it again here.
+		hole := Rect{X: b.X + d.Bounds.X/s, Y: b.Y + d.Bounds.Y/s, W: d.Bounds.W / s, H: d.Bounds.H / s}.Intersect(b)
+		if hole.IsEmpty() {
+			continue
+		}
+		c.ClearRect(hole)
+		rc.QueueRetainedDraw(key, bounds, draw)
 	}
 }

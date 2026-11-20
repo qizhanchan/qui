@@ -615,6 +615,8 @@ func (s *ScrollView) drawContentInto(window, cc Canvas, m Matrix, off image.Poin
 		cc = gpuProbeCanvas{Canvas: cc, probe: probe}
 	} else if _, isRetained := window.(RetainedCompositorCanvas); isRetained {
 		cc = retainedProbeCanvas{Canvas: cc, probe: probe}
+	} else if _, isPage := window.(CrossThreadRetainedCanvas); isPage {
+		cc = crossThreadProbeCanvas{Canvas: cc, probe: probe}
 	}
 	cc.Translate(float32(off.X), float32(off.Y))
 	cc.Concat(m)
@@ -791,6 +793,16 @@ type retainedProbeCanvas struct {
 }
 
 func (p retainedProbeCanvas) QueueRetainedDraw(any, Rect, func(Compositor)) { p.probe.used = true }
+
+// crossThreadProbeCanvas: a page window's canvas (RFC 0005).
+type crossThreadProbeCanvas struct {
+	Canvas
+	probe *gpuProbe
+}
+
+func (p crossThreadProbeCanvas) QueueCrossThreadRetainedDraw(any, Rect, func(Compositor)) {
+	p.probe.used = true
+}
 
 // ContentCached reports whether the last paint drew the content through
 // the content cache (diagnostics and tests).

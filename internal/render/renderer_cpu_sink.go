@@ -23,6 +23,9 @@ type RetainedSink interface {
 	RetainedBegin(damage image.Rectangle)
 	// QueueOverlay takes a compositor-safe overlay draw for this frame.
 	QueueOverlay(key any, physBounds gfx.Rect, fn func(Compositor))
+	// QueueUnder takes a thread-safe retained draw composited under the
+	// 2D layer (CrossThreadRetainedCanvas).
+	QueueUnder(key any, physBounds gfx.Rect, fn func(Compositor))
 	// RetainedEnd ends the frame.
 	RetainedEnd()
 	// RetainedRedraw is a frame that only replays the retained draws.
@@ -41,10 +44,15 @@ func (c sinkImageCanvas) QueueCompositorOverlayDraw(key any, physBounds gfx.Rect
 	c.sink.QueueOverlay(key, physBounds, fn)
 }
 
+func (c sinkImageCanvas) QueueCrossThreadRetainedDraw(key any, physBounds gfx.Rect, fn func(Compositor)) {
+	c.sink.QueueUnder(key, physBounds, fn)
+}
+
 // QueueRetainedOverlayDraw exists so overlay owners find the canvas; only
 // compositor-safe draws may cross to the host, and CompositorOnly tells
 // owners to queue those through QueueCompositorOverlayDraw.
-func (c sinkImageCanvas) QueueRetainedOverlayDraw(key any, physBounds gfx.Rect, fn func(Compositor)) {}
+func (c sinkImageCanvas) QueueRetainedOverlayDraw(key any, physBounds gfx.Rect, fn func(Compositor)) {
+}
 
 // CompositorOnly reports that only compositor-safe overlay draws are
 // accepted: an owner that cannot make one draws on the CPU instead.

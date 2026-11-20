@@ -54,6 +54,9 @@ type (
 	// RetainedOverlayCanvas composites retained draws over the 2D layer
 	// (GPU-composited animated layers).
 	RetainedOverlayCanvas = render.RetainedOverlayCanvas
+	// CrossThreadRetainedCanvas takes retained draws a page window's host
+	// composites under the 2D layer on its own threads (RFC 0005).
+	CrossThreadRetainedCanvas = render.CrossThreadRetainedCanvas
 	// CompositorOverlayCanvas queues overlay draws the compositor thread
 	// may also run (RFC 0004 R4).
 	CompositorOverlayCanvas = render.CompositorOverlayCanvas
