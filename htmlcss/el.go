@@ -5555,7 +5555,7 @@ func (e *El) ancestorStateVariant() *ancestorVariant {
 	if e.elParent != nil {
 		parentCS = e.elParent.lastCS
 	}
-	cs := interpret(e.node, mergedDecls(e.node, e.engine.sheet, st), parentCS)
+	cs := interpret(e.node, mergedDecls(e.node, e.engine.sheet, st), parentCS, e.engine.sheet.FontFamilies)
 	v := &ancestorVariant{cs: cs, box: stateBoxStyle(e.lastCS, cs)}
 	if e.ancestorVariants == nil {
 		e.ancestorVariants = map[uint32]*ancestorVariant{}
@@ -5813,7 +5813,7 @@ func (e *El) layoutStateVariant(cs, parent *ComputedStyle) *ComputedStyle {
 			}
 		}
 	}
-	v := *interpret(e.node, mergedDecls(e.node, e.engine.sheet, st), parent)
+	v := *interpret(e.node, mergedDecls(e.node, e.engine.sheet, st), parent, e.engine.sheet.FontFamilies)
 	v.Hover, v.Focus, v.Active, v.FocusVisible = cs.Hover, cs.Focus, cs.Active, cs.FocusVisible
 	v.AncestorHover, v.AncestorFocus, v.AncestorActive = cs.AncestorHover, cs.AncestorFocus, cs.AncestorActive
 	return &v

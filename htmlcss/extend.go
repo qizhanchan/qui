@@ -261,7 +261,7 @@ func (e *El) ComputedStyleForState(hover, focus *El) *ComputedStyle {
 		st.focus = nodeIn(st.focusNodes, el.node)
 		st.active = nodeIn(st.activeNodes, el.node)
 		st.focusVisible = el.FocusVisibleNow()
-		return interpret(el.node, mergedDeclsRest(el.node, el.engine.sheet, st, nil, false, parent), parent)
+		return interpret(el.node, mergedDeclsRest(el.node, el.engine.sheet, st, nil, false, parent), parent, el.engine.sheet.FontFamilies)
 	}
 	return resolve(e)
 }
