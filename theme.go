@@ -289,7 +289,7 @@ func newLightTheme() Theme {
 
 // Global theme state.
 var (
-	currentTheme = LightTheme
+	currentTheme = newThemeSnapshot(LightTheme)
 	// themeSubMu guards the subscriber list: page windows (RFC 0005)
 	// subscribe and unsubscribe from their own threads.
 	themeSubMu       sync.Mutex
@@ -308,16 +308,24 @@ type themeSubscriber struct {
 // its cache key, exactly like FontRegistryGeneration and LocaleGeneration.
 func ThemeGeneration() uint64 { return themeGeneration.Load() }
 
-// CurrentTheme returns a pointer to the active Theme. Widgets use this
-// at Draw time to pick colors. The pointer is stable across SetTheme
-// calls (SetTheme mutates the underlying struct, not the address).
-func CurrentTheme() *Theme { return &currentTheme }
+// CurrentTheme returns the active Theme. Widgets use this at Draw time to
+// pick colors. The Theme is an immutable snapshot: SetTheme installs a new
+// one rather than overwriting it, because page windows (RFC 0005) paint on
+// their own threads while the UI thread switches themes. Read it afresh
+// each frame; never write through the pointer. Safe from any goroutine.
+func CurrentTheme() *Theme { return currentTheme.Load() }
+
+func newThemeSnapshot(t Theme) *atomic.Pointer[Theme] {
+	var p atomic.Pointer[Theme]
+	p.Store(&t)
+	return &p
+}
 
 // SetTheme swaps the global theme. Every subscribed window has its
 // callback fired so they can Invalidate + InvalidateLayout. Widgets
 // don't need to do anything — Draw reads CurrentTheme() afresh.
 func SetTheme(t Theme) {
-	currentTheme = t
+	currentTheme.Store(&t)
 	themeGeneration.Add(1)
 	themeSubMu.Lock()
 	subs := append([]themeSubscriber(nil), themeSubscribers...)

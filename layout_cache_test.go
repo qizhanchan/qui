@@ -215,13 +215,13 @@ func TestSubscribeThemeUnsubscribe(t *testing.T) {
 
 	calls := 0
 	unsubscribe := SubscribeTheme(func() { calls++ })
-	SetTheme(currentTheme)
+	SetTheme(*CurrentTheme())
 	if calls != 1 {
 		t.Fatalf("subscriber calls after SetTheme = %d, want 1", calls)
 	}
 
 	unsubscribe()
-	SetTheme(currentTheme)
+	SetTheme(*CurrentTheme())
 	if calls != 1 {
 		t.Fatalf("subscriber should not fire after unsubscribe; calls = %d", calls)
 	}
