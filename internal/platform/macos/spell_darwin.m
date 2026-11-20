@@ -31,8 +31,40 @@ int quiSpellAvailable(void) {
 
 // quiSpellCheck checks n UTF-16 units and stores malloc'd (location,
 // length) int32 pairs in *out. Returns the pair count, or -1 on timeout.
-// On the main thread it checks synchronously; elsewhere it uses the
-// asynchronous request API and waits (2s) for the completion handler.
+// With an installed language it checks synchronously in that language.
+// Without one it lets the checker identify the language: synchronously on
+// the main thread, elsewhere through the asynchronous request API, waiting
+// (2s) for the completion handler.
+// quiSpellHasLanguage reports whether the checker has a dictionary for l
+// itself or for one of its regional variants ("en" → "en_GB").
+static BOOL quiSpellHasLanguage(NSSpellChecker *sc, NSString *l) {
+	NSString *prefix = [l stringByAppendingString:@"_"];
+	for (NSString *a in sc.availableLanguages) {
+		if ([a isEqualToString:l] || [a hasPrefix:prefix]) return YES;
+	}
+	return NO;
+}
+
+// quiSpellCheckLanguage finds every misspelling of str in exactly language
+// l. It exists because checkString / requestCheckingOfString honor
+// neither the orthography option nor setLanguage: while the checker
+// automatically identifies languages (the default) — they resolve "en"
+// to the user's regional dictionary instead (en_SG on an en-SG system,
+// whose dictionary accepts "teh"). checkSpellingOfString:…language: takes
+// the language per call and leaves the shared checker's state alone.
+static NSArray<NSValue *> *quiSpellCheckLanguage(NSSpellChecker *sc, NSString *str, NSString *l) {
+	NSMutableArray<NSValue *> *found = [NSMutableArray array];
+	NSInteger at = 0, n = (NSInteger)str.length;
+	while (at < n) {
+		NSRange r = [sc checkSpellingOfString:str startingAt:at language:l wrap:NO
+		               inSpellDocumentWithTag:quiSpellTag() wordCount:NULL];
+		if (r.location == NSNotFound || r.length == 0 || (NSInteger)r.location < at) break;
+		[found addObject:[NSValue valueWithRange:r]];
+		at = (NSInteger)NSMaxRange(r);
+	}
+	return found;
+}
+
 int quiSpellCheck(const uint16_t *s, int n, const char *lang, int32_t **out) {
 	*out = NULL;
 	if (n <= 0) return 0;
@@ -40,6 +72,20 @@ int quiSpellCheck(const uint16_t *s, int n, const char *lang, int32_t **out) {
 		NSSpellChecker *sc = [NSSpellChecker sharedSpellChecker];
 		NSString *str = quiNS16(s, n);
 		NSString *l = quiLang(lang);
+		if (l && quiSpellHasLanguage(sc, l)) {
+			NSArray<NSValue *> *found = quiSpellCheckLanguage(sc, str, l);
+			if (found.count == 0) return 0;
+			int32_t *buf = malloc(sizeof(int32_t) * 2 * found.count);
+			for (NSUInteger i = 0; i < found.count; i++) {
+				NSRange r = found[i].rangeValue;
+				buf[2*i] = (int32_t)r.location;
+				buf[2*i+1] = (int32_t)r.length;
+			}
+			*out = buf;
+			return (int)found.count;
+		}
+		// No language, or none installed for it: let the checker identify
+		// the language itself.
 		NSDictionary *opts = nil;
 		if (l) {
 			NSOrthography *o = [NSOrthography defaultOrthographyForLanguage:l];
