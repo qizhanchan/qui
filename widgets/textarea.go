@@ -17,6 +17,8 @@ type TextArea struct {
 	Cols        int
 	Text        string
 	Placeholder string
+	// PlaceholderColor / PlaceholderFocusColor: see Input.
+	PlaceholderColor, PlaceholderFocusColor *Color
 	// placeholderKey, when set, supersedes Placeholder and is resolved
 	// during Measure/Draw. Read it through DisplayPlaceholder().
 	placeholderKey messageKey
@@ -350,7 +352,10 @@ func (t *TextArea) Draw(canvas Canvas) {
 	textColor := st.Foreground
 	if displayText == "" && !t.focused {
 		displayText = t.DisplayPlaceholder()
-		textColor = CurrentTheme().TextMuted
+		textColor = placeholderInk(CurrentTheme().TextMuted, t.PlaceholderColor, t.PlaceholderFocusColor, t.focused)
+		if textColor.A == 0 {
+			displayText = ""
+		}
 	}
 
 	// While composing, INSERT the in-flight preedit into the displayed text

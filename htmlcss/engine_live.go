@@ -1,7 +1,11 @@
 package htmlcss
 
 import (
+	"fmt"
+	"os"
 	"reflect"
+	"strings"
+	"time"
 
 	"github.com/qizhanchan/qui"
 	"github.com/qizhanchan/qui/widgets"
@@ -47,11 +51,15 @@ type StyleEngine struct {
 	tooltipStyled bool
 
 	distributionDirty bool
-	slotChange        func(*El)
-	allowDeclarative  bool
-	shadowRoots       []*El
-	shadowSheetDirty  bool
-	sheet             *Stylesheet
+	// distributionChanged: some slot's assigned nodes changed since
+	// prepareShadowTrees last looked (distributeSlots may run earlier, for
+	// assignedSlot / assignedNodes).
+	distributionChanged bool
+	slotChange          func(*El)
+	allowDeclarative    bool
+	shadowRoots         []*El
+	shadowSheetDirty    bool
+	sheet               *Stylesheet
 	// scoped is set while flush restyles dirty scopes (vs. a full Restyle).
 	scoped    bool
 	viewportW float32 // @media evaluation width (0 = default), kept for SetCSS
@@ -79,6 +87,9 @@ type StyleEngine struct {
 	// lifetime. Test-only observability for asserting restyle scope; no
 	// runtime use.
 	styled, applied int
+	// QUI_DEBUG_STYLE bookkeeping (logFlush).
+	lastFlushScoped bool
+	lastFlushWhy    string
 	// pass counts restyle walks; El.styledPass records the last one that
 	// reached an element.
 	pass int
@@ -694,11 +705,14 @@ func (eng *StyleEngine) FlushPendingStyles() {
 // is seamless. Falls back to a full Restyle when a scope's inherited
 // style isn't known yet (first style pass still pending).
 func (eng *StyleEngine) flush() {
-	if len(eng.shadowRoots) > 0 {
+	defer eng.useViewport()()
+	if debugStyle {
+		defer eng.logFlush(len(eng.dirty), time.Now(), eng.styled, eng.applied, eng.pass)()
+	}
+	if eng.prepareShadowTrees() {
 		eng.Restyle()
 		return
 	}
-	defer eng.useViewport()()
 	dirty := eng.dirty
 	eng.dirty = nil
 	defer func() {
@@ -750,6 +764,11 @@ func (eng *StyleEngine) flush() {
 				attrOnly[e] = true
 			}
 		}
+		// A shadow root is never styled itself: its children inherit
+		// from the host, whose walk renders them.
+		if s != nil && s.shadowHost != nil {
+			s = s.shadowHost
+		}
 		if s != nil {
 			scopes[s] = true
 		}
@@ -782,6 +801,15 @@ func (eng *StyleEngine) flush() {
 	}
 	eng.pass++
 	eng.scoped = true
+	eng.lastFlushScoped = true
+	if debugStyle {
+		for sc := range scopes {
+			eng.lastFlushWhy += sc.tag + "#" + sc.attrs["id"] + "." + sc.attrs["class"] + " "
+			if len(eng.lastFlushWhy) > 200 {
+				break
+			}
+		}
+	}
 	eng.mustApply = make(map[*El]bool, len(dirty)+len(reflow))
 	for e := range dirty {
 		eng.mustApply[e] = true
@@ -800,6 +828,28 @@ func (eng *StyleEngine) flush() {
 			continue
 		}
 		eng.restyleWalk(s, parentCS)
+	}
+}
+
+// debugStyle (QUI_DEBUG_STYLE=1) logs every style flush: how many
+// elements were dirty, how many the walks styled and re-applied, whether
+// it fell back to a full Restyle, and how long it took. A page that keeps
+// restyling whole documents shows up as styled≈document size per flush.
+var debugStyle = os.Getenv("QUI_DEBUG_STYLE") != ""
+
+func (eng *StyleEngine) logFlush(dirty int, t0 time.Time, styled, applied, pass int) func() {
+	return func() {
+		kind := "scoped"
+		if !eng.lastFlushScoped {
+			kind = "FULL"
+		}
+		eng.lastFlushScoped = false
+		if eng.pass == pass {
+			return // nothing dirty
+		}
+		fmt.Fprintf(os.Stderr, "style: flush %s dirty=%d styled=%d applied=%d in %v (%s)\n",
+			kind, dirty, eng.styled-styled, eng.applied-applied, time.Since(t0).Round(10*time.Microsecond), eng.lastFlushWhy)
+		eng.lastFlushWhy = ""
 	}
 }
 
@@ -919,8 +969,9 @@ func (eng *StyleEngine) restyleWalk(e *El, parent *ComputedStyle) {
 	// invalidates): re-applying rebuilds its inline flow and drops every
 	// cached measurement below it, so resizing a panel through its style
 	// re-shaped all the text inside, every frame of the drag.
-	if eng.scoped && prev != nil && !eng.mustApply[e] && !e.pseudoRules && e.onStyle == nil && e.canvasUser == nil &&
-		(eng.stylesEqual(prev, cs) || reflect.DeepEqual(widgetStyleView(prev), widgetStyleView(cs))) {
+	if eng.scoped && prev != nil && !eng.mustApply[e] && e.onStyle == nil && e.canvasUser == nil &&
+		(eng.stylesEqual(prev, cs) || reflect.DeepEqual(widgetStyleView(prev), widgetStyleView(cs))) &&
+		eng.pseudoBoxesUnchanged(e, cs) {
 		// An inherited custom-property table may change without changing any
 		// resolved declaration here. Keep that table for descendants and
 		// future mutations, while preserving this element's measured widgets.
@@ -962,6 +1013,41 @@ func (eng *StyleEngine) restyleWalk(e *El, parent *ComputedStyle) {
 	if e.inlineSVG != nil {
 		e.RefreshInlineSVG()
 	}
+}
+
+// pseudoBoxesUnchanged reports whether e's ::before / ::after would come
+// out as they are now under cs. An element whose own style stands keeps its
+// widgets only if its generated boxes stand too: an ancestor's class can
+// switch a descendant's `::after { content }` without touching the
+// descendant's own style. Rules that match a pseudo-element but generate
+// nothing (`*, ::before, ::after { box-sizing: border-box }`, on most
+// sites) leave it alone; generated content built from counters depends on
+// the elements before it, so it is always rebuilt.
+func (eng *StyleEngine) pseudoBoxesUnchanged(e *El, cs *ComputedStyle) bool {
+	if eng.sheet == nil || e.node == nil || e.isTextSeg() {
+		return true
+	}
+	for _, which := range [...]string{"before", "after"} {
+		pcs, content, has := pseudoStyleContent(e.node, eng.sheet, which, cs)
+		curText, curCS := e.pbText, e.pbCS
+		if which == "after" {
+			curText, curCS = e.paText, e.paCS
+		}
+		c := strings.TrimSpace(content)
+		if pcs == nil || !has || c == "none" || c == "normal" || pcs.Display == "none" {
+			if curCS != nil {
+				return false
+			}
+			continue
+		}
+		if curCS == nil || strings.Contains(content, "counter") {
+			return false
+		}
+		if unquoteContent(content, e.node) != curText || !eng.stylesEqual(curCS, pcs) {
+			return false
+		}
+	}
+	return true
 }
 
 // pointerEventsOnly handles a restyle whose only change is pointer-events

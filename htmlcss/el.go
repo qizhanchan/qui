@@ -1272,7 +1272,9 @@ func (e *El) inheritParent() *El {
 // it like restyleScope. Detached elements return nil.
 func (e *El) selfScope(local ...bool) *El {
 	if (len(local) == 0 || !local[0]) && e.engine != nil && e.engine.hasHasRule() {
-		return e.restyleScope()
+		if s, ok := e.engine.hasScope(e); ok {
+			return s
+		}
 	}
 	s := e
 	for {
@@ -1301,12 +1303,8 @@ func (e *El) restyleScope() *El {
 	// descendants) are recomputed correctly. The common case, without :has,
 	// retains the narrower parent scope below.
 	if e.engine != nil && e.engine.hasHasRule() {
-		root := e
-		for root.elParent != nil {
-			root = root.elParent
-		}
-		if e.engine.roots[root] {
-			return root
+		if s, ok := e.engine.hasScope(e); ok {
+			return s
 		}
 	}
 	if e.elParent != nil {
@@ -3047,6 +3045,7 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 				}
 			})
 			applyControlColors(e.backing, cs, &e.nativeStates)
+			e.applyPlaceholderStyle(cs)
 			if selectControl, ok := e.backing.(*widgets.Select); ok {
 				// The backing control paints its own surface. Its CSS image
 				// must be composited there, between that surface and its text.
@@ -5261,6 +5260,17 @@ func (e *El) naturalImageSize() (qui.Size, bool) {
 	return qui.Size{}, false
 }
 
+// compressibleReplaced reports a replaced element whose percentage width
+// is compressible for min-content (img, video, canvas, iframe, embed,
+// object, inline SVG stand-ins).
+func (e *El) compressibleReplaced() bool {
+	switch e.tag {
+	case "video", "canvas", "iframe", "embed", "object":
+		return true
+	}
+	return e.isImg()
+}
+
 // MinContentOverride implements qui.MinContentOverrider: an auto-width
 // picture with a ratio but no natural size (an SVG with only a viewBox)
 // fills whatever width it is given, so it asks for none — Chrome lays a
@@ -5278,13 +5288,15 @@ func (e *El) MinContentOverride() (float32, bool) {
 		// contribution of a replaced element (CSS Sizing 3 §5.2.1).
 		return e.Style().ContentInsets().Horizontal(), true
 	}
+	if webCompat && cs != nil && e.iconSrc == nil && cs.WidthPct > 0 && e.compressibleReplaced() {
+		// A replaced element's cyclic percentage width contributes zero to
+		// its ancestor's min-content size (CSS Sizing 3 §5.2.2): a
+		// `video { width: 100% }` card shrinks in a flex row like its
+		// text neighbours, whatever the video's natural width.
+		return e.Style().ContentInsets().Horizontal(), true
+	}
 	if w, ok := e.replacedIntrinsicWidth(); ok {
 		return w, true
-	}
-	if webCompat && cs != nil && e.isImg() && e.iconSrc == nil && cs.WidthPct > 0 {
-		// A replaced element's cyclic percentage width contributes zero to
-		// its ancestor's min-content size (CSS Sizing 3, cyclic percentages).
-		return e.Style().ContentInsets().Horizontal(), true
 	}
 	if !webCompat || cs == nil || !e.isImg() || e.iconSrc != nil || cs.HasWidth || cs.WidthPct > 0 {
 		return 0, false
@@ -7456,3 +7468,48 @@ func (a *inlinePseudoAnchor) Layout(r qui.Rect) {
 	a.child.Layout(qui.Rect{X: r.X + a.margin, Y: r.Y - a.size.H, W: a.size.W, H: a.size.H})
 }
 func (a *inlinePseudoAnchor) PaintBounds() qui.Rect { return qui.PaintBoundsOf(a.child) }
+
+// applyPlaceholderStyle gives a text control's placeholder its
+// ::placeholder color and opacity, at rest and focused (GitHub's sign-up
+// field hides it with `::placeholder { opacity: 0 }` until `:focus`, a
+// floating label standing in for it). No rule leaves the control's own.
+func (e *El) applyPlaceholderStyle(cs *ComputedStyle) {
+	var rest, focus **qui.Color
+	switch c := e.backing.(type) {
+	case *widgets.Input:
+		rest, focus = &c.PlaceholderColor, &c.PlaceholderFocusColor
+	case *widgets.TextArea:
+		rest, focus = &c.PlaceholderColor, &c.PlaceholderFocusColor
+	default:
+		return
+	}
+	*rest, *focus = nil, nil
+	if e.engine == nil || e.engine.sheet == nil || e.node == nil {
+		return
+	}
+	ink := func(st selectorState) *qui.Color {
+		m := pseudoDeclsState(e.node, e.engine.sheet, "placeholder", st)
+		if m == nil {
+			return nil
+		}
+		_, hasColor := m["color"]
+		_, hasOpacity := m["opacity"]
+		if !hasColor && !hasOpacity {
+			return nil
+		}
+		pcs := interpret(e.node, m, cs, e.engine.sheet.FontFamilies)
+		c := qui.Color{R: 0.46, G: 0.46, B: 0.46, A: 1} // Chrome's darkgray-ish #757575
+		if hasColor {
+			c = pcs.Color
+		}
+		if pcs.HasOpacity {
+			c.A *= pcs.Opacity
+		}
+		return &c
+	}
+	*rest = ink(selectorState{})
+	*focus = ink(selectorState{focus: true, focusVisible: true})
+	if *focus == nil {
+		*focus = *rest
+	}
+}

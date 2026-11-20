@@ -427,6 +427,39 @@ func parseLengthPct(v string, fs float32) (px, frac float32, hasPct, ok bool) {
 	return v0, v1 - v0, true, true
 }
 
+// pctInsideMathFn reports whether a percentage sits inside a min() / max()
+// / clamp() argument, which makes the value nonlinear in the percentage
+// basis. `calc(100% - 2 * clamp(20px, 5vw, 128px))` is linear (the clamp
+// does not involve the %) and resolves like calc(100% - 2rem).
+func pctInsideMathFn(v string) bool {
+	if !strings.Contains(v, "%") {
+		return false
+	}
+	low := strings.ToLower(v)
+	var stack []bool // per open paren: inside a min/max/clamp
+	inside := func() bool { return len(stack) > 0 && stack[len(stack)-1] }
+	for i := 0; i < len(low); i++ {
+		switch low[i] {
+		case '(':
+			j := i
+			for j > 0 && (low[j-1] >= 'a' && low[j-1] <= 'z' || low[j-1] == '-') {
+				j--
+			}
+			fn := low[j:i]
+			stack = append(stack, inside() || fn == "min" || fn == "max" || fn == "clamp")
+		case ')':
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+		case '%':
+			if inside() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // parseMinMaxClamp evaluates the CSS math functions min()/max()/clamp() to
 // logical pixels. Each argument is resolved via parseLength (so calc()/px/%/em
 // nest freely). clamp(min, val, max) returns val clamped to [min, max]. Any
@@ -440,7 +473,13 @@ func parseMinMaxClamp(s string, fontSize, pctRef float32) (float32, bool) {
 	args := splitTopLevelCommas(s[open+1 : len(s)-1])
 	vals := make([]float32, 0, len(args))
 	for _, a := range args {
-		v, ok := parseLength(strings.TrimSpace(a), fontSize, pctRef)
+		a = strings.TrimSpace(a)
+		v, ok := parseLength(a, fontSize, pctRef)
+		if !ok {
+			// Math function arguments are calc sums: `min(100% - 4rem, 70rem)`,
+			// or a nested calc() whose name parseCalc stripped to "(".
+			v, ok = parseCalc("("+a+")", fontSize, pctRef)
+		}
 		if !ok {
 			return 0, false
 		}

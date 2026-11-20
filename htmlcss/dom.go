@@ -54,11 +54,14 @@ type Node struct {
 
 	// designMode marks a document root in design mode (edit.go): every
 	// element below it is :read-write.
-	designMode       bool
-	queryContainer   bool
-	containerNames   string
-	containerWidth   float32
-	containerLaidOut bool
+	designMode     bool
+	queryContainer bool
+	containerNames string
+	containerWidth float32
+	// containerUnitsUsed: a descendant's declaration resolved cq* units
+	// against this container (a width change must restyle).
+	containerUnitsUsed bool
+	containerLaidOut   bool
 }
 
 // siblingParent is the parent whose Children hold n's siblings — nil for

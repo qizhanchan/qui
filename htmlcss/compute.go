@@ -510,6 +510,12 @@ func computeNode(n *Node, sheet *Stylesheet, parent *ComputedStyle) *ComputedSty
 // pseudoDecls runs the cascade for n's `which` pseudo-element; nil when
 // no rule matches.
 func pseudoDecls(n *Node, sheet *Stylesheet, which string) map[string]string {
+	return pseudoDeclsState(n, sheet, which, selectorState{})
+}
+
+// pseudoDeclsState is pseudoDecls with the originating element in state st
+// (`input:focus::placeholder`).
+func pseudoDeclsState(n *Node, sheet *Stylesheet, which string, st selectorState) map[string]string {
 	var decls []matchedDecl
 	order := 0
 	for _, ri := range sheet.candidateRules(n) {
@@ -526,7 +532,7 @@ func pseudoDecls(n *Node, sheet *Stylesheet, which string) map[string]string {
 			// Match the base element (ignoring the pseudo-element suffix): a
 			// pseudoElement selector's non-pseudo parts still constrain which
 			// elements get the generated content.
-			if selectorMatchesIgnoringPseudoElem(sel, n) {
+			if sel.matchesElement(n, st) {
 				a, b, c := sel.specificity()
 				if score := a*10000 + b*100 + c; score > best {
 					best, ba, bb, bc = score, a, b, c
@@ -987,6 +993,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle, aliases ...m
 	// throughout the normal declarations.
 	customProps, customPropsID := buildCustomPropTable(parent, m)
 	m = resolveMapVars(m, customProps)
+	m = resolveContainerUnits(n, m)
 	inheritRegisteredProps(m, parent)
 	colorInherited := m["color"] == "inherit" || m["color"] == "unset"
 	lineHeightInherited := m["line-height"] == "inherit" || m["line-height"] == "unset" || m["font"] == "inherit"
@@ -1558,7 +1565,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle, aliases ...m
 	// --- sizing ---
 	cs.BoxSizing = strings.ToLower(strings.TrimSpace(m["box-sizing"]))
 	if v, ok := m["width"]; ok {
-		if strings.Contains(v, "%") && (strings.Contains(v, "min(") || strings.Contains(v, "max(") || strings.Contains(v, "clamp(")) {
+		if pctInsideMathFn(v) {
 			cs.widthExpr = v
 		} else if pct, ok := parsePercentFraction(v); ok {
 			cs.WidthPct = pct
@@ -1569,7 +1576,7 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle, aliases ...m
 		}
 	}
 	if v, ok := m["height"]; ok {
-		if strings.Contains(v, "%") && (strings.Contains(v, "min(") || strings.Contains(v, "max(") || strings.Contains(v, "clamp(")) {
+		if pctInsideMathFn(v) {
 			cs.heightExpr = v
 		} else if pct, ok := parsePercentFraction(v); ok {
 			cs.HeightPct = pct

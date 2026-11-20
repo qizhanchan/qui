@@ -286,9 +286,8 @@ func (w *mediaWidget) Draw(c qui.Canvas) {
 	b := w.Bounds()
 	m := w.m
 	if m.video {
-		if w.vv == nil || m.showPoster && w.posterImage() != nil {
-			c.FillRect(b, qui.Color{A: 1})
-		}
+		// Like Chrome, a <video> paints only its picture (or poster): before
+		// the first frame and around a letterboxed one the page shows through.
 		if w.vv != nil && !(m.showPoster && w.posterImage() != nil) {
 			w.Container.Draw(c)
 		}

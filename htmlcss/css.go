@@ -230,6 +230,13 @@ type Stylesheet struct {
 	// structKeys keys the elements those selectors can concern (see
 	// StructuralRelevant).
 	structKeys structKeys
+	// hasKeys are the compounds carrying a :has() — the elements whose
+	// match a change below or beside them can flip (StyleEngine.hasScope).
+	hasKeys structKeys
+	// hasCtxKeys stand in for a keyless :has() compound written below
+	// another (`.menu :has(> svg)`): its subject is some descendant of an
+	// element carrying one of these.
+	hasCtxKeys structKeys
 	// HasHover / HasFocus / HasActive are true when any rule is gated on the
 	// matching interactive pseudo, so style resolution knows to compute the
 	// corresponding per-element state variant.
@@ -568,7 +575,14 @@ func (sheet *Stylesheet) addRule(rule Rule) {
 		}
 	}
 	for _, sel := range rule.Selectors {
-		sheet.HasHas = sheet.HasHas || sel.hasPseudo(pseudoHas)
+		if sel.hasPseudo(pseudoHas) {
+			sheet.HasHas = true
+			for i, part := range sel.parts {
+				if simpleHasPseudo(part.sel, pseudoHas) {
+					addHasSubject(&sheet.hasKeys, &sheet.hasCtxKeys, sel.parts, i)
+				}
+			}
+		}
 		sib := sel.hasSiblingCombinator()
 		sheet.HasSiblingCombinator = sheet.HasSiblingCombinator || sib
 		if sib || sel.hasStructuralPseudo() {
@@ -603,6 +617,55 @@ func (sheet *Stylesheet) addRule(rule Rule) {
 type structKeys struct {
 	any                bool
 	classes, ids, tags map[string]bool
+}
+
+// addHasSubject records the keys of parts[i], a compound carrying :has():
+// its own (subject) or, when it has none and sits below another compound
+// (`.menu :has(> svg)`, `.menu > :has(svg)`), that compound's as context.
+func addHasSubject(subject, ctx *structKeys, parts []compound, i int) {
+	var own structKeys
+	own.addSubject(parts[i].sel)
+	if !own.any {
+		subject.merge(own)
+		return
+	}
+	if i > 0 && (parts[i].comb == combDescendant || parts[i].comb == combChild) {
+		var c structKeys
+		c.addSubject(parts[i-1].sel)
+		if !c.any {
+			ctx.merge(c)
+			return
+		}
+	}
+	subject.any = true
+}
+
+// addSubject is add for a compound that may carry its keys only inside
+// :is() / :where() (`:is(.a, .b):has(x)`): an element it matches carries
+// some key of every argument's subject compound.
+func (k *structKeys) addSubject(ss simpleSelector) {
+	if len(ss.classes) > 0 || ss.id != "" || ss.tag != "" && ss.tag != "*" {
+		k.add(ss)
+		return
+	}
+	for _, ps := range ss.pseudos {
+		if ps.kind != pseudoIs && ps.kind != pseudoWhere || len(ps.args) == 0 {
+			continue
+		}
+		var sub structKeys
+		for _, a := range ps.args {
+			if len(a.parts) == 0 {
+				sub.any = true
+				break
+			}
+			sub.addSubject(a.parts[len(a.parts)-1].sel)
+		}
+		if !sub.any {
+			k.merge(sub)
+			return
+		}
+	}
+	k.any = true
 }
 
 func (k *structKeys) add(ss simpleSelector) {
@@ -722,25 +785,27 @@ func (s Selector) hasStructuralPseudo() bool {
 }
 
 func (s Selector) hasPseudo(kind pseudoKind) bool {
-	var hasInSimple func(simpleSelector) bool
-	hasInSimple = func(simple simpleSelector) bool {
-		for _, ps := range simple.pseudos {
-			if ps.kind == kind {
-				return true
-			}
-			for _, a := range ps.args {
-				for _, part := range a.parts {
-					if hasInSimple(part.sel) {
-						return true
-					}
+	for _, part := range s.parts {
+		if simpleHasPseudo(part.sel, kind) {
+			return true
+		}
+	}
+	return false
+}
+
+// simpleHasPseudo reports whether one compound carries kind, directly or
+// inside a pseudo-class argument (:is(.a:has(b)), :not(:has(b))).
+func simpleHasPseudo(simple simpleSelector, kind pseudoKind) bool {
+	for _, ps := range simple.pseudos {
+		if ps.kind == kind {
+			return true
+		}
+		for _, a := range ps.args {
+			for _, part := range a.parts {
+				if simpleHasPseudo(part.sel, kind) {
+					return true
 				}
 			}
-		}
-		return false
-	}
-	for _, part := range s.parts {
-		if hasInSimple(part.sel) {
-			return true
 		}
 	}
 	return false
@@ -1999,7 +2064,12 @@ type ruleIndex struct {
 	n                    int   // len(Rules) when built
 	first                *Rule // &Rules[0] when built (a replaced slice rebuilds)
 	byClass, byID, byTag map[string][]int
-	any                  []int
+	// byAttr keys rules whose subject has no class, id or tag but tests an
+	// attribute (`[data-color-mode] …`, `[hidden]`) by its name; root
+	// holds `:root` subjects. Chrome's RuleSet buckets these the same way.
+	byAttr map[string][]int
+	root   []int
+	any    []int
 	// states[i] is the interactive-state pseudos rule i uses anywhere in
 	// any selector (stateHover | …), for stateMask.
 	states []uint8
@@ -2018,7 +2088,7 @@ const (
 
 func buildRuleIndex(rules []Rule) *ruleIndex {
 	ix := &ruleIndex{n: len(rules), byClass: map[string][]int{}, byID: map[string][]int{}, byTag: map[string][]int{},
-		states: make([]uint8, len(rules))}
+		byAttr: map[string][]int{}, states: make([]uint8, len(rules))}
 	if len(rules) > 0 {
 		ix.first = &rules[0]
 	}
@@ -2045,21 +2115,91 @@ func buildRuleIndex(rules []Rule) *ruleIndex {
 			if len(sub.slotArgs) > 0 || sub.partName != "" {
 				sub = simpleSelector{}
 			}
-			switch {
-			case len(sub.classes) > 0:
-				add(ix.byClass, sub.classes[0], i)
-			case sub.id != "":
-				add(ix.byID, sub.id, i)
-			case sub.tag != "" && sub.tag != "*":
-				add(ix.byTag, strings.ToLower(sub.tag), i)
-			default:
+			keys, ok := subjectBuckets(sub, nil)
+			if !ok {
 				if l := ix.any; len(l) == 0 || l[len(l)-1] != i {
 					ix.any = append(ix.any, i)
+				}
+				continue
+			}
+			for _, k := range keys {
+				switch k.kind {
+				case bucketClass:
+					add(ix.byClass, k.key, i)
+				case bucketID:
+					add(ix.byID, k.key, i)
+				case bucketTag:
+					add(ix.byTag, k.key, i)
+				case bucketAttr:
+					add(ix.byAttr, k.key, i)
+				case bucketRoot:
+					if l := ix.root; len(l) == 0 || l[len(l)-1] != i {
+						ix.root = append(ix.root, i)
+					}
 				}
 			}
 		}
 	}
 	return ix
+}
+
+type bucketKind uint8
+
+const (
+	bucketClass bucketKind = iota
+	bucketID
+	bucketTag
+	bucketAttr
+	bucketRoot
+)
+
+type ruleBucket struct {
+	kind bucketKind
+	key  string
+}
+
+// subjectBuckets appends the index buckets an element must be in for sub
+// to match it — one, or one per argument of a keyless :is() / :where()
+// whose arguments all have one. ok is false when sub can match without
+// any: such a rule is tried on every element.
+func subjectBuckets(sub simpleSelector, out []ruleBucket) ([]ruleBucket, bool) {
+	switch {
+	case len(sub.classes) > 0:
+		return append(out, ruleBucket{bucketClass, sub.classes[0]}), true
+	case sub.id != "":
+		return append(out, ruleBucket{bucketID, sub.id}), true
+	case sub.tag != "" && sub.tag != "*":
+		return append(out, ruleBucket{bucketTag, strings.ToLower(sub.tag)}), true
+	case len(sub.attrs) > 0:
+		return append(out, ruleBucket{bucketAttr, strings.ToLower(sub.attrs[0].name)}), true
+	}
+	for _, ps := range sub.pseudos {
+		if ps.kind == pseudoRoot {
+			return append(out, ruleBucket{bucketRoot, ""}), true
+		}
+	}
+	for _, ps := range sub.pseudos {
+		if ps.kind != pseudoIs && ps.kind != pseudoWhere || len(ps.args) == 0 {
+			continue
+		}
+		start, all := len(out), true
+		for _, a := range ps.args {
+			if len(a.parts) == 0 {
+				all = false
+				break
+			}
+			var ok bool
+			if out, ok = subjectBuckets(a.parts[len(a.parts)-1].sel, out); !ok {
+				all = false
+				break
+			}
+		}
+		if all {
+			return out, true
+		}
+		out = out[:start]
+	}
+	return out, false
 }
 
 func (s *Stylesheet) ruleIndex() *ruleIndex {
@@ -2095,6 +2235,22 @@ func (s *Stylesheet) candidateRules(n *Node) []int {
 	id, _ := n.Attr("id")
 	cls, _ := n.Attr("class")
 	key := n.Tag + "\x00" + id + "\x00" + cls
+	// The signature also carries what the attribute and root buckets see.
+	if isRootElement(n) && len(ix.root) > 0 {
+		key += "\x00:root"
+	}
+	if len(ix.byAttr) > 0 && len(n.Attrs) > 0 {
+		var names []string
+		for a := range n.Attrs {
+			if a = strings.ToLower(a); len(ix.byAttr[a]) > 0 {
+				names = append(names, a)
+			}
+		}
+		if len(names) > 0 {
+			slices.Sort(names)
+			key += "\x00" + strings.Join(names, "\x00")
+		}
+	}
 	ix.candMu.Lock()
 	if l, ok := ix.cand[key]; ok {
 		ix.candMu.Unlock()
@@ -2136,6 +2292,16 @@ func (ix *ruleIndex) collectCandidates(n *Node, id string) []int {
 	if id != "" {
 		if l := ix.byID[id]; len(l) > 0 {
 			lists = append(lists, l)
+		}
+	}
+	if len(ix.root) > 0 && isRootElement(n) {
+		lists = append(lists, ix.root)
+	}
+	if len(ix.byAttr) > 0 {
+		for a := range n.Attrs {
+			if l := ix.byAttr[strings.ToLower(a)]; len(l) > 0 {
+				lists = append(lists, l)
+			}
 		}
 	}
 	for _, cl := range n.classFields() {

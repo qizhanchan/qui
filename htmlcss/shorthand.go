@@ -314,6 +314,15 @@ func capitalizeWords(s string) string {
 // mergeLogicalBox maps horizontal writing-mode box edges while folding the
 // cascade, so logical and physical properties compete in cascade order.
 func mergeLogicalBox(m map[string]string, d Declaration, rtl bool) {
+	// Logical sizes (horizontal writing mode): inline = width, block = height.
+	switch d.Property {
+	case "inline-size", "min-inline-size", "max-inline-size":
+		m[strings.Replace(d.Property, "inline-size", "width", 1)] = d.Value
+		return
+	case "block-size", "min-block-size", "max-block-size":
+		m[strings.Replace(d.Property, "block-size", "height", 1)] = d.Value
+		return
+	}
 	if edge, ok := strings.CutPrefix(d.Property, "inset-"); ok {
 		start, end := "left", "right"
 		if rtl {

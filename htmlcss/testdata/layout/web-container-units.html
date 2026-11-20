@@ -1,0 +1,13 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+.box { width: 600px; padding: 0 20px; container-type: inline-size; }
+.box > div { height: 10px; background: #888; }
+#a { width: 50cqw; }
+#b { inline-size: calc(min(100cqw - 4rem, 400px) - 2px); }
+#c { inline-size: calc(min(100cqi - 64px, 900px) - 2px); }
+#d { inline-size: 200px; block-size: 30px; max-inline-size: 150px; }
+</style></head><body>
+<div class="box" id="w"><div id="a"></div><div id="b"></div><div id="c"></div><div id="d"></div></div>
+</body></html>

@@ -116,6 +116,15 @@ func writeSVGEl(b *strings.Builder, e *El, root bool) {
 			continue
 		}
 		v, _ := e.readAttr(k)
+		if strings.Contains(v, "var(") {
+			// Presentation attributes are CSS declarations (SVG 2 §6.6):
+			// `fill="var(--canvas)"` takes the element's custom property.
+			// Unresolvable, the attribute is invalid and left out.
+			var ok bool
+			if v, ok = e.resolveAttrVars(v); !ok {
+				continue
+			}
+		}
 		writeSVGAttr(b, k, v)
 	}
 	style, _ := e.readAttr("style")
@@ -150,6 +159,20 @@ func writeSVGEl(b *strings.Builder, e *El, root bool) {
 	b.WriteString("</")
 	b.WriteString(svgTag(e.tag))
 	b.WriteByte('>')
+}
+
+// resolveAttrVars substitutes var() in an attribute value from the
+// element's computed custom properties.
+func (e *El) resolveAttrVars(v string) (string, bool) {
+	var props map[string]string
+	if e.lastCS != nil {
+		props = e.lastCS.customProps
+	}
+	if props == nil {
+		props = map[string]string{}
+	}
+	r := varResolver{done: props}
+	return r.substitute(v)
 }
 
 // svgTagNames restores the camelCase SVG element names the HTML parser

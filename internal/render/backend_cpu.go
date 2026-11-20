@@ -158,6 +158,9 @@ func (b *CPUBackend) PopLayer(mask *image.Alpha) {
 	if f.outer == b.base {
 		b.flushPending(f.clip)
 	}
+	if len(f.holes) > 0 {
+		b.punchHoles(f, mask)
+	}
 	compositeLayerClipped(f.outer, src, mask, f.paint, f.clip)
 }
 
@@ -193,6 +196,57 @@ func (b *CPUBackend) ClearRect(dst image.Rectangle) {
 	}
 	if dst = dst.Intersect(img.Bounds()); !dst.Empty() {
 		clearPixels(img, dst)
+		if b.layers != nil {
+			if f := b.layers.peek(); f != nil && f.img == img {
+				f.holes = append(f.holes, dst)
+			}
+		}
+	}
+}
+
+// punchHoles carries a popped layer's ClearRect holes into its parent:
+// cleared where the layer's clip (and mask) let the layer show, and
+// recorded on the parent layer so they reach the base.
+func (b *CPUBackend) punchHoles(f layerFrame, mask *image.Alpha) {
+	for _, h := range f.holes {
+		h = h.Intersect(f.clip).Intersect(f.outer.Bounds())
+		if h.Empty() {
+			continue
+		}
+		if f.outer == b.base {
+			b.flushPending(h)
+		}
+		if mask == nil {
+			clearPixels(f.outer, h)
+		} else {
+			eraseUnderMask(f.outer, h, mask)
+		}
+		if b.layers != nil {
+			if p := b.layers.peek(); p != nil && p.img == f.outer {
+				p.holes = append(p.holes, h)
+			}
+		}
+	}
+}
+
+// eraseUnderMask scales dst's premultiplied pixels in r by 1 - coverage:
+// gone where the mask covers fully, kept outside it, faded on its edge.
+func eraseUnderMask(dst *image.RGBA, r image.Rectangle, mask *image.Alpha) {
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			if !(image.Point{X: x, Y: y}.In(mask.Rect)) {
+				continue
+			}
+			m := uint32(mask.Pix[mask.PixOffset(x, y)])
+			if m == 0 {
+				continue
+			}
+			i := dst.PixOffset(x, y)
+			keep := 255 - m
+			for k := 0; k < 4; k++ {
+				dst.Pix[i+k] = uint8(uint32(dst.Pix[i+k]) * keep / 255)
+			}
+		}
 	}
 }
 

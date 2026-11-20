@@ -29,6 +29,8 @@ var frameworkCSS struct {
 	// HasSiblingCombinator and HasStructural for the framework rules.
 	has, siblingComb, structural bool
 	structKeys                   structKeys
+	hasKeys                      structKeys
+	hasCtxKeys                   structKeys
 }
 
 // RegisterFrameworkCSS appends css to the framework stylesheet. Call it
@@ -42,6 +44,8 @@ func RegisterFrameworkCSS(css string) {
 	frameworkCSS.siblingComb = frameworkCSS.siblingComb || sheet.HasSiblingCombinator
 	frameworkCSS.structural = frameworkCSS.structural || sheet.HasStructural
 	frameworkCSS.structKeys.merge(sheet.structKeys)
+	frameworkCSS.hasKeys.merge(sheet.hasKeys)
+	frameworkCSS.hasCtxKeys.merge(sheet.hasCtxKeys)
 	for _, rule := range sheet.Rules {
 		for _, sel := range rule.Selectors {
 			h, f, a := sel.stateGates()

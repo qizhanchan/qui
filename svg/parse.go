@@ -61,7 +61,7 @@ func parseSVG(r io.Reader, into *Document) error {
 			break
 		}
 	}
-	resolveGradientPaints(&into.Root, collectGradients(data))
+	resolveGradientPaints(&into.Root, collectGradients(data), collectPatterns(data))
 	return nil
 }
 
@@ -238,7 +238,7 @@ func parseElement(dec *xml.Decoder, start xml.StartElement) (Element, error) {
 			}
 		}
 		return p, skipTo(dec, start.End())
-	case "defs", "title", "desc", "metadata":
+	case "defs", "title", "desc", "metadata", "pattern":
 		// Recognised-but-unused — skip the subtree so following
 		// siblings parse correctly.
 		return nil, skipTo(dec, start.End())

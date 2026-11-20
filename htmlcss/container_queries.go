@@ -1,8 +1,11 @@
 package htmlcss
 
 import (
-	"github.com/qizhanchan/qui"
+	"regexp"
+	"strconv"
 	"strings"
+
+	"github.com/qizhanchan/qui"
 )
 
 func queryContainerStyle(cs *ComputedStyle) (bool, string) {
@@ -81,6 +84,8 @@ func (e *El) updateContainerWidth(offer float32, placed ...bool) {
 		}
 	}
 	e.node.containerWidth = width
+	// Container units below resolve against this width too.
+	changed = changed || e.node.containerUnitsUsed
 	if !changed {
 		return
 	}
@@ -94,4 +99,66 @@ func (e *El) updateContainerWidth(offer float32, placed ...bool) {
 		}
 	}
 	e.invalidateStyledLayout()
+}
+
+var reContainerUnit = regexp.MustCompile(`(?i)(^|[^a-z0-9_-])([+-]?(?:\d+\.?\d*|\.\d+))(cqw|cqh|cqi|cqb|cqmin|cqmax)\b`)
+
+// resolveContainerUnits rewrites container query length units (cqw, cqi …)
+// in n's declared values to px, against the nearest size query container
+// above n — its content box, as last laid out. Without one (or before its
+// first layout) they fall back to the small viewport units, as in CSS
+// Containment 3 §6. GitHub sizes its hero media with
+// `min(100cqw - 4rem, 71.25rem)`.
+func resolveContainerUnits(n *Node, m map[string]string) map[string]string {
+	var out map[string]string
+	for k, v := range m {
+		if !strings.Contains(v, "cq") || strings.HasPrefix(k, "--") || !reContainerUnit.MatchString(v) {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]string, len(m))
+			for kk, vv := range m {
+				out[kk] = vv
+			}
+		}
+		out[k] = containerUnitsToPx(n, v)
+	}
+	if out == nil {
+		return m
+	}
+	return out
+}
+
+func containerUnitsToPx(n *Node, v string) string {
+	w, h := viewportUnits[0], viewportUnits[1]
+	for p := n.Parent; p != nil; p = p.Parent {
+		if p.queryContainer {
+			p.containerUnitsUsed = true
+			if p.containerWidth > 0 {
+				w = p.containerWidth
+				// Only inline-size containers are tracked: block-axis
+				// units fall back to the viewport.
+			}
+			break
+		}
+	}
+	return reContainerUnit.ReplaceAllStringFunc(v, func(m string) string {
+		sub := reContainerUnit.FindStringSubmatch(m)
+		num, err := strconv.ParseFloat(sub[2], 32)
+		if err != nil {
+			return m
+		}
+		var ref float32
+		switch strings.ToLower(sub[3]) {
+		case "cqw", "cqi":
+			ref = w
+		case "cqh", "cqb":
+			ref = h
+		case "cqmin":
+			ref = min(w, h)
+		case "cqmax":
+			ref = max(w, h)
+		}
+		return sub[1] + strconv.FormatFloat(float64(float32(num)/100*ref), 'f', -1, 32) + "px"
+	})
 }

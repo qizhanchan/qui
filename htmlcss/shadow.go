@@ -135,6 +135,7 @@ func (eng *StyleEngine) distributeSlots() {
 			}
 			if !found && len(s.assigned) > 0 {
 				s.assigned = nil
+				eng.distributionChanged = true
 				if eng.slotChange != nil {
 					eng.slotChange(s)
 				}
@@ -161,17 +162,27 @@ func (eng *StyleEngine) distributeSlots() {
 				}
 			}
 			s.assigned = ns
+			if changed {
+				eng.distributionChanged = true
+			}
 			if changed && eng.slotChange != nil {
 				eng.slotChange(s)
 			}
 		}
 	}
 }
-func (eng *StyleEngine) prepareShadowTrees() {
+
+// It reports whether anything a scoped restyle cannot follow changed since
+// the last call: a slot's assigned nodes (which re-parents rendering and
+// inheritance) or the combined sheet. Otherwise a mutation inside or
+// around a shadow tree restyles only its own scope, as without one.
+func (eng *StyleEngine) prepareShadowTrees() (changed bool) {
 	if len(eng.shadowRoots) == 0 {
-		return
+		return false
 	}
 	eng.distributeSlots()
+	changed = eng.distributionChanged
+	eng.distributionChanged = false
 	for _, r := range eng.shadowRoots {
 		if !r.shadowCSSOverride {
 			css := collectShadowStyles(r)
@@ -182,7 +193,7 @@ func (eng *StyleEngine) prepareShadowTrees() {
 		}
 	}
 	if !eng.shadowSheetDirty {
-		return
+		return changed
 	}
 	eng.shadowSheetDirty = false
 	// Parse the whole source once to retain all selector dependency flags. Bind
@@ -211,6 +222,7 @@ func (eng *StyleEngine) prepareShadowTrees() {
 		}
 	}
 	eng.sheet = sheet
+	return true
 }
 
 // collectShadowStyles deliberately stops at nested hosts' DOM roots and inert

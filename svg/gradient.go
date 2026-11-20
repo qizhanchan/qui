@@ -148,14 +148,17 @@ func collectGradients(data []byte) map[string]*paintGradient {
 	}
 	return out
 }
-func resolveGradientPaints(root *Group, gradients map[string]*paintGradient) {
+func resolveGradientPaints(root *Group, gradients map[string]*paintGradient, patterns ...map[string]*paintPattern) {
 	var walk func(Element)
 	walk = func(e Element) {
 		s := &e.base().Style
 		for _, p := range []*Paint{&s.Fill, &s.Stroke} {
 			if p.Kind == PaintGradient {
 				p.gradient = gradients[p.reference]
-				if p.gradient == nil {
+				if p.gradient == nil && len(patterns) > 0 && patterns[0] != nil {
+					p.pattern = patterns[0][p.reference]
+				}
+				if p.gradient == nil && p.pattern == nil {
 					p.Kind = PaintNone
 				}
 			}

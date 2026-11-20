@@ -38,6 +38,12 @@ type layerFrame struct {
 	// SaveLayer — the mask stays nil there so composite is a straight
 	// blit through paint.BlendMode.
 	clipMask *image.Alpha
+	// holes are the device rects ClearRect punched while this layer was
+	// the target. Compositing the layer back would only cover them with
+	// what the parent already holds (a clipped box's own background), so
+	// PopLayer clears them in the parent too: a hole is a window for a
+	// retained draw beneath the 2D frame (video), through every layer.
+	holes []image.Rectangle
 }
 
 // layerStack is the ImageCanvas-side companion to CanvasState. Stored

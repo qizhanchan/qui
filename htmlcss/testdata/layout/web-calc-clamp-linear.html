@@ -1,0 +1,13 @@
+<!doctype html>
+<html><head><style>
+@font-face { font-family: GoRegular; src: url("../../../widgets/scripts/web/go-regular.ttf"); }
+body { margin: 0; padding: 0; font: 16px/20px GoRegular; }
+.wrap { width: 600px; --g: clamp(20px, calc((600px - 400px) / 4), 128px); }
+.wrap > div { height: 10px; background: #888; }
+/* % outside the clamp: linear, resolves like calc(100% - 2rem) */
+#a { width: calc(100% - 2 * var(--g)); margin-inline: auto; }
+#b { width: calc(100% - clamp(20px, 128px, 64px)); }
+#d { width: calc(100% - 2 * clamp(10px, calc((100px + 20px) / 4), 128px)); }
+</style></head><body>
+<div class="wrap" id="w"><div id="a"></div><div id="b"></div><div id="d"></div></div>
+</body></html>

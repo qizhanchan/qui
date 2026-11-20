@@ -176,3 +176,29 @@ func TestClearRespectsCurrentClip(t *testing.T) {
 		t.Errorf("far-corner pixel = %v, want red (should be preserved)", img.Pix[i:i+4])
 	}
 }
+
+// ClearRect inside a ClipPath layer punches through to the base: a video
+// in an `overflow: hidden; border-radius` box clears its rect so the
+// retained frame beneath shows, and compositing the layer back must not
+// leave the box's own background (painted before the clip) in the hole.
+// Outside the clip shape the base keeps its pixels.
+func TestClearRectInClipLayerReachesBase(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 40, 40))
+	c := NewImageCanvas(img)
+	c.FillRect(Rect{W: 40, H: 40}, Color{R: 1, G: 1, B: 1, A: 1})
+	depth := c.Save()
+	c.ClipPath(NewPath().AddCircle(20, 20, 15))
+	c.FillRect(Rect{W: 40, H: 40}, Color{G: 1, A: 1})
+	c.ClearRect(Rect{X: 10, Y: 10, W: 20, H: 20})
+	c.RestoreTo(depth)
+
+	if a := img.Pix[img.PixOffset(20, 20)+3]; a != 0 {
+		t.Errorf("hole centre alpha = %d, want 0", a)
+	}
+	if i := img.PixOffset(1, 1); img.Pix[i] < 240 || img.Pix[i+3] < 240 {
+		t.Errorf("outside the clip = %v, want the white base", img.Pix[i:i+4])
+	}
+	if i := img.PixOffset(20, 7); img.Pix[i+1] < 240 || img.Pix[i] > 16 {
+		t.Errorf("clip outside the hole = %v, want green", img.Pix[i:i+4])
+	}
+}

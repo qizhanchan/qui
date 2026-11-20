@@ -65,6 +65,10 @@ type Input struct {
 	// without a Label it acts as the only visible hint (vertically
 	// centered, OnSurfaceVariant color).
 	Placeholder string
+	// PlaceholderColor / PlaceholderFocusColor, when set, paint the
+	// placeholder at rest / while focused instead of the theme's muted
+	// text (HTML ::placeholder; alpha 0 hides it).
+	PlaceholderColor, PlaceholderFocusColor *Color
 	// placeholderKey, when set, supersedes Placeholder and is resolved
 	// during Measure/Draw. Read it through DisplayPlaceholder().
 	placeholderKey messageKey
@@ -879,7 +883,10 @@ func (t *Input) Draw(canvas Canvas) {
 	if text == "" && t.ed.preedit == "" {
 		if !t.hasLabel() || t.focused {
 			text = t.DisplayPlaceholder()
-			textColor = theme.TextMuted
+			textColor = placeholderInk(theme.TextMuted, t.PlaceholderColor, t.PlaceholderFocusColor, t.focused)
+			if textColor.A == 0 {
+				text = ""
+			}
 		}
 	}
 	if t.ed.preedit != "" {
@@ -1386,4 +1393,16 @@ func (t *Input) InlineBaseline() float32 {
 		return webControlBaseline(&t.States.Base, t.States.Base.Padding)
 	}
 	return 0
+}
+
+// placeholderInk is the placeholder's color: the focused override while
+// focused, else the resting override, else muted.
+func placeholderInk(muted Color, rest, focus *Color, focused bool) Color {
+	if focused && focus != nil {
+		return *focus
+	}
+	if rest != nil {
+		return *rest
+	}
+	return muted
 }

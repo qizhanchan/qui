@@ -60,6 +60,9 @@ func vvSample(tag string, every int) bool {
 type VideoView struct {
 	qui.BaseWidget
 
+	// transparent: no letterbox fill (SetTransparentBackground).
+	transparent bool
+
 	mu        sync.Mutex
 	src       Source
 	track     *VideoTrackInfo
@@ -1085,6 +1088,16 @@ func (v *VideoView) HitTest(p qui.Point) qui.Widget {
 	return nil
 }
 
+// SetTransparentBackground leaves the letterbox (and the whole rect before
+// the first frame) unpainted, so what is behind the view shows — an HTML
+// <video>, which paints only its picture.
+func (v *VideoView) SetTransparentBackground(on bool) {
+	if v.transparent != on {
+		v.transparent = on
+		v.Invalidate()
+	}
+}
+
 // Draw paints the letterbox background and registers the retained
 // compositor draw showing the current frame. Without a GPU-presenting
 // canvas (tests, CPU presentation) only the background is painted.
@@ -1095,7 +1108,7 @@ func (v *VideoView) Draw(canvas qui.Canvas) {
 			vvDebugf("Draw: canvas has no compositor (CPU presentation)")
 		}
 		bg := v.Style().Background
-		if bg == (qui.Color{}) {
+		if bg == (qui.Color{}) && !v.transparent {
 			bg = qui.Color{R: 0.10, G: 0.10, B: 0.12, A: 1}
 		}
 		canvas.FillRect(v.Bounds(), bg)
@@ -1122,7 +1135,7 @@ func (v *VideoView) Draw(canvas qui.Canvas) {
 	// the whole rect, but bg keeps a clean border when the frame hasn't
 	// arrived yet.
 	bg := v.Style().Background
-	if bg == (qui.Color{}) {
+	if bg == (qui.Color{}) && !v.transparent {
 		bg = qui.Color{R: 0, G: 0, B: 0, A: 1}
 	}
 	canvas.FillRect(bounds, bg)

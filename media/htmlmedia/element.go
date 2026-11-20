@@ -471,6 +471,7 @@ func (e *Element) install(src media.Source, bs media.ByteSource) {
 	e.src, e.bs = src, bs
 	if vt := src.VideoTrack(); vt != nil && e.video {
 		vv := media.NewVideoView()
+		vv.SetTransparentBackground(true)
 		vv.SetFitMode(media.FitContain)
 		if err := vv.OpenSource(src); err != nil {
 			vv.Destroy()

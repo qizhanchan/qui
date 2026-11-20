@@ -76,3 +76,66 @@ func (eng *StyleEngine) hasIdentityInHas(e *El, name string, previous []string) 
 	}
 	return false
 }
+
+// hasScope is the restyle scope a change at e needs because of :has(): a
+// :has() can only flip on an element its compound could match (hasKeys)
+// that is e or an ancestor of e — descendant arguments look down at e — or
+// a sibling of one of those — sibling arguments (`:has(+ x)`, `:has(~ x y)`)
+// look sideways and down. The scope is the parent of the topmost such
+// ancestor, which covers the flipped element, everything it styles through
+// descendant and sibling combinators, and e. ok is false when no :has()
+// subject can be involved: the caller's ordinary scope stands. Chrome
+// narrows :has() invalidation the same way, by the subject compound's
+// features.
+func (eng *StyleEngine) hasScope(e *El) (scope *El, ok bool) {
+	var keys, ctx []*structKeys
+	if eng.sheet != nil && eng.sheet.HasHas {
+		keys = append(keys, &eng.sheet.hasKeys)
+		ctx = append(ctx, &eng.sheet.hasCtxKeys)
+	}
+	frameworkCSS.mu.RLock()
+	if frameworkCSS.has {
+		k, c := frameworkCSS.hasKeys, frameworkCSS.hasCtxKeys
+		keys = append(keys, &k)
+		ctx = append(ctx, &c)
+	}
+	frameworkCSS.mu.RUnlock()
+	match := func(ks []*structKeys, n *El) bool {
+		if n == nil || n.node == nil {
+			return false
+		}
+		for _, k := range ks {
+			if k.relevant(n.node) {
+				return true
+			}
+		}
+		return false
+	}
+	var top *El
+	for a := e; a != nil; a = a.elParent {
+		// a is a candidate subject when its compound could match, or when
+		// it lies inside a context element of a keyless one.
+		hit := match(keys, a) || match(ctx, a.elParent)
+		if !hit && a.elParent != nil {
+			for _, w := range a.elParent.elementKids {
+				if s, isEl := w.(*El); isEl && s != a && match(keys, s) {
+					hit = true
+					break
+				}
+			}
+		}
+		if hit {
+			top = a
+		}
+	}
+	if top == nil {
+		return nil, false
+	}
+	if top.elParent != nil {
+		return top.elParent, true
+	}
+	if eng.roots[top] || top.shadowHost != nil {
+		return top, true
+	}
+	return nil, false
+}
