@@ -61,7 +61,7 @@ func matchesContainers(n *Node, conditions []string) bool {
 func (e *El) updateContainerWidth(offer float32, placed ...bool) {
 	eng := e.engine
 	used := len(placed) > 0 && placed[0]
-	if eng == nil || eng.containerRestyling || !e.node.queryContainer || offer <= 0 || offer >= 1e6 || !used && (e.node.containerLaidOut || qui.IntrinsicWidthMeasurement()) {
+	if eng == nil || eng.containerRestyling || !e.node.queryContainer || offer <= 0 || offer >= 1e6 || !used && (e.node.containerLaidOut || qui.IntrinsicWidthMeasurement(e)) {
 		return
 	}
 	if used {
@@ -232,7 +232,8 @@ func resolveContainerUnits(n *Node, m map[string]string) map[string]string {
 }
 
 func containerUnitsToPx(n *Node, v string) string {
-	w, h := viewportUnits[0], viewportUnits[1]
+	vp := nodeViewport(n)
+	w, h := vp[0], vp[1]
 	for p := n.Parent; p != nil; p = p.Parent {
 		if p.queryContainer {
 			p.containerUnitsUsed = true

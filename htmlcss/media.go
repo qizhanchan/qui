@@ -1,8 +1,10 @@
 package htmlcss
 
 import (
+	"math"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 // Media Queries 4 / Conditional Rules / Container Queries evaluation.
@@ -10,26 +12,38 @@ import (
 // is laid out for (a host re-renders on resize), for a screen in light
 // mode with a fine hovering pointer — a desktop browser window.
 
-// devicePixelRatio answers resolution queries (SetDevicePixelRatio).
-var devicePixelRatio float32 = 1
+// devicePixelRatioBits holds the ratio resolution queries see
+// (SetDevicePixelRatio): the display's, process-wide.
+var devicePixelRatioBits atomic.Uint32
+
+func devicePixelRatio() float32 {
+	if b := devicePixelRatioBits.Load(); b != 0 {
+		return math.Float32frombits(b)
+	}
+	return 1
+}
 
 // SetDevicePixelRatio sets the ratio `resolution` / `-webkit-device-pixel-
 // ratio` media queries see.
 func SetDevicePixelRatio(r float32) {
 	if r > 0 {
-		devicePixelRatio = r
+		devicePixelRatioBits.Store(math.Float32bits(r))
 	}
 }
 
 // mediaMatches evaluates a media query list: it matches when any
 // comma-separated query does.
 func mediaMatches(cond string, viewportW float32) bool {
+	return mediaMatchesSize(cond, viewportW, defaultViewport()[1])
+}
+
+func mediaMatchesSize(cond string, viewportW, viewportH float32) bool {
 	cond = strings.ToLower(strings.TrimSpace(cond))
 	if cond == "" {
 		return true
 	}
 	for _, q := range splitTopLevel(cond, ',') {
-		if mediaQueryMatches(strings.TrimSpace(q), viewportW) {
+		if mediaQueryMatches(strings.TrimSpace(q), viewportW, viewportH) {
 			return true
 		}
 	}
@@ -38,7 +52,8 @@ func mediaMatches(cond string, viewportW float32) bool {
 
 // mediaQueryMatches evaluates one query: `[not|only] type [and cond]` or a
 // bare condition.
-func mediaQueryMatches(q string, viewportW float32) bool {
+func mediaQueryMatches(q string, viewportW, viewportH float32) bool {
+	mediaFeature := func(f string, vw float32) bool { return mediaFeatureSize(f, vw, viewportH) }
 	if q == "" {
 		return true
 	}
@@ -132,8 +147,7 @@ func splitConditionTerms(c string) (parts, ops []string) {
 
 // mediaFeature answers one media feature test (the text inside its
 // parentheses): `min-width: 40em`, `width >= 600px`, `hover`, ….
-func mediaFeature(f string, vw float32) bool {
-	vh := viewportUnits[1]
+func mediaFeatureSize(f string, vw, vh float32) bool {
 	if name, val, ok := strings.Cut(f, ":"); ok {
 		name, val = strings.TrimSpace(name), strings.TrimSpace(val)
 		switch name {
@@ -178,17 +192,17 @@ func mediaFeature(f string, vw float32) bool {
 			r := parseResolution(val)
 			switch name {
 			case "min-resolution":
-				return devicePixelRatio >= r
+				return devicePixelRatio() >= r
 			case "max-resolution":
-				return devicePixelRatio <= r
+				return devicePixelRatio() <= r
 			}
-			return devicePixelRatio == r
+			return devicePixelRatio() == r
 		case "-webkit-min-device-pixel-ratio", "min--moz-device-pixel-ratio":
 			r, _ := strconv.ParseFloat(val, 32)
-			return devicePixelRatio >= float32(r)
+			return devicePixelRatio() >= float32(r)
 		case "-webkit-max-device-pixel-ratio":
 			r, _ := strconv.ParseFloat(val, 32)
-			return devicePixelRatio <= float32(r)
+			return devicePixelRatio() <= float32(r)
 		case "min-aspect-ratio", "max-aspect-ratio", "aspect-ratio":
 			ar := parseRatio(val)
 			if ar <= 0 {
@@ -305,10 +319,7 @@ func flipOp(op string) string {
 // cmpLen compares v with a CSS length (em/rem against 16px, as media
 // queries do).
 func cmpLen(v float32, op, length string) bool {
-	saved := remPx
-	remPx = 16
 	l, ok := parseLength(length, 16, 0)
-	remPx = saved
 	if !ok {
 		return false
 	}
@@ -395,5 +406,5 @@ func containerMatches(prelude string, vw float32) bool {
 	if p == "" {
 		return true
 	}
-	return evalCondition(p, vw, mediaFeature)
+	return evalCondition(p, vw, func(f string, w float32) bool { return mediaFeatureSize(f, w, defaultViewport()[1]) })
 }

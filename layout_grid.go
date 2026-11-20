@@ -151,7 +151,7 @@ func (l GridLayout) expandRepeat(children []Widget, availW float32) GridLayout {
 // resolvePctTracks turns percentage tracks into pixels against avail, or
 // into Auto tracks when avail is indefinite (0, or an intrinsic-size pass
 // for columns). tracks is copied only when it holds one.
-func resolvePctTracks(tracks []GridTrack, avail float32, columnAxis bool) []GridTrack {
+func resolvePctTracks(tracks []GridTrack, avail float32, columnAxis, pctDefinite bool) []GridTrack {
 	var out []GridTrack
 	for i, t := range tracks {
 		if t.Pct <= 0 {
@@ -160,7 +160,7 @@ func resolvePctTracks(tracks []GridTrack, avail float32, columnAxis bool) []Grid
 		if out == nil {
 			out = append([]GridTrack(nil), tracks...)
 		}
-		if avail > 0 && (!columnAxis || widthPctDefinite()) {
+		if avail > 0 && (!columnAxis || pctDefinite) {
 			out[i].Kind, out[i].Size = GridFixed, t.Pct*avail
 		} else {
 			out[i].Kind, out[i].Size = GridAuto, 0
@@ -354,7 +354,7 @@ func gridItemRect(ch Widget, cell Rect, keepSize bool, justify, align AlignCross
 			justify = s.JustifySelf
 		}
 		p = widgetPreferredSize(ch)
-		if p.W == 0 && s.WidthPct > 0 && widthPctDefinite() {
+		if p.W == 0 && s.WidthPct > 0 && widthPctDefinite(ch) {
 			p.W = s.pctWidth(s.WidthPct, in.W)
 		}
 		if p.H == 0 && s.HeightPct > 0 {
@@ -438,7 +438,7 @@ func (l GridLayout) Measure(children []Widget, avail Size) Size {
 	if len(children) == 0 {
 		return Size{}
 	}
-	if l.SizedItemsKeepSize && !widthPctDefinite() {
+	if l.SizedItemsKeepSize && !widthPctDefinite(children[0]) {
 		// A grid measured as an auto-basis flex item has an indefinite
 		// inline size. Fraction tracks use its content, not the flex row's
 		// offered width, before flexing assigns the final width.
@@ -587,7 +587,7 @@ func (l GridLayout) autoPlace(placements []GridItem) {
 func (l GridLayout) resolveTracks(tracks []GridTrack, avail, gap float32,
 	children []Widget, placements []GridItem, columnAxis bool,
 	crossSizes []float32, crossGap float32) []float32 {
-	tracks = resolvePctTracks(tracks, avail, columnAxis)
+	tracks = resolvePctTracks(tracks, avail, columnAxis, len(children) == 0 || widthPctDefinite(children[0]))
 	sizes := make([]float32, len(tracks))
 	used := gap * float32(len(tracks)-1) // total inter-track gaps
 	var fractionSum float32

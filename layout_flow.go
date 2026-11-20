@@ -81,7 +81,7 @@ func shrinkToFitWidth(w Widget) bool {
 func flowPreferredSize(child Widget, cb Size) Size {
 	pref := widgetPreferredSize(child)
 	if s := child.Style(); s != nil {
-		if pref.W == 0 && s.WidthPct > 0 && widthPctDefinite() {
+		if pref.W == 0 && s.WidthPct > 0 && widthPctDefinite(child) {
 			pref.W = s.pctWidth(s.WidthPct, cb.W)
 		}
 		if pref.H == 0 && s.HeightPct > 0 && cb.H > 0 {

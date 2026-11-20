@@ -3,6 +3,7 @@ package qui
 import (
 	"fmt"
 	"log"
+	"sync/atomic"
 )
 
 // Measure caching.
@@ -43,15 +44,15 @@ const measureCacheSize = 16
 
 // layoutEpoch is bumped for changes that can alter any widget's measured
 // size without passing through its own InvalidateLayout.
-var layoutEpoch uint64
+var layoutEpoch atomic.Uint64
 
 // invalidateAllMeasures discards every cached measurement in the process.
-func invalidateAllMeasures() { layoutEpoch++ }
+func invalidateAllMeasures() { layoutEpoch.Add(1) }
 
 type measureEpoch struct{ layout, theme, font, locale uint64 }
 
 func currentMeasureEpoch() measureEpoch {
-	return measureEpoch{layoutEpoch, ThemeGeneration(), FontRegistryGeneration(), LocaleGeneration()}
+	return measureEpoch{layoutEpoch.Load(), ThemeGeneration(), FontRegistryGeneration(), LocaleGeneration()}
 }
 
 type measureEntry struct {
@@ -98,24 +99,24 @@ func (c *measureCache) syncEpoch(epoch measureEpoch) bool {
 	return false
 }
 
-func (c *measureCache) lookup(avail Size, epoch measureEpoch) (Size, bool) {
+func (c *measureCache) lookup(avail Size, epoch measureEpoch, indef bool) (Size, bool) {
 	if !c.syncEpoch(epoch) {
 		return Size{}, false
 	}
 	for _, e := range c.entries {
-		if e.avail == avail && e.indef == (pctIndefinite > 0) {
+		if e.avail == avail && e.indef == indef {
 			return e.size, true
 		}
 	}
 	return Size{}, false
 }
 
-func (c *measureCache) store(avail, size Size) {
+func (c *measureCache) store(avail, size Size, indef bool) {
 	if len(c.entries) < measureCacheSize {
-		c.entries = append(c.entries, measureEntry{avail, size, pctIndefinite > 0})
+		c.entries = append(c.entries, measureEntry{avail, size, indef})
 		return
 	}
-	c.entries[c.next] = measureEntry{avail, size, pctIndefinite > 0}
+	c.entries[c.next] = measureEntry{avail, size, indef}
 	c.next = (c.next + 1) % measureCacheSize
 }
 
@@ -152,7 +153,8 @@ func MeasureChild(w Widget, avail Size) Size {
 	if wo, ok := w.(WidthOnlyMeasurer); ok && wo.MeasuresByWidthOnly() {
 		key.H = 0
 	}
-	if size, hit := c.lookup(key, epoch); hit {
+	indef := IntrinsicWidthMeasurement(w)
+	if size, hit := c.lookup(key, epoch, indef); hit {
 		if layoutCacheVerify.Load() {
 			verifyMeasure(w, avail, size)
 		}
@@ -163,7 +165,7 @@ func MeasureChild(w Widget, avail Size) Size {
 	// Only keep a result nothing invalidated while it was being computed
 	// (a descendant's Measure may adjust state and InvalidateLayout).
 	if c.version == version && c.epoch == currentMeasureEpoch() {
-		c.store(key, size)
+		c.store(key, size, indef)
 	}
 	return size
 }
@@ -188,7 +190,7 @@ func cachedIntrinsic(w Widget, max bool, compute func() float32) float32 {
 	if max {
 		kind = 1
 	}
-	if pctIndefinite > 0 {
+	if IntrinsicWidthMeasurement(w) {
 		indef = 1
 	}
 	e := &c.intrinsic[kind][indef]

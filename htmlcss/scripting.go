@@ -152,8 +152,13 @@ func (e *El) IsComment() bool { return e.tag == "#comment" }
 // MediaMatches evaluates a media query list against the current viewport
 // (window.matchMedia).
 func MediaMatches(query string, viewportW float32) bool {
+	return MediaMatchesSize(query, viewportW, defaultViewport()[1])
+}
+
+// MediaMatchesSize is MediaMatches for a document's whole viewport.
+func MediaMatchesSize(query string, viewportW, viewportH float32) bool {
 	for _, q := range strings.Split(query, ",") {
-		if mediaQueryMatches(strings.TrimSpace(strings.ToLower(q)), viewportW) {
+		if mediaQueryMatches(strings.TrimSpace(strings.ToLower(q)), viewportW, viewportH) {
 			return true
 		}
 	}

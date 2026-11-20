@@ -353,6 +353,9 @@ type Window struct {
 	lastPresent   atomic.Int64
 	refreshPeriod atomic.Int64
 	rafCallbacks  []func(time.Time)
+	// pctIndefinite: intrinsic-width probes in progress in this window's
+	// tree (layout.go pctIndefiniteOf).
+	pctIndefinite int
 	lastRAF       time.Time // frame time of the last callback run
 	lastRAFWall   time.Time
 	// onFramePainted observers run after every painted frame

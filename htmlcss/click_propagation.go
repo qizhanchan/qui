@@ -5,6 +5,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/qizhanchan/qui"
 )
@@ -47,25 +48,44 @@ type clickDispatch struct {
 	activated bool
 }
 
-// curClick is the click being dispatched. All dispatch runs on the UI
-// thread, one event at a time, so a single record is enough.
-var curClick clickDispatch
+// clickRecords holds the click being dispatched, per window: dispatch runs
+// on the window's thread one event at a time, and the record is shared by
+// every document in the window (a nested document's release is the same
+// click). Windows on different threads (RFC 0005 page threads) each get
+// their own.
+var clickRecords sync.Map // *qui.Window (or nil key) -> *clickDispatch
+
+func clickRecord(e *El) *clickDispatch {
+	var key any = (*qui.Window)(nil)
+	if e != nil {
+		if w := e.Window(); w != nil {
+			key = w
+		}
+	}
+	if r, ok := clickRecords.Load(key); ok {
+		return r.(*clickDispatch)
+	}
+	r, _ := clickRecords.LoadOrStore(key, &clickDispatch{})
+	return r.(*clickDispatch)
+}
 
 // clickFor returns the record for ev's dispatch, starting a fresh one
 // when ev is a new event.
-func clickFor(ev qui.Event) *clickDispatch {
-	if d, ok := ev.(interface{ SameDispatch(qui.Event) bool }); ok && curClick.ev != nil && d.SameDispatch(curClick.ev) {
-		return &curClick
+func clickFor(e *El, ev qui.Event) *clickDispatch {
+	cur := clickRecord(e)
+	if d, ok := ev.(interface{ SameDispatch(qui.Event) bool }); ok && cur.ev != nil && d.SameDispatch(cur.ev) {
+		return cur
 	}
-	curClick = clickDispatch{ev: ev}
-	return &curClick
+	*cur = clickDispatch{ev: ev}
+	return cur
 }
 
 // syntheticClick is a click with no pointer event behind it (keyboard
 // activation, El.Click): its own record, not shared with any dispatch.
-func syntheticClick() *clickDispatch {
-	curClick = clickDispatch{}
-	return &curClick
+func syntheticClick(e *El) *clickDispatch {
+	cur := clickRecord(e)
+	*cur = clickDispatch{}
+	return cur
 }
 
 // SetStopClickPropagation makes the element a click-propagation barrier:
@@ -130,7 +150,7 @@ func (e *El) dispatchRelease(me qui.MouseEvent, selfOver bool) bool {
 	if me.Button != qui.MouseButtonLeft || me.AfterDrag {
 		return false
 	}
-	cs := clickFor(me)
+	cs := clickFor(e, me)
 	var doubles []*El
 	for a := e; a != nil; a = a.elParent {
 		over := selfOver
@@ -238,7 +258,7 @@ func (e *El) activate(me qui.MouseEvent, acted bool) {
 // ancestors are marked so their own Handle doesn't run it again. It
 // reports whether any handler ran.
 func (e *El) dispatchContextMenu(me qui.MouseEvent) bool {
-	cs := clickFor(me)
+	cs := clickFor(e, me)
 	// Event coordinates arrive in e's own space; the handler anchors a
 	// window-level overlay, so map back out (a no-op outside scroll
 	// containers / transformed subtrees).

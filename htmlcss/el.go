@@ -2882,9 +2882,6 @@ func (e *El) applyComputed(cs *ComputedStyle) {
 	} else {
 		e.cancelAnimations()
 	}
-	if cs != nil && cs.RootFontSize > 0 {
-		remPx = cs.RootFontSize // rem in lengths resolved while applying
-	}
 	if cs == nil {
 		return
 	}
@@ -6776,7 +6773,7 @@ func (e *El) pressFromKeyboard(mods qui.Modifiers) bool {
 	}
 	// The synthetic click bubbles to the ancestors' handlers, as a
 	// browser's does; the default action follows the whole dispatch.
-	e.bubbleSyntheticClick(mods, syntheticClick())
+	e.bubbleSyntheticClick(mods, syntheticClick(e))
 	if e.runBuiltinClick() {
 		acted = true
 	}
@@ -6793,7 +6790,7 @@ func (e *El) keyClick() {
 	if e.onClickMods != nil {
 		e.onClickMods(0)
 	}
-	e.bubbleSyntheticClick(0, syntheticClick())
+	e.bubbleSyntheticClick(0, syntheticClick(e))
 }
 
 // Click runs the element's click behavior as if it had been clicked —

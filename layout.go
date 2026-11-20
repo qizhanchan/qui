@@ -212,20 +212,37 @@ func applyConstraints(size, min, max Size) Size {
 // its descendants' percentage widths are cyclic then and behave as auto
 // (CSS Sizing 3 § 5.2.1), resolving against the box once it is laid out.
 // Measure memos key on it (measureEntry.indef).
-var pctIndefinite int
+//
+// The count belongs to the window whose tree is being laid out (RFC 0005:
+// pages lay out on their own threads, each in its own window), so two
+// trees measured at once never see each other's probes. Detached widgets
+// share detachedPctIndefinite and must be measured on one goroutine.
+var detachedPctIndefinite int
 
-// widthPctDefinite reports whether percentage widths resolve now.
-func widthPctDefinite() bool { return pctIndefinite == 0 }
+func pctIndefiniteOf(w Widget) *int {
+	if o, ok := w.(interface{ Window() *Window }); ok {
+		if win := o.Window(); win != nil {
+			return &win.pctIndefinite
+		}
+	}
+	return &detachedPctIndefinite
+}
 
-// IntrinsicWidthMeasurement reports that the current width offer is only
-// a probe for content sizing, rather than the containing block's used size.
-func IntrinsicWidthMeasurement() bool { return pctIndefinite > 0 }
+// widthPctDefinite reports whether percentage widths resolve now in w's
+// tree.
+func widthPctDefinite(w Widget) bool { return *pctIndefiniteOf(w) == 0 }
+
+// IntrinsicWidthMeasurement reports that the current width offer to w is
+// only a probe for content sizing, rather than the containing block's used
+// size.
+func IntrinsicWidthMeasurement(w Widget) bool { return *pctIndefiniteOf(w) > 0 }
 
 // measureIntrinsic measures w with its descendants' percentage widths
 // indefinite.
 func measureIntrinsic(w Widget, avail Size, measure func(Widget, Size) Size) Size {
-	pctIndefinite++
-	defer func() { pctIndefinite-- }()
+	p := pctIndefiniteOf(w)
+	*p++
+	defer func() { *p-- }()
 	return measure(w, avail)
 }
 
@@ -237,7 +254,7 @@ func (s *Style) pctHeight(frac, cbH float32) float32 { return cbH*frac + s.PctEx
 func resolvedMinSize(w Widget, cb Size) Size {
 	min := widgetMinSize(w)
 	if s := w.Style(); s != nil {
-		if min.W == 0 && s.MinWidthPct > 0 && cb.W > 0 && widthPctDefinite() {
+		if min.W == 0 && s.MinWidthPct > 0 && cb.W > 0 && widthPctDefinite(w) {
 			min.W = s.pctWidth(s.MinWidthPct, cb.W)
 		}
 		if min.H == 0 && s.MinHeightPct > 0 && cb.H > 0 {
@@ -250,7 +267,7 @@ func resolvedMinSize(w Widget, cb Size) Size {
 func resolvedMaxSize(w Widget, cb Size) Size {
 	max := widgetMaxSize(w)
 	if s := w.Style(); s != nil {
-		if max.W == 0 && s.MaxWidthPct > 0 && cb.W > 0 && widthPctDefinite() {
+		if max.W == 0 && s.MaxWidthPct > 0 && cb.W > 0 && widthPctDefinite(w) {
 			max.W = s.pctWidth(s.MaxWidthPct, cb.W)
 		}
 		if max.H == 0 && s.MaxHeightPct > 0 && cb.H > 0 {
@@ -314,7 +331,7 @@ func ownWidthAvail(avail Size, prefW, minW, maxW float32) Size {
 func MeasureConstrained(w Widget, avail Size) Size {
 	p := widgetPreferredSize(w)
 	if s := w.Style(); s != nil {
-		if p.W == 0 && s.WidthPct > 0 && avail.W > 0 && widthPctDefinite() {
+		if p.W == 0 && s.WidthPct > 0 && avail.W > 0 && widthPctDefinite(w) {
 			p.W = s.pctWidth(s.WidthPct, avail.W)
 		}
 		if p.H == 0 && s.HeightPct > 0 && avail.H > 0 {

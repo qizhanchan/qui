@@ -888,7 +888,7 @@ func mergedDeclsRest(n *Node, sheet *Stylesheet, st selectorState, rest *restMat
 
 	// Tier 2: inline style attribute (highest).
 	if inline, ok := n.Attr("style"); ok {
-		for _, d := range parseDeclarations(inline) {
+		for _, d := range parseDeclarationsIn(inline, nodeViewport(n)) {
 			decls = append(decls, matchedDecl{decl: d, tier: 2, context: shadowDepth(shadowScope(n))})
 		}
 	}
@@ -987,13 +987,18 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle, aliases ...m
 	if parent != nil && parent.RootFontSize > 0 {
 		rootFS = parent.RootFontSize
 	}
-	remPx = rootFS
 	// Resolve CSS custom properties + var() before reading any property:
 	// build this node's inherited custom-prop table, then substitute var()
 	// throughout the normal declarations.
 	customProps, customPropsID := buildCustomPropTable(parent, m)
 	m = resolveMapVars(m, customProps)
 	m = resolveContainerUnits(n, m)
+	// rem is the root element's font size. font-size itself resolves now
+	// (the root's own uses the initial 16px); everything else once this
+	// element's root font size is known, below.
+	if v, ok := m["font-size"]; ok && strings.Contains(v, "rem") {
+		m["font-size"] = resolveRemUnits(v, rootFS)
+	}
 	inheritRegisteredProps(m, parent)
 	colorInherited := m["color"] == "inherit" || m["color"] == "unset"
 	lineHeightInherited := m["line-height"] == "inherit" || m["line-height"] == "unset" || m["font"] == "inherit"
@@ -1185,9 +1190,13 @@ func interpret(n *Node, m map[string]string, parent *ComputedStyle, aliases ...m
 		// The root's own font size (its rem is the initial 16px) is
 		// every rem below it — and in its other properties.
 		rootFS = cs.FontSize
-		remPx = rootFS
 	}
 	cs.RootFontSize = rootFS
+	for k, v := range m {
+		if k != "font-size" && strings.Contains(v, "rem") && !strings.HasPrefix(k, "--") {
+			m[k] = resolveRemUnits(v, rootFS)
+		}
+	}
 	fs := cs.FontSize
 
 	// --- color ---
@@ -2115,7 +2124,7 @@ func parseWebBorder(m map[string]string, cs *ComputedStyle, fs float32) {
 		} else if widths[i] > 0 {
 			// Blink snaps border widths down to device pixels, with a one-pixel
 			// minimum for nonzero borders. These used widths affect layout too.
-			scale := max(devicePixelRatio, 1)
+			scale := max(devicePixelRatio(), 1)
 			widths[i] = max(1, float32(math.Floor(float64(widths[i]*scale)))) / scale
 		}
 	}

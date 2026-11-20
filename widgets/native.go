@@ -2,6 +2,7 @@ package widgets
 
 import (
 	"math"
+	"sync/atomic"
 
 	. "github.com/qizhanchan/qui"
 )
@@ -70,20 +71,26 @@ const (
 // dark theme even though it equals htmlControlText. Matching by RGBA alone
 // would remap it to the theme's light text.
 
-var (
-	baselineGen   = ^uint64(0)
-	baselineState bool
-)
+type baselineMemo struct {
+	gen   uint64
+	state bool
+}
+
+// baseline caches themeIsBaseline; atomic because widgets paint on page
+// threads too (RFC 0005).
+var baseline atomic.Pointer[baselineMemo]
 
 // themeIsBaseline reports whether the active theme is the default light
 // theme (cached per ThemeGeneration): the fast path where every baseline
 // color paints as itself.
 func themeIsBaseline() bool {
-	if g := ThemeGeneration(); g != baselineGen {
-		baselineGen = g
-		baselineState = *CurrentTheme() == LightTheme
+	g := ThemeGeneration()
+	if m := baseline.Load(); m != nil && m.gen == g {
+		return m.state
 	}
-	return baselineState
+	m := &baselineMemo{gen: g, state: *CurrentTheme() == LightTheme}
+	baseline.Store(m)
+	return m.state
 }
 
 // Literal baseline grays some constructors use besides the named ones.

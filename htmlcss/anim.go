@@ -30,7 +30,7 @@ type keyframe struct {
 }
 
 // parseKeyframes parses the body of an @keyframes rule.
-func parseKeyframes(block string) []keyframe {
+func parseKeyframes(block string, vp viewportSize) []keyframe {
 	var out []keyframe
 	p := &cssParser{src: block}
 	for {
@@ -45,7 +45,7 @@ func parseKeyframes(block string) []keyframe {
 		p.pos++ // '{'
 		body := p.readBalancedBlock()
 		decls := map[string]string{}
-		for _, d := range parseDeclarations(body) {
+		for _, d := range parseDeclarationsIn(body, vp) {
 			decls[strings.ToLower(d.Property)] = d.Value
 		}
 		for _, s := range strings.Split(sel, ",") {

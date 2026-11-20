@@ -40,8 +40,6 @@ func Render(htmlSrc, cssSrc string, opts Options) qui.Widget {
 // RenderResult). Use it when you need to locate specific HTML elements'
 // widgets — e.g. to drive them in tests or wire extra behavior.
 func RenderDoc(htmlSrc, cssSrc string, opts Options) RenderResult {
-	previousViewport := viewportUnits
-	defer func() { viewportUnits = previousViewport }()
 	dom := parseHTML(htmlSrc, opts.ScriptDOM)
 	css := cssSrc
 	if embedded := collectStyleText(dom); embedded != "" {
@@ -56,8 +54,7 @@ func RenderDoc(htmlSrc, cssSrc string, opts Options) RenderResult {
 	if opts.Window != nil {
 		SetDevicePixelRatio(opts.Window.DevicePixelRatio())
 	}
-	SetViewportUnits(vw, opts.ViewportHeight)
-	eng := NewStyleEngineViewport(css, vw)
+	eng := newStyleEngineSize(css, viewportSize{vw, opts.ViewportHeight})
 	eng.opts = opts
 	eng.sheet.FontFamilies = opts.FontFamilies
 

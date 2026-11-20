@@ -309,11 +309,21 @@ func ParseCSS(src string) *Stylesheet {
 // Non-@media at-rules are skipped. Evaluation is one-shot at parse time (not
 // reactive to window resize).
 func ParseCSSViewport(src string, viewportW float32) *Stylesheet {
-	if viewportW <= 0 {
-		viewportW = defaultViewportWidth
+	return parseCSSIn(src, viewportSize{viewportW, defaultViewport()[1]})
+}
+
+// parseCSSIn is ParseCSSViewport for a document's viewport: @media and
+// vw / vh units evaluate against vp.
+func parseCSSIn(src string, vp viewportSize) *Stylesheet {
+	if vp[0] <= 0 {
+		vp[0] = defaultViewportWidth
 	}
+	if vp[1] <= 0 {
+		vp[1] = defaultViewport()[1]
+	}
+	viewportW := vp[0]
 	sheet := &Stylesheet{}
-	ctx := &cssParseCtx{viewportW: viewportW, layers: map[string]int{}}
+	ctx := &cssParseCtx{viewportW: viewportW, viewportH: vp[1], layers: map[string]int{}}
 	ctx.parseBlock(stripComments(src), sheet, 0, nil)
 	return sheet
 }
@@ -323,6 +333,7 @@ func ParseCSSViewport(src string, viewportW float32) *Stylesheet {
 // cascade layers in order of first appearance.
 type cssParseCtx struct {
 	viewportW  float32
+	viewportH  float32
 	layers     map[string]int
 	anonLayer  int
 	containers []string
@@ -405,7 +416,7 @@ func (c *cssParseCtx) atRule(prelude, block string, sheet *Stylesheet, layer int
 	}
 	switch strings.ToLower(name) {
 	case "@media":
-		if mediaMatches(cond, c.viewportW) {
+		if mediaMatchesSize(cond, c.viewportW, c.viewportH) {
 			c.nestedGroup(block, sheet, layer, parents)
 		}
 	case "@supports":
@@ -424,14 +435,14 @@ func (c *cssParseCtx) atRule(prelude, block string, sheet *Stylesheet, layer int
 	case "@scope", "@starting-style":
 		// Not modeled: @starting-style only matters for transitions.
 	case "@font-face":
-		sheet.FontFaces = append(sheet.FontFaces, parseDeclarations(block))
+		sheet.FontFaces = append(sheet.FontFaces, parseDeclarationsIn(block, c.vp()))
 	case "@property":
 		if !strings.HasPrefix(cond, "--") || len(cond) > 256 || strings.ContainsAny(cond, " \t\r\n") {
 			return
 		}
 		var def PropertyDef
 		var syntax, inherits bool
-		for _, d := range parseDeclarations(block) {
+		for _, d := range parseDeclarationsIn(block, c.vp()) {
 			switch d.Property {
 			case "syntax":
 				syntax = strings.Trim(d.Value, `"'`) != ""
@@ -453,7 +464,7 @@ func (c *cssParseCtx) atRule(prelude, block string, sheet *Stylesheet, layer int
 			if sheet.Keyframes == nil {
 				sheet.Keyframes = map[string][]keyframe{}
 			}
-			sheet.Keyframes[name] = parseKeyframes(block)
+			sheet.Keyframes[name] = parseKeyframes(block, c.vp())
 		}
 	default:
 		// @keyframes, @page, @property, @counter-style, … are skipped.
@@ -481,7 +492,7 @@ func (c *cssParseCtx) styleRule(selText, body string, sheet *Stylesheet, layer i
 	rule := Rule{
 		Containers:   append([]string(nil), c.containers...),
 		Selectors:    parseSelectorList(selText),
-		Declarations: parseDeclarations(decls),
+		Declarations: parseDeclarationsIn(decls, c.vp()),
 		Layer:        layer,
 	}
 	if len(rule.Selectors) > 0 && len(rule.Declarations) > 0 {
@@ -1375,7 +1386,15 @@ func parseAnB(s string) (a, b int, ok bool) {
 	return a, v, true
 }
 
+func (c *cssParseCtx) vp() viewportSize { return viewportSize{c.viewportW, c.viewportH} }
+
+// parseDeclarations parses a declaration block against the default
+// viewport (vw / vh units); parseDeclarationsIn names a document's.
 func parseDeclarations(body string) []Declaration {
+	return parseDeclarationsIn(body, defaultViewport())
+}
+
+func parseDeclarationsIn(body string, vp viewportSize) []Declaration {
 	var out []Declaration
 	for _, chunk := range splitDeclChunks(body) {
 		chunk = strings.TrimSpace(chunk)
@@ -1403,7 +1422,7 @@ func parseDeclarations(body string) []Declaration {
 			}
 		}
 		if prop != "" && (val != "" || strings.HasPrefix(prop, "--")) {
-			val = resolveViewportUnits(val)
+			val = resolveViewportUnits(val, vp)
 			if strings.Contains(val, "light-dark(") || strings.Contains(val, "LIGHT-DARK(") {
 				val = resolveLightDark(val)
 			}

@@ -199,12 +199,12 @@ func (eng *StyleEngine) prepareShadowTrees() (changed bool) {
 	// Parse the whole source once to retain all selector dependency flags. Bind
 	// each selector to its originating tree afterwards, without rewriting CSS.
 	src := eng.cssSrc
-	counts := []int{len(ParseCSSViewport(src, eng.viewportW).Rules)}
+	counts := []int{len(parseCSSIn(src, eng.viewport()).Rules)}
 	for _, r := range eng.shadowRoots {
 		src += "\n" + r.shadowCSS
-		counts = append(counts, len(ParseCSSViewport(r.shadowCSS, eng.viewportW).Rules))
+		counts = append(counts, len(parseCSSIn(r.shadowCSS, eng.viewport()).Rules))
 	}
-	sheet := ParseCSSViewport(src, eng.viewportW)
+	sheet := parseCSSIn(src, eng.viewport())
 	sheet.FontFamilies = eng.opts.FontFamilies
 	at := 0
 	for i, count := range counts {

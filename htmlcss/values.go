@@ -2,6 +2,7 @@ package htmlcss
 
 import (
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -309,11 +310,30 @@ func clamp01(v float32) float32 {
 	return v
 }
 
-// remPx is what 1rem is while a style is being resolved: the document
-// root's font size (interpret and applyComputed set it from the style at
-// hand; media queries use the initial 16px). Styles resolve on the UI
-// thread, one element at a time.
-var remPx float32 = 16
+// initialRemPx is what 1rem means where no document root applies: media
+// queries, and values parsed outside a cascade. interpret rewrites rem to
+// px against the document's root font size (resolveRemUnits) before
+// anything parses a length, so no shared "current rem" exists — pages
+// style concurrently on their own threads (RFC 0005).
+const initialRemPx = 16
+
+var reRemUnit = regexp.MustCompile(`(?i)(^|[^a-z0-9_.-])([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)rem\b`)
+
+// resolveRemUnits rewrites rem lengths in a declared value to px. Strings
+// and url() are left alone.
+func resolveRemUnits(v string, rem float32) string {
+	if strings.ContainsAny(v, `"'`) || strings.Contains(v, "url(") || !reRemUnit.MatchString(v) {
+		return v
+	}
+	return reRemUnit.ReplaceAllStringFunc(v, func(m string) string {
+		sub := reRemUnit.FindStringSubmatch(m)
+		n, err := strconv.ParseFloat(sub[2], 32)
+		if err != nil {
+			return m
+		}
+		return sub[1] + strconv.FormatFloat(float64(float32(n)*rem), 'f', -1, 32) + "px"
+	})
+}
 
 // parseLength converts a CSS length to logical pixels. em is relative to
 // the supplied font size; rem to remPx; % returns a fraction of pct
@@ -342,7 +362,7 @@ func parseLength(s string, fontSize, pctRef float32) (float32, bool) {
 		return parseFloat(strings.TrimSuffix(s, "px"))
 	case strings.HasSuffix(s, "rem"):
 		if v, ok := parseFloat(strings.TrimSuffix(s, "rem")); ok {
-			return v * remPx, true
+			return v * initialRemPx, true
 		}
 	case strings.HasSuffix(s, "em"):
 		if v, ok := parseFloat(strings.TrimSuffix(s, "em")); ok {

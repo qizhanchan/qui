@@ -176,23 +176,34 @@ func (eng *StyleEngine) radioGroup(name string, member *El) *widgets.RadioGroup 
 
 // NewStyleEngine parses css once into a reusable engine (default viewport).
 func NewStyleEngine(css string) *StyleEngine {
-	return &StyleEngine{sheet: ParseCSS(css), viewportH: viewportUnits[1], cssSrc: css, roots: map[*El]bool{}}
+	return &StyleEngine{sheet: ParseCSS(css), viewportH: defaultViewport()[1], cssSrc: css, roots: map[*El]bool{}}
 }
 
 // NewStyleEngineViewport parses css evaluating @media against viewportW.
 func NewStyleEngineViewport(css string, viewportW float32) *StyleEngine {
-	previous := viewportUnits
-	defer func() { viewportUnits = previous }()
-	SetViewportUnits(viewportW, 0)
-	return &StyleEngine{sheet: ParseCSSViewport(css, viewportW), viewportW: viewportW, viewportH: viewportUnits[1], cssSrc: css, roots: map[*El]bool{}}
+	return newStyleEngineSize(css, viewportSize{viewportW, 0})
 }
 
-// useViewport scopes declaration parsing to this document. Subframes can
-// restyle between parent jobs without changing the parent's vw/vh units.
-func (eng *StyleEngine) useViewport() func() {
-	previous := viewportUnits
-	SetViewportUnits(eng.viewportW, eng.viewportH)
-	return func() { viewportUnits = previous }
+func newStyleEngineSize(css string, vp viewportSize) *StyleEngine {
+	if vp[1] <= 0 {
+		vp[1] = defaultViewport()[1]
+	}
+	return &StyleEngine{sheet: parseCSSIn(css, vp), viewportW: vp[0], viewportH: vp[1], cssSrc: css, roots: map[*El]bool{}}
+}
+
+// viewport is the size this document's vw / vh units and @media resolve
+// against. Each engine keeps its own, so documents styled concurrently
+// (RFC 0005 page threads), or a subframe between its parent's jobs, never
+// see another's.
+func (eng *StyleEngine) viewport() viewportSize {
+	vp := viewportSize{eng.viewportW, eng.viewportH}
+	if vp[0] <= 0 {
+		vp[0] = defaultViewportWidth
+	}
+	if vp[1] <= 0 {
+		vp[1] = defaultViewport()[1]
+	}
+	return vp
 }
 
 // CSS returns the stylesheet source the engine was built with (or last
@@ -208,13 +219,12 @@ func (eng *StyleEngine) SetViewport(w, h float32) {
 	if h > 0 {
 		eng.viewportH = h
 	}
-	defer eng.useViewport()()
 	if !changed {
 		eng.Restyle()
 		return
 	}
 	eng.viewportW = w
-	eng.sheet = ParseCSSViewport(eng.cssSrc, w)
+	eng.sheet = parseCSSIn(eng.cssSrc, eng.viewport())
 	eng.sheet.FontFamilies = eng.opts.FontFamilies
 	eng.shadowSheetDirty = true
 	eng.Restyle()
@@ -226,13 +236,8 @@ func (eng *StyleEngine) SetViewport(w, h float32) {
 // palette's :root variables — and swap it in place without remounting
 // the element tree.
 func (eng *StyleEngine) SetCSS(css string) {
-	defer eng.useViewport()()
 	eng.cssSrc = css
-	if eng.viewportW > 0 {
-		eng.sheet = ParseCSSViewport(css, eng.viewportW)
-	} else {
-		eng.sheet = ParseCSS(css)
-	}
+	eng.sheet = parseCSSIn(css, eng.viewport())
 	eng.sheet.FontFamilies = eng.opts.FontFamilies
 	eng.shadowSheetDirty = true
 	eng.Restyle()
@@ -709,7 +714,6 @@ func (eng *StyleEngine) FlushPendingStyles() {
 // is seamless. Falls back to a full Restyle when a scope's inherited
 // style isn't known yet (first style pass still pending).
 func (eng *StyleEngine) flush() {
-	defer eng.useViewport()()
 	eng.styleGen++
 	if debugStyle {
 		defer eng.logFlush(len(eng.dirty), time.Now(), eng.styled, eng.applied, eng.pass)()
@@ -1177,7 +1181,6 @@ func widgetStyleView(cs *ComputedStyle) *ComputedStyle {
 // h.Mount calls this once after attach; incremental updates go through
 // the scoped flush instead.
 func (eng *StyleEngine) Restyle() {
-	defer eng.useViewport()()
 	eng.styleGen++
 	eng.prepareShadowTrees()
 	eng.dirty = nil // a full pass satisfies any pending scoped work

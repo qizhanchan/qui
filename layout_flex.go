@@ -226,7 +226,7 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 			nat = measureWithConstraints(ch, cb)
 		}
 		basis := fx.Basis
-		if s := ch.Style(); basis <= 0 && s != nil && s.BasisPct > 0 && widthPctDefinite() {
+		if s := ch.Style(); basis <= 0 && s != nil && s.BasisPct > 0 && widthPctDefinite(ch) {
 			// A percentage flex-basis resolves against the container's
 			// main size (an indefinite one leaves it content-sized).
 			main, extra := bounds.W, s.BasisExtra
@@ -253,7 +253,7 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 		// becomes the basis (like an explicit width with flex-basis:auto);
 		// cross-axis pct replaces the natural size resolveCross aligns with.
 		if s := ch.Style(); s != nil {
-			if s.Width == 0 && s.WidthPct > 0 && widthPctDefinite() {
+			if s.Width == 0 && s.WidthPct > 0 && widthPctDefinite(ch) {
 				nat.W = s.pctWidth(s.WidthPct, bounds.W)
 				if l.Direction == Horizontal && basis <= 0 {
 					basis = nat.W
@@ -279,7 +279,7 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 		}
 		if explicitCross == 0 {
 			if s := ch.Style(); s != nil {
-				if l.Direction == Vertical && s.WidthPct > 0 && widthPctDefinite() {
+				if l.Direction == Vertical && s.WidthPct > 0 && widthPctDefinite(ch) {
 					explicitCross = s.pctWidth(s.WidthPct, bounds.W)
 				} else if l.Direction == Horizontal && s.HeightPct > 0 {
 					explicitCross = s.pctHeight(s.HeightPct, bounds.H)
@@ -305,7 +305,7 @@ func (l FlexLayout) measureFlexItems(children []Widget, bounds Rect) []flexItem 
 		if s := ch.Style(); s != nil && minMain == 0 &&
 			(l.Direction == Horizontal && s.FlexAutoMinWidth || l.Direction == Vertical && s.FlexAutoMinHeight) {
 			p := widgetPreferredSize(ch)
-			if p.W == 0 && s.WidthPct > 0 && widthPctDefinite() {
+			if p.W == 0 && s.WidthPct > 0 && widthPctDefinite(ch) {
 				p.W = s.pctWidth(s.WidthPct, bounds.W)
 			}
 			if l.Direction == Horizontal {
@@ -736,7 +736,7 @@ func (l FlexLayout) remeasureCross(items []flexItem, bounds Rect) {
 		if s := it.w.Style(); s != nil {
 			if l.Direction == Horizontal && s.Height == 0 && s.HeightPct > 0 && bounds.H > 0 {
 				sz.H = applyConstraints(Size{W: sz.W, H: s.pctHeight(s.HeightPct, bounds.H)}, widgetMinSize(it.w), widgetMaxSize(it.w)).H
-			} else if l.Direction == Vertical && s.Width == 0 && s.WidthPct > 0 && bounds.W > 0 && widthPctDefinite() {
+			} else if l.Direction == Vertical && s.Width == 0 && s.WidthPct > 0 && bounds.W > 0 && widthPctDefinite(it.w) {
 				sz.W = applyConstraints(Size{W: s.pctWidth(s.WidthPct, bounds.W), H: sz.H}, widgetMinSize(it.w), widgetMaxSize(it.w)).W
 			}
 		}
@@ -1113,7 +1113,7 @@ func (fl FlexLayout) Measure(children []Widget, padded Size) Size {
 			mainAvail = contentSum
 		}
 	}
-	if fl.Direction == Horizontal && !widthPctDefinite() {
+	if fl.Direction == Horizontal && len(items) > 0 && !widthPctDefinite(items[0].w) {
 		mainAvail = basisSum // intrinsic sizing cannot distribute offered free space
 	}
 	fl.resolveMainSizes(items, mainAvail)
