@@ -284,6 +284,8 @@ type Window struct {
 	paintGen uint64
 	// scrollLayers: the scrollers a page window commits (page_scroll_layer.go).
 	scrollLayers scrollLayerState
+	// pageMark: see PageMeta.Mark (page windows only).
+	pageMark uint64
 	// locals: per-window package state (window_local.go).
 	locals map[any]any
 	// isPageWindow: a PageHost's window (set before it is registered).

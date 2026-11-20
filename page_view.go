@@ -39,6 +39,11 @@ type PageView struct {
 
 	// meta: page state from the last commit (IME).
 	meta PageMeta
+
+	// previews: zoom changes the page has not committed yet
+	// (page_view_zoom.go).
+	previews  []zoomPreview
+	markSeq   uint64
 }
 
 // NewPageView returns a view of h. One view per host.
@@ -81,6 +86,9 @@ func (v *PageView) pullFrame() {
 	}
 	v.frontSeq = u.Seq
 	v.meta = u.Meta
+	if v.settlePreviews(u.Meta.Mark) {
+		prev = nil // repaint everything at the committed zoom
+	}
 	v.adoptDraws(u)
 	moved := v.adoptLayers(u.Layers)
 	if prev != v.front {
@@ -147,6 +155,10 @@ func (v *PageView) Draw(c Canvas) {
 		s = 1
 	}
 	fb := v.front.Bounds()
+	if z := v.previewRatio(); z != 1 {
+		v.drawPreview(c, z)
+		return
+	}
 	c.Save()
 	c.ClipRect(b)
 	c.DrawImage(v.front, Rect{X: b.X, Y: b.Y, W: float32(fb.Dx()) / s, H: float32(fb.Dy()) / s})

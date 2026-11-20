@@ -592,11 +592,14 @@ type PageMeta struct {
 	// Caret is its caret, page-logical, for the candidate window.
 	IMEActive bool
 	Caret     Rect
+	// Mark is the last PageView.PreviewZoom token whose apply ran before
+	// this commit.
+	Mark uint64
 }
 
 // pageMeta snapshots w's PageMeta. Page thread.
 func (w *Window) pageMeta() PageMeta {
-	var m PageMeta
+	m := PageMeta{Mark: w.pageMark}
 	if _, ok := imeClientOf(w.focused); ok {
 		m.IMEActive = true
 		m.Caret = w.CaretRect()
