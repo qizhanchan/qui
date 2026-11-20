@@ -29,7 +29,7 @@ func hostOf(ctx *qui.ProtocolContext) (*Server, *session) {
 
 type targetInfo struct {
 	TargetID string `json:"targetId"`
-	Type     string `json:"type" desc:"page (a window)"`
+	Type     string `json:"type" desc:"page (a window), or iframe (a page thread's window shown in a PageView; address it by targetId)"`
 	Title    string `json:"title"`
 	URL      string `json:"url"`
 	Attached bool   `json:"attached"`
@@ -44,7 +44,11 @@ func infoFor(s *Server, w *qui.Window) targetInfo {
 			break
 		}
 	}
-	return targetInfo{TargetID: id, Type: "page", Title: w.Title(), URL: "qui://" + id, Attached: attached}
+	typ := "page"
+	if w.IsPageWindow() {
+		typ = "iframe" // a page shown inside another window's PageView
+	}
+	return targetInfo{TargetID: id, Type: typ, Title: w.Title(), URL: "qui://" + id, Attached: attached}
 }
 
 // announceTarget buffers a Target lifecycle event and sends it to the
@@ -123,6 +127,9 @@ func targetDomain() qui.ProtocolDomain {
 					s, _ := hostOf(ctx)
 					out := targetInfosResult{TargetInfos: []targetInfo{}}
 					for _, w := range s.windows() {
+						out.TargetInfos = append(out.TargetInfos, infoFor(s, w))
+					}
+					for _, w := range qui.PageWindows() {
 						out.TargetInfos = append(out.TargetInfos, infoFor(s, w))
 					}
 					return out, nil

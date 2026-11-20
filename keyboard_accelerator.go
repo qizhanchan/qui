@@ -153,6 +153,14 @@ func (r *AcceleratorRegistry) MatchFor(evt KeyEvent, target Widget) bool {
 	return r.match(evt, target, false)
 }
 
+// Has reports whether an enabled accelerator would fire for key+mods
+// aimed at target, without running it. A widget that forwards keys
+// elsewhere (PageView sends them to a page thread) leaves those to the
+// window, as a browser's own shortcuts win over the page's.
+func (r *AcceleratorRegistry) Has(key Key, mods Modifiers, target Widget) bool {
+	return r.find(key, mods, target, false) >= 0
+}
+
 func (r *AcceleratorRegistry) match(evt KeyEvent, target Widget, scopedOnly bool) bool {
 	if r == nil || evt.Type() != EventKeyDown {
 		return false

@@ -280,7 +280,9 @@ func (s *Server) windowFor(sess *session, explicit string) (*qui.Window, error) 
 	}
 	wins := s.windows()
 	if id != "" {
-		for _, w := range wins {
+		// A page window (RFC 0005) is addressable by id but never the
+		// default target.
+		for _, w := range append(wins, qui.PageWindows()...) {
 			if w.TargetID() == id {
 				return w, nil
 			}

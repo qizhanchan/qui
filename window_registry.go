@@ -22,7 +22,43 @@ type windowListener struct{ fn func(w *Window, alive bool) }
 
 // LiveWindows returns the platform-backed windows currently open, in
 // creation order. Safe from any goroutine.
+//
+// Page windows (PageHost, RFC 0005) are not listed: they are part of the
+// PageView that shows them, not windows of the app. allLiveWindows has
+// them too.
 func LiveWindows() []*Window {
+	liveWindowsMu.Lock()
+	defer liveWindowsMu.Unlock()
+	out := make([]*Window, 0, len(liveWindows))
+	for _, w := range liveWindows {
+		if !w.isPageWindow {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// PageWindows returns the live page windows (PageHost): the agent lists
+// them as child targets of the app's windows, like Chromium's
+// out-of-process frames. Safe from any goroutine.
+func PageWindows() []*Window {
+	liveWindowsMu.Lock()
+	defer liveWindowsMu.Unlock()
+	var out []*Window
+	for _, w := range liveWindows {
+		if w.isPageWindow {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// IsPageWindow reports whether w is a PageHost's window.
+func (w *Window) IsPageWindow() bool { return w != nil && w.isPageWindow }
+
+// allLiveWindows is LiveWindows plus page windows: for broadcasts every
+// window must see (font changes).
+func allLiveWindows() []*Window {
 	liveWindowsMu.Lock()
 	defer liveWindowsMu.Unlock()
 	return append([]*Window(nil), liveWindows...)
@@ -53,6 +89,9 @@ func registerLiveWindow(w *Window) {
 	liveWindows = append(liveWindows, w)
 	ls := append([]*windowListener(nil), windowListeners...)
 	liveWindowsMu.Unlock()
+	if w.isPageWindow {
+		return // not an app window (LiveWindows)
+	}
 	for _, l := range ls {
 		l.fn(w, true)
 	}
@@ -70,7 +109,7 @@ func unregisterLiveWindow(w *Window) {
 	}
 	ls := append([]*windowListener(nil), windowListeners...)
 	liveWindowsMu.Unlock()
-	if !found {
+	if !found || w.isPageWindow {
 		return
 	}
 	for _, l := range ls {

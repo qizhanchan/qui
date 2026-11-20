@@ -344,3 +344,10 @@ P0 与架构无关，可以立刻做。P1 是后面所有阶段的地基，也�
 - **P5b**：
   - `qui.PageThread`、`PageHost`、`PageView` 已经是公开 API，示例见 `examples/pagehost`：一个页面线程上的 HTML 文档，可以一键阻塞页面线程，观察窗口仍然响应、可以滚动、走马灯仍在走。
   - go-code 预览面板的迁移留给 go-code 仓库（当前有未提交的其他改动）。
+- **P5 收尾时的状态（2026-11-20）**：
+  - 页面窗口不再出现在 `LiveWindows()` 里，避免 agent 默认目标出现歧义。它们以 `iframe` 类型的子目标列在 `Target.getTargets` 中，只能用 id 指定。
+  - 浏览器自己的快捷键优先于页面：宿主窗口有对应加速键时，PageView 不转发这个键（`AcceleratorRegistry.Has`）。
+  - sitecheck 页面线程模式只跑完了一部分（apple 到 python-docs）。
+    - go-dev、rust-lang、rust-book、kernel、lobsters、cnn-lite 的 B 和 C 都通过。
+    - 未解决：mdn-css、pkg-go、github-repo 的“点击链接导航”和 mdn-css、bbc-news 的“悬停样式”在页面线程模式下失败，旧模式下这些是通过的。
+    - 单线程模式的对照这轮没跑。

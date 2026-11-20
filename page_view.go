@@ -217,6 +217,11 @@ func (v *PageView) Handle(ev Event) bool {
 		if !v.focused {
 			return false
 		}
+		// The host window's shortcuts win over the page's (a browser's
+		// Back, New Tab, Close Tab): leave those keys to its accelerators.
+		if w := v.Window(); w != nil && w.Accelerators().Has(e.Key, e.Mods, v) {
+			return false
+		}
 		v.host.SendKey(e.Key, e.ScanCode, e.Type() == EventKeyDown, e.Repeat, e.Mods)
 		return true
 	case CharEvent:

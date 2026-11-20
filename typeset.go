@@ -421,7 +421,7 @@ func SetDefaultFontFeatures(features ...string) {
 	if !typeset.SetDefaultFontFeatures(features) {
 		return
 	}
-	for _, w := range LiveWindows() {
+	for _, w := range allLiveWindows() {
 		w.PostJob(func() {
 			w.InvalidateLayout()
 			w.Invalidate()

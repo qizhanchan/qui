@@ -11,7 +11,7 @@ func init() { typeset.OnLateSystemFallback(relayoutAllWindows) }
 // relayoutAllWindows lays every window out again and repaints it, after
 // a font change the measure caches cannot see coming.
 func relayoutAllWindows() {
-	for _, w := range LiveWindows() {
+	for _, w := range allLiveWindows() {
 		w := w
 		w.PostJob(func() {
 			w.InvalidateLayout()

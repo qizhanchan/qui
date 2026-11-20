@@ -286,6 +286,8 @@ type Window struct {
 	scrollLayers scrollLayerState
 	// locals: per-window package state (window_local.go).
 	locals map[any]any
+	// isPageWindow: a PageHost's window (set before it is registered).
+	isPageWindow bool
 
 	// inStep guards against synchronous redraws requested from platform
 	// event callbacks while a frame is already being produced. Resizing on
@@ -439,6 +441,7 @@ func newWindowFromConfig(plat platformApp, cfg platformWindowConfig) (*Window, e
 		cursorShape:    CursorDefault,
 	}
 	w.initUIThreadOwnership()
+	w.isPageWindow = isEmbeddedPlatform(pw)
 	w.renderer = w.preferredRenderer(w.renderer)
 	// Whether the OS window has keyboard focus right now; onFocus tracks
 	// it from here on. Asked, not assumed: a process launched from a
