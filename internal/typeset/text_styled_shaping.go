@@ -73,6 +73,7 @@ func shapeStyledParagraph(stream []styledRune, requested TextDirection) (styledS
 	for i := range stream {
 		text[i] = stream[i].r
 	}
+	EnsureRunesCovered(text)
 	// Small caps is resolved into the stream: a lowercase rune under it
 	// becomes a capital drawn at a reduced size. Doing it here rather than in
 	// the shaper means the size change splits style and shaping ranges by

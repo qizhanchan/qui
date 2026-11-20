@@ -579,6 +579,9 @@ func LoadFallbackFontFromFile(path string) error {
 // GetFontFace where we're already under the lock and can't re-enter
 // via installFont.
 func tryLoadCJKUnlocked() (*opentype.Font, io.Closer) {
+	if f := loadPlatformCJKFont(); f != nil {
+		return f, nil
+	}
 	for _, path := range CJKFontCandidates() {
 		f, src, err := ParseFirstFontFromFile(path, true)
 		if err == nil {

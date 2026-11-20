@@ -201,18 +201,29 @@ func TestInlineBoxDoubleClickWordOnWrappedLine(t *testing.T) {
 		t.Fatal("paragraph did not fold into an InlineBox")
 	}
 	b := lead.Bounds()
-	// Center of the box lands on a middle visual line.
-	cx, cy := b.X+b.W/2, b.Y+b.H/2
+	// The vertical center lands on a middle visual line. Where a word sits
+	// on it depends on the font's metrics, and a double-click on a space
+	// selects that space (as in Chrome), so step right past whitespace.
+	cy := b.Y + b.H/2
 	base := time.UnixMilli(1000)
-	for i := 0; i < 2; i++ {
-		d := qui.NewMouseEvent(qui.EventMouseDown, cx, cy, qui.MouseButtonLeft, 0)
-		d.When = base.Add(time.Duration(i*90) * time.Millisecond)
-		win.DispatchTestEvent(d)
-		u := qui.NewMouseEvent(qui.EventMouseUp, cx, cy, qui.MouseButtonLeft, 0)
-		u.When = d.When.Add(10 * time.Millisecond)
-		win.DispatchTestEvent(u)
+	doubleClick := func(cx float32, at time.Time) string {
+		for i := 0; i < 2; i++ {
+			d := qui.NewMouseEvent(qui.EventMouseDown, cx, cy, qui.MouseButtonLeft, 0)
+			d.When = at.Add(time.Duration(i*90) * time.Millisecond)
+			win.DispatchTestEvent(d)
+			u := qui.NewMouseEvent(qui.EventMouseUp, cx, cy, qui.MouseButtonLeft, 0)
+			u.When = d.When.Add(10 * time.Millisecond)
+			win.DispatchTestEvent(u)
+		}
+		return lead.SelectedText()
 	}
-	got := lead.SelectedText()
+	var got string
+	for i := 0; i < 8; i++ {
+		got = doubleClick(b.X+b.W/2+float32(i*4), base.Add(time.Duration(i)*time.Second))
+		if strings.TrimSpace(got) != "" {
+			break
+		}
+	}
 	if got == "" || strings.ContainsAny(got, " \n") {
 		t.Fatalf("double-click at box center selected %q — want a single word", got)
 	}

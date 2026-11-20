@@ -402,6 +402,7 @@ func layoutSegment(segText string, fontSpec gfx.Font, opts TextLayoutOptions, fi
 // BuildTextLayoutUncached is the real line builder behind BuildTextLayout.
 // opts arrive normalized (Wrap promotion, LineHeightScale default).
 func BuildTextLayoutUncached(text string, fontSpec gfx.Font, opts TextLayoutOptions) TextLayout {
+	EnsureStringCovered(text) // before the chain below is taken
 	faces := GetFontFacesFor(fontSpec)
 	lineHeight := scaledLineHeight(fontSpec, opts.LineHeightScale)
 
@@ -901,19 +902,77 @@ func ellipsizeTextLine(line string, maxWidth float32, fontSpec gfx.Font, directi
 	}
 	runes := []rune(line)
 	boundaries := GraphemeBoundaries(runes)
-	for keep := len(boundaries) - 1; keep >= 0; keep-- {
-		candidate := append(append([]rune(nil), runes[:boundaries[keep]]...), '…')
+	last := len(boundaries) - 1
+	type cut struct {
+		text   []rune
+		shaped *ShapedLine
+	}
+	// try shapes the first keep graphemes plus "…".
+	try := func(keep int) (cut, bool, bool) {
+		candidate := append(append(make([]rune, 0, boundaries[keep]+1), runes[:boundaries[keep]]...), '…')
 		shaped, ok := ShapeSingleLine(candidate, fontSpec, direction)
 		if !ok {
+			return cut{}, false, false
+		}
+		return cut{candidate, shaped}, shaped.Advance <= maxAdvance, true
+	}
+	done := func(c cut) (string, float32, *ShapedLine) {
+		return string(c.text), withTextVisualOverhang(c.shaped.Advance, overhang), c.shaped
+	}
+	fallback := func() (string, float32, *ShapedLine) {
+		text, width := ellipsizeLine(line, maxWidth, fontSpec, faces)
+		return text, width, nil
+	}
+	if maxWidth <= 0 {
+		c, _, ok := try(last)
+		if !ok {
+			return fallback()
+		}
+		return done(c)
+	}
+	// The longest prefix that fits. Probe prefixes of 1, 2, 4, … graphemes
+	// and bisect the last step, so the work scales with what fits rather
+	// than with the line: walking back from the full line one grapheme at
+	// a time reshaped the whole prefix per step — O(n²), which froze the
+	// UI for a 30 KB single-line error message in an ellipsized label.
+	best, fits, ok := try(0)
+	if !ok {
+		return fallback()
+	}
+	if !fits {
+		return done(best) // not even "…" fits: keep 0 regardless
+	}
+	lo, hi := 0, -1 // lo fits; hi (when ≥ 0) does not
+	for k := 1; ; k *= 2 {
+		if k >= last {
+			k = last
+		}
+		c, fits, ok := try(k)
+		if !ok {
+			return fallback()
+		}
+		if !fits {
+			hi = k
 			break
 		}
-		width := withTextVisualOverhang(shaped.Advance, overhang)
-		if maxWidth <= 0 || shaped.Advance <= maxAdvance || keep == 0 {
-			return string(candidate), width, shaped
+		lo, best = k, c
+		if k == last {
+			return done(best)
 		}
 	}
-	text, width := ellipsizeLine(line, maxWidth, fontSpec, faces)
-	return text, width, nil
+	for hi-lo > 1 {
+		mid := lo + (hi-lo)/2
+		c, fits, ok := try(mid)
+		if !ok {
+			return fallback()
+		}
+		if fits {
+			lo, best = mid, c
+		} else {
+			hi = mid
+		}
+	}
+	return done(best)
 }
 
 func wrapTextLine(line string, maxWidth, firstIndent float32, breakLongWords bool, fontSpec gfx.Font, faces []font.Face) []TextLayoutLine {

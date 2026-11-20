@@ -3,6 +3,7 @@ package typeset
 import (
 	"io"
 	"log"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -66,6 +67,7 @@ func loadSystemFontIndex() map[string][]fontscan.Footprint {
 			}
 		}
 		sysFontIndex = idx
+		sysIndexReady.Store(true)
 	})
 	return sysFontIndex
 }
@@ -101,8 +103,8 @@ func SystemFontFamilyInstalled(family string) bool {
 }
 
 // ensureSystemFamilyUnlocked registers every installed face of family the
-// first time it is asked for. Caller holds FontCacheMu. Reports whether
-// the family is now registered.
+// first time it is asked for, when system font lookup is on. Caller holds
+// FontCacheMu. Reports whether the family is now registered.
 func ensureSystemFamilyUnlocked(family string) bool {
 	key := strings.ToLower(strings.TrimSpace(family))
 	if key == "" {
@@ -111,39 +113,88 @@ func ensureSystemFamilyUnlocked(family string) bool {
 	if _, ok := fontFamilyNames[key]; ok {
 		return true
 	}
-	if !sysFontsOn || sysFontTried[key] {
+	if !sysFontsOn {
+		return false
+	}
+	return registerSystemFamilyUnlocked(family)
+}
+
+// systemFace is one installed face of a family, wherever it was found.
+type systemFace struct {
+	path       string
+	index      int    // face in a collection; -1: find it by postScript
+	postScript string // known for platform-listed faces
+	weight     gfx.FontWeight
+	italic     bool
+	stretched  bool // condensed / expanded
+}
+
+// systemFamilyFaces lists family's installed faces: from the font
+// directory index, else from the OS (macOS keeps downloadable fonts such
+// as PingFang in hashed asset directories the index never sees).
+func systemFamilyFaces(family string) []systemFace {
+	var out []systemFace
+	for _, fp := range loadSystemFontIndex()[gtfont.NormalizeFamily(family)] {
+		w := gfx.FontWeight(int(fp.Aspect.Weight))
+		if w <= 0 {
+			w = gfx.FontWeightNormal
+		}
+		out = append(out, systemFace{
+			path: fp.Location.File, index: int(fp.Location.Index), weight: w,
+			italic:    fp.Aspect.Style == gtfont.StyleItalic,
+			stretched: fp.Aspect.Stretch != 0 && fp.Aspect.Stretch != gtfont.StretchNormal,
+		})
+	}
+	if len(out) == 0 {
+		out = platformFamilyFaces(family)
+	}
+	return out
+}
+
+// registerSystemFamilyUnlocked registers every installed face of family
+// (once per name). Caller holds FontCacheMu. Reports whether the family
+// is now registered.
+func registerSystemFamilyUnlocked(family string) bool {
+	key := strings.ToLower(strings.TrimSpace(family))
+	if key == "" {
+		return false
+	}
+	if _, ok := fontFamilyNames[key]; ok {
+		return true
+	}
+	if sysFontTried[key] {
 		return false
 	}
 	sysFontTried[key] = true
-	// The index normally is loaded already (FontFamilyRegistered and
-	// PreloadSystemFontIndex load it outside the lock); a first lookup
-	// straight from font selection loads it here, once.
-	faces := loadSystemFontIndex()[gtfont.NormalizeFamily(family)]
 	type loaded struct {
 		k fontVariantKey
 		f *opentype.Font
 	}
 	var got []loaded
-	for _, fp := range faces {
-		f := loadSystemFace(fp.Location.File, int(fp.Location.Index))
-		if f == nil {
-			continue
-		}
-		w := gfx.FontWeight(int(fp.Aspect.Weight))
-		if w <= 0 {
-			w = gfx.FontWeightNormal
-		}
-		italic := fp.Aspect.Style == gtfont.StyleItalic
+	var buf sfnt.Buffer
+	for _, sf := range systemFamilyFaces(family) {
 		// Condensed / expanded cuts are separate faces of the same family;
 		// the registry has no stretch axis, so they must not shadow the
 		// normal-width face of the same weight.
-		if fp.Aspect.Stretch != 0 && fp.Aspect.Stretch != gtfont.StretchNormal {
+		if sf.stretched {
 			continue
 		}
-		if name, err := f.Name(&sfnt.Buffer{}, sfnt.NameIDPostScript); err == nil {
+		idx := sf.index
+		if idx < 0 {
+			idx = faceIndexByPostScript(sf.path, sf.postScript)
+		}
+		f := loadSystemFace(sf.path, idx)
+		if f == nil {
+			continue
+		}
+		name, err := f.Name(&buf, sfnt.NameIDPostScript)
+		if sf.postScript != "" && name != sf.postScript {
+			continue // the face index lookup missed: not the cut asked for
+		}
+		if err == nil {
 			systemTypefaceNames.Store(f, name)
 		}
-		got = append(got, loaded{fontVariantKey{family: key, weight: w, italic: italic}, f})
+		got = append(got, loaded{fontVariantKey{family: key, weight: sf.weight, italic: sf.italic}, f})
 	}
 	if len(got) == 0 {
 		return false
@@ -156,6 +207,22 @@ func ensureSystemFamilyUnlocked(family string) bool {
 	fontFamilyNames[key] = strings.TrimSpace(family)
 	ClearFontFaceCachesUnlocked()
 	return true
+}
+
+// cssWeight maps a Core Text weight trait (-1…1) to the nearest CSS weight,
+// after AppKit's NSFontWeight constants.
+func cssWeight(ct float64) gfx.FontWeight {
+	steps := []struct {
+		ct float64
+		w  gfx.FontWeight
+	}{{-0.8, 100}, {-0.6, 200}, {-0.4, 300}, {0, 400}, {0.23, 500}, {0.3, 600}, {0.4, 700}, {0.56, 800}, {0.62, 900}}
+	best := steps[0]
+	for _, s := range steps[1:] {
+		if math.Abs(s.ct-ct) < math.Abs(best.ct-ct) {
+			best = s
+		}
+	}
+	return best.w
 }
 
 // loadSystemFace loads face index of a system font file. A face of a

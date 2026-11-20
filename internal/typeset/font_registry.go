@@ -206,7 +206,7 @@ func GetFontFacesFor(spec gfx.Font) []font.Face {
 	if err != nil {
 		return []font.Face{basicfont.Face7x13}
 	}
-	chain := []font.Face{primary}
+	chain := []font.Face{yieldingFace(primary, primaryParsed)}
 	appendFallback := func(parsed *opentype.Font) {
 		if parsed == nil || parsed == primaryParsed {
 			return
@@ -223,7 +223,7 @@ func GetFontFacesFor(spec gfx.Font) []font.Face {
 			chain = append(chain, UISymbolFace{fallback})
 			return
 		}
-		chain = append(chain, fallback)
+		chain = append(chain, yieldingFace(fallback, parsed))
 	}
 	for _, parsed := range FontFallbacks {
 		appendFallback(parsed)
@@ -262,15 +262,29 @@ func populateAutoFallbacksUnlocked() {
 		autoFallbackSources = append(autoFallbackSources, src)
 		UISymbolFallback.Store(f)
 	}
+	// The user's fallback font (SetFallbackFamily) goes ahead of every
+	// automatic one; when it draws Chinese it is the CJK font as well.
+	userCJK := false
+	if f := userFallbackFontUnlocked(); f != nil {
+		AutoFallbacks = append(AutoFallbacks, f)
+		autoFallbackSources = append(autoFallbackSources, nil)
+		if fontDrawsHan(f) {
+			CJKFallback.Store(f)
+			userCJK = true
+		}
+	}
 	if f, src := probeSymbolFontUnlocked(); f != nil {
+		cjkPunctYield.Store(f, struct{}{})
 		AutoFallbacks = append(AutoFallbacks, f)
 		autoFallbackSources = append(autoFallbackSources, src)
 	}
 	if f, src := probeDingbatFontUnlocked(); f != nil {
+		cjkPunctYield.Store(f, struct{}{})
 		AutoFallbacks = append(AutoFallbacks, f)
 		autoFallbackSources = append(autoFallbackSources, src)
 	}
 	if f, err := opentype.Parse(goregular.TTF); err == nil {
+		cjkPunctYield.Store(f, struct{}{})
 		AutoFallbacks = append(AutoFallbacks, f)
 		autoFallbackSources = append(autoFallbackSources, nil)
 	}
@@ -282,7 +296,7 @@ func populateAutoFallbacksUnlocked() {
 	// entry in the fallback chain those glyphs render as tofu. Keeping CJK
 	// here means a font swap never silently drops CJK coverage. Gated on
 	// the same auto-load toggle so apps that opted out don't pay the probe.
-	if FontAutoLoadSystemCJK {
+	if FontAutoLoadSystemCJK && !userCJK {
 		if FontDefaultIsSystemCJK && FontParsed != nil {
 			// The lazy init above already probed the system CJK font into
 			// the primary slot. Reuse that POINTER rather than calling the
@@ -299,7 +313,9 @@ func populateAutoFallbacksUnlocked() {
 			// twice on reset.
 			AutoFallbacks = append(AutoFallbacks, FontParsed)
 			autoFallbackSources = append(autoFallbackSources, nil)
+			CJKFallback.Store(FontParsed)
 		} else if f, src := ProbeSystemCJKFontUnlocked(); f != nil {
+			CJKFallback.Store(f)
 			AutoFallbacks = append(AutoFallbacks, f)
 			autoFallbackSources = append(autoFallbackSources, src)
 		}
@@ -355,6 +371,8 @@ func ClearAutoFallbacksUnlocked() {
 	autoFallbacksInit = false
 	UISymbolFallback.Store(nil)
 	uiSymbolShapingFont.Store(nil)
+	CJKFallback.Store(nil)
+	cjkPunctYield.Clear()
 	ClearFontFaceCachesUnlocked()
 }
 

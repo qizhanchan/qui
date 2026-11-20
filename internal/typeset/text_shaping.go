@@ -296,6 +296,8 @@ func ShapeParagraph(text []rune, fontSpec gfx.Font, requested TextDirection) (sh
 	if fontSpec.Size <= 0 {
 		fontSpec.Size = 14
 	}
+	text = blankWhitespaceControls(text)
+	EnsureRunesCovered(text)
 	if len(text) == 0 {
 		return shapedParagraph{
 			Text:       []rune{},
@@ -390,6 +392,9 @@ func ShapeParagraph(text []rune, fontSpec gfx.Font, requested TextDirection) (sh
 		addTrailingLetterSpacing(runs, len(text), pxToFixed(fontSpec.LetterSpacing))
 	}
 
+	if tofuDebug {
+		noteTofu(runs, text)
+	}
 	var advance fixed.Int26_6
 	for i := range runs {
 		advance += runs[i].Advance
@@ -910,4 +915,39 @@ func parseShapingSetting(raw string, defaultValue int64) (gtot.Tag, int64, bool)
 		return 0, 0, false
 	}
 	return gtot.NewTag(raw[0], raw[1], raw[2], raw[3]), value, true
+}
+
+// blankWhitespaceControls returns text with control characters made
+// drawable: the whitespace ones (tab, CR, VT, FF) shape as spaces, every
+// other C0 / C1 control (ESC, NUL, DEL, NEL, …) as U+200B, which the
+// shaper hides like any default-ignorable. No font has glyphs for them,
+// so shaping them as themselves drew .notdef boxes — a tab in a tooltip
+// quoting a compiler error came out as tofu. Blink draws them the same
+// way (tabs as space unless a tab stop sizes them — the inline layout
+// does that itself — the rest as zero-width spaces). '\n' is left alone:
+// callers split paragraphs on it. One rune for one, so cluster offsets
+// are unchanged; text is copied only when it has a control.
+func blankWhitespaceControls(text []rune) []rune {
+	for i, r := range text {
+		if controlReplacement(r) != r {
+			out := append([]rune(nil), text...)
+			for j := i; j < len(out); j++ {
+				out[j] = controlReplacement(out[j])
+			}
+			return out
+		}
+	}
+	return text
+}
+
+func controlReplacement(r rune) rune {
+	switch {
+	case r == '\t' || r == '\r' || r == '\v' || r == '\f':
+		return ' '
+	case r == '\n':
+		return r
+	case r < 0x20 || r >= 0x7F && r <= 0x9F:
+		return 0x200B
+	}
+	return r
 }

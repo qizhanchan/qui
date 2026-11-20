@@ -92,7 +92,10 @@ func IsUIKeyboardSymbol(r rune) bool {
 // FallbackSkipsRune reports whether chain member f must be skipped for r:
 // the UI-symbol face only answers for keyboard symbols.
 func FallbackSkipsRune(f *opentype.Font, r rune) bool {
-	return f != nil && f == UISymbolFallback.Load() && !IsUIKeyboardSymbol(r)
+	if f != nil && f == UISymbolFallback.Load() && !IsUIKeyboardSymbol(r) {
+		return true
+	}
+	return yieldsRune(f, r)
 }
 
 // shapingFallbackSkipsRune is FallbackSkipsRune for the go-text chain.
