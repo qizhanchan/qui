@@ -31,6 +31,9 @@ type CPURenderer struct {
 	// recording is the frame's display list under QUI_RECORD_FRAMES=1:
 	// the frame is recorded, then played onto the buffer at End.
 	recording *PictureRecorder
+	// sink takes the frame's retained overlay draws (renderer_cpu_sink.go).
+	sink       RetainedSink
+	sinkActive bool // this frame began on the sink
 }
 
 // recordFrames turns on record-then-play for every CPU frame — the
@@ -68,7 +71,13 @@ func (r *CPURenderer) Begin(windowSize gfx.Size) gfx.Canvas {
 		return c
 	}
 	state := gfx.NewCanvasState(gfx.Rect{W: float32(w), H: float32(h)})
-	return imageCanvas{CanvasState: state, Backend: r.backend, Layers: newFrontendLayerTracker()}
+	ic := imageCanvas{CanvasState: state, Backend: r.backend, Layers: newFrontendLayerTracker()}
+	if r.sink != nil {
+		r.sinkActive = true
+		r.sink.RetainedBegin(r.damage)
+		return sinkImageCanvas{imageCanvas: ic, sink: r.sink}
+	}
+	return ic
 }
 
 // End finishes the frame. The pixels stay in the renderer's buffer for
@@ -80,6 +89,10 @@ func (r *CPURenderer) End() {
 	}
 	if r.backend != nil {
 		r.backend.End()
+	}
+	if r.sinkActive {
+		r.sinkActive = false
+		r.sink.RetainedEnd()
 	}
 }
 

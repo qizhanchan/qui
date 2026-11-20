@@ -329,6 +329,7 @@ func (s *ScrollView) fitNatural(available Size) Size {
 
 func (s *ScrollView) Layout(rect Rect) {
 	s.BaseWidget.Layout(rect)
+	s.registerScrollLayer()
 	s.ensureContentSize(s.unzoom(s.innerBounds()))
 	s.ClampScroll()
 	if s.Content == nil {

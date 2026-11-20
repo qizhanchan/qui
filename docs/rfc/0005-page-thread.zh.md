@@ -298,3 +298,22 @@ P0 与架构无关，可以立刻做。P1 是后面所有阶段的地基，也�
     - `SetTheme` 在页面线程绘制时直接改写 `currentTheme`（P5 前处理）。
     - 页面里的弹层窗口回退为窗口内浮层（P4）。
     - `reactive` 的 `popupPool` 仍是全局变量（P4）。
+- **P3**：
+  - 滚动层（`page_scroll_layer.go`、`widgets/scroll_layer.go`、`page_view_scroll.go`）：
+    - 带内容缓存的 ScrollView（`PixelScroll` + `FixedViewport`，即文档滚动区）每次提交都附上它的内容瓦片。瓦片是写时复制的，显示过的不会再被改写，UI 线程可以直接持有。
+    - 滚轮落在这种层上时，`PageView` 立即在 UI 线程移动瓦片，fixed/sticky 盒子和滚动条从帧里按原位置拷贝。随后用 `SetScrollLayerOffset` 把新偏移异步告诉页面。
+    - 提交里的 `Applied` 表示页面已经追上；追上之前，UI 继续按自己的偏移显示。
+    - 其他能滚动的滚动区作为“慢区域”提交，落在上面的滚轮交给页面处理。
+  - 合成动画（`page_host_retained.go`、`internal/render/renderer_cpu_sink.go`）：
+    - 页面窗口的 CPURenderer 在宿主能合成时以 PageHost 为“保留绘制接收者”，只接受可在合成线程运行的覆盖绘制（运动由时间曲线决定的动画层），并按 RetainedSet 的生存规则随帧提交。
+    - `PageView` 把这些绘制平移后重新排到宿主画布上，宿主的合成线程据此继续推动 CSS 走马灯。
+    - 没有曲线的动画层在页面窗口里退回 CPU 绘制（`CompositorOnly`）。
+  - 顺带修复的共享状态：`animLayers` 原是全局表，改为按窗口保存（新增 `Window.LocalValue` / `SetLocalValue`）。
+  - 验收：
+    - `widgets` 的 `TestPageScrollLayerScrollsWhilePageBlocked`：页面线程卡住时，宿主滚轮滚动到位，页面恢复后追上同一偏移。
+    - `htmlcss` 的 `TestMarqueeOnPageThreadKeepsMovingWhilePageBlocked`：页面线程卡住时，宿主合成线程 150ms 内呈现多帧，走马灯持续移动。
+    - 以上测试在 `-race` 下零报告。
+  - 留到后续：
+    - 嵌套滚动区做成合成层（8.2 节）：需要元素背景色随层提交，并换算父层瓦片空间。
+    - 页面缩放的位图预览：需要 P5 中 q-browser 的缩放路径。
+    - 层里的视频保留绘制（`QueueRetainedDraw`）跨线程：需要先审计 `FrameView` 的线程安全。

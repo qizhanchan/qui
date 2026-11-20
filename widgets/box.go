@@ -100,6 +100,7 @@ type Box struct {
 
 	// Animated layer state (anim_layer.go).
 	layerSeq     uint64 // window paint it was last drawn as a layer
+	animLayer    bool   // SetAnimatedLayer(true): registered with its window
 	layerDrawing bool   // being drawn as a layer right now
 	childRasters map[Widget]*childRaster
 	gpuLayer     *gpuLayer                             // composited on the GPU (anim_layer_gpu.go)

@@ -157,6 +157,16 @@ func (s *ScrollView) drawGPULayers(canvas Canvas, effClip, vp Rect, layers []cac
 		s.dropGPULayers()
 		return false
 	}
+	// A page window's canvas takes only draws its host may run on another
+	// thread (RFC 0005 P3): every layer must move by a curve of time.
+	if co, ok := canvas.(interface{ CompositorOnly() bool }); ok && co.CompositorOnly() {
+		for _, l := range layers {
+			if l.box.compCurve == nil {
+				s.dropGPULayers()
+				return false
+			}
+		}
+	}
 	if set := s.gpuSet; set != nil && set.seq == seq {
 		// An earlier clip rectangle of this frame captured and queued it.
 		s.drawCoveredLayers(canvas, effClip, vp, layers, set)

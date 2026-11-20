@@ -284,6 +284,8 @@ type Window struct {
 	paintGen uint64
 	// scrollLayers: the scrollers a page window commits (page_scroll_layer.go).
 	scrollLayers scrollLayerState
+	// locals: per-window package state (window_local.go).
+	locals map[any]any
 
 	// inStep guards against synchronous redraws requested from platform
 	// event callbacks while a frame is already being produced. Resizing on

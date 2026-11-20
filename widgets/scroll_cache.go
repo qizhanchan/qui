@@ -70,6 +70,12 @@ type scrollCache struct {
 	// nil once content damage made it stale.
 	pic     *Picture
 	picRect image.Rectangle
+	// Where the last frame composited the tiles (scroll_layer.go): window
+	// device viewport, content device origin, and the offsets it showed.
+	commitPhys   image.Rectangle
+	commitOff    image.Point
+	commitScroll Point
+	committed    bool
 }
 
 // tileRect is tile k's rectangle in content device space.
@@ -257,6 +263,11 @@ func (s *ScrollView) drawCached(canvas Canvas, effClip, vp Rect) bool {
 		s.dropCache()
 		s.dropGPULayers()
 		return false
+	}
+
+	if win.WantsScrollLayers() {
+		so, _ := s.layerOffsets()
+		c.noteCommit(phys, off, so)
 	}
 
 	// Composite the visible tiles for this frame's clip, 1:1 in device

@@ -1,6 +1,7 @@
 package qui
 
 import (
+	"fmt"
 	"image"
 	"log"
 	"runtime"
@@ -286,11 +287,24 @@ type PageHost struct {
 	// Commit store: the last presented frame, physical pixels. presentCPU
 	// copies the damaged area in; the host side copies out of it under the
 	// same lock (PageView keeps its own front buffer).
-	frameMu  sync.Mutex
-	store    *image.RGBA
-	pending  image.Rectangle
-	seq      uint64
-	frameFns atomic.Pointer[[]func()]
+	frameMu sync.Mutex
+	store   *image.RGBA
+	pending image.Rectangle
+	seq     uint64
+	// layers are the scroll layers of the last commit (page_scroll_layer.go);
+	// layersSig detects a change worth a commit of its own.
+	layers    []ScrollLayerFrame
+	layersSig string
+	taken     uint64 // seq of the last TakeFrame
+	// committedThisStep: presentCPU ran during the current Step.
+	committedThisStep bool
+	// Retained overlay draws (page_host_retained.go): the page thread's
+	// sink state, and what the last commits hand the host.
+	retained      retainedState
+	draws         []PageRetainedDraw
+	drawsSeq      uint64
+	redrawPending bool
+	forgetPending []any
 
 	listenerMu sync.Mutex
 	onFrame    func()
@@ -510,6 +524,17 @@ func (h *PageHost) commitPixels(img *image.RGBA, damage image.Rectangle) {
 	}
 	b := img.Bounds()
 	h.frameMu.Lock()
+	if h.retained.redraw && h.store != nil && h.store.Bounds() == b {
+		// A redraw-only frame: the pixels did not change, the host replays
+		// the retained draws.
+		h.takeRetainedLocked()
+		h.publishLayersLocked()
+		h.seq++
+		h.committedThisStep = true
+		h.frameMu.Unlock()
+		h.notifyFrame()
+		return
+	}
 	if h.store == nil || h.store.Bounds() != b {
 		h.store = image.NewRGBA(b)
 		damage = b
@@ -520,8 +545,25 @@ func (h *PageHost) commitPixels(img *image.RGBA, damage image.Rectangle) {
 	damage = damage.Intersect(b)
 	copyRGBARect(h.store, img, damage)
 	h.pending = h.pending.Union(damage)
+	h.publishLayersLocked()
+	h.takeRetainedLocked()
 	h.seq++
+	h.committedThisStep = true
 	h.frameMu.Unlock()
+	h.notifyFrame()
+}
+
+// publishLayersLocked snapshots the page's scroll layers into the commit.
+// Page thread, frameMu held.
+func (h *PageHost) publishLayersLocked() {
+	if h.win == nil {
+		return
+	}
+	h.layers = h.win.collectScrollLayers()
+	h.layersSig = scrollLayersSig(h.layers)
+}
+
+func (h *PageHost) notifyFrame() {
 	h.listenerMu.Lock()
 	fn := h.onFrame
 	h.listenerMu.Unlock()
@@ -530,30 +572,98 @@ func (h *PageHost) commitPixels(img *image.RGBA, damage image.Rectangle) {
 	}
 }
 
+// commitLayersIfChanged commits scroll layers on their own after a Step
+// that painted nothing — tiles a raster worker finished, a scroller that
+// appeared — so the host can scroll into them. Page thread.
+func (h *PageHost) commitLayersIfChanged() {
+	st := &h.retained
+	if h.win == nil || len(h.win.scrollLayers.sources) == 0 && !st.changed && !st.redraw && len(st.forget) == 0 {
+		return
+	}
+	layers := h.win.collectScrollLayers()
+	sig := scrollLayersSig(layers)
+	h.frameMu.Lock()
+	if h.store == nil || sig == h.layersSig && !st.changed && !st.redraw && len(st.forget) == 0 {
+		h.frameMu.Unlock()
+		return
+	}
+	h.layers, h.layersSig = layers, sig
+	h.takeRetainedLocked()
+	h.seq++
+	h.frameMu.Unlock()
+	h.notifyFrame()
+}
+
+func scrollLayersSig(ls []ScrollLayerFrame) string {
+	var b []byte
+	for _, l := range ls {
+		b = fmt.Appendf(b, "%p|%v|%v|%v|%v|%d|%v|%d|%d;", l.Key, l.Viewport, l.Offset, l.Max, l.Composited,
+			len(l.Tiles), l.Origin, l.Applied, len(l.Covers))
+	}
+	return string(b)
+}
+
+// SetScrollLayerOffset tells the page that the host scrolled the layer key
+// (a ScrollLayerFrame.Key) to the logical offsets (x, y). seq orders the
+// requests; commits report the last one applied (ScrollLayerFrame.Applied).
+func (h *PageHost) SetScrollLayerOffset(key any, x, y float32, seq uint64) {
+	if h == nil || h.closed.Load() {
+		return
+	}
+	h.thread.post(func() {
+		if w := h.win; w != nil && !h.closed.Load() {
+			w.applyScrollLayerOffset(key, x, y, seq)
+		}
+	})
+}
+
+// PageFrameUpdate is what TakeFrame hands the host.
+type PageFrameUpdate struct {
+	// Image is the host's copy of the frame (the buffer passed in, or a
+	// new one when the size changed); Changed the device pixels that
+	// differ from what it held before.
+	Image   *image.RGBA
+	Changed image.Rectangle
+	// Seq numbers commits; Layers are the scroll layers of the latest.
+	Seq    uint64
+	Layers []ScrollLayerFrame
+	// Draws are the committed overlay draws (DrawsSeq changes with them);
+	// Redraw asks the host to replay them; Forget lists keys whose host
+	// textures can go (page_host_retained.go).
+	Draws    []PageRetainedDraw
+	DrawsSeq uint64
+	Redraw   bool
+	Forget   []any
+}
+
 // TakeFrame copies what changed since the last TakeFrame into dst (which
-// it reallocates when the frame size changed) and returns the updated
-// buffer, the changed area in physical pixels, and the commit sequence
-// number. ok is false when no frame was committed since the last call.
-// Safe from any goroutine; holds the commit lock only for the copy.
-func (h *PageHost) TakeFrame(dst *image.RGBA) (out *image.RGBA, changed image.Rectangle, seq uint64, ok bool) {
+// it reallocates when the frame size changed) and returns it with the
+// latest scroll layers. ok is false when nothing was committed since the
+// last call. Safe from any goroutine; holds the commit lock only for the
+// copy.
+func (h *PageHost) TakeFrame(dst *image.RGBA) (u PageFrameUpdate, ok bool) {
 	h.frameMu.Lock()
 	defer h.frameMu.Unlock()
-	if h.store == nil {
-		return dst, image.Rectangle{}, h.seq, false
+	u = PageFrameUpdate{Image: dst, Seq: h.seq, Layers: h.layers, Draws: h.draws, DrawsSeq: h.drawsSeq}
+	if h.store == nil || h.seq == h.taken {
+		return u, false
 	}
+	h.taken = h.seq
+	u.Redraw, h.redrawPending = h.redrawPending, false
+	u.Forget, h.forgetPending = h.forgetPending, nil
 	b := h.store.Bounds()
 	if dst == nil || dst.Bounds() != b {
 		dst = image.NewRGBA(b)
 		MarkImageVolatile(dst)
 		h.pending = b
 	}
-	if h.pending.Empty() {
-		return dst, image.Rectangle{}, h.seq, false
+	u.Image = dst
+	if !h.pending.Empty() {
+		u.Changed = h.pending
+		copyRGBARect(dst, h.store, u.Changed)
+		h.pending = image.Rectangle{}
 	}
-	changed = h.pending
-	copyRGBARect(dst, h.store, changed)
-	h.pending = image.Rectangle{}
-	return dst, changed, h.seq, true
+	return u, true
 }
 
 // FrameSeq is the number of frames committed so far.
@@ -600,6 +710,10 @@ func (h *PageHost) stepOnThread() {
 		return
 	}
 	w.pollLifecycle()
+	h.syncRetainedSink()
+	h.frameMu.Lock()
+	h.committedThisStep = false
+	h.frameMu.Unlock()
 	defer func() {
 		if r := recover(); r != nil {
 			// A frame that panicked half-way leaves the Window in no state to
@@ -625,6 +739,12 @@ func (h *PageHost) stepOnThread() {
 		}
 	}()
 	w.Step()
+	h.frameMu.Lock()
+	painted := h.committedThisStep
+	h.frameMu.Unlock()
+	if !painted {
+		h.commitLayersIfChanged()
+	}
 }
 
 // Crashed reports whether the page stopped after a panic.
@@ -685,4 +805,12 @@ func FramesClose(a, b *image.RGBA, tol uint8) (bad int, ok bool) {
 		}
 	}
 	return bad, bad == 0
+}
+
+// TakeFrameLayersForTest returns the scroll layers of the latest commit
+// and its sequence number, without consuming the frame.
+func (h *PageHost) TakeFrameLayersForTest() ([]ScrollLayerFrame, uint64) {
+	h.frameMu.Lock()
+	defer h.frameMu.Unlock()
+	return h.layers, h.seq
 }

@@ -25,17 +25,33 @@ import (
 // over it, and no later sibling (of it or an ancestor) may overlap the
 // area it can paint in. Otherwise it stays an ordinary box.
 
-// animLayers are the boxes marked with SetAnimatedLayer.
-var animLayers = map[*Box]struct{}{}
+// animLayers are the boxes of a window marked with SetAnimatedLayer, kept
+// per window: page windows paint on threads of their own.
+type animLayersKey struct{}
+
+func animLayersOf(w *Window, create bool) map[*Box]struct{} {
+	if w == nil {
+		return nil
+	}
+	m, _ := w.LocalValue(animLayersKey{}).(map[*Box]struct{})
+	if m == nil && create {
+		m = map[*Box]struct{}{}
+		w.SetLocalValue(animLayersKey{}, m)
+	}
+	return m
+}
 
 // SetAnimatedLayer marks (or unmarks) b as an animated layer candidate:
 // its transform is changing every frame.
 func (b *Box) SetAnimatedLayer(on bool) {
+	b.animLayer = on
 	if on {
-		animLayers[b] = struct{}{}
+		if m := animLayersOf(b.Window(), true); m != nil {
+			m[b] = struct{}{}
+		}
 		return
 	}
-	delete(animLayers, b)
+	delete(animLayersOf(b.Window(), false), b)
 	b.layerSeq = 0
 	b.releaseLayerRasters(b.Window())
 }
@@ -62,8 +78,12 @@ func (b *Box) SetWindow(w *Window) {
 		if b.childRasters != nil || b.gpuLayer != nil {
 			b.releaseLayerRasters(old)
 		}
+		delete(animLayersOf(old, false), b)
 	}
 	b.Container.SetWindow(w)
+	if b.animLayer && w != nil {
+		animLayersOf(w, true)[b] = struct{}{}
+	}
 }
 
 // CompositeLayerActive reports whether b was drawn as a layer over a
@@ -96,10 +116,11 @@ type layerLevel struct {
 // cacheLayers lists the animated layers that can be drawn over the
 // content cache, in tree order.
 func (s *ScrollView) cacheLayers() []cacheLayer {
+	win := s.Window()
+	animLayers := animLayersOf(win, false)
 	if len(animLayers) == 0 || s.Content == nil {
 		return nil
 	}
-	win := s.Window()
 	var out []cacheLayer
 	for b := range animLayers {
 		if b.Window() != win || isWidgetHiddenOrCollapsed(b.Self()) {

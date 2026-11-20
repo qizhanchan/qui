@@ -82,11 +82,12 @@ func TestPageHostSyncRendersAndTakesInput(t *testing.T) {
 	}
 	pixelAt(t, img.RGBAAt(100, 100), 255, 0, "first frame")
 
-	front, changed, _, ok := h.TakeFrame(nil)
-	if !ok || changed != front.Bounds() {
-		t.Fatalf("first TakeFrame: ok=%v changed=%v", ok, changed)
+	u, ok := h.TakeFrame(nil)
+	front := u.Image
+	if !ok || u.Changed != front.Bounds() {
+		t.Fatalf("first TakeFrame: ok=%v changed=%v", ok, u.Changed)
 	}
-	if _, _, _, ok := h.TakeFrame(front); ok {
+	if _, ok := h.TakeFrame(front); ok {
 		t.Fatal("TakeFrame with nothing new reported a frame")
 	}
 
@@ -96,7 +97,8 @@ func TestPageHostSyncRendersAndTakesInput(t *testing.T) {
 	if box.clicks.Load() != 1 {
 		t.Fatalf("clicks = %d, want 1", box.clicks.Load())
 	}
-	front, _, _, ok = h.TakeFrame(front)
+	u, ok = h.TakeFrame(front)
+	front = u.Image
 	if !ok {
 		t.Fatal("click did not commit a frame")
 	}
@@ -142,7 +144,7 @@ func TestPageHostDoesNotBlockHost(t *testing.T) {
 	h.SendMouseButton(MouseButtonLeft, true, 5, 5, 0)
 	h.SendMouseButton(MouseButtonLeft, false, 5, 5, 0)
 	h.SendKey(KeyA, 0, true, false, 0)
-	_, _, _, _ = h.TakeFrame(nil)
+	_, _ = h.TakeFrame(nil)
 	if busy, since := th.Busy(); !busy || time.Since(since) <= 0 {
 		t.Fatalf("Busy() = %v, %v while the page is stuck", busy, since)
 	}

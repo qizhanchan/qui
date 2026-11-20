@@ -26,6 +26,15 @@ type PageView struct {
 	pressed   int
 	hovering  bool
 	lastLocal Point
+
+	// layers: the committed scroll layers and what the UI thread shows of
+	// them (page_view_scroll.go).
+	layers   []*viewLayer
+	layerSeq uint64
+
+	// draws: the page's committed overlay draws (page_host_retained.go).
+	draws    []PageRetainedDraw
+	drawsSeq uint64
 }
 
 // NewPageView returns a view of h. One view per host.
@@ -61,25 +70,41 @@ func (v *PageView) pullFrame() {
 		return
 	}
 	prev := v.front
-	front, changed, seq, ok := v.host.TakeFrame(v.front)
-	v.front = front
+	u, ok := v.host.TakeFrame(v.front)
+	v.front = u.Image
 	if !ok {
 		return
 	}
-	v.frontSeq = seq
-	if prev != front {
+	v.frontSeq = u.Seq
+	v.adoptDraws(u)
+	moved := v.adoptLayers(u.Layers)
+	if prev != v.front {
 		v.Invalidate()
 		return
 	}
-	s := v.scale
-	if s <= 0 {
-		s = 1
+	if !u.Changed.Empty() {
+		v.invalidateDevice(u.Changed)
 	}
+	for _, r := range moved {
+		v.invalidateDevice(r)
+	}
+}
+
+// invalidateDevice repaints r, in page device pixels.
+func (v *PageView) invalidateDevice(r image.Rectangle) {
+	s := v.pageScale()
 	b := v.Bounds()
 	v.InvalidateRect(Rect{
-		X: b.X + float32(changed.Min.X)/s, Y: b.Y + float32(changed.Min.Y)/s,
-		W: float32(changed.Dx())/s + 1, H: float32(changed.Dy())/s + 1,
+		X: b.X + float32(r.Min.X)/s, Y: b.Y + float32(r.Min.Y)/s,
+		W: float32(r.Dx())/s + 1, H: float32(r.Dy())/s + 1,
 	})
+}
+
+func (v *PageView) pageScale() float32 {
+	if v.scale <= 0 {
+		return 1
+	}
+	return v.scale
 }
 
 // FrameSeq is the commit sequence number of the frame on screen.
@@ -120,7 +145,9 @@ func (v *PageView) Draw(c Canvas) {
 	c.Save()
 	c.ClipRect(b)
 	c.DrawImage(v.front, Rect{X: b.X, Y: b.Y, W: float32(fb.Dx()) / s, H: float32(fb.Dy()) / s})
+	v.drawMovedLayers(c)
 	c.Restore()
+	v.queueDraws(c)
 }
 
 // Focusable: the page takes keyboard focus when clicked.
@@ -176,6 +203,9 @@ func (v *PageView) Handle(ev Event) bool {
 			return true
 		case EventScroll:
 			x, y := v.local(e.X, e.Y)
+			if v.scrollLayer(e, x, y) {
+				return true
+			}
 			v.host.SendScroll(x, y, float64(e.DeltaX), float64(e.DeltaY), e.Mods, e.ScrollPhase, e.PreciseScroll)
 			return true
 		}
