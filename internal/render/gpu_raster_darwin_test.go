@@ -75,7 +75,7 @@ func gpuRasterDevice(t *testing.T) *wgpu.Device {
 
 func gpuRasterRead(t *testing.T, dev *wgpu.Device, pic *Picture, r image.Rectangle) (*image.RGBA, bool) {
 	t.Helper()
-	dst := newGPUTex(dev, r.Dx(), r.Dy(), wgpu.FormatRGBA8Unorm)
+	dst := newGPUTex(dev, "test", r.Dx(), r.Dy(), wgpu.FormatRGBA8Unorm)
 	defer dst.release()
 	if !gpuRasterPicture(dev, pic, r, dst) {
 		return nil, false

@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/qizhanchan/qui/internal/gfx"
@@ -200,7 +201,7 @@ func gpuRasterPipesFor(dev *wgpu.Device) (*gpuRasterPipes, error) {
 	}
 	p.layout = p.blend.BindGroupLayout(0)
 	p.linear = dev.CreateSampler(wgpu.FilterLinear, wgpu.AddressClampToEdge)
-	p.white = newGPUTex(dev, 1, 1, wgpu.FormatRGBA8Unorm)
+	p.white = newGPUTex(dev, "qui gpu raster", 1, 1, wgpu.FormatRGBA8Unorm)
 	if p.white == nil {
 		grPipesErr = errGPURaster
 		return nil, grPipesErr
@@ -224,8 +225,9 @@ type gpuTex struct {
 	w, h int
 }
 
-func newGPUTex(dev *wgpu.Device, w, h int, f wgpu.TextureFormat) *gpuTex {
-	t := dev.CreateTexture(wgpu.TextureDescriptor{Label: "qui gpu raster", Width: w, Height: h, Format: f,
+// newGPUTex makes a texture; label names it in the QUI_DEBUG_MEM report.
+func newGPUTex(dev *wgpu.Device, label string, w, h int, f wgpu.TextureFormat) *gpuTex {
+	t := dev.CreateTexture(wgpu.TextureDescriptor{Label: label, Width: w, Height: h, Format: f,
 		Usage: wgpu.UsageTextureBinding | wgpu.UsageCopyDst | wgpu.UsageRenderAttachment | wgpu.UsageCopySrc})
 	if t == nil {
 		return nil
@@ -242,12 +244,12 @@ func (t *gpuTex) release() {
 }
 
 // uploadRGBA uploads premultiplied RGBA pixels.
-func uploadRGBA(dev *wgpu.Device, img *image.RGBA) *gpuTex {
+func uploadRGBA(dev *wgpu.Device, label string, img *image.RGBA) *gpuTex {
 	w, h := img.Rect.Dx(), img.Rect.Dy()
 	if w <= 0 || h <= 0 {
 		return nil
 	}
-	t := newGPUTex(dev, w, h, wgpu.FormatRGBA8Unorm)
+	t := newGPUTex(dev, label, w, h, wgpu.FormatRGBA8Unorm)
 	if t == nil {
 		return nil
 	}
@@ -259,7 +261,7 @@ func uploadR8(dev *wgpu.Device, pix []uint8, w, h, stride int) *gpuTex {
 	if w <= 0 || h <= 0 {
 		return nil
 	}
-	t := newGPUTex(dev, w, h, wgpu.FormatR8Unorm)
+	t := newGPUTex(dev, "qui gpu raster mask", w, h, wgpu.FormatR8Unorm)
 	if t == nil {
 		return nil
 	}
@@ -270,36 +272,49 @@ func uploadR8(dev *wgpu.Device, pix []uint8, w, h, stride int) *gpuTex {
 // ---- image textures ----
 
 // gpuImageCache keeps uploaded images (decoded photos are drawn again and
-// again), within a byte budget.
+// again), within a byte budget, by the decoded image and the scale they
+// are drawn at (scaledKey; bucket -1: the image itself). The texture
+// stands in for the CPU copy at that scale (image_scale_cache.go), which
+// is dropped once uploaded: a photo is kept once, on the GPU, not also
+// as a scaled RGBA copy.
 type gpuImageCache struct {
 	lru   *list.List
-	items map[image.Image]*list.Element
+	items map[scaledKey]*list.Element
 	bytes int
 }
 
 type gpuImageEntry struct {
-	img image.Image
+	key scaledKey
 	t   *gpuTex
 }
 
 const gpuImageBudget = 192 << 20
 
-var grImages = &gpuImageCache{lru: list.New(), items: map[image.Image]*list.Element{}}
+var grImages = &gpuImageCache{lru: list.New(), items: map[scaledKey]*list.Element{}}
 
-// texture returns img uploaded (premultiplied RGBA). UI thread, under the
+// lookup returns the texture cached under k. UI thread, under the
 // renderer's lock.
-func (c *gpuImageCache) texture(dev *wgpu.Device, rgba *image.RGBA) *gpuTex {
-	var img image.Image = rgba
-	if el, ok := c.items[img]; ok {
+func (c *gpuImageCache) lookup(k scaledKey) *gpuTex {
+	if el, ok := c.items[k]; ok {
 		c.lru.MoveToFront(el)
 		return el.Value.(*gpuImageEntry).t
 	}
-	t := uploadRGBA(dev, rgba)
+	return nil
+}
+
+// texture returns rgba (the image of k) uploaded (premultiplied RGBA).
+// UI thread, under the renderer's lock.
+func (c *gpuImageCache) texture(dev *wgpu.Device, k scaledKey, rgba *image.RGBA) *gpuTex {
+	if t := c.lookup(k); t != nil {
+		return t
+	}
+	t := uploadRGBA(dev, "qui gpu image", rgba)
 	if t == nil {
 		return nil
 	}
-	c.items[img] = c.lru.PushFront(&gpuImageEntry{img: img, t: t})
+	c.items[k] = c.lru.PushFront(&gpuImageEntry{key: k, t: t})
 	c.bytes += t.w * t.h * 4
+	grImageBytes.Store(int64(c.bytes))
 	return t
 }
 
@@ -310,10 +325,18 @@ func (c *gpuImageCache) trim() {
 		old := c.lru.Back()
 		e := old.Value.(*gpuImageEntry)
 		c.lru.Remove(old)
-		delete(c.items, e.img)
+		delete(c.items, e.key)
 		c.bytes -= e.t.w * e.t.h * 4
 		e.t.release()
 	}
+	grImageBytes.Store(int64(c.bytes))
+}
+
+// grImageBytes mirrors grImages.bytes for the QUI_DEBUG_MEM report.
+var grImageBytes atomic.Int64
+
+func init() {
+	RegisterMemSource("gpu-images", func() (int64, int) { return grImageBytes.Load(), 0 })
 }
 
 // ---- the backend ----
@@ -458,7 +481,7 @@ func (g *gpuRasterBackend) cpuOp(bounds image.Rectangle, rec func(r *PictureReco
 	}
 	img := image.NewRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
 	pic.RasterizeInto(img, bounds.Min)
-	tx := uploadRGBA(g.dev, img)
+	tx := uploadRGBA(g.dev, "qui gpu raster op", img)
 	if tx == nil {
 		g.fail()
 		return
@@ -519,6 +542,22 @@ func (g *gpuRasterBackend) DrawVector(src gfx.VectorSource, dst gfx.Rect, clip g
 // the background for the next raster (Chromium's image decode tasks run
 // ahead of raster the same way).
 func (g *gpuRasterBackend) imageTexture(img image.Image, m gfx.Matrix) (*gpuTex, gfx.Matrix) {
+	key := scaledKey{img: img, bucket: -1}
+	var copied bool
+	if !imageScaleCacheOff && !gfx.IsVolatile(img) {
+		var w, h int
+		var bucket int
+		bucket, w, h, copied = drawScale(img, m)
+		if copied {
+			key.bucket = bucket
+		}
+		if t := grImages.lookup(key); t != nil {
+			if copied {
+				return t, scaledMatrix(img, m, w, h)
+			}
+			return t, m
+		}
+	}
 	src, mm, ready := scaledForDrawReady(img, m)
 	if !ready {
 		prepareImage(img, m)
@@ -529,11 +568,17 @@ func (g *gpuRasterBackend) imageTexture(img image.Image, m gfx.Matrix) (*gpuTex,
 	var t *gpuTex
 	if gfx.IsVolatile(img) || gfx.IsVolatile(rgba) {
 		// Not cached: its pixels change (or it is a per-recording copy).
-		if t = uploadRGBA(g.dev, rgba); t != nil {
+		if t = uploadRGBA(g.dev, "qui gpu raster op", rgba); t != nil {
 			g.transient = append(g.transient, t)
 		}
 	} else {
-		t = grImages.texture(g.dev, rgba)
+		if imageScaleCacheOff {
+			key = scaledKey{img: rgba, bucket: -1}
+		}
+		t = grImages.texture(g.dev, key, rgba)
+		if t != nil && copied {
+			dropScaled(img, key.bucket) // the texture replaces it
+		}
 	}
 	if t == nil {
 		g.fail()
@@ -840,12 +885,12 @@ func (g *gpuRasterBackend) encode(p *gpuRasterPipes, dst *gpuTex) {
 			tstack[len(tstack)-1].pass.End()
 			var lt *gpuTex
 			if !s.cmd.layer.Empty() {
-				lt = newGPUTex(dev, s.cmd.layer.Dx(), s.cmd.layer.Dy(), wgpu.FormatRGBA8Unorm)
+				lt = newGPUTex(dev, "qui gpu raster layer", s.cmd.layer.Dx(), s.cmd.layer.Dy(), wgpu.FormatRGBA8Unorm)
 			}
 			if lt == nil {
 				// An empty layer still needs a pass to absorb its draws
 				// (there are none: quad drops them while the layer is dead).
-				lt = newGPUTex(dev, 1, 1, wgpu.FormatRGBA8Unorm)
+				lt = newGPUTex(dev, "qui gpu raster layer", 1, 1, wgpu.FormatRGBA8Unorm)
 			}
 			layers = append(layers, lt)
 			tstack = append(tstack, target{t: lt, pass: begin(lt, true)})

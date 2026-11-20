@@ -300,18 +300,66 @@ func (s *ScrollView) drawCached(canvas Canvas, effClip, vp Rect) bool {
 		tileDbg.tiles = len(c.tiles)
 		flushTileDebug()
 	}
+	if debugMem {
+		s.noteCacheMem()
+	}
 	return true
+}
+
+// noteCacheMem publishes the cache's bytes to the QUI_DEBUG_MEM report.
+func (s *ScrollView) noteCacheMem() {
+	c := s.cache
+	if c == nil {
+		memNote("content-tiles", s, 0, 0)
+		memNote("content-recording", s, 0, 0)
+		return
+	}
+	n, b := 0, 0
+	for _, t := range c.tiles {
+		if t.img != nil {
+			n++
+			b += len(t.img.Pix)
+		}
+	}
+	memNote("content-tiles", s, b, n)
+	memNote("content-recording", s, c.pic.Bytes(), c.pic.Len())
 }
 
 // readyArea is the content device area whose tiles are kept rasterized:
 // the view, a view height above and below, half a width either side,
-// within the content.
+// within the content — narrowed (sides first) to what fits
+// contentTileBudget, as Chromium's tile manager shrinks its interest
+// area to its memory budget. The view itself is always kept.
 func (s *ScrollView) readyArea(view image.Rectangle, mc Matrix, off image.Point) image.Rectangle {
-	r := image.Rect(view.Min.X-view.Dx()/2, view.Min.Y-view.Dy(), view.Max.X+view.Dx()/2, view.Max.Y+view.Dy())
-	if ext := s.contentExtent(mc, off); !ext.Empty() {
-		r = r.Intersect(ext.Union(view))
+	within := func(r image.Rectangle) image.Rectangle {
+		if ext := s.contentExtent(mc, off); !ext.Empty() {
+			return r.Intersect(ext.Union(view))
+		}
+		return r
+	}
+	mx, my := view.Dx()/2, view.Dy()
+	r := within(image.Rect(view.Min.X-mx, view.Min.Y-my, view.Max.X+mx, view.Max.Y+my))
+	if tileBytes(r) <= contentTileBudget {
+		return r
+	}
+	r = within(image.Rect(view.Min.X, view.Min.Y-my, view.Max.X, view.Max.Y+my))
+	for tileBytes(r) > contentTileBudget && my > 0 {
+		my = my * 3 / 4
+		if my < contentTileSize {
+			my = 0
+		}
+		r = within(image.Rect(view.Min.X, view.Min.Y-my, view.Max.X, view.Max.Y+my))
 	}
 	return r
+}
+
+// contentTileBudget bounds the bytes of the tiles a view keeps ready
+// (react.dev in a 1000×672 window at 2×: about 32 MiB).
+const contentTileBudget = 64 << 20
+
+// tileBytes is what the tiles r touches hold.
+func tileBytes(r image.Rectangle) int {
+	return len(tilesIn(r)) * contentTileSize * contentTileSize * 4
 }
 
 // contentExtent is the content's paint bounds in content device space.
@@ -390,12 +438,18 @@ func (s *ScrollView) prepareTiles(canvas Canvas, m Matrix, off image.Point, view
 			s.adoptTile(c, t, task, k)
 		}
 	}
-	// Drop tiles well outside the ready area.
+	// Drop tiles well outside the ready area, and the stale pixels of
+	// tiles out of view: they are being rasterized again, and until then
+	// nothing shows them (a scroll that reaches one first waits for its
+	// raster, like a tile never rasterized).
 	keep := ready.Inset(-contentTileSize)
+	inView := view.Inset(-contentTileSize)
 	for k, t := range c.tiles {
 		if t.used != seq && !tileRect(k).Overlaps(keep) {
 			t.pending.Cancel()
 			delete(c.tiles, k)
+		} else if t.stale && !tileRect(k).Overlaps(inView) {
+			t.img, t.stale, t.private = nil, false, false
 		}
 	}
 	return false
@@ -416,13 +470,18 @@ func tileRasterRect(pic *Picture, tr image.Rectangle) image.Rectangle {
 }
 
 // tileImage is a tile's pixels out of its raster (cropping the filter
-// margin), with its rectangle at (0,0).
+// margin), with its rectangle at (0,0). A raster with the margin is
+// copied out: a sub-image would keep the whole padded raster — four
+// times the tile — alive as long as the tile.
 func tileImage(img *image.RGBA) *image.RGBA {
 	if img == nil || img.Rect.Dx() == contentTileSize && img.Rect.Dy() == contentTileSize {
 		return img
 	}
-	o := img.PixOffset(filterPad, filterPad)
-	return &image.RGBA{Pix: img.Pix[o:], Stride: img.Stride, Rect: image.Rect(0, 0, contentTileSize, contentTileSize)}
+	out := image.NewRGBA(image.Rect(0, 0, contentTileSize, contentTileSize))
+	for y := 0; y < contentTileSize; y++ {
+		copy(out.Pix[y*out.Stride:(y+1)*out.Stride], img.Pix[img.PixOffset(filterPad, filterPad+y):])
+	}
+	return out
 }
 
 // adoptTile makes a finished raster tile t's pixels; a tile that was
@@ -621,6 +680,9 @@ func (s *ScrollView) dropCache() {
 		}
 	}
 	s.cache = nil
+	if debugMem {
+		s.noteCacheMem()
+	}
 }
 
 // wholeDeviceRect converts r to whole device pixels, or reports false

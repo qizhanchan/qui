@@ -121,3 +121,9 @@ func NewPictureCanvas(bounds image.Rectangle) (Canvas, *PictureRecorder) {
 func ScheduleRaster(pic *Picture, rect image.Rectangle, prio int, onDone func(*RasterTask)) *RasterTask {
 	return render.ScheduleRaster(pic, rect, prio, onDone)
 }
+
+// RegisterMemSource adds a cache to the QUI_DEBUG_MEM report: f returns
+// its bytes and entries, and is called from a background goroutine.
+func RegisterMemSource(name string, f func() (bytes int64, entries int)) {
+	render.RegisterMemSource(name, f)
+}

@@ -48,6 +48,46 @@ var scaledCache = struct {
 	bytes int
 }{lru: list.New(), items: map[scaledKey]*list.Element{}}
 
+// drawScale is the scale img is sampled at when drawn through m: its
+// quarter-octave bucket and the size of the copy at that scale; copied is
+// false when img itself is sampled (RGBA and not minified much).
+func drawScale(img image.Image, m gfx.Matrix) (bucket, w, h int, copied bool) {
+	b := img.Bounds()
+	sx := math.Hypot(float64(m.A), float64(m.C))
+	sy := math.Hypot(float64(m.B), float64(m.D))
+	s := math.Max(sx, sy)
+	_, isRGBA := img.(*image.RGBA)
+	if b.Dx() <= 0 || b.Dy() <= 0 || s <= 0 || (isRGBA && s >= 0.75) {
+		return 0, b.Dx(), b.Dy(), false
+	}
+	if s < 1 {
+		bucket = int(math.Floor(-4 * math.Log2(s))) // round the scale UP to a quarter octave
+	}
+	scale := math.Pow(2, -float64(bucket)/4)
+	w = max(1, int(math.Ceil(float64(b.Dx())*scale)))
+	h = max(1, int(math.Ceil(float64(b.Dy())*scale)))
+	return bucket, w, h, !(isRGBA && w == b.Dx() && h == b.Dy())
+}
+
+// scaledMatrix is the matrix drawing img's w×h copy where m draws img.
+func scaledMatrix(img image.Image, m gfx.Matrix, w, h int) gfx.Matrix {
+	b := img.Bounds()
+	return m.Concat(gfx.ScaleMatrix(float32(b.Dx())/float32(w), float32(b.Dy())/float32(h)))
+}
+
+// dropScaled forgets img's cached copy at bucket (its GPU texture
+// replaced it, gpu_raster.go).
+func dropScaled(img image.Image, bucket int) {
+	c := &scaledCache
+	c.Lock()
+	defer c.Unlock()
+	if el, ok := c.items[scaledKey{img: img, bucket: bucket}]; ok {
+		c.lru.Remove(el)
+		delete(c.items, scaledKey{img: img, bucket: bucket})
+		c.bytes -= len(el.Value.(*scaledEntry).img.Pix)
+	}
+}
+
 // scaledForDrawReady is scaledForDraw when it needs no work — no copy to
 // make, or the copy already cached; ready=false otherwise (the GPU raster
 // then has the copy made in the background, gpu_raster.go).
@@ -56,26 +96,10 @@ func scaledForDrawReady(img image.Image, m gfx.Matrix) (out image.Image, mm gfx.
 		_, isRGBA := img.(*image.RGBA)
 		return img, m, isRGBA
 	}
-	b := img.Bounds()
-	if b.Dx() <= 0 || b.Dy() <= 0 {
-		return img, m, true
-	}
-	sx := math.Hypot(float64(m.A), float64(m.C))
-	sy := math.Hypot(float64(m.B), float64(m.D))
-	s := math.Max(sx, sy)
-	_, isRGBA := img.(*image.RGBA)
-	if s <= 0 || (isRGBA && s >= 0.75) {
-		return img, m, isRGBA
-	}
-	bucket := 0
-	if s < 1 {
-		bucket = int(math.Floor(-4 * math.Log2(s)))
-	}
-	scale := math.Pow(2, -float64(bucket)/4)
-	w := max(1, int(math.Ceil(float64(b.Dx())*scale)))
-	h := max(1, int(math.Ceil(float64(b.Dy())*scale)))
-	if isRGBA && w == b.Dx() && h == b.Dy() {
-		return img, m, true
+	bucket, w, h, copied := drawScale(img, m)
+	if !copied {
+		_, isRGBA := img.(*image.RGBA)
+		return img, m, isRGBA || img.Bounds().Empty()
 	}
 	if gfx.IsVolatile(img) {
 		out, mm := scaledForDraw(img, m) // uncached, see there
@@ -89,7 +113,7 @@ func scaledForDrawReady(img image.Image, m gfx.Matrix) (out image.Image, mm gfx.
 		return nil, m, false
 	}
 	c.lru.MoveToFront(el)
-	return el.Value.(*scaledEntry).img, m.Concat(gfx.ScaleMatrix(float32(b.Dx())/float32(w), float32(b.Dy())/float32(h))), true
+	return el.Value.(*scaledEntry).img, scaledMatrix(img, m, w, h), true
 }
 
 // scaledForDraw returns the image to sample for drawing img through m and

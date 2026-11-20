@@ -51,6 +51,7 @@ func (b *Box) releaseLayerRasters(win *Window) {
 	}
 	b.childRasters = nil
 	b.gpuLayer = nil
+	memNote("layer-children", b, 0, 0)
 }
 
 // SetWindow releases what b kept as an animated layer when it leaves its
@@ -511,6 +512,15 @@ func (b *Box) evictChildRasters() {
 	total := 0
 	for _, cr := range b.childRasters {
 		total += cr.bytes()
+	}
+	if debugMem {
+		defer func() {
+			t := 0
+			for _, cr := range b.childRasters {
+				t += cr.bytes()
+			}
+			memNote("layer-children", b, t, len(b.childRasters))
+		}()
 	}
 	if total <= childRasterBudget {
 		return

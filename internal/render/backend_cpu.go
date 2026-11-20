@@ -868,8 +868,8 @@ func drawShadowImplRaw(img *image.RGBA, rect gfx.Rect, radius float32, spec gfx.
 	// A shadow small enough to keep is blurred once, whole, and reused
 	// (a sticky header's shadow is recomposited every scroll frame, a
 	// card's shadow by every tile it reaches): shadowMaskCache.
-	if m := cachedShadowMask(shadowRect, shadowRadius, rect, radius, spec.Knockout, blur, boxR, margin, dstX0, dstY0, bufW, bufH); m != nil {
-		blendShadowMask(img, m, dstX0, dstY0, bufW, effBounds, shadowColor, alpha)
+	if m, ok := cachedShadowMask(shadowRect, shadowRadius, rect, radius, spec.Knockout, blur, boxR, margin, dstX0, dstY0, bufW, bufH); ok {
+		blendShadowMask(img, m, dstX0, dstY0, effBounds, shadowColor, alpha)
 		return
 	}
 	pad := 2*boxR + 2

@@ -424,6 +424,8 @@ type Texture struct {
 	mipLevels  int
 	layers     int
 	uploadable bool
+	label      string // texture memory accounting (texmem.go)
+	bytes      int64
 }
 
 type TextureDescriptor struct {
@@ -466,8 +468,11 @@ func (d *Device) CreateTexture(desc TextureDescriptor) *Texture {
 	if t == nil {
 		return nil
 	}
+	n := int64(desc.Width) * int64(desc.Height) * int64(layers) * int64(bytesPerTexel(desc.Format)) * int64(max(1, desc.SampleCount))
+	noteTexture(desc.Label, n, 1)
 	return &Texture{c: t, w: desc.Width, h: desc.Height, format: desc.Format, usage: desc.Usage, mipLevels: levels,
-		layers: layers, uploadable: desc.Usage&UsageCopyDst != 0 && desc.SampleCount <= 1 && layers == 1}
+		layers: layers, uploadable: desc.Usage&UsageCopyDst != 0 && desc.SampleCount <= 1 && layers == 1,
+		label: desc.Label, bytes: n}
 }
 
 func (t *Texture) Width() int            { return t.w }
@@ -567,6 +572,9 @@ func (t *Texture) CreateMipView(base, count int) (*TextureView, error) {
 // Release drops the reference; Destroy also frees the GPU memory now.
 func (t *Texture) Release() {
 	if t != nil && t.c != nil {
+		if t.bytes > 0 {
+			noteTexture(t.label, t.bytes, -1)
+		}
 		C.wgpuTextureRelease(t.c)
 		t.c = nil
 	}
@@ -574,6 +582,9 @@ func (t *Texture) Release() {
 
 func (t *Texture) Destroy() {
 	if t != nil && t.c != nil {
+		if t.bytes > 0 {
+			noteTexture(t.label, t.bytes, -1)
+		}
 		C.wgpuTextureDestroy(t.c)
 		C.wgpuTextureRelease(t.c)
 		t.c = nil
@@ -606,6 +617,7 @@ type Buffer struct {
 	// 1 mapped, −1 failed) and the mapped range.
 	mapStatus       *C.int
 	mapOff, mapSize uint64
+	label           string // memory accounting (texmem.go)
 }
 
 func (d *Device) CreateBuffer(label string, usage BufferUsage, size uint64) *Buffer {
@@ -619,7 +631,8 @@ func (d *Device) CreateBuffer(label string, usage BufferUsage, size uint64) *Buf
 	if b == nil {
 		return nil
 	}
-	return &Buffer{c: b, size: uint64(bd.size), dev: d}
+	noteTexture("buffer "+label, int64(bd.size), 1)
+	return &Buffer{c: b, size: uint64(bd.size), dev: d, label: "buffer " + label}
 }
 
 // CreateBufferInit creates a buffer holding data (CopyDst is added).
@@ -638,6 +651,7 @@ func (b *Buffer) Size() uint64 { return b.size }
 // safe; Destroy frees it now (and invalidates any unsubmitted use).
 func (b *Buffer) Release() {
 	if b != nil && b.c != nil {
+		noteTexture(b.label, int64(b.size), -1)
 		C.wgpuBufferRelease(b.c)
 		b.c = nil
 	}
@@ -647,6 +661,7 @@ func (b *Buffer) Release() {
 // still references the buffer fails validation on submit.
 func (b *Buffer) Destroy() {
 	if b != nil && b.c != nil {
+		noteTexture(b.label, int64(b.size), -1)
 		C.wgpuBufferDestroy(b.c)
 		C.wgpuBufferRelease(b.c)
 		b.c = nil
@@ -712,6 +727,7 @@ func (d *Device) writeTexture(t *Texture, level, x, y, w, h int, pix unsafe.Poin
 	layout := C.WGPUTexelCopyBufferLayout{bytesPerRow: C.uint32_t(stride), rowsPerImage: C.uint32_t(h)}
 	size := C.WGPUExtent3D{C.uint32_t(w), C.uint32_t(h), 1}
 	n := stride*(h-1) + w*bytesPerTexel(t.format)
+	noteUpload(int64(n))
 	C.wgpuQueueWriteTexture(d.queue, &dst, pix, C.size_t(n), &layout, &size)
 }
 

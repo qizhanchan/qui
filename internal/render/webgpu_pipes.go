@@ -349,7 +349,7 @@ func (r *WebGPURenderer) RasterizePicture(key any, version uint64, pic *Picture,
 			t.release()
 			delete(r.pixels, key)
 		}
-		gt := newGPUTex(r.dev, w, h, wgpu.FormatRGBA8Unorm)
+		gt := newGPUTex(r.dev, "qui gpu raster", w, h, wgpu.FormatRGBA8Unorm)
 		if gt == nil {
 			return false
 		}
