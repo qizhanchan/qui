@@ -2,6 +2,7 @@ package qui
 
 import (
 	"image"
+	"log"
 	"sort"
 )
 
@@ -78,7 +79,9 @@ type scrollLayerState struct {
 
 // WantsScrollLayers reports whether w commits scroll layers: true for a
 // page window (PageHost). Scrollers check it before doing commit work.
-func (w *Window) WantsScrollLayers() bool { return w != nil && w.plat != nil && isEmbeddedPlatform(w.plat) }
+func (w *Window) WantsScrollLayers() bool {
+	return w != nil && w.plat != nil && isEmbeddedPlatform(w.plat)
+}
 
 // RegisterScrollLayer adds s to the scrollers w commits. Scrollers call it
 // when laid out in a page window; detached ones drop out by themselves.
@@ -103,6 +106,9 @@ func (w *Window) applyScrollLayerOffset(key any, x, y float32, seq uint64) {
 		return
 	}
 	src.ScrollLayerTo(x, y)
+	if debugPageView {
+		log.Printf("qui/pageview: page applied layer offset %v,%v seq %d", x, y, seq)
+	}
 	if w.scrollLayers.applied == nil {
 		w.scrollLayers.applied = map[any]uint64{}
 	}

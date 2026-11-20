@@ -28,8 +28,8 @@ var (
 )
 
 func (b *pageTestBox) Measure(avail Size) Size { return avail }
-func (b *pageTestBox) Focusable() bool          { return true }
-func (b *pageTestBox) SetFocused(bool)          {}
+func (b *pageTestBox) Focusable() bool         { return true }
+func (b *pageTestBox) SetFocused(bool)         {}
 func (b *pageTestBox) Draw(c Canvas) {
 	col := pageRed
 	if b.on {

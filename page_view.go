@@ -2,6 +2,7 @@ package qui
 
 import (
 	"image"
+	"log"
 	"sync/atomic"
 )
 
@@ -199,6 +200,9 @@ func (v *PageView) Handle(ev Event) bool {
 			v.host.SendMouseButton(e.Button, true, x, y, e.Mods)
 			return true
 		case EventMouseUp:
+			if debugPageView {
+				log.Printf("qui/pageview: mouse up at page %.0f,%.0f", e.X-v.Bounds().X, e.Y-v.Bounds().Y)
+			}
 			if v.pressed > 0 {
 				v.pressed--
 			}
