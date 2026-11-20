@@ -87,6 +87,10 @@ type StyleEngine struct {
 	// lifetime. Test-only observability for asserting restyle scope; no
 	// runtime use.
 	styled, applied int
+	// styleGen counts style passes that are not a query container's own
+	// width restyle: anything that can change a cascade result. Container
+	// style caches are valid only within one generation.
+	styleGen uint64
 	// QUI_DEBUG_STYLE bookkeeping (logFlush).
 	lastFlushScoped bool
 	lastFlushWhy    string
@@ -706,6 +710,7 @@ func (eng *StyleEngine) FlushPendingStyles() {
 // style isn't known yet (first style pass still pending).
 func (eng *StyleEngine) flush() {
 	defer eng.useViewport()()
+	eng.styleGen++
 	if debugStyle {
 		defer eng.logFlush(len(eng.dirty), time.Now(), eng.styled, eng.applied, eng.pass)()
 	}
@@ -1173,6 +1178,7 @@ func widgetStyleView(cs *ComputedStyle) *ComputedStyle {
 // the scoped flush instead.
 func (eng *StyleEngine) Restyle() {
 	defer eng.useViewport()()
+	eng.styleGen++
 	eng.prepareShadowTrees()
 	eng.dirty = nil // a full pass satisfies any pending scoped work
 	eng.reflow = nil

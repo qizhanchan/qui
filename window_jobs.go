@@ -202,7 +202,7 @@ func (w *Window) runJobs() int {
 	for _, fn := range pri {
 		w.jobs.startOne()
 		if fn != nil {
-			fn()
+			runJob(fn)
 			count++
 		}
 	}
@@ -212,7 +212,7 @@ func (w *Window) runJobs() int {
 			if debugIdle {
 				idleDebugJob(fn)
 			}
-			fn()
+			runJob(fn)
 			count++
 		}
 	}

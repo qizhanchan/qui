@@ -53,6 +53,10 @@ func idleDebugFrame(now time.Time) {
 
 // idleDebugJob records where a posted job's closure was written.
 func idleDebugJob(fn func()) {
+	idleDbg.jobFuncs[jobName(fn)]++
+}
+
+func jobName(fn func()) string {
 	name := "?"
 	if f := runtime.FuncForPC(reflect.ValueOf(fn).Pointer()); f != nil {
 		name = f.Name()
@@ -60,7 +64,26 @@ func idleDebugJob(fn func()) {
 			name = name[i+1:]
 		}
 	}
-	idleDbg.jobFuncs[name]++
+	return name
+}
+
+// longTaskThreshold is the job duration QUI_DEBUG_IDLE reports one by one
+// (Chromium's long-task threshold): the UI thread could not respond to
+// input for that long.
+const longTaskThreshold = 50 * time.Millisecond
+
+// runJob runs one queued job, and under QUI_DEBUG_IDLE names any that
+// held the UI thread past longTaskThreshold.
+func runJob(fn func()) {
+	if !debugIdle {
+		fn()
+		return
+	}
+	t0 := time.Now()
+	fn()
+	if d := time.Since(t0); d >= longTaskThreshold {
+		log.Printf("qui/longtask %v job=%s", d.Round(100*time.Microsecond), jobName(fn))
+	}
 }
 
 func idleDebugReason(r string) {

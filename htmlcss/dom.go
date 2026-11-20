@@ -61,7 +61,9 @@ type Node struct {
 	// containerUnitsUsed: a descendant's declaration resolved cq* units
 	// against this container (a width change must restyle).
 	containerUnitsUsed bool
-	containerLaidOut   bool
+	// containerStyleCache: see updateContainerWidth.
+	containerStyleCache *containerStyleCache
+	containerLaidOut    bool
 }
 
 // siblingParent is the parent whose Children hold n's siblings — nil for
