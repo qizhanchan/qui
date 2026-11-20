@@ -199,7 +199,9 @@ func (a *App) Run() {
 	// and until an event otherwise (window_idle.go).
 	snap := newEnvSnapshot()
 	for a.running {
-		if !a.step(snap.timeout(a.idleTimeout(time.Now()))) {
+		wait := snap.timeout(a.idleTimeout(time.Now()))
+		idleDebugLoop(wait)
+		if !a.step(wait) {
 			break
 		}
 		if snap != nil && snap.poll(a) {

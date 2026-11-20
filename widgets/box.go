@@ -2,6 +2,7 @@ package widgets
 
 import (
 	"math"
+	"time"
 
 	. "github.com/qizhanchan/qui"
 )
@@ -101,6 +102,9 @@ type Box struct {
 	layerSeq     uint64 // window paint it was last drawn as a layer
 	layerDrawing bool   // being drawn as a layer right now
 	childRasters map[Widget]*childRaster
+	gpuLayer     *gpuLayer                             // composited on the GPU (anim_layer_gpu.go)
+	compCurve    func(time.Time) (*BoxTransform, bool) // SetCompositorCurve
+	gpuCapture   *gpuCapture                           // collecting child bitmaps right now
 
 	// PosOffset shifts the box (and its whole subtree) from its normal
 	// laid-out position without disturbing siblings — CSS

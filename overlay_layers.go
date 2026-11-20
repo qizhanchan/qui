@@ -76,3 +76,31 @@ func removeWidget(list []Widget, widget Widget) []Widget {
 	}
 	return list
 }
+
+// OverlaysIntersecting lists the window-coordinate bounds of everything
+// the window paints above its root tree that may cover r — overlays
+// (popups, menus, tooltips), ones still animating out, the debug overlay
+// (all of r). A widget that composites content over the 2D frame on the
+// GPU (an animated layer) leaves these areas to the 2D frame, so what is
+// painted above it stays above it.
+func (w *Window) OverlaysIntersecting(r Rect) []Rect {
+	if w == nil || r.IsEmpty() {
+		return nil
+	}
+	if w.IsDebugOverlayEnabled() {
+		return []Rect{r}
+	}
+	var out []Rect
+	for _, list := range [][]Widget{w.overlays, w.exitingOverlays} {
+		for _, ov := range list {
+			if ov == nil || isCollapsed(ov) {
+				continue
+			}
+			b := PaintBoundsOf(ov).Union(ov.Bounds())
+			if b.Intersects(r) {
+				out = append(out, b.Intersect(r))
+			}
+		}
+	}
+	return out
+}

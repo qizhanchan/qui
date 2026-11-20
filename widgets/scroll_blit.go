@@ -79,25 +79,9 @@ func (s *ScrollView) blitScroll(dx, dy float32, before []Rect) bool {
 	return true
 }
 
-// shiftCache moves the content cache's pixels with a pixel scroll of
-// (mx, my) logical units, the way the window moved its own. The strip the
-// move exposes arrives as content damage and is re-rendered on paint; a
-// move that does not land on whole device pixels drops the cache.
-func (s *ScrollView) shiftCache(mx, my float32) {
-	c := s.cache
-	if c == nil || !c.valid || c.img == nil {
-		return
-	}
-	px, py := float64(mx*c.scaleX), float64(my*c.scaleY)
-	dx, dy := int(math.Round(px)), int(math.Round(py))
-	if math.Abs(px-float64(dx)) > 0.01 || math.Abs(py-float64(dy)) > 0.01 {
-		c.valid = false
-		return
-	}
-	if !shiftRGBA(c.img, dx, dy) {
-		c.valid = false
-	}
-}
+// shiftCache is a no-op: the content cache's tiles are in content space
+// (scroll_cache.go), so a scroll moves where they land, not their pixels.
+func (s *ScrollView) shiftCache(mx, my float32) {}
 
 // shiftRGBA moves img's pixels by (dx, dy) in place; what moves out is
 // lost, what is exposed keeps stale pixels (the caller re-renders it).

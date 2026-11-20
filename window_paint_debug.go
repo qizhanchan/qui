@@ -20,3 +20,9 @@ func (w *Window) assertNotPainting(op string) {
 	}
 	panic(fmt.Sprintf("qui: %s during Draw; the paint pass must not mutate the widget tree or layout (set QUI_DEBUG_DRAW=0 to disable this check)", op))
 }
+
+// InPaintPass reports whether the window is in its frame's paint pass.
+// A Draw outside it (a snapshot drawn straight into an image, a test)
+// must not trust state cached per paint, such as a content cache keyed
+// by PaintSeq.
+func (w *Window) InPaintPass() bool { return w != nil && w.inPaint }

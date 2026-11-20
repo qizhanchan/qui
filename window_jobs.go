@@ -209,6 +209,9 @@ func (w *Window) runJobs() int {
 	for _, fn := range nor {
 		w.jobs.startOne()
 		if fn != nil {
+			if debugIdle {
+				idleDebugJob(fn)
+			}
 			fn()
 			count++
 		}

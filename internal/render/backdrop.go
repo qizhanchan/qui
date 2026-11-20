@@ -3,6 +3,7 @@ package render
 import (
 	"image"
 	"math"
+	"os"
 
 	"github.com/qizhanchan/qui/internal/gfx"
 )
@@ -14,7 +15,7 @@ import (
 // its edges extended (CSS: the backdrop is cropped to the border box).
 // Lengths in filter are physical pixels. No-op without a CPU backend.
 func (c imageCanvas) BackdropFilter(bounds gfx.Rect, shape *gfx.Path, filter gfx.ImageFilter) {
-	b, ok := c.Backend.(*CPUBackend)
+	b, ok := c.Backend.(backdropFilterer)
 	if !ok || filter == nil {
 		return
 	}
@@ -30,11 +31,21 @@ func (c imageCanvas) BackdropFilter(bounds gfx.Rect, shape *gfx.Path, filter gfx
 	b.backdropFilter(region, filter, mask)
 }
 
+// backdropFilterer is a backend that can filter what it already holds:
+// the CPU backend, and the picture recorder (which defers to the backend
+// it is played onto).
+type backdropFilterer interface {
+	backdropFilter(region image.Rectangle, filter gfx.ImageFilter, mask *image.Alpha)
+}
+
 // backdropFilter filters region of the active target in place.
 func (b *CPUBackend) backdropFilter(region image.Rectangle, filter gfx.ImageFilter, mask *image.Alpha) {
 	img := b.target(region)
 	if img == nil {
 		return
+	}
+	if os.Getenv("QUI_TMP_CLIPS") != "" {
+		println("BACKDROP", region.Min.X, region.Min.Y, region.Dx(), region.Dy(), img.Bounds().Dx(), img.Bounds().Dy())
 	}
 	region = region.Intersect(img.Bounds())
 	if region.Empty() {

@@ -105,6 +105,15 @@ func (s *RetainedSet[F]) Forget(key any) {
 
 func (s *RetainedSet[F]) Len() int { return len(s.entries) }
 
+// Each calls fn for every registered key until fn returns false.
+func (s *RetainedSet[F]) Each(fn func(key any) bool) {
+	for _, e := range s.entries {
+		if !fn(e.key) {
+			return
+		}
+	}
+}
+
 // rectToPixelBounds grows a float physical rect outward to whole pixels.
 func rectToPixelBounds(r gfx.Rect) image.Rectangle {
 	if r.W <= 0 || r.H <= 0 {

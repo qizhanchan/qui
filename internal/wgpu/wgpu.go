@@ -100,6 +100,7 @@ type Device struct {
 	ioSurface     bool
 	timestamps    bool
 	clipDistances bool
+	threadSafe    bool
 }
 
 // deviceLost is set when the shared device is lost (GPU reset, eGPU
@@ -159,6 +160,11 @@ func newDevice() (*Device, error) {
 	if C.wgpuAdapterHasFeature(adapter, C.WGPUFeatureName_ClipDistances) != 0 {
 		want = append(want, C.WGPUFeatureName_ClipDistances)
 	}
+	// Dawn serializes device calls itself: the compositor thread presents
+	// layer frames while the UI thread runs script (RFC 0004 R4).
+	if C.wgpuAdapterHasFeature(adapter, C.WGPUFeatureName_ImplicitDeviceSynchronization) != 0 {
+		want = append(want, C.WGPUFeatureName_ImplicitDeviceSynchronization)
+	}
 	var a arena
 	defer a.free()
 	feats := allocN[C.WGPUFeatureName](&a, len(want))
@@ -186,8 +192,13 @@ func newDevice() (*Device, error) {
 		name: C.GoString(&buf[0]), ioSurface: io,
 		timestamps:    C.wgpuDeviceHasFeature(dev, C.WGPUFeatureName_TimestampQuery) != 0,
 		clipDistances: C.wgpuDeviceHasFeature(dev, C.WGPUFeatureName_ClipDistances) != 0,
+		threadSafe:    C.wgpuDeviceHasFeature(dev, C.WGPUFeatureName_ImplicitDeviceSynchronization) != 0,
 	}, nil
 }
+
+// ThreadSafe reports whether the device may be used from more than one
+// thread (Dawn's implicit device synchronization).
+func (d *Device) ThreadSafe() bool { return d != nil && d.c != nil && d.threadSafe && !Lost() }
 
 // SupportsClipDistances reports whether shaders may declare
 // "enable clip_distances;" and write @builtin(clip_distances): user clip

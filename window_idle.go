@@ -143,9 +143,27 @@ func (w *Window) RequestTickAt(at time.Time) {
 // Step: frameInterval while it is changing, the distance to its earliest
 // deadline while it waits on one, pumpForever when it is idle.
 func (w *Window) nextFrameWait(now time.Time) time.Duration {
-	if w.framePainted || !w.dirtyRegion.IsEmpty() || w.gpuRedrawPending() ||
+	if len(w.rafCallbacks) > 0 && !w.framePainted && w.dirtyRegion.IsEmpty() && w.PendingJobs() == 0 {
+		// Frame callbacks wait for their period (runAnimationFrames gates
+		// them on the time of the last run), not a full interval from now.
+		period := time.Duration(w.refreshPeriod.Load())
+		if period <= 0 {
+			period = defaultRefreshPeriod
+		}
+		if debugIdle {
+			idleDebugReason("raf")
+		}
+		if w.lastRAFWall.IsZero() {
+			return time.Millisecond
+		}
+		return max(time.Millisecond, time.Until(w.lastRAFWall.Add(period-rafSlack)))
+	}
+	if w.framePainted || !w.dirtyRegion.IsEmpty() || w.gpuRedrawPending() || len(w.rafCallbacks) > 0 ||
 		w.PendingJobs() > 0 || len(w.afterLayout) > 0 || len(w.afterFrame) > 0 || w.overlayResizePending ||
 		(w.root != nil && w.root.IsLayoutDirty()) {
+		if debugIdle {
+			w.noteBusyReason()
+		}
 		return frameInterval
 	}
 	wait := pumpForever
@@ -168,6 +186,18 @@ func (w *Window) nextFrameWait(now time.Time) time.Duration {
 		}
 		if d < wait {
 			wait = d
+		}
+	}
+	if debugIdle {
+		for _, a := range w.animators {
+			q := ""
+			if w.animatorsQuiet(now) {
+				q = "(quiet)"
+			}
+			idleDebugReason(fmt.Sprintf("anim:%T%s", a, q))
+		}
+		if !w.tickAt.IsZero() {
+			idleDebugReason(fmt.Sprintf("tickAt<%dms", (w.tickAt.Sub(now)/(10*time.Millisecond)+1)*10))
 		}
 	}
 	consider(w.tickAt)
@@ -214,5 +244,28 @@ func warnQuietAnimators(animators []Animator) {
 		log.Printf("qui: animator %s ticks without ever painting; polling it every %v instead of every frame. "+
 			"Return done=true once it is finished; hand work from goroutines to the UI with Window.PostJob, "+
 			"and wait for a moment with Window.RequestTickAt.", name, animatorQuietPoll)
+	}
+}
+
+func (w *Window) noteBusyReason() {
+	switch {
+	case w.framePainted:
+		idleDebugReason("painted")
+	case !w.dirtyRegion.IsEmpty():
+		idleDebugReason("dirty")
+	case w.gpuRedrawPending():
+		idleDebugReason("gpuRedraw")
+	case len(w.rafCallbacks) > 0:
+		idleDebugReason("raf")
+	case w.PendingJobs() > 0:
+		idleDebugReason("jobs")
+	case len(w.afterLayout) > 0:
+		idleDebugReason("afterLayout")
+	case len(w.afterFrame) > 0:
+		idleDebugReason("afterFrame")
+	case w.overlayResizePending:
+		idleDebugReason("overlayResize")
+	default:
+		idleDebugReason("layoutDirty")
 	}
 }

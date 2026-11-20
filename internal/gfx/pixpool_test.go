@@ -46,3 +46,15 @@ func TestPixPoolTrimsWhenIdle(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+func TestVolatileImageCopied(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	if StableImage(img) != image.Image(img) {
+		t.Fatal("a plain image must be shared")
+	}
+	MarkVolatile(img)
+	c := StableImage(img).(*image.RGBA)
+	if c == img || &c.Pix[0] == &img.Pix[0] {
+		t.Fatal("a volatile image must be copied")
+	}
+}

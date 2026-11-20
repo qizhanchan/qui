@@ -224,10 +224,16 @@ type Window struct {
 	// content change, as opposed to InvalidateCompositeRect's "repaint the
 	// same content here" (a sticky header moving over a scrolled view).
 	// Retained layers (ScrollView's content cache) re-render only it.
+	// contentCarry is content damage of frames that painted nothing,
+	// handed to the next painted frame (resetDirty); contentPainted marks
+	// that this frame's damage reached a paint.
+	contentCarry     []Rect
+	contentCarryAll  bool
+	contentPainted   bool
 	contentDirty     []Rect
 	contentDirtyAll  bool
 	compositeOnlyInv int
-	pixelScrolls       []pixelScroll
+	pixelScrolls     []pixelScroll
 	// inLayoutPass + boundsChanged implement repaint scoping for layout
 	// changes: Step sets inLayoutPass around the frame's Measure+Layout;
 	// any widget whose bounds change during the pass sets boundsChanged
@@ -250,6 +256,20 @@ type Window struct {
 	// painted, which buys the window another frame (see window_idle.go).
 	tickAt       time.Time
 	framePainted bool
+	// tickWanted asks the next Step to walk the widget tree's Tickables
+	// even if nothing else would (an input event arrived); lastTreeTick is
+	// when that walk last ran (window_tick.go: treeTickDue).
+	tickWanted   bool
+	lastTreeTick time.Time
+	// treeTicking: the last tree walk's Tickables reported a change (an
+	// animation is running in the tree), so the next Step walks again.
+	treeTicking bool
+	// frameRasterized: the last Step painted widgets (not only a GPU
+	// redraw of retained draws). A Tickable that animates by invalidating
+	// rather than returning a rect keeps the walk going through it.
+	frameRasterized bool
+	// frameClock is the animators' frame clock (window_frameclock.go).
+	frameClock frameClock
 	// gpuRedraw is a pending RequestGPURedraw: a frame that only replays
 	// retained draws (internal/render/retained.go). Atomic because any
 	// goroutine may request one.
@@ -324,6 +344,20 @@ type Window struct {
 	// not caught — handlers should be defensive on their own. Cleared
 	// after firing so re-entry doesn't double-invoke.
 	onClose hookList[func()]
+	// rafCallbacks run at the start of the next frame
+	// (RequestAnimationFrame).
+	// Compositor thread (compositor_thread.go): the running thread, when
+	// the UI thread last presented, and the learned refresh period, both
+	// read by that thread.
+	comp          *compositorThread
+	lastPresent   atomic.Int64
+	refreshPeriod atomic.Int64
+	rafCallbacks  []func(time.Time)
+	lastRAF       time.Time // frame time of the last callback run
+	lastRAFWall   time.Time
+	// onFramePainted observers run after every painted frame
+	// (OnFramePainted).
+	onFramePainted hookList[func()]
 	// life holds close-request vetoes, activation / move / minimize
 	// callbacks and window ownership. See window_lifecycle.go.
 	life windowLifecycle

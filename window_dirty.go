@@ -57,6 +57,22 @@ func (w *Window) unionDirty(r Rect) {
 
 // resetDirty clears the dirty region and its rectangles.
 func (w *Window) resetDirty() {
+	// Content damage a frame did not paint (all of it outside the window:
+	// a change just below the fold) still changed content a cache holds
+	// (widgets/scroll_cache.go prepares tiles beyond the window): keep it
+	// for the next painted frame.
+	if !w.contentPainted && !w.contentDirtyAll {
+		for _, r := range w.contentDirty {
+			if len(w.contentCarry) >= maxContentDirty {
+				w.contentCarryAll = true
+				break
+			}
+			w.contentCarry = append(w.contentCarry, r)
+		}
+	} else if !w.contentPainted && w.contentDirtyAll {
+		w.contentCarryAll = true
+	}
+	w.contentPainted = false
 	w.dirtyRegion = Rect{}
 	w.dirtyRects = w.dirtyRects[:0]
 	w.dirtyRectsOverflow = false
@@ -130,6 +146,19 @@ func (w *Window) PaintSeq() uint64 {
 // coordinates (see InvalidateCompositeRect); all is true when all of the
 // frame's damage counts as content (a full repaint, an overflowing list).
 // Valid while the frame paints; the slice must not be retained.
+// takeContentCarry merges the damage of unpainted frames into this
+// painted frame's.
+func (w *Window) takeContentCarry() {
+	w.contentPainted = true
+	if w.contentCarryAll {
+		w.contentDirty, w.contentDirtyAll = w.contentDirty[:0], true
+	}
+	for _, r := range w.contentCarry {
+		w.noteContentDirty(r)
+	}
+	w.contentCarry, w.contentCarryAll = w.contentCarry[:0], false
+}
+
 func (w *Window) ContentDirty() (rects []Rect, all bool) {
 	if w == nil {
 		return nil, true
@@ -275,6 +304,10 @@ func (w *Window) ScrollPixels(r Rect, dx, dy float32) bool {
 		w.unionDirty(Rect{X: r.X, Y: ie, W: r.W, H: e - ie})
 	}
 	// What the move exposes: the strips of inner the shifted pixels leave.
+	// Composite-only: the content did not change, only where it shows —
+	// a content cache (widgets/scroll_cache.go) already holds it.
+	w.compositeOnlyInv++
+	defer func() { w.compositeOnlyInv-- }()
 	ldx, ldy := float32(pdx)/sx, float32(pdy)/sy
 	if ldy > 0 {
 		w.unionDirty(Rect{X: inner.X, Y: inner.Y, W: inner.W, H: ldy})

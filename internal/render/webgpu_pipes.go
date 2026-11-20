@@ -2,7 +2,9 @@ package render
 
 import (
 	"encoding/binary"
+	"image"
 	"math"
+	"time"
 	"unsafe"
 
 	"github.com/qizhanchan/qui/internal/gfx"
@@ -150,6 +152,9 @@ type pixelTex struct {
 	view    *wgpu.TextureView
 	bg      *wgpu.BindGroup
 	version uint64 // content last uploaded (0: unknown)
+	// gpuRaster: the texture was rasterized on the GPU (RasterizePicture);
+	// DrawPixels replaces it with an uploadable one.
+	gpuRaster bool
 }
 
 func (t *pixelTex) release() {
@@ -188,6 +193,14 @@ func (r *WebGPURenderer) forgetTextures(key any) {
 
 type webgpuCompositor struct{ r *WebGPURenderer }
 
+// FrameTime implements FrameTimer.
+func (c webgpuCompositor) FrameTime() time.Time {
+	if c.r.frameTime.IsZero() {
+		return time.Now()
+	}
+	return c.r.frameTime
+}
+
 func (c webgpuCompositor) FramebufferSize() gfx.Size {
 	return gfx.Size{W: float32(c.r.img.Rect.Dx()), H: float32(c.r.img.Rect.Dy())}
 }
@@ -202,7 +215,7 @@ func (c webgpuCompositor) DrawPixels(key any, version uint64, pix unsafe.Pointer
 		format = wgpu.FormatBGRA8Unorm
 	}
 	t := r.pixels[key]
-	if t == nil || t.tex.Width() != w || t.tex.Height() != h || t.tex.Format() != format {
+	if t == nil || t.gpuRaster || t.tex.Width() != w || t.tex.Height() != h || t.tex.Format() != format {
 		if t != nil {
 			t.release()
 		}
@@ -305,3 +318,55 @@ type sharedTex struct {
 	mem *wgpu.SharedMemory
 	tex *wgpu.Texture
 }
+
+// DrawTexture implements TextureCompositor: a texture RasterizePicture
+// left under key.
+func (c webgpuCompositor) DrawTexture(key any, version uint64, src, dst gfx.Rect) bool {
+	r := c.r
+	t := r.pixels[key]
+	if t == nil || !t.gpuRaster || t.version != version || version == 0 {
+		return false
+	}
+	r.addQuad(r.pipes.tex, t.bg, dst, src, gfx.Rect{}, t.tex.Width(), t.tex.Height(), 1, false)
+	return true
+}
+
+// RasterizePicture implements GPURasterizer: pic's rect is rasterized on
+// the GPU into the texture cached under key (the pixels a DrawPixels of
+// the same key would upload), tagged version. UI thread.
+func (r *WebGPURenderer) RasterizePicture(key any, version uint64, pic *Picture, rect image.Rectangle) bool {
+	if r == nil || gpuRasterOff || key == nil || version == 0 || pic == nil || rect.Empty() {
+		return false
+	}
+	defer r.uiLock()()
+	if r.dev == nil || r.pipes == nil {
+		return false
+	}
+	w, h := rect.Dx(), rect.Dy()
+	t := r.pixels[key]
+	if t == nil || !t.gpuRaster || t.tex.Width() != w || t.tex.Height() != h {
+		if t != nil {
+			t.release()
+			delete(r.pixels, key)
+		}
+		gt := newGPUTex(r.dev, w, h, wgpu.FormatRGBA8Unorm)
+		if gt == nil {
+			return false
+		}
+		t = &pixelTex{tex: gt.tex, view: gt.view, bg: r.pipes.textureBindGroup(gt.view, false), gpuRaster: true}
+		if r.pixels == nil {
+			r.pixels = map[any]*pixelTex{}
+		}
+		r.pixels[key] = t
+	}
+	if !gpuRasterPicture(r.dev, pic, rect, &gpuTex{tex: t.tex, view: t.view, w: w, h: h}) {
+		return false
+	}
+	t.version = version
+	return true
+}
+
+var (
+	_ TextureCompositor = webgpuCompositor{}
+	_ GPURasterizer     = (*WebGPURenderer)(nil)
+)

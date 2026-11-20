@@ -256,3 +256,14 @@ func NewHeadlessWindowForTest(width, height int) (*Window, error) {
 // TickAnimatorsForTest runs one animator tick at now, as a frame would —
 // for tests in other packages that drive animations without a frame loop.
 func (w *Window) TickAnimatorsForTest(now time.Time) { w.tickAnimators(now) }
+
+// RunAnimationFramesForTest runs the frame callbacks requested with
+// RequestAnimationFrame, as the start of a frame would — for tests that
+// pump jobs without stepping the window.
+func (w *Window) RunAnimationFramesForTest() {
+	w.lastRAF, w.lastRAFWall = time.Time{}, time.Time{}
+	w.runAnimationFrames(time.Now())
+}
+
+// LastFrameTimeForTest is the frame time the last Step's animators saw.
+func (w *Window) LastFrameTimeForTest() time.Time { return w.frameClock.last }

@@ -37,7 +37,32 @@ func (b *Box) SetAnimatedLayer(on bool) {
 	}
 	delete(animLayers, b)
 	b.layerSeq = 0
+	b.releaseLayerRasters(b.Window())
+}
+
+// releaseLayerRasters drops b's child bitmaps, their GPU textures in win's
+// renderer and their pending rasters.
+func (b *Box) releaseLayerRasters(win *Window) {
+	for _, cr := range b.childRasters {
+		cr.pending.Cancel()
+		if win != nil {
+			win.ForgetRetainedDraw(cr) // its texture
+		}
+	}
 	b.childRasters = nil
+	b.gpuLayer = nil
+}
+
+// SetWindow releases what b kept as an animated layer when it leaves its
+// window (an element removed while it animates), before the window is
+// forgotten: its textures live in that window's renderer.
+func (b *Box) SetWindow(w *Window) {
+	if old := b.Window(); old != nil && old != w {
+		if b.childRasters != nil || b.gpuLayer != nil {
+			b.releaseLayerRasters(old)
+		}
+	}
+	b.Container.SetWindow(w)
 }
 
 // CompositeLayerActive reports whether b was drawn as a layer over a
@@ -234,7 +259,27 @@ type childRaster struct {
 	img      *image.RGBA
 	key      childRasterKey
 	lastUsed time.Time
-	noCache  bool // the child draws through the GPU
+	noCache  bool   // the child draws through the GPU
+	ver      uint64 // bumped on every new bitmap (its texture's version)
+	// pending is the raster of the child's latest recording, on the
+	// worker pool (RFC 0004 R2); img stays what was shown until it lands.
+	pending    *RasterTask
+	pendingKey childRasterKey
+	// gpu: the bitmap is a renderer texture rasterized on the GPU (RFC 0004
+	// R5) under this childRaster as key, gpuW×gpuH; img is nil then.
+	gpu        bool
+	gpuW, gpuH int
+}
+
+// bytes is what cr's bitmap holds, on the CPU or the GPU.
+func (cr *childRaster) bytes() int {
+	if cr.img != nil {
+		return len(cr.img.Pix)
+	}
+	if cr.gpu {
+		return cr.gpuW * cr.gpuH * 4
+	}
+	return 0
 }
 
 type childRasterKey struct {
@@ -261,8 +306,11 @@ func snapLayerTranslation(canvas Canvas) {
 	}
 }
 
-// drawChildRaster draws child from its bitmap, rendering it first when
-// missing, stale or changed.
+// drawChildRaster draws child from its bitmap. A missing, stale or
+// changed bitmap is re-recorded as a Picture on this thread — cheap — and
+// rasterized on the worker pool; until the raster lands the old bitmap
+// keeps showing. Only a child with no bitmap at all that must show now
+// waits for its raster (and its siblings', which run in parallel).
 func (b *Box) drawChildRaster(canvas Canvas, child Widget) {
 	m := canvas.CurrentMatrix()
 	win := b.Window()
@@ -280,6 +328,12 @@ func (b *Box) drawChildRaster(canvas Canvas, child Widget) {
 		return
 	}
 	key := childRasterKey{a: m.A, d: m.D, fx: dr.X - float32(x0), fy: dr.Y - float32(y0), w: w, h: h, pb: pb}
+	// While capturing for the GPU (anim_layer_gpu.go) canvas records;
+	// children must see the frame's real canvas capabilities.
+	probeBase := canvas
+	if b.gpuCapture != nil {
+		probeBase = b.gpuCapture.real
+	}
 	if b.childRasters == nil {
 		b.childRasters = map[Widget]*childRaster{}
 	}
@@ -288,38 +342,141 @@ func (b *Box) drawChildRaster(canvas Canvas, child Widget) {
 		child.Draw(canvas)
 		return
 	}
-	if cr == nil || cr.key != key || childContentDamaged(win, child, pb) {
-		if cr == nil {
-			cr = &childRaster{}
-			b.childRasters[child] = cr
-		}
-		if cr.img == nil || cr.img.Rect.Dx() != w || cr.img.Rect.Dy() != h {
-			cr.img = image.NewRGBA(image.Rect(0, 0, w, h))
-		} else {
-			clear(cr.img.Pix)
-		}
-		var cc Canvas = NewImageCanvas(cr.img)
+	at := image.Pt(int(x0), int(y0))
+	if cr == nil {
+		cr = &childRaster{}
+		b.childRasters[child] = cr
+	}
+	current := cr.key
+	if cr.pending != nil {
+		current = cr.pendingKey
+	}
+	// Drawn into the 2D frame, a GPU texture is no use: raster on the CPU.
+	cpuNeeded := b.gpuCapture == nil && cr.gpu && cr.img == nil && cr.pending == nil
+	if (cr.img == nil && !cr.gpu && cr.pending == nil) || cpuNeeded || current != key || childContentDamaged(win, child, pb) {
+		var cc Canvas
+		cc, rec := NewPictureCanvas(image.Rect(0, 0, w, h))
 		probe := &gpuProbe{}
-		if _, isGPU := canvas.(GPUCanvas); isGPU {
+		if _, isGPU := probeBase.(GPUCanvas); isGPU {
 			cc = gpuProbeCanvas{Canvas: cc, probe: probe}
-		} else if _, isRetained := canvas.(RetainedCompositorCanvas); isRetained {
+		} else if _, isRetained := probeBase.(RetainedCompositorCanvas); isRetained {
 			cc = retainedProbeCanvas{Canvas: cc, probe: probe}
 		}
 		cc.Translate(-float32(x0), -float32(y0))
 		cc.Concat(m)
+		tRec := time.Now()
 		child.Draw(cc)
+		pic := rec.Finish()
+		if debugGPULayers {
+			gpuDbg.records++
+			gpuDbg.recordTime += time.Since(tRec)
+		}
 		if probe.used {
-			cr.noCache, cr.img = true, nil
+			cr.pending.Cancel()
+			cr.noCache, cr.img, cr.pending = true, nil, nil
 			child.Draw(canvas)
 			return
 		}
-		cr.key = key
+		cr.pending.Cancel()
+		cr.pending = nil
+		// Composited on the GPU, the child is rasterized there, now: a few
+		// GPU commands instead of a CPU raster and an upload.
+		if b.gpuCapture != nil {
+			if gr := win.GPURasterizer(); gr != nil {
+				t0 := time.Now()
+				if gr.RasterizePicture(cr, cr.ver+1, pic, image.Rect(0, 0, w, h)) {
+					cr.ver++
+					cr.key, cr.img, cr.gpu, cr.gpuW, cr.gpuH = key, nil, true, w, h
+					if debugGPULayers {
+						gpuDbg.gpuRasters++
+						gpuDbg.gpuRasterTime += time.Since(t0)
+					}
+					goto placed
+				}
+			}
+		}
+		cr.pendingKey = key
+		var task *RasterTask
+		task = ScheduleRaster(pic, image.Rect(0, 0, w, h), 1, func(*RasterTask) {
+			win.PostJob(func() { b.adoptChildRaster(cr, task) })
+		})
+		cr.pending = task
+		if task.Done() { // ran inline (not worker-safe, or raster threads off)
+			b.adoptChildRaster(cr, task)
+		}
 	}
+placed:
 	cr.lastUsed = time.Now()
+	if b.gpuCapture != nil {
+		// A slot in paint order; an empty one is filled when its raster
+		// lands (captureGPULayer waits for those that show now).
+		b.gpuCapture.tiles = append(b.gpuCapture.tiles, cr.tile(at))
+		return
+	}
+	if cr.img == nil {
+		b.waitChildRaster(cr)
+	}
+	if cr.img == nil {
+		return
+	}
+	iw, ih := cr.img.Rect.Dx(), cr.img.Rect.Dy()
 	canvas.DrawImage(cr.img, Rect{
 		X: (float32(x0) - m.TX) / m.A, Y: (float32(y0) - m.TY) / m.D,
-		W: float32(w) / m.A, H: float32(h) / m.D,
+		W: float32(iw) / m.A, H: float32(ih) / m.D,
 	})
+}
+
+// waitChildRaster blocks until cr's pending raster is in (running it on
+// this thread if no worker has started it).
+func (b *Box) waitChildRaster(cr *childRaster) {
+	t := cr.pending
+	if t == nil {
+		return
+	}
+	start := time.Now()
+	t.Wait()
+	if debugGPULayers {
+		gpuDbg.waits++
+		gpuDbg.waitTime += time.Since(start)
+	}
+	b.adoptChildRaster(cr, t)
+}
+
+// adoptChildRaster makes a finished raster cr's bitmap, on the UI thread.
+// A GPU-composited layer shows it on the next GPU redraw — no repaint;
+// a layer drawn in the 2D frame repaints the child's area.
+func (b *Box) adoptChildRaster(cr *childRaster, t *RasterTask) {
+	if cr.pending != t {
+		return // superseded or dropped
+	}
+	cr.pending = nil
+	img := t.Image()
+	if img == nil {
+		return
+	}
+	cr.img, cr.key, cr.gpu = img, cr.pendingKey, false
+	cr.ver++
+	if debugGPULayers {
+		gpuDbg.rasters++
+		gpuDbg.rasterTime += t.Duration()
+	}
+	win := b.Window()
+	if win == nil {
+		return
+	}
+	if gl := b.gpuLayer; gl != nil {
+		for i := range gl.tiles {
+			if gl.tiles[i].cr == cr {
+				gl.tiles[i] = cr.tile(gl.tiles[i].at)
+			}
+		}
+		gl.set.publish()
+		win.RequestGPURedraw()
+		return
+	}
+	if b.layerSeq != 0 {
+		win.InvalidateCompositeRect(RectInWindow(b, PaintBoundsOf(b)))
+	}
 }
 
 // childContentDamaged reports whether this frame's content damage touches
@@ -341,13 +498,43 @@ func childContentDamaged(win *Window, child Widget, pb Rect) bool {
 	return false
 }
 
-// evictChildRasters drops bitmaps of children not drawn for a while (they
-// scrolled out of the clip).
+// childRasterBudget bounds the bitmaps one layer keeps. A layer cycles
+// through its children (a marquee shows the same photos over and over),
+// so keeping them all — like a compositor keeping a layer's tiles within
+// its memory budget — makes every later pass free; only beyond the budget
+// are the least recently drawn ones (idle for childRasterIdle) dropped.
+const childRasterBudget = 64 << 20
+
+// evictChildRasters drops the least recently used bitmaps while the layer
+// is over its budget.
 func (b *Box) evictChildRasters() {
-	now := time.Now()
+	total := 0
+	for _, cr := range b.childRasters {
+		total += cr.bytes()
+	}
+	if total <= childRasterBudget {
+		return
+	}
+	type aged struct {
+		w  Widget
+		cr *childRaster
+	}
+	list := make([]aged, 0, len(b.childRasters))
 	for w, cr := range b.childRasters {
-		if now.Sub(cr.lastUsed) > childRasterIdle {
-			delete(b.childRasters, w)
+		list = append(list, aged{w, cr})
+	}
+	slices.SortFunc(list, func(x, y aged) int { return x.cr.lastUsed.Compare(y.cr.lastUsed) })
+	now := time.Now()
+	win := b.Window()
+	for _, a := range list {
+		if total <= childRasterBudget || now.Sub(a.cr.lastUsed) <= childRasterIdle {
+			break
+		}
+		delete(b.childRasters, a.w)
+		a.cr.pending.Cancel()
+		total -= a.cr.bytes()
+		if win != nil {
+			win.ForgetRetainedDraw(a.cr) // its texture, if composited on the GPU
 		}
 	}
 }

@@ -134,6 +134,7 @@ func (c *Context) Resize(w, h int) {
 	c.bmp, c.scratch = nil, nil
 	if w > 0 && h > 0 && w*h <= MaxPixels {
 		c.bmp = image.NewRGBA(image.Rect(0, 0, w, h))
+		qui.MarkImageVolatile(c.bmp) // drawn into after it is shown
 	}
 	c.st = defaultState()
 	c.stack = nil

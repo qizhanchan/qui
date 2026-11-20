@@ -50,6 +50,9 @@ type frontendLayerTracker struct {
 type frontendLayerEntry struct {
 	saveDepth int
 	mask      *image.Alpha
+	// lazyMask is a ClipPath mask a picture recording rasterizes at
+	// playback instead.
+	lazyMask *pathMask
 }
 
 func newFrontendLayerTracker() *frontendLayerTracker { return &frontendLayerTracker{} }
@@ -124,12 +127,21 @@ func (c imageCanvas) ClipPath(path *gfx.Path) {
 	)
 	project := func(p gfx.Point) gfx.Point { return top.Matrix.TransformPoint(p) }
 	subs := path.Flatten(project)
-	mask := rasterizePathToAlpha(subs, physRect)
+	// A recording keeps the path and rasterizes the mask at playback (on
+	// a raster worker), not here.
+	rec, recording := c.Backend.(*PictureRecorder)
+	var mask *image.Alpha
+	if !recording {
+		mask = rasterizePathToAlpha(subs, physRect)
+	}
 	// SaveLayer with default paint — composite step just blits mask-
 	// multiplied content through SrcOver / Alpha=1.
 	c.SaveLayer(logicalBounds, gfx.Paint{})
 	if n := len(c.Layers.entries); n > 0 {
 		c.Layers.entries[n-1].mask = mask
+		if recording {
+			c.Layers.entries[n-1].lazyMask = rec.maskSpec(subs, physRect)
+		}
 	}
 }
 
@@ -149,6 +161,12 @@ func (c imageCanvas) restoreLayers(keepDepth int) {
 			return
 		}
 		c.Layers.entries = c.Layers.entries[:len(c.Layers.entries)-1]
+		if top.lazyMask != nil {
+			if rec, ok := c.Backend.(*PictureRecorder); ok {
+				rec.popLayerPathMask(top.lazyMask)
+				continue
+			}
+		}
 		c.Backend.PopLayer(top.mask)
 	}
 }

@@ -1,6 +1,7 @@
 package render
 
 import (
+	"time"
 	"unsafe"
 
 	"github.com/qizhanchan/qui/internal/gfx"
@@ -59,6 +60,49 @@ type RetainedCompositorCanvas interface {
 	// content it shows at call time, so a RequestGPURedraw frame picks up
 	// new content.
 	QueueRetainedDraw(key any, physBounds gfx.Rect, fn func(Compositor))
+}
+
+// RetainedOverlayCanvas is implemented by the canvases of renderers that
+// can composite retained draws OVER the 2D layer, the way a browser's
+// compositor draws a layer it holds as a texture over the page: an
+// animated layer (a CSS marquee) moves by replaying such a draw at a new
+// offset (Window.RequestGPURedraw) with nothing rasterized or uploaded.
+// The draw covers whatever the 2D layer shows in physBounds, so its owner
+// must make sure nothing that paints after it overlaps there. Lifetime
+// rules are those of QueueRetainedDraw.
+type RetainedOverlayCanvas interface {
+	QueueRetainedOverlayDraw(key any, physBounds gfx.Rect, fn func(Compositor))
+}
+
+// CompositorOverlayCanvas queues an overlay draw the renderer may also run
+// on its compositor thread, to keep a layer moving while the UI thread is
+// busy (RFC 0004 R4). fn must read only data it owns or that is immutable
+// — a snapshot committed by the UI thread — and take the frame's time
+// from the Compositor (FrameTimer), never from widgets.
+type CompositorOverlayCanvas interface {
+	QueueCompositorOverlayDraw(key any, physBounds gfx.Rect, fn func(Compositor))
+}
+
+// FrameTimer is implemented by Compositors: the time of the frame being
+// composited (the UI thread's frame clock, or the compositor thread's
+// vsync estimate).
+type FrameTimer interface {
+	FrameTime() time.Time
+}
+
+// CompositorRenderer is a renderer whose compositor-safe overlay draws can
+// be presented from another thread.
+type CompositorRenderer interface {
+	// CompositorWanted reports whether every retained draw of the last
+	// frame is compositor-safe and one of them exists. Any thread.
+	CompositorWanted() bool
+	// RedrawFromCompositor presents the last frame with its retained
+	// draws replayed at time t; false when the UI thread holds the
+	// renderer (it is painting) or the draws are not all compositor-safe.
+	// Called on the compositor thread.
+	RedrawFromCompositor(t time.Time) bool
+	// SetFrameTime sets the time the UI thread's next frame composites at.
+	SetFrameTime(t time.Time)
 }
 
 // RetainedRenderer replays retained draws without rasterizing

@@ -1,9 +1,12 @@
 package widgets
 
 import (
+	"fmt"
 	"image"
 	"math"
+	"os"
 	"slices"
+	"time"
 
 	. "github.com/qizhanchan/qui"
 )
@@ -30,22 +33,77 @@ import (
 // content that draws through the GPU (retained / GPU draws need the
 // window's canvas).
 
+// The cache is tiled (RFC 0004 R3): 256×256 device-pixel tiles in
+// CONTENT device space — the content's own coordinates times the device
+// scale, independent of the scroll offset — so a scroll moves where the
+// tiles land, never what they hold. The UI thread records the content
+// over an interest area (the viewport and a viewport's worth around it)
+// as a Picture; raster workers play it into tiles. A frame composites the
+// visible tiles; those missing are rasterized in parallel and waited for,
+// the ones around the viewport are prepared in the background so a
+// scroll finds them ready. Content damage repaints the damaged part of
+// the tiles that hold it, on this thread (it is usually small).
+
+const contentTileSize = 256
+
+type contentTile struct {
+	img     *image.RGBA // nil until its first raster lands
+	pending *RasterTask // a raster on the worker pool
+	stale   bool        // img predates content damage too large to repaint in place
+	private bool        // img was copied for an in-place repaint this frame
+	used    uint64      // paint seq it was last needed in
+}
+
 type scrollCache struct {
-	img      *image.RGBA     // origin (0,0); pixel (x,y) is device (phys.Min + (x,y))
-	phys     image.Rectangle // device rect of the viewport it covers
-	scaleX   float32         // canvas scale it was rendered at
-	scaleY   float32
-	content  Widget
-	valid    bool
-	disabled bool   // content needed the window canvas (GPU draws)
+	tiles   map[image.Point]*contentTile // by tile index in content device space
+	scaleX  float32                      // content device scale
+	scaleY  float32
+	phase   Point // sub-pixel phase the tiles are rasterized at
+	content Widget
+	valid   bool
+	// disabled: the content needed the window canvas (GPU draws).
+	disabled bool
 	seq      uint64 // window paint the damage was last applied for
 	seqSet   bool
 	layers   []*Box // animated layers kept out of it (anim_layer.go)
+	// pic is the content recorded over picRect (content device space);
+	// nil once content damage made it stale.
+	pic     *Picture
+	picRect image.Rectangle
+}
+
+// tileRect is tile k's rectangle in content device space.
+func tileRect(k image.Point) image.Rectangle {
+	return image.Rect(k.X*contentTileSize, k.Y*contentTileSize, (k.X+1)*contentTileSize, (k.Y+1)*contentTileSize)
+}
+
+// tilesIn lists the tiles r touches.
+func tilesIn(r image.Rectangle) []image.Point {
+	if r.Empty() {
+		return nil
+	}
+	x0, y0 := floorDiv(r.Min.X, contentTileSize), floorDiv(r.Min.Y, contentTileSize)
+	x1, y1 := floorDiv(r.Max.X-1, contentTileSize), floorDiv(r.Max.Y-1, contentTileSize)
+	out := make([]image.Point, 0, (x1-x0+1)*(y1-y0+1))
+	for y := y0; y <= y1; y++ {
+		for x := x0; x <= x1; x++ {
+			out = append(out, image.Pt(x, y))
+		}
+	}
+	return out
+}
+
+func floorDiv(a, b int) int {
+	q := a / b
+	if a%b != 0 && (a < 0) != (b < 0) {
+		q--
+	}
+	return q
 }
 
 // cacheWanted reports whether the content cache applies to this view now.
 func (s *ScrollView) cacheWanted(layers []cacheLayer) bool {
-	if !s.PixelScroll || !s.FixedViewport || (len(s.vpBoxes) == 0 && len(layers) == 0) || s.Content == nil {
+	if !s.PixelScroll || !s.FixedViewport || s.Content == nil || tiledCacheOff && len(s.vpBoxes) == 0 && len(layers) == 0 {
 		return false
 	}
 	if s.cache != nil && s.cache.disabled && s.cache.content == s.Content {
@@ -58,6 +116,10 @@ func (s *ScrollView) cacheWanted(layers []cacheLayer) bool {
 	}
 	return true
 }
+
+// tiledCacheOff (QUI_CONTENT_TILES=0) keeps the cache to views with
+// viewport boxes or animated layers, as before tiling, to bisect.
+var tiledCacheOff = os.Getenv("QUI_CONTENT_TILES") == "0"
 
 // plainPathToContent reports whether every ancestor of w up to and
 // including content paints w untouched: no clip, transform, opacity or
@@ -88,94 +150,142 @@ func plainPathToContent(w, content Widget) bool {
 	return false // w is not under content
 }
 
+// contentDeviceMatrix is the canvas matrix content draws under, the
+// whole-pixel offset from device space to content device space (content
+// device = device + off), and the sub-pixel phase the content sits at
+// (tiles are rasterized at it: a scroll that changes it re-rasterizes
+// them); false when the content is not a plain scale + translation.
+func (s *ScrollView) contentDeviceMatrix(m Matrix) (Matrix, image.Point, Point, bool) {
+	geo := &RecordingCanvas{}
+	geo.Concat(m)
+	s.applyContentTransform(geo)
+	mc := geo.CurrentMatrix()
+	if mc.B != 0 || mc.C != 0 || mc.A <= 0 || mc.D <= 0 {
+		return mc, image.Point{}, Point{}, false
+	}
+	tx, ty := math.Round(float64(mc.TX)), math.Round(float64(mc.TY))
+	phase := Point{X: float32(math.Round((float64(mc.TX)-tx)*256) / 256), Y: float32(math.Round((float64(mc.TY)-ty)*256) / 256)}
+	return mc, image.Pt(-int(tx), -int(ty)), phase, true
+}
+
 // drawCached draws the content through the cache. effClip is the logical
 // part of the viewport this frame paints (already clipped on canvas), vp
 // the viewport. False means the caller draws the content directly.
 func (s *ScrollView) drawCached(canvas Canvas, effClip, vp Rect) bool {
 	layers := s.cacheLayers()
 	if !s.cacheWanted(layers) {
-		s.cache = nil
+		noteTileBypass("not wanted")
+		s.dropCache()
+		s.dropGPULayers()
 		return false
 	}
 	win := s.Window()
 	ca, ok := canvas.(ClipAware)
-	if win == nil || !ok {
+	if win == nil || !ok || !win.InPaintPass() {
+		noteTileBypass("outside paint")
 		return false
 	}
 	m := canvas.CurrentMatrix()
 	if m.B != 0 || m.C != 0 || m.A <= 0 || m.D <= 0 {
+		noteTileBypass("transformed")
+		s.dropGPULayers()
 		return false
 	}
-	pr := m.TransformRect(vp)
-	phys, ok := wholeDeviceRect(pr)
-	if !ok || phys.Empty() {
+	phys, ok := wholeDeviceRect(m.TransformRect(vp))
+	mc, off, phase, ok2 := s.contentDeviceMatrix(m)
+	if !ok || !ok2 || phys.Empty() {
+		noteTileBypass(fmt.Sprintf("off-pixel vp=%v content=%v", ok, ok2))
+		s.dropGPULayers()
 		return false
 	}
 	c := s.cache
-	if c == nil || c.content != s.Content {
-		c = &scrollCache{content: s.Content}
+	if c == nil || c.content != s.Content || c.scaleX != mc.A || c.scaleY != mc.D {
+		s.dropCache()
+		c = &scrollCache{content: s.Content, scaleX: mc.A, scaleY: mc.D, phase: phase, tiles: map[image.Point]*contentTile{}}
 		s.cache = c
+	}
+	if c.phase != phase {
+		// A scroll by a fraction of a device pixel: the tiles hold the
+		// content at another phase.
+		c.phase = phase
+		c.invalidateAll()
 	}
 	if sig := layerSignature(layers); !slices.Equal(sig, c.layers) {
 		// A box that joined or left the layers is missing from (or still
 		// in) the cached pixels.
-		c.layers, c.valid = sig, false
+		c.layers = sig
+		c.invalidateAll()
 	}
-	if c.img == nil || c.phys != phys || c.scaleX != m.A || c.scaleY != m.D {
-		if c.img == nil || c.img.Rect.Dx() != phys.Dx() || c.img.Rect.Dy() != phys.Dy() {
-			c.img = image.NewRGBA(image.Rect(0, 0, phys.Dx(), phys.Dy()))
+	seq := win.PaintSeq()
+	// The damage is the frame's: a frame paints its clip rectangles one by
+	// one, so apply it once.
+	if !c.seqSet || c.seq != seq {
+		c.seq, c.seqSet = seq, true
+		rects, all := win.ContentDirty()
+		if !c.valid || all {
+			c.invalidateAll()
+		} else if len(rects) > 0 {
+			vpWin := RectInWindow(s, vp)
+			woff := Point{X: vpWin.X - vp.X, Y: vpWin.Y - vp.Y}
+			var dev []image.Rectangle
+			for _, r := range rects {
+				// Not clipped to the viewport: tiles are kept ready around it.
+				lr := Rect{X: r.X - woff.X, Y: r.Y - woff.Y, W: r.W, H: r.H}
+				if lr.IsEmpty() {
+					continue
+				}
+				dr := m.TransformRect(lr)
+				d := image.Rect(int(math.Floor(float64(dr.X))), int(math.Floor(float64(dr.Y))),
+					int(math.Ceil(float64(dr.X+dr.W))), int(math.Ceil(float64(dr.Y+dr.H)))).Add(off)
+				dev = append(dev, d)
+			}
+			if s.repaintDamage(canvas, m, off, dev, layers) {
+				c.disabled = true
+				s.dropCache()
+				s.dropGPULayers()
+				return false
+			}
 		}
-		c.phys, c.scaleX, c.scaleY, c.valid = phys, m.A, m.D, false
+		c.valid = true
 	}
 
-	// Re-render what changed: everything when the cache is new or the
-	// frame is a full repaint, else the content damage in the viewport.
-	vpWin := RectInWindow(s, vp)
-	off := Point{X: vpWin.X - vp.X, Y: vpWin.Y - vp.Y}
-	rects, all := win.ContentDirty()
-	var gpu bool
-	// A frame paints its clip rectangles one by one; the damage is the
-	// frame's, so render it once and only composite on the later calls.
-	if seq := win.PaintSeq(); c.valid && c.seqSet && c.seq == seq {
-		rects, all = nil, false
-	} else {
-		c.seq, c.seqSet = seq, true
-	}
-	if !c.valid || all {
-		gpu = s.renderCache(canvas, m, vp, layers)
-		c.valid = !gpu
-	} else {
-		for _, r := range rects {
-			lr := Rect{X: r.X - off.X, Y: r.Y - off.Y, W: r.W, H: r.H}.Intersect(vp)
-			if lr.IsEmpty() {
-				continue
-			}
-			if gpu = s.renderCache(canvas, m, lr, layers); gpu {
-				break
-			}
-		}
-	}
-	if gpu {
-		c.disabled, c.valid, c.img = true, false, nil
+	// The tiles this frame shows, and the ones kept ready around them.
+	view := phys.Add(off)
+	ready := s.readyArea(view, mc, off)
+	if s.prepareTiles(canvas, m, off, view, ready, layers, seq) {
+		c.disabled = true
+		s.dropCache()
+		s.dropGPULayers()
 		return false
 	}
 
-	// Composite the cache for this frame's clip, 1:1 in device pixels.
+	// Composite the visible tiles for this frame's clip, 1:1 in device
+	// pixels.
 	cb := ca.ClipBounds()
 	clip := image.Rect(int(math.Floor(float64(cb.X))), int(math.Floor(float64(cb.Y))),
 		int(math.Ceil(float64(cb.X+cb.W))), int(math.Ceil(float64(cb.Y+cb.H)))).Intersect(phys)
-	if !clip.Empty() {
-		sub := c.img.SubImage(clip.Sub(phys.Min)).(*image.RGBA)
-		logical := Rect{
-			X: (float32(clip.Min.X) - m.TX) / m.A, Y: (float32(clip.Min.Y) - m.TY) / m.D,
-			W: float32(clip.Dx()) / m.A, H: float32(clip.Dy()) / m.D,
+	for _, k := range tilesIn(clip.Add(off)) {
+		t := c.tiles[k]
+		if t == nil || t.img == nil {
+			continue
 		}
-		canvas.DrawImage(sub, logical)
+		dst := tileRect(k).Sub(off).Intersect(clip)
+		if dst.Empty() {
+			continue
+		}
+		t.private = false // shown from here on: shared with whatever records this frame
+		sub := t.img.SubImage(dst.Add(off).Sub(tileRect(k).Min)).(*image.RGBA)
+		canvas.DrawImage(sub, Rect{
+			X: (float32(dst.Min.X) - m.TX) / m.A, Y: (float32(dst.Min.Y) - m.TY) / m.D,
+			W: float32(dst.Dx()) / m.A, H: float32(dst.Dy()) / m.D,
+		})
 	}
 
 	// The animated layers, then the fixed / sticky boxes on top, as the
 	// content would paint them.
-	s.drawLayers(canvas, effClip, layers, win.PaintSeq())
+	if !s.drawGPULayers(canvas, effClip, vp, layers, seq) {
+		s.drawLayers(canvas, effClip, layers, seq)
+	}
 	depth := canvas.Save()
 	canvas.ClipRect(effClip)
 	s.applyContentTransform(canvas)
@@ -185,25 +295,208 @@ func (s *ScrollView) drawCached(canvas Canvas, effClip, vp Rect) bool {
 		}
 	}
 	canvas.RestoreTo(depth)
+	if debugTiles {
+		tileDbg.frames++
+		tileDbg.tiles = len(c.tiles)
+		flushTileDebug()
+	}
 	return true
 }
 
-// renderCache renders the content (without the viewport boxes) into the
-// cache over the logical rect r. It reports true when the content asked
-// for the window's GPU canvas, which the cache cannot stand in for.
-func (s *ScrollView) renderCache(window Canvas, m Matrix, r Rect, layers []cacheLayer) (usedGPU bool) {
+// readyArea is the content device area whose tiles are kept rasterized:
+// the view, a view height above and below, half a width either side,
+// within the content.
+func (s *ScrollView) readyArea(view image.Rectangle, mc Matrix, off image.Point) image.Rectangle {
+	r := image.Rect(view.Min.X-view.Dx()/2, view.Min.Y-view.Dy(), view.Max.X+view.Dx()/2, view.Max.Y+view.Dy())
+	if ext := s.contentExtent(mc, off); !ext.Empty() {
+		r = r.Intersect(ext.Union(view))
+	}
+	return r
+}
+
+// contentExtent is the content's paint bounds in content device space.
+func (s *ScrollView) contentExtent(mc Matrix, off image.Point) image.Rectangle {
+	pb := PaintBoundsOf(s.Content)
+	if pb.IsEmpty() {
+		return image.Rectangle{}
+	}
+	d := mc.TransformRect(pb)
+	return image.Rect(int(math.Floor(float64(d.X))), int(math.Floor(float64(d.Y))),
+		int(math.Ceil(float64(d.X+d.W))), int(math.Ceil(float64(d.Y+d.H)))).Add(off)
+}
+
+// prepareTiles makes sure every tile of view has pixels (waiting for the
+// rasters of those that have none) and that those of ready are on their
+// way; it drops tiles far outside ready. True means the content needed
+// the window's GPU canvas.
+func (s *ScrollView) prepareTiles(canvas Canvas, m Matrix, off image.Point, view, ready image.Rectangle, layers []cacheLayer, seq uint64) bool {
 	c := s.cache
-	var cc Canvas = NewImageCanvas(c.img)
+	win := s.Window()
+	need := func(k image.Point, visible bool) (*contentTile, bool) {
+		t := c.tiles[k]
+		if t == nil {
+			t = &contentTile{}
+			c.tiles[k] = t
+		}
+		t.used = seq
+		if (t.img != nil && !t.stale) || t.pending != nil {
+			return t, true
+		}
+		tr := tileRect(k)
+		if c.pic == nil || !tr.In(c.picRect) {
+			if s.recordInterest(canvas, m, off, ready.Union(tr), layers) {
+				return nil, false
+			}
+		}
+		prio := 2
+		if visible {
+			prio = 0
+		}
+		var task *RasterTask
+		task = ScheduleRaster(c.pic, tileRasterRect(c.pic, tr), prio, func(*RasterTask) {
+			win.PostJob(func() { s.adoptTile(c, t, task, k) })
+		})
+		t.pending = task
+		if task.Done() {
+			s.adoptTile(c, t, task, k)
+		}
+		return t, true
+	}
+	visible := tilesIn(view)
+	for _, k := range visible {
+		if _, ok := need(k, true); !ok {
+			return true
+		}
+	}
+	for _, k := range tilesIn(ready) {
+		if _, ok := need(k, false); !ok {
+			return true
+		}
+	}
+	// Visible tiles with nothing current to show wait for their rasters,
+	// which were all scheduled above and so run in parallel: a frame never
+	// mixes old and new content (Chromium likewise activates a tree only
+	// once its visible tiles are ready).
+	for _, k := range visible {
+		t := c.tiles[k]
+		if (t.img == nil || t.stale) && t.pending != nil {
+			task := t.pending
+			t0 := time.Now()
+			task.Wait()
+			if debugTiles {
+				tileDbg.waits++
+				tileDbg.waitTime += time.Since(t0)
+			}
+			s.adoptTile(c, t, task, k)
+		}
+	}
+	// Drop tiles well outside the ready area.
+	keep := ready.Inset(-contentTileSize)
+	for k, t := range c.tiles {
+		if t.used != seq && !tileRect(k).Overlaps(keep) {
+			t.pending.Cancel()
+			delete(c.tiles, k)
+		}
+	}
+	return false
+}
+
+// filterPad is the margin a tile is rasterized with when the content
+// runs image filters (blur, drop shadow, backdrop-filter): a filter reads
+// pixels around the ones it writes, and a tile cut at its own edge would
+// show seams. Chromium sidesteps this with separate render surfaces.
+const filterPad = 128
+
+// tileRasterRect is what to rasterize for tile rectangle tr.
+func tileRasterRect(pic *Picture, tr image.Rectangle) image.Rectangle {
+	if pic.FiltersNear(tr, filterPad) {
+		return tr.Inset(-filterPad)
+	}
+	return tr
+}
+
+// tileImage is a tile's pixels out of its raster (cropping the filter
+// margin), with its rectangle at (0,0).
+func tileImage(img *image.RGBA) *image.RGBA {
+	if img == nil || img.Rect.Dx() == contentTileSize && img.Rect.Dy() == contentTileSize {
+		return img
+	}
+	o := img.PixOffset(filterPad, filterPad)
+	return &image.RGBA{Pix: img.Pix[o:], Stride: img.Stride, Rect: image.Rect(0, 0, contentTileSize, contentTileSize)}
+}
+
+// adoptTile makes a finished raster tile t's pixels; a tile that was
+// showing stale pixels is recomposited.
+func (s *ScrollView) adoptTile(c *scrollCache, t *contentTile, task *RasterTask, k image.Point) {
+	if t.pending != task || s.cache != c {
+		return
+	}
+	t.pending = nil
+	img := tileImage(task.Image())
+	if img == nil {
+		return
+	}
+	if debugTiles {
+		tileDbg.rasters++
+		tileDbg.rasterTime += task.Duration()
+		if t.stale {
+			tileDbg.staleRasters++
+		}
+	}
+	wasStale := t.stale && t.img != nil
+	t.img, t.stale = img, false
+	if wasStale {
+		s.invalidateTile(k)
+	}
+}
+
+// invalidateTile recomposites tile k's area of the view, if it shows.
+func (s *ScrollView) invalidateTile(k image.Point) {
+	win := s.Window()
+	c := s.cache
+	if win == nil || c == nil {
+		return
+	}
+	r := tileRect(k)
+	// content device → content logical → view → window
+	cr := Rect{X: float32(r.Min.X) / c.scaleX, Y: float32(r.Min.Y) / c.scaleY,
+		W: float32(r.Dx()) / c.scaleX, H: float32(r.Dy()) / c.scaleY}
+	m := s.ChildPaintTransform()
+	win.InvalidateCompositeRect(RectInWindow(s, m.TransformRect(cr)).Intersect(RectInWindow(s, s.viewportRect())))
+}
+
+// recordInterest records the content over area (content device space),
+// grown to the interest margin, as the cache's picture. True means the
+// content needed the window's GPU canvas.
+func (s *ScrollView) recordInterest(window Canvas, m Matrix, off image.Point, area image.Rectangle, layers []cacheLayer) bool {
+	c := s.cache
+	rect := area.Inset(-contentTileSize)
+	cc, rec := NewPictureCanvas(rect)
+	t0 := time.Now()
+	if s.drawContentInto(window, cc, m, off, layers) {
+		return true
+	}
+	c.pic, c.picRect = rec.Finish(), rect
+	if debugTiles {
+		tileDbg.records++
+		tileDbg.recordTime += time.Since(t0)
+	}
+	return false
+}
+
+// drawContentInto draws the content (without the viewport boxes and
+// animated layers) into cc, whose coordinates are content device space.
+// True means the content asked for the window's GPU canvas, which the
+// cache cannot stand in for.
+func (s *ScrollView) drawContentInto(window, cc Canvas, m Matrix, off image.Point, layers []cacheLayer) bool {
 	probe := &gpuProbe{}
 	if _, isGPU := window.(GPUCanvas); isGPU {
 		cc = gpuProbeCanvas{Canvas: cc, probe: probe}
 	} else if _, isRetained := window.(RetainedCompositorCanvas); isRetained {
 		cc = retainedProbeCanvas{Canvas: cc, probe: probe}
 	}
-	cc.Translate(-float32(c.phys.Min.X), -float32(c.phys.Min.Y))
+	cc.Translate(float32(off.X), float32(off.Y))
 	cc.Concat(m)
-	cc.ClipRect(r)
-	cc.ClearRect(r)
 	s.applyContentTransform(cc)
 	suppressed := s.vpBoxes
 	if len(layers) > 0 {
@@ -218,6 +511,116 @@ func (s *ScrollView) renderCache(window Canvas, m Matrix, r Rect, layers []cache
 	}
 	ResumeDraw()
 	return probe.used
+}
+
+// repaintDamage brings the tiles up to date with content damage dev
+// (content device rectangles). Small damage is repainted into the tiles
+// on this thread; tiles whose damaged share is large are re-rasterized
+// instead. True means the content needed the window's GPU canvas.
+func (s *ScrollView) repaintDamage(window Canvas, m Matrix, off image.Point, dev []image.Rectangle, layers []cacheLayer) bool {
+	c := s.cache
+	c.pic = nil // recorded before the damage
+	share := map[image.Point]int{}
+	for _, d := range dev {
+		for _, k := range tilesIn(d) {
+			if t := c.tiles[k]; t != nil {
+				r := d.Intersect(tileRect(k))
+				share[k] += r.Dx() * r.Dy()
+			}
+		}
+	}
+	inPlace := map[image.Point]bool{}
+	for k, area := range share {
+		t := c.tiles[k]
+		switch {
+		case t.pending != nil:
+			// Its raster predates the damage: raster it again.
+			t.pending.Cancel()
+			t.pending = nil
+			t.stale = t.img != nil
+		case t.img == nil || t.stale:
+		case area*2 > contentTileSize*contentTileSize:
+			t.stale = true
+		default:
+			inPlace[k] = true
+		}
+	}
+	if len(inPlace) == 0 {
+		return false
+	}
+	// Each damage rectangle is drawn once, with a margin for filters
+	// reading around it, and copied into the tiles it touches.
+	for _, d := range dev {
+		var ks []image.Point
+		for _, k := range tilesIn(d) {
+			if inPlace[k] {
+				ks = append(ks, k)
+			}
+		}
+		if len(ks) == 0 {
+			continue
+		}
+		cc, rec := NewPictureCanvas(d.Inset(-filterPad))
+		if s.drawContentInto(window, cc, m, off, layers) {
+			return true
+		}
+		pic := rec.Finish()
+		area := d
+		if pic.FiltersNear(d, filterPad) {
+			area = d.Inset(-filterPad)
+		}
+		scratch := image.NewRGBA(image.Rect(0, 0, area.Dx(), area.Dy()))
+		pic.RasterizeInto(scratch, area.Min)
+		if debugTiles {
+			tileDbg.inPlace += len(ks)
+		}
+		for _, k := range ks {
+			t := c.tiles[k]
+			if !t.private {
+				// The tile's pixels may be shared by a Picture a raster
+				// worker is playing (the cache drawn into a recording):
+				// write into a copy.
+				cp := image.NewRGBA(t.img.Rect)
+				for y := 0; y < cp.Rect.Dy(); y++ {
+					copy(cp.Pix[y*cp.Stride:(y+1)*cp.Stride], t.img.Pix[y*t.img.Stride:])
+				}
+				t.img, t.private = cp, true
+			}
+			tr := tileRect(k)
+			r := d.Intersect(tr)
+			for y := r.Min.Y; y < r.Max.Y; y++ {
+				src := scratch.Pix[scratch.PixOffset(r.Min.X-area.Min.X, y-area.Min.Y):]
+				dst := t.img.Pix[t.img.PixOffset(r.Min.X-tr.Min.X, y-tr.Min.Y):]
+				copy(dst[:r.Dx()*4], src[:r.Dx()*4])
+			}
+		}
+	}
+	return false
+}
+
+// invalidateAll marks every tile stale (kept on screen until re-rastered
+// — invisible tiles are simply dropped) and the recording outdated.
+func (c *scrollCache) invalidateAll() {
+	c.pic = nil
+	for k, t := range c.tiles {
+		t.pending.Cancel()
+		t.pending = nil
+		if t.img == nil {
+			delete(c.tiles, k)
+			continue
+		}
+		t.stale = true
+	}
+}
+
+// dropCache forgets the cache.
+func (s *ScrollView) dropCache() {
+	if c := s.cache; c != nil {
+		for _, t := range c.tiles {
+			t.pending.Cancel()
+		}
+	}
+	s.cache = nil
 }
 
 // wholeDeviceRect converts r to whole device pixels, or reports false
@@ -269,4 +672,22 @@ func (p retainedProbeCanvas) QueueRetainedDraw(any, Rect, func(Compositor)) { p.
 // the content cache (diagnostics and tests).
 func (s *ScrollView) ContentCached() bool {
 	return s.cache != nil && s.cache.valid && !s.cache.disabled
+}
+
+// ContentTilesForTest reports the cache's tiles: how many, how many have
+// pixels, and how many are still rasterizing.
+func (s *ScrollView) ContentTilesForTest() (tiles, ready, pending int) {
+	if s.cache == nil {
+		return
+	}
+	for _, t := range s.cache.tiles {
+		tiles++
+		if t.img != nil && !t.stale {
+			ready++
+		}
+		if t.pending != nil {
+			pending++
+		}
+	}
+	return
 }

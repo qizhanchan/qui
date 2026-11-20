@@ -3,6 +3,7 @@ package qui
 import (
 	"image"
 	"log"
+	"os"
 	"slices"
 	"time"
 
@@ -123,6 +124,56 @@ func (w *Window) RegisterAnimator(a Animator) {
 	w.assertUIThread("Window.RegisterAnimator")
 	w.animators = append(w.animators, a)
 	w.Invalidate()
+}
+
+// minRAFGap bounds frame callbacks to display rate when the frame clock
+// is off (QUI_FRAME_CLOCK=0) and frame times never repeat.
+const minRAFGap = 8 * time.Millisecond
+
+// rafSlack is how much earlier than a full refresh period after the last
+// run frame callbacks may run again (wake-up jitter).
+const rafSlack = 1500 * time.Microsecond
+
+// RequestAnimationFrame runs fn once at the start of the next frame, with
+// the frame's time (the display-aligned frame clock), before animators
+// tick and before style, layout and paint — the frame then shows what fn
+// changed. It is the window's counterpart of the web's
+// requestAnimationFrame: a host runs its frame callbacks from it so they
+// keep display cadence. Requesting a frame keeps the loop at display
+// cadence for that frame only; it invalidates nothing. UI thread only.
+func (w *Window) RequestAnimationFrame(fn func(now time.Time)) {
+	if w == nil || fn == nil {
+		return
+	}
+	w.assertUIThread("Window.RequestAnimationFrame")
+	w.rafCallbacks = append(w.rafCallbacks, fn)
+}
+
+// runAnimationFrames runs the frame callbacks requested before this frame;
+// ones they request run next frame.
+func (w *Window) runAnimationFrames(now time.Time) {
+	if len(w.rafCallbacks) == 0 {
+		return
+	}
+	// Once per frame: a Step woken early (by a job, an event) within the
+	// same display period shares its frame time and runs no callbacks —
+	// they wait for the next period, as a browser's wait for BeginFrame.
+	// Gated on wall time, not on the frame clock: a Step woken by a job
+	// between two vsyncs can take the next frame time early, and the vsync
+	// Step after it would then share it and skip the callbacks a period.
+	period := time.Duration(w.refreshPeriod.Load())
+	if period <= 0 {
+		period = defaultRefreshPeriod
+	}
+	if !w.lastRAFWall.IsZero() && time.Since(w.lastRAFWall) < max(period-rafSlack, minRAFGap) {
+		return
+	}
+	w.lastRAF, w.lastRAFWall = now, time.Now()
+	cbs := w.rafCallbacks
+	w.rafCallbacks = nil
+	for _, fn := range cbs {
+		fn(now)
+	}
 }
 
 // tickAnimators ticks every currently-registered animator once, prunes
@@ -278,14 +329,25 @@ func (w *Window) Step() {
 		w.runAfterFrame()
 		w.inStep = false
 		w.noteAnimatorActivity(time.Now())
+		if w.plat != nil {
+			w.syncCompositorThread()
+		}
 	}()
-	w.framePainted = false
+	rasterized := w.frameRasterized
+	w.framePainted, w.frameRasterized = false, false
 
 	// Drain cross-goroutine jobs (agent actions, deferred callbacks)
 	// before any Tick / layout work so their state mutations show up
 	// in this frame. New jobs posted during drain land in the next
 	// Step — keeps frame time bounded.
-	w.runJobs()
+	tStep := time.Now()
+	nj := w.runJobs()
+	if debugIdle {
+		idleDbg.steps++
+		idleDbg.jobs += nj
+		tJobs := time.Now()
+		defer func() { noteSlowStep(tStep, tJobs, nj) }()
+	}
 	// A job may have closed this window (app.CloseWindow / Destroy).
 	if w.plat == nil {
 		return
@@ -304,15 +366,26 @@ func (w *Window) Step() {
 	now := time.Now()
 	// A reached RequestTickAt deadline is spent; the Tickables that asked
 	// for it re-request during the tick walk below if they need another.
-	if !w.tickAt.IsZero() && !now.Before(w.tickAt) {
+	tickDue := !w.tickAt.IsZero() && !now.Before(w.tickAt)
+	if tickDue {
 		w.tickAt = time.Time{}
 	}
 	// Close a grace-pending tooltip before the overlay tick loop so
 	// removing it doesn't mutate the slice ranged below.
 	w.tickTooltip(now)
-	w.tickAnimators(w.anim.now(now))
-	if w.root != nil {
-		w.unionDirty(tickWidget(w.root, now))
+	if debugIdle {
+		stepPhase = stepPhases{start: now}
+	}
+	frameNow := w.anim.now(w.frameTime(now))
+	w.runAnimationFrames(frameNow)
+	w.tickAnimators(frameNow)
+	if w.root != nil && w.treeTickDue(now, w.treeTicking || rasterized || tickDue) {
+		td := tickWidget(w.root, now)
+		w.treeTicking = !td.IsEmpty()
+		if debugIdle && !td.IsEmpty() {
+			idleDbg.tickDirty++
+		}
+		w.unionDirty(td)
 	}
 	// Overlays animate independently. A popup with its own blink/timer
 	// contributes its Tick Rect to the dirty region.
@@ -325,6 +398,9 @@ func (w *Window) Step() {
 	// Deferred work that belongs to this frame (a style engine's coalesced
 	// restyle after this frame's jobs mutated the DOM) runs before layout,
 	// so the frame never paints the half-updated state.
+	if debugIdle {
+		stepPhase.tick = time.Since(now)
+	}
 	w.runBeforeLayout()
 	// Layout caching: skip Measure+Layout unless something explicitly
 	// invalidated the layout. This is the win for high-frequency
@@ -344,6 +420,9 @@ func (w *Window) Step() {
 	w.layoutPass()
 	w.noteLayoutLifecycle()
 	layoutDur := time.Since(tLayout)
+	if debugIdle {
+		stepPhase.styleLayout = time.Since(now) - stepPhase.tick
+	}
 	// A RequestGPURedraw is satisfied by any frame: a painted one replays
 	// retained draws anyway, so only a frame with nothing dirty needs the
 	// redraw-only path.
@@ -440,11 +519,15 @@ func (w *Window) Step() {
 		if clips == nil {
 			clips = []Rect{clip}
 		}
+		w.takeContentCarry()
 		w.inPaint = true
 		func() {
 			beginPaintPass()
 			defer endPaintPass()
 			for _, c := range clips {
+				if dbgClips {
+					println("CLIP", int(c.X), int(c.Y), int(c.W), int(c.H))
+				}
 				w.paintClip(drawCanvas, c)
 			}
 		}()
@@ -452,8 +535,15 @@ func (w *Window) Step() {
 		drawCanvas.RestoreTo(dprID)
 	}
 	tPresent := time.Now()
+	if cr, ok := w.renderer.(render.CompositorRenderer); ok {
+		cr.SetFrameTime(frameNow)
+	}
 	w.renderer.End()
 	w.present()
+	w.notePresented(time.Now())
+	if debugIdle {
+		stepPhase.paint, stepPhase.present = tPresent.Sub(tDraw), time.Since(tPresent)
+	}
 	{
 		sx, sy := float32(fbWidth)/max(viewport.W, 1), float32(fbHeight)/max(viewport.H, 1)
 		w.frameStats.add(FrameTiming{
@@ -469,9 +559,33 @@ func (w *Window) Step() {
 		w.InvalidateShadow()
 	}
 	w.afterPaintProtocol(clip, fullRepaintClip(clip, viewport))
+	if debugIdle {
+		idleDbg.painted++
+		idleDebugFrame(time.Now())
+		idleDbg.paintedPx += float64(dirtyArea(clips, clip, float32(fbWidth)/max(viewport.W, 1), float32(fbHeight)/max(viewport.H, 1)))
+	}
 	w.resetDirty()
-	w.framePainted = true
+	w.framePainted, w.frameRasterized = true, true
 	w.retryDroppedFrame()
+	if w.onFramePainted.len() > 0 {
+		for _, fn := range w.onFramePainted.snapshot() {
+			fn()
+		}
+	}
+}
+
+// OnFramePainted registers fn to run after every frame that painted
+// pixels, on the UI goroutine at the end of Step. It is the hook for work
+// that only matters when something visibly changed — layout moved a box,
+// the page scrolled, an animation advanced — and that should cost nothing
+// while the window is idle (a browser's IntersectionObserver checks). fn
+// must stay cheap; it may post jobs or request ticks.
+func (w *Window) OnFramePainted(fn func()) (remove func()) {
+	if w == nil || fn == nil {
+		return func() {}
+	}
+	w.assertUIThread("Window.OnFramePainted")
+	return w.onFramePainted.add(fn)
 }
 
 // runAfterFrame runs the work queued for the end of this Step. Work queued
@@ -522,6 +636,9 @@ func (w *Window) layoutPass() {
 	for pass := 0; pass < 4; pass++ {
 		if w.root != nil && w.root.IsLayoutDirty() {
 			w.inLayoutPass = true
+			if debugIdle {
+				idleDbg.layouts++
+			}
 			w.boundsChanged = false
 			MeasureChild(w.root, w.lastSize)
 			w.root.Layout(Rect{X: 0, Y: 0, W: w.lastSize.W, H: w.lastSize.H})
@@ -608,3 +725,5 @@ func (w *Window) LayoutForTest() {
 	}
 	w.layoutPass()
 }
+
+var dbgClips = os.Getenv("QUI_TMP_CLIPS") != ""

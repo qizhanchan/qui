@@ -143,7 +143,9 @@ func TestAnimationPlayStateToggle(t *testing.T) {
 		t.Fatalf("animation not created: %+v", a.anim)
 	}
 	run := a.anim.anims[0]
-	a.tickAnimations(time.Now().Add(400 * time.Millisecond))
+	if !a.tickAnimations(time.Now().Add(400 * time.Millisecond)) {
+		t.Fatal("a paused animation still asks for frames")
+	}
 	if o := a.Style().Opacity; o > 0.05 {
 		t.Fatalf("paused animation advanced: opacity %v", o)
 	}
@@ -153,7 +155,9 @@ func TestAnimationPlayStateToggle(t *testing.T) {
 		t.Fatal("play-state change did not reach the running animation")
 	}
 	resumed := time.Now()
-	a.tickAnimations(resumed.Add(500 * time.Millisecond))
+	if a.tickAnimations(resumed.Add(500 * time.Millisecond)) {
+		t.Fatal("a resumed infinite animation reports done")
+	}
 	if o := a.Style().Opacity; math.Abs(float64(o)-0.5) > 0.1 {
 		t.Fatalf("opacity 500ms after resume = %v, want ~0.5", o)
 	}

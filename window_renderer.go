@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/qizhanchan/qui/internal/platform/contract"
 	"github.com/qizhanchan/qui/internal/render"
@@ -171,9 +172,20 @@ func logWebGPUMissing() {
 		"(install it with `go run github.com/qizhanchan/qui/cmd/qui-dawn`)")
 }
 
+// GPURasterizer is the window's renderer when it can rasterize Pictures
+// on the GPU (RFC 0004 R5), else nil.
+func (w *Window) GPURasterizer() render.GPURasterizer {
+	if w == nil {
+		return nil
+	}
+	gr, _ := w.renderer.(render.GPURasterizer)
+	return gr
+}
+
 // closeRenderer releases a renderer's native resources (a GPU context)
 // when the window stops using it.
 func (w *Window) closeRenderer() {
+	w.stopCompositorThread()
 	if c, ok := w.renderer.(interface{ Close() }); ok {
 		c.Close()
 	}
@@ -237,10 +249,14 @@ func (w *Window) redrawRetainedOnly() {
 		fi.SetLogicalSize(w.lastSize)
 	}
 	w.bindSurface()
+	if cr, ok := w.renderer.(render.CompositorRenderer); ok {
+		cr.SetFrameTime(w.frameClock.last)
+	}
 	if !rr.RedrawRetained() {
 		return
 	}
 	w.present()
+	w.notePresented(time.Now())
 	w.framePainted = true
 	w.retryDroppedFrame()
 }

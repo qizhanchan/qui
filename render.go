@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 
+	"github.com/qizhanchan/qui/internal/gfx"
 	"github.com/qizhanchan/qui/internal/render"
 )
 
@@ -50,6 +51,27 @@ type (
 	// video-like content under the 2D layer, shown through the holes
 	// Canvas.ClearRect opened. Type-assert the canvas passed to Draw.
 	RetainedCompositorCanvas = render.RetainedCompositorCanvas
+	// RetainedOverlayCanvas composites retained draws over the 2D layer
+	// (GPU-composited animated layers).
+	RetainedOverlayCanvas = render.RetainedOverlayCanvas
+	// CompositorOverlayCanvas queues overlay draws the compositor thread
+	// may also run (RFC 0004 R4).
+	CompositorOverlayCanvas = render.CompositorOverlayCanvas
+	// FrameTimer gives a Compositor's frame time.
+	FrameTimer = render.FrameTimer
+	// GPURasterizer rasterizes Pictures into renderer textures (RFC 0004
+	// R5); TextureCompositor shows them.
+	GPURasterizer     = render.GPURasterizer
+	TextureCompositor = render.TextureCompositor
+
+	// Picture is a recorded display list (RFC 0004 R1): what a canvas from
+	// NewPictureCanvas drew, replayable onto any raster target, on any
+	// thread when WorkerSafe.
+	Picture = render.Picture
+	// PictureRecorder finishes a NewPictureCanvas recording.
+	PictureRecorder = render.PictureRecorder
+	// RasterTask is a Picture being rasterized by the worker pool.
+	RasterTask = render.RasterTask
 
 	// YUVPlane is one 8-bit plane for Compositor.DrawYUV420.
 	YUVPlane = render.YUVPlane
@@ -82,3 +104,20 @@ func ColorToRGBA(c Color) color.RGBA { return render.ColorToRGBA(c) }
 // so test code can immediately FillRect / DrawText / Save / ClipRect
 // without manual setup.
 func NewImageCanvas(img *image.RGBA) Canvas { return render.NewImageCanvas(img) }
+
+// MarkImageVolatile registers img as a bitmap its owner keeps drawing
+// into after showing it (a <canvas> element's backing store): recorded
+// display lists copy it instead of sharing it.
+func MarkImageVolatile(img *image.RGBA) { gfx.MarkVolatile(img) }
+
+// NewPictureCanvas returns a canvas that records into a Picture covering
+// bounds (device pixels) instead of rasterizing.
+func NewPictureCanvas(bounds image.Rectangle) (Canvas, *PictureRecorder) {
+	return render.NewPictureCanvas(bounds)
+}
+
+// ScheduleRaster rasterizes rect of pic (device pixels of the recording)
+// on the raster worker pool; see render.ScheduleRaster.
+func ScheduleRaster(pic *Picture, rect image.Rectangle, prio int, onDone func(*RasterTask)) *RasterTask {
+	return render.ScheduleRaster(pic, rect, prio, onDone)
+}

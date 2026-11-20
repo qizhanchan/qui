@@ -533,6 +533,10 @@ func (b *CPUBackend) DrawImage(img image.Image, dst gfx.Rect, clip gfx.Rect) {
 	if ix, iy, ok := wholePixelOrigin(dst); ok && src.Dx() == int(math.Round(float64(dst.W))) &&
 		src.Dy() == int(math.Round(float64(dst.H))) && near1(float64(dst.W), float64(src.Dx())) && near1(float64(dst.H), float64(src.Dy())) {
 		sp := image.Point{X: src.Min.X + clipped.Min.X - ix, Y: src.Min.Y + clipped.Min.Y - iy}
+		if rgba, ok := img.(*image.RGBA); ok {
+			drawOverRGBA(target, clipped, rgba, sp) // blit_over.go
+			return
+		}
 		stddraw.Draw(target, clipped, img, sp, stddraw.Over)
 		return
 	}
@@ -567,6 +571,7 @@ func (b *CPUBackend) DrawImageTransformed(img image.Image, m gfx.Matrix, clip gf
 	if target == nil || img == nil {
 		return
 	}
+	img, m = scaledForDraw(img, m) // image_scale_cache.go
 	src := img.Bounds()
 	sw, sh := float32(src.Dx()), float32(src.Dy())
 	if sw <= 0 || sh <= 0 {
@@ -859,6 +864,13 @@ func drawShadowImplRaw(img *image.RGBA, rect gfx.Rect, radius float32, spec gfx.
 		if boxR < 1 {
 			boxR = 1
 		}
+	}
+	// A shadow small enough to keep is blurred once, whole, and reused
+	// (a sticky header's shadow is recomposited every scroll frame, a
+	// card's shadow by every tile it reaches): shadowMaskCache.
+	if m := cachedShadowMask(shadowRect, shadowRadius, rect, radius, spec.Knockout, blur, boxR, margin, dstX0, dstY0, bufW, bufH); m != nil {
+		blendShadowMask(img, m, dstX0, dstY0, bufW, effBounds, shadowColor, alpha)
+		return
 	}
 	pad := 2*boxR + 2
 	wx0 := max(effBounds.Min.X-dstX0-pad, 0)

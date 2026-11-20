@@ -153,6 +153,7 @@ func (w *Window) dispatch(event Event) {
 		return
 	}
 	w.assertUIThread("Window.dispatch")
+	w.tickWanted = true
 	if w.root == nil {
 		return
 	}

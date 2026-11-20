@@ -491,6 +491,14 @@ type elAnimations struct {
 	quiet      bool               // sampling without events or state changes
 	layer      bool               // marked as an animated layer (widgets)
 	lastDirty  qui.Rect           // the animator's last damage, window space
+	lastTick   time.Time          // the frame time of the last tick
+	sameFrame  bool               // this tick is at the last tick's frame time
+	// The animation whose compositor curve the box has (syncCompositorCurve),
+	// and what the curve captured.
+	curveOf    *runAnimation
+	curveStart time.Time
+	curveSpec  animSpec
+	curveCS    *ComputedStyle
 }
 
 // layerMinDuration: an animation shorter than this is not worth a layer
@@ -684,6 +692,11 @@ func (a *elAnimator) Tick(now time.Time) (qui.Rect, bool) {
 	// there leaves the animated element stale on screen. The old place is
 	// damaged too: a moving transform leaves it.
 	r := qui.PaintBoundsInWindow(e)
+	if e.anim.layer && e.Box.GPULayerFollows() {
+		// The GPU draw follows the box (applyAnimated asked for it).
+		e.anim.lastDirty = r
+		return qui.Rect{}, done
+	}
 	dirty := r.Union(e.anim.lastDirty)
 	e.anim.lastDirty = r
 	return dirty, done
@@ -717,6 +730,8 @@ func (e *El) tickAnimations(now time.Time) bool {
 	if st == nil || cs == nil {
 		return true
 	}
+	st.sameFrame = now.Equal(st.lastTick)
+	st.lastTick = now
 	fs := cs.FontSize
 	over := map[string]animVal{}
 	// Animations first; transitions override them.
@@ -729,10 +744,12 @@ func (e *El) tickAnimations(now time.Time) bool {
 		for p, v := range vals {
 			over[p] = v
 		}
-		if active || (!a.ended && !ended) {
+		// A paused animation holds its sampled values and needs no frames
+		// until animation-play-state resumes it (updateAnimations then
+		// registers the animator again), as in a browser.
+		if (active || (!a.ended && !ended)) && !a.spec.paused {
 			running = true
 		}
-		_ = active
 	}
 	for prop, tr := range st.trans {
 		el := now.Sub(tr.start) - tr.spec.delay
@@ -768,6 +785,7 @@ func (e *El) tickAnimations(now time.Time) bool {
 		layer = layer || isLayerAnimation(a)
 	}
 	e.setLayer(layer && running)
+	e.syncCompositorCurve(layer && running)
 	return !running
 }
 
@@ -839,41 +857,142 @@ func (e *El) frameValues(frames []keyframe, p float64, sp animSpec, fs float32) 
 	out := map[string]animVal{}
 	cs := e.lastCS
 	for _, prop := range animatedProps {
-		// Bracketing keyframes that set prop; the computed value stands
-		// in for a missing 0% / 100%.
-		var lo, hi *keyframe
-		for i := range frames {
-			if _, ok := frames[i].decls[prop]; !ok {
-				continue
-			}
-			if float64(frames[i].offset) <= p {
-				lo = &frames[i]
-			}
-			if float64(frames[i].offset) >= p && hi == nil {
-				hi = &frames[i]
-			}
+		if v, ok := keyframeValue(prop, frames, p, sp, fs, valueOf(prop, cs)); ok {
+			out[prop] = v
 		}
-		if lo == nil && hi == nil {
-			continue
-		}
-		base := valueOf(prop, cs)
-		loV, loOff := base, float32(0)
-		if lo != nil {
-			loV, _ = valueFromDecl(prop, lo.decls, fs)
-			loOff = lo.offset
-		}
-		hiV, hiOff := base, float32(1)
-		if hi != nil {
-			hiV, _ = valueFromDecl(prop, hi.decls, fs)
-			hiOff = hi.offset
-		}
-		t := 1.0
-		if hiOff > loOff {
-			t = (p - float64(loOff)) / float64(hiOff-loOff)
-		}
-		out[prop] = lerpVal(prop, loV, hiV, sp.ease(t))
 	}
 	return out
+}
+
+// keyframeValue interpolates prop's keyframes at progress p; base (the
+// computed value) stands in for a missing 0% / 100%. Pure: the compositor
+// curve (compositorCurve) calls it off the UI thread.
+func keyframeValue(prop string, frames []keyframe, p float64, sp animSpec, fs float32, base animVal) (animVal, bool) {
+	// Bracketing keyframes that set prop.
+	var lo, hi *keyframe
+	for i := range frames {
+		if _, ok := frames[i].decls[prop]; !ok {
+			continue
+		}
+		if float64(frames[i].offset) <= p {
+			lo = &frames[i]
+		}
+		if float64(frames[i].offset) >= p && hi == nil {
+			hi = &frames[i]
+		}
+	}
+	if lo == nil && hi == nil {
+		return animVal{}, false
+	}
+	loV, loOff := base, float32(0)
+	if lo != nil {
+		loV, _ = valueFromDecl(prop, lo.decls, fs)
+		loOff = lo.offset
+	}
+	hiV, hiOff := base, float32(1)
+	if hi != nil {
+		hiV, _ = valueFromDecl(prop, hi.decls, fs)
+		hiOff = hi.offset
+	}
+	t := 1.0
+	if hiOff > loOff {
+		t = (p - float64(loOff)) / float64(hiOff-loOff)
+	}
+	return lerpVal(prop, loV, hiV, sp.ease(t)), true
+}
+
+// compositorCurve captures a playing transform animation as a pure
+// function of time (widgets.Box.SetCompositorCurve): the keyframes,
+// timing and the base transform as they are now. It answers only while
+// the animation is in its active phase; outside it the UI thread decides.
+func (e *El) compositorCurve(a *runAnimation) func(time.Time) (*widgets.BoxTransform, bool) {
+	cs := e.lastCS
+	if cs == nil || a.spec.dur <= 0 || a.spec.paused {
+		return nil
+	}
+	sp, frames, start := a.spec, a.frames, a.start
+	fs := cs.FontSize
+	base := valueOf("transform", cs)
+	var ox, oy float32
+	hasOrigin := false
+	if cs.Transform != nil {
+		ox, oy, hasOrigin = cs.Transform.ox, cs.Transform.oy, cs.Transform.hasOrigin
+	}
+	total := math.Inf(1)
+	if !math.IsInf(sp.iterations, 1) {
+		total = float64(sp.dur) * sp.iterations
+	}
+	return func(now time.Time) (*widgets.BoxTransform, bool) {
+		el := now.Sub(start) - sp.delay
+		if el < 0 || float64(el) >= total {
+			return nil, false
+		}
+		iterF := float64(el) / float64(sp.dur)
+		iter := math.Floor(iterF)
+		v, ok := keyframeValue("transform", frames, progressAt(iterF-iter, iter, sp.direction), sp, fs, base)
+		if !ok {
+			return nil, false
+		}
+		if len(v.ops) == 0 {
+			return nil, true
+		}
+		ops := v.ops
+		return &widgets.BoxTransform{SX: 1, SY: 1, OX: ox, OY: oy, HasOrigin: hasOrigin,
+			Resolve: func(w, h float32) qui.Matrix { return resolveTransformOps(ops, w, h) }}, true
+	}
+}
+
+// sameTiming compares two specs but for the easing function (its source
+// text stands for it).
+func sameTiming(a, b animSpec) bool {
+	a.ease, b.ease = nil, nil
+	return a.name == b.name && a.dur == b.dur && a.delay == b.delay && a.easeSrc == b.easeSrc &&
+		a.iterations == b.iterations && a.direction == b.direction && a.fill == b.fill && a.paused == b.paused
+}
+
+// syncCompositorCurve gives the box the curve of its layer animation when
+// one alone moves it: a single playing transform animation, no transform
+// transition over it.
+func (e *El) syncCompositorCurve(layer bool) {
+	st := e.anim
+	var pick *runAnimation
+	if layer && st != nil && st.trans["transform"] == nil {
+		for _, a := range st.anims {
+			if a.ended || a.spec.paused {
+				continue
+			}
+			has := false
+			for _, f := range a.frames {
+				if _, ok := f.decls["transform"]; ok {
+					has = true
+					break
+				}
+			}
+			if !has {
+				continue
+			}
+			if pick != nil {
+				pick = nil // two animations compose: leave it to the UI thread
+				break
+			}
+			pick = a
+		}
+	}
+	if st == nil {
+		return
+	}
+	if pick == st.curveOf && pick != nil && pick.start.Equal(st.curveStart) && sameTiming(pick.spec, st.curveSpec) && e.lastCS == st.curveCS {
+		return
+	}
+	if pick == nil {
+		if st != nil && st.curveOf != nil {
+			st.curveOf = nil
+			e.Box.SetCompositorCurve(nil)
+		}
+		return
+	}
+	st.curveOf, st.curveStart, st.curveSpec, st.curveCS = pick, pick.start, pick.spec, e.lastCS
+	e.Box.SetCompositorCurve(e.compositorCurve(pick))
 }
 
 // applyAnimated puts the animated values on the box (and restores the
@@ -926,6 +1045,27 @@ func (e *El) applyAnimated(over map[string]animVal) {
 				t.Resolve = func(w, h float32) qui.Matrix { return resolveTransformOps(ops, w, h) }
 				e.Box.Transform = t
 			}
+		}
+	}
+	// Composited on the GPU, the element moves by replaying its overlay
+	// draw at the new offset: no repaint at all (widgets/anim_layer_gpu.go).
+	if st.layer && e.Box.GPULayerFollows() {
+		if w := e.Window(); w != nil {
+			// An extra Step within the same frame (a timer woke the loop)
+			// moved nothing: a redraw would only take a drawable the next
+			// frame needs.
+			// The compositor thread moves a layer with a curve on its own.
+			if !st.sameFrame {
+				if !(w.CompositorDriving() && st.curveOf != nil) {
+					w.RequestGPURedraw()
+				}
+				// Where something covers the layer (a sticky header, the
+				// status bubble), the 2D frame draws it: repaint just those.
+				for _, r := range e.Box.GPULayerCovered() {
+					w.InvalidateCompositeRect(r)
+				}
+			}
+			return
 		}
 	}
 	// Drawn as an animated layer, the element only moves: its pixels are

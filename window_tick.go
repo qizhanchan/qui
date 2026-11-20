@@ -43,7 +43,13 @@ func tickWidget(w Widget, now time.Time) Rect {
 		return Rect{}
 	}
 	if t, ok := w.(Tickable); ok {
-		return t.Tick(now)
+		r := t.Tick(now)
+		if debugIdle && !r.IsEmpty() {
+			if _, isC := w.(*Container); !isC {
+				idleDebugTicker(w)
+			}
+		}
+		return r
 	}
 	if l, ok := w.(childLister); ok {
 		var dirty Rect
@@ -53,4 +59,30 @@ func tickWidget(w Widget, now time.Time) Rect {
 		return dirty
 	}
 	return Rect{}
+}
+
+// treeTickSafetyNet bounds how long the tree walk may be skipped, for
+// Tickables that poll state without asking for a tick (see Tickable).
+const treeTickSafetyNet = time.Second
+
+// treeTickDue reports whether this Step walks the widget tree's
+// Tickables. The walk visits every widget, which on a large document
+// (a web page of tens of thousands of boxes) costs far more than the
+// job that woke the loop — a page's setInterval that changes nothing
+// would pay a full tree walk sixty times a second. Like a browser that
+// runs its animation/lifecycle steps only when a frame was requested,
+// the walk runs when something could have started or continued an
+// animation: the last walk reported a change, the last Step rasterized
+// widgets (GPU-only redraws of retained draws do not count),
+// a RequestTickAt deadline arrived,
+// input was dispatched, or this Step has dirty paint or layout (a job
+// changed something). Otherwise only the safety net keeps it going.
+func (w *Window) treeTickDue(now time.Time, frameWanted bool) bool {
+	due := frameWanted || w.tickWanted || !w.dirtyRegion.IsEmpty() ||
+		w.root.IsLayoutDirty() || now.Sub(w.lastTreeTick) >= treeTickSafetyNet
+	if due {
+		w.tickWanted = false
+		w.lastTreeTick = now
+	}
+	return due
 }

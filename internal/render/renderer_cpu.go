@@ -2,6 +2,7 @@ package render
 
 import (
 	"image"
+	"os"
 
 	"github.com/qizhanchan/qui/internal/gfx"
 )
@@ -27,7 +28,15 @@ type CPURenderer struct {
 	// (SetDamage); empty means unknown, i.e. the whole frame.
 	damage      image.Rectangle
 	transparent bool
+	// recording is the frame's display list under QUI_RECORD_FRAMES=1:
+	// the frame is recorded, then played onto the buffer at End.
+	recording *PictureRecorder
 }
+
+// recordFrames turns on record-then-play for every CPU frame — the
+// conformance mode for display lists (picture.go): with it on, every
+// window test and golden runs through Picture playback.
+var recordFrames = os.Getenv("QUI_RECORD_FRAMES") == "1"
 
 // NewCPURenderer creates a renderer that rasterizes on the CPU and hands
 // finished frames to the platform compositor.
@@ -53,6 +62,11 @@ func (r *CPURenderer) Begin(windowSize gfx.Size) gfx.Canvas {
 		r.backend.SetBase(r.img)
 	}
 	r.backend.Begin(windowSize)
+	if recordFrames {
+		c, rec := NewPictureCanvas(r.img.Rect)
+		r.recording = rec
+		return c
+	}
 	state := gfx.NewCanvasState(gfx.Rect{W: float32(w), H: float32(h)})
 	return imageCanvas{CanvasState: state, Backend: r.backend, Layers: newFrontendLayerTracker()}
 }
@@ -60,6 +74,10 @@ func (r *CPURenderer) Begin(windowSize gfx.Size) gfx.Canvas {
 // End finishes the frame. The pixels stay in the renderer's buffer for
 // FrameImage / Snapshot.
 func (r *CPURenderer) End() {
+	if rec := r.recording; rec != nil && r.backend != nil {
+		r.recording = nil
+		rec.Finish().Playback(r.backend, image.Point{}, r.img.Rect)
+	}
 	if r.backend != nil {
 		r.backend.End()
 	}

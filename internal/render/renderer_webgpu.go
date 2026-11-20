@@ -7,6 +7,9 @@ import (
 	"log"
 	"math"
 	"os"
+	"sync"
+	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/qizhanchan/qui/internal/gfx"
@@ -66,6 +69,10 @@ type WebGPURenderer struct {
 
 	retainedComp RetainedSet[func(Compositor)]
 	queuedComp   []func(Compositor)
+	// retainedOver / queuedOver are compositor draws OVER the 2D layer
+	// (RetainedOverlayCanvas: GPU-composited animated layers).
+	retainedOver RetainedSet[func(Compositor)]
+	queuedOver   []func(Compositor)
 	retainedGPU  RetainedSet[func(*GPUFrame)]
 	queuedGPU    []func(*GPUFrame)
 	pre, post    func(*GPUFrame)
@@ -90,6 +97,81 @@ type WebGPURenderer struct {
 	keepShown bool
 	capture   []func(*image.RGBA)
 	shown     *wgpu.Texture
+
+	// Compositor thread (RFC 0004 R4). mu serializes the renderer between
+	// the UI thread — which holds it from Begin to the end of End, and
+	// around its other calls (uiHolds: only the UI thread reads it) — and
+	// the compositor thread's RedrawFromCompositor. overSafe marks the
+	// overlay draws queued as compositor-safe; wanted caches
+	// CompositorWanted for other threads. frameTime is the time the frame
+	// being composited is drawn at (FrameTimer).
+	mu        sync.Mutex
+	uiHolds   bool
+	overSafe  map[any]bool
+	wanted    atomic.Bool
+	frameTime time.Time
+}
+
+// uiLock takes the renderer for a UI-thread call made outside Begin…End;
+// inside them the UI thread already holds it.
+func (r *WebGPURenderer) uiLock() (unlock func()) {
+	if r.uiHolds {
+		return func() {}
+	}
+	r.mu.Lock()
+	r.uiHolds = true
+	return func() {
+		r.uiHolds = false
+		r.mu.Unlock()
+	}
+}
+
+// SetFrameTime sets the frame time the UI thread's next frame composites
+// at (CompositorRenderer).
+func (r *WebGPURenderer) SetFrameTime(t time.Time) {
+	if r != nil {
+		defer r.uiLock()()
+		r.frameTime = t
+	}
+}
+
+// CompositorWanted implements CompositorRenderer.
+func (r *WebGPURenderer) CompositorWanted() bool { return r != nil && r.wanted.Load() }
+
+// noteCompositorWanted recomputes CompositorWanted after a frame: every
+// retained draw must be a compositor-safe overlay draw (video, GPU widget
+// and hook draws read UI-thread state).
+func (r *WebGPURenderer) noteCompositorWanted() {
+	ok := r.dev != nil && r.dev.ThreadSafe() && r.retainedComp.Len() == 0 && r.retainedGPU.Len() == 0 &&
+		r.pre == nil && r.post == nil && r.retainedOver.Len() > 0
+	if ok {
+		r.retainedOver.Each(func(k any) bool {
+			ok = r.overSafe[k]
+			return ok
+		})
+	}
+	r.wanted.Store(ok)
+}
+
+// RedrawFromCompositor implements CompositorRenderer: called on the
+// compositor thread while the UI thread is late with a frame.
+func (r *WebGPURenderer) RedrawFromCompositor(t time.Time) bool {
+	if r == nil || !r.wanted.Load() || !r.mu.TryLock() {
+		return false
+	}
+	defer r.mu.Unlock()
+	// Not while a pixel scroll waits for the UI frame that paints what it
+	// exposed, nor on a surface that broke.
+	if r.surface == nil || r.img == nil || !r.painted || r.locked || r.broken || len(r.moves) > 0 {
+		return false
+	}
+	r.noteCompositorWanted()
+	if !r.wanted.Load() {
+		return false
+	}
+	r.frameTime = t
+	r.present(nil, image.Rectangle{}, true)
+	return true
 }
 
 // NewWebGPURenderer creates a WebGPU-presenting renderer. It presents
@@ -120,6 +202,7 @@ func (r *WebGPURenderer) SetSurfaceTarget(t SurfaceTarget) bool {
 	if r == nil {
 		return false
 	}
+	defer r.uiLock()()
 	if wgpu.Lost() || r.broken {
 		// The window falls back to CPU presentation (Window.rendererFailed).
 		r.releaseSurface()
@@ -182,6 +265,8 @@ func (r *WebGPURenderer) Close() {
 	if r == nil {
 		return
 	}
+	defer r.uiLock()()
+	r.wanted.Store(false)
 	if r.dev != nil {
 		r.dev.WaitIdle()
 	}
@@ -307,6 +392,10 @@ func (r *WebGPURenderer) frameBuffer(w, h int) {
 
 // Begin starts a frame of the given physical size.
 func (r *WebGPURenderer) Begin(windowSize gfx.Size) gfx.Canvas {
+	if !r.uiHolds {
+		r.mu.Lock()
+		r.uiHolds = true
+	}
 	w := int(maxFloat(windowSize.W, 1))
 	h := int(maxFloat(windowSize.H, 1))
 	r.frameBuffer(w, h)
@@ -335,6 +424,13 @@ func (r *WebGPURenderer) Begin(windowSize gfx.Size) gfx.Canvas {
 
 // End finishes the raster and presents the frame.
 func (r *WebGPURenderer) End() {
+	defer func() {
+		r.noteCompositorWanted()
+		if r.uiHolds {
+			r.uiHolds = false
+			r.mu.Unlock()
+		}
+	}()
 	if r.backend != nil {
 		r.backend.End()
 	}
@@ -344,9 +440,10 @@ func (r *WebGPURenderer) End() {
 	rects := r.damageRects
 	r.damage, r.damageRects = image.Rectangle{}, nil
 	if r.surface == nil || r.img == nil {
-		r.queuedComp, r.queuedGPU = r.queuedComp[:0], r.queuedGPU[:0]
+		r.queuedComp, r.queuedGPU, r.queuedOver = r.queuedComp[:0], r.queuedGPU[:0], r.queuedOver[:0]
 		r.moves, r.moveDeltas = r.moves[:0], r.moveDeltas[:0]
 		r.retainedComp.EndFrame()
+		r.retainedOver.EndFrame()
 		r.retainedGPU.EndFrame()
 		return
 	}
@@ -374,11 +471,16 @@ func (r *WebGPURenderer) End() {
 // RedrawRetained produces a frame that replays the retained draws over the
 // last painted frame without rasterizing anything.
 func (r *WebGPURenderer) RedrawRetained() bool {
-	if r == nil || r.surface == nil || r.img == nil || !r.painted ||
-		r.retainedComp.Len()+r.retainedGPU.Len() == 0 && r.pre == nil && r.post == nil && !r.dropped {
+	if r == nil {
+		return false
+	}
+	defer r.uiLock()()
+	if r.surface == nil || r.img == nil || !r.painted ||
+		r.retainedComp.Len()+r.retainedGPU.Len()+r.retainedOver.Len() == 0 && r.pre == nil && r.post == nil && !r.dropped {
 		return false
 	}
 	r.present(nil, image.Rectangle{}, true)
+	r.noteCompositorWanted()
 	return true
 }
 
@@ -388,9 +490,11 @@ func (r *WebGPURenderer) present(up []image.Rectangle, damage image.Rectangle, d
 	w, h := img.Rect.Dx(), img.Rect.Dy()
 	replayComp := r.retainedComp.CarryOver(damage, damageNone)
 	replayGPU := r.retainedGPU.CarryOver(damage, damageNone)
-	freshComp, freshGPU := r.queuedComp, r.queuedGPU
-	r.queuedComp, r.queuedGPU = r.queuedComp[:0], r.queuedGPU[:0]
+	replayOver := r.retainedOver.CarryOver(damage, damageNone)
+	freshComp, freshGPU, freshOver := r.queuedComp, r.queuedGPU, r.queuedOver
+	r.queuedComp, r.queuedGPU, r.queuedOver = r.queuedComp[:0], r.queuedGPU[:0], r.queuedOver[:0]
 	defer r.retainedComp.EndFrame()
+	defer r.retainedOver.EndFrame()
 	defer r.retainedGPU.EndFrame()
 
 	r.updateFrameTexture(up)
@@ -427,6 +531,12 @@ func (r *WebGPURenderer) present(up []image.Rectangle, damage image.Rectangle, d
 		fn(frame)
 	}
 	r.addQuad(r.pipes.layer, r.frameBindGroup(), gfx.Rect{W: float32(w), H: float32(h)}, gfx.Rect{}, gfx.Rect{}, 1, 1, 1, false)
+	for _, fn := range replayOver {
+		fn(comp)
+	}
+	for _, fn := range freshOver {
+		fn(comp)
+	}
 	if r.post != nil {
 		r.post(frame)
 	}
@@ -504,7 +614,11 @@ func (r *WebGPURenderer) acquire(w, h int) *wgpu.Texture {
 // frame. It reports each drop once, and stops after maxRetriedDrops in a
 // row.
 func (r *WebGPURenderer) TakeDroppedFrame() bool {
-	if r == nil || !r.dropped || r.broken {
+	if r == nil {
+		return false
+	}
+	defer r.uiLock()()
+	if !r.dropped || r.broken {
 		return false
 	}
 	return r.drops <= maxRetriedDrops
@@ -777,6 +891,7 @@ func (r *WebGPURenderer) PresentsItself() bool { return r != nil && r.surface !=
 
 func (r *WebGPURenderer) SetLogicalSize(s gfx.Size) {
 	if r != nil {
+		defer r.uiLock()()
 		r.logicalSize = s
 	}
 }
@@ -789,14 +904,24 @@ func (r *WebGPURenderer) SetDamage(rect image.Rectangle) {
 
 func (r *WebGPURenderer) SetTransparent(on bool) {
 	if r != nil {
+		defer r.uiLock()()
 		r.transparent = on
 	}
 }
 
 func (r *WebGPURenderer) IsTransparent() bool { return r != nil && r.transparent }
 
-func (r *WebGPURenderer) SetPreRender(fn func(*GPUFrame))  { r.pre = fn }
-func (r *WebGPURenderer) SetPostRender(fn func(*GPUFrame)) { r.post = fn }
+func (r *WebGPURenderer) SetPreRender(fn func(*GPUFrame)) {
+	defer r.uiLock()()
+	r.pre = fn
+	r.noteCompositorWanted()
+}
+
+func (r *WebGPURenderer) SetPostRender(fn func(*GPUFrame)) {
+	defer r.uiLock()()
+	r.post = fn
+	r.noteCompositorWanted()
+}
 
 // Snapshot copies the last frame. When the window shows GPU content
 // (retained 3D / video draws, pre/post hooks) the CPU image alone would
@@ -807,6 +932,7 @@ func (r *WebGPURenderer) Snapshot() *image.RGBA {
 	if r == nil || r.img == nil {
 		return nil
 	}
+	defer r.uiLock()()
 	if img := r.snapshotComposited(); img != nil {
 		return img
 	}
@@ -843,9 +969,13 @@ func (r *WebGPURenderer) ForgetRetainedDraw(key any) {
 	if r == nil {
 		return
 	}
+	defer r.uiLock()()
+	delete(r.overSafe, key)
 	r.retainedComp.Forget(key)
 	r.retainedGPU.Forget(key)
+	r.retainedOver.Forget(key)
 	r.forgetTextures(key)
+	r.noteCompositorWanted()
 }
 
 func (r *WebGPURenderer) CanScrollPixels() bool { return r != nil && r.img != nil }
@@ -857,6 +987,7 @@ func (r *WebGPURenderer) ScrollPixels(rect image.Rectangle, dx, dy int) bool {
 	if r == nil || r.img == nil {
 		return false
 	}
+	defer r.uiLock()()
 	rr := rect.Sub(r.img.Rect.Min)
 	if r.shared != nil {
 		// The shared frame IS img's memory: move the pixels with the CPU,
@@ -893,6 +1024,26 @@ func (c webgpuCanvas) QueueRetainedDraw(key any, physBounds gfx.Rect, fn func(Co
 	}
 	c.r.retainedComp.Put(key, physBounds, fn)
 	c.r.queuedComp = append(c.r.queuedComp, fn)
+}
+
+func (c webgpuCanvas) QueueRetainedOverlayDraw(key any, physBounds gfx.Rect, fn func(Compositor)) {
+	if key == nil || fn == nil {
+		return
+	}
+	delete(c.r.overSafe, key) // until QueueCompositorOverlayDraw says otherwise
+	c.r.retainedOver.Put(key, physBounds, fn)
+	c.r.queuedOver = append(c.r.queuedOver, fn)
+}
+
+func (c webgpuCanvas) QueueCompositorOverlayDraw(key any, physBounds gfx.Rect, fn func(Compositor)) {
+	if key == nil || fn == nil {
+		return
+	}
+	c.QueueRetainedOverlayDraw(key, physBounds, fn)
+	if c.r.overSafe == nil {
+		c.r.overSafe = map[any]bool{}
+	}
+	c.r.overSafe[key] = true
 }
 
 func (c webgpuCanvas) QueueGPUDraw(fn func(*GPUFrame)) {

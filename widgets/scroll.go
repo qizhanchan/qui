@@ -84,6 +84,7 @@ type ScrollView struct {
 	UserScrollLocked func() bool
 	vpBoxes          []Widget        // fixed / sticky boxes of the content
 	cache            *scrollCache    // content cache, see scroll_cache.go
+	gpuSet           *gpuLayerSet    // layers composited on the GPU (anim_layer_gpu.go)
 	stickyBase       map[Widget]Rect // sticky boxes' in-flow rects
 	stickyPlaced     map[Widget]Rect // where placeViewportBoxes last put them
 	// Orientation selects the scroll axis. Zero value = ScrollVertical.

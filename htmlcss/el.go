@@ -5599,16 +5599,29 @@ func (e *El) linkAncestorState(cs *ComputedStyle) {
 		}
 	}
 	restyles := func(v *ComputedStyle) bool {
-		return stateLayoutDiffers(cs, v) || inheritKids && v != nil && v.Color != cs.Color
+		return stateRestyleDiffers(cs, v) || inheritKids && v != nil && v.Color != cs.Color
 	}
 	layH := restyles(cs.AncestorHover)
 	layF := restyles(cs.AncestorFocus)
 	layA := restyles(cs.AncestorActive)
-	e.stateLayout = layH || layF || layA
+	// The element's own :hover / :focus / :active rules restyle it the same
+	// way when the paint swap cannot show them (`.btn:hover { transform:
+	// scale(1.05) }`): the element is then its own trigger.
+	selfH := paintSwapMisses(cs, cs.Hover)
+	selfF := paintSwapMisses(cs, cs.Focus)
+	selfA := paintSwapMisses(cs, cs.Active)
+	e.stateLayout = layH || layF || layA || selfH || selfF || selfA
 	sensH := layH || ancestorStateSensitive(cs, cs.AncestorHover)
 	sensF := layF || ancestorStateSensitive(cs, cs.AncestorFocus)
 	sensA := layA || ancestorStateSensitive(cs, cs.AncestorActive)
-	if (!sensH && !sensF && !sensA) || e.engine == nil || e.engine.sheet == nil || e.node == nil {
+	if (!sensH && !sensF && !sensA && !selfH && !selfF && !selfA) || e.engine == nil || e.engine.sheet == nil || e.node == nil {
+		return
+	}
+	if selfH || selfF || selfA {
+		e.stateTriggers = append(e.stateTriggers, stateTrigger{el: e, hover: selfH, focus: selfF, active: selfA})
+		e.engine.addStateDep(e, e, selfF)
+	}
+	if !sensH && !sensF && !sensA {
 		return
 	}
 	sheet := e.engine.sheet
@@ -5676,6 +5689,42 @@ func (e *El) notifyStateDeps() {
 	}
 }
 
+// stateRestyleDiffers reports whether the state variant v changes
+// something only a restyle can show: the layout, a property the paint swap
+// does not carry (transform, opacity, filter, clipping, masking), or a
+// property the resting style transitions — a browser restyles on the state
+// boundary and so starts the transition (react.dev's cards scale and tilt
+// on `.group:hover` over 300ms).
+func stateRestyleDiffers(base, v *ComputedStyle) bool {
+	if base == nil || v == nil {
+		return false
+	}
+	return stateLayoutDiffers(base, v) || paintSwapMisses(base, v)
+}
+
+// paintSwapMisses reports whether the state variant v changes a property
+// the draw-time state swap does not carry, or one the resting style
+// transitions (the swap would jump instead of transitioning).
+func paintSwapMisses(base, v *ComputedStyle) bool {
+	if base == nil || v == nil {
+		return false
+	}
+	for _, p := range [...]string{"transform", "translate", "rotate", "scale", "opacity", "filter",
+		"clip-path", "mask", "mask-image", "backdrop-filter"} {
+		if rawValue(base, p) != rawValue(v, p) {
+			return true
+		}
+	}
+	if len(base.transitions()) > 0 {
+		for _, p := range transitionProps {
+			if rawValue(base, p) != rawValue(v, p) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // stateLayoutDiffers reports whether the state variant v lays out
 // differently from the resting style base (paint-only changes excluded).
 func stateLayoutDiffers(base, v *ComputedStyle) bool {
@@ -5704,14 +5753,29 @@ func (e *El) layoutStateVariant(cs, parent *ComputedStyle) *ComputedStyle {
 	}
 	var st selectorState
 	for i, t := range e.stateTriggers {
+		// The element as its own trigger: the subject compound matches
+		// under its own state flags, not the node-scoped sets.
+		self := t.el == e
 		if mask&(1<<(uint(i)*3)) != 0 {
-			st.hoverNodes = append(st.hoverNodes, t.el.node)
+			if self {
+				st.hover = true
+			} else {
+				st.hoverNodes = append(st.hoverNodes, t.el.node)
+			}
 		}
 		if mask&(1<<(uint(i)*3+1)) != 0 {
-			st.focusNodes = append(st.focusNodes, t.el.node)
+			if self {
+				st.focus = true
+			} else {
+				st.focusNodes = append(st.focusNodes, t.el.node)
+			}
 		}
 		if mask&(1<<(uint(i)*3+2)) != 0 {
-			st.activeNodes = append(st.activeNodes, t.el.node)
+			if self {
+				st.active = true
+			} else {
+				st.activeNodes = append(st.activeNodes, t.el.node)
+			}
 		}
 	}
 	v := *interpret(e.node, mergedDecls(e.node, e.engine.sheet, st), parent)
