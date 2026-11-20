@@ -2,7 +2,9 @@ package qui
 
 import (
 	"image"
+	"log"
 	"math"
+	"os"
 )
 
 // UI-thread scrolling (RFC 0005 §3.3, P3). A wheel over a composited scroll
@@ -83,6 +85,11 @@ func (v *PageView) containerShift(i int) image.Point {
 // reports true, or false when the page must handle the wheel (a slow
 // region, or nothing composited can scroll).
 func (v *PageView) scrollLayer(e MouseEvent, x, y float64) bool {
+	if debugPageView {
+		for _, l := range v.layers {
+			log.Printf("qui/pageview: wheel at %.0f,%.0f layer vp=%v off=%v max=%v comp=%v tiles=%d", x, y, l.f.Viewport, l.ui, l.f.Max, l.f.Composited, len(l.f.Tiles))
+		}
+	}
 	if len(v.layers) == 0 {
 		return false
 	}
@@ -175,3 +182,6 @@ func (v *PageView) drawMovedLayers(c Canvas) {
 		c.RestoreTo(depth)
 	}
 }
+
+// debugPageView (QUI_DEBUG_PAGEVIEW=1) logs PageView's UI-thread scrolling.
+var debugPageView = os.Getenv("QUI_DEBUG_PAGEVIEW") != ""

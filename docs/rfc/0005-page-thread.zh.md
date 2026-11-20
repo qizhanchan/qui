@@ -326,3 +326,21 @@ P0 与架构无关，可以立刻做。P1 是后面所有阶段的地基，也�
   - 验收：`TestPageViewIMEAndFileDrop`（候选窗位置、预编辑和上屏、拖放坐标），`-race` 零报告。
   - 留到 P5：浏览器右键菜单在 shell 里同步读页面命中信息，要改成向页面异步请求。
   - 未做：页面弹层越出页面视口（Chromium 的独立弹层窗口）。
+- **P5**（q-browser 接入）：
+  - `browser.TabHandle` 是 shell 一侧的句柄。`browser.Tab` 本身不动，整个跑在 `PageHost` 的窗口里，每个标签页一条页面线程；按（组, 站点）共享线程留到后续。
+    - shell 读到的状态（标题、URL、加载中、历史、缩放、查找结果、悬停链接）是页面线程每次变化后发布的镜像。
+    - 命令一律投递，不等待。
+    - 原来 shell 同步读页面的地方（`HitAt`、`SelectedText`）改到页面一侧：页面窗口的事件过滤器根据同一批鼠标事件算出悬停链接、中键链接和右键目标，再报给 UI 线程（`OnContextMenu`）。
+  - 无响应检测：每秒检查一次 `PageThread.Busy`，单个任务超过 15 秒就在状态栏提示。
+  - 后台标签页：`PageHost.SetHidden` 把帧率降到每秒 4 帧，任务照常运行；JS 定时器的节流沿用 `js.SetVisible`。
+  - 绘制保持：导航时 PageView 一直显示上一帧，直到新文档提交，这是这个架构自然带来的。
+  - `matchMedia` 改用文档自己的视口（`MediaMatchesSize`）。
+  - 用 `QB_PAGE_THREADS=0` 可以回到旧模式。DevTools 只在旧模式下可用，因为它从 shell 窗口直接读 DOM；页面线程模式下面板里给出说明。
+  - 顺带修复：`position: fixed` 盒子位于 transform 等祖先之下时，内容瓦片缓存原来会拒绝整个文档（go.dev 因此从来没有用上瓦片）。现在这类盒子画进瓦片，它们的移动按内容损伤处理。
+  - 验收（真实窗口）：
+    - `QB_DEBUG_UILAT` 测 UI 线程排队延迟。打开 github.com/pricing 时，页面线程模式下除启动那一秒外每秒 p99 ≤ 20ms、最大约 31ms；旧模式下 UI 线程多次卡住 1–3.3 秒。
+    - go.dev 页面线程卡住 4 秒期间，滚轮立即滚动一屏，页面恢复后追上同一位置。
+    - `TestTabHandleThreaded` 在 `-race` 下零报告。
+- **P5b**：
+  - `qui.PageThread`、`PageHost`、`PageView` 已经是公开 API，示例见 `examples/pagehost`：一个页面线程上的 HTML 文档，可以一键阻塞页面线程，观察窗口仍然响应、可以滚动、走马灯仍在走。
+  - go-code 预览面板的迁移留给 go-code 仓库（当前有未提交的其他改动）。

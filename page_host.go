@@ -199,12 +199,32 @@ func (t *PageThread) nextWait(now time.Time) time.Duration {
 	wait := pumpForever
 	for _, h := range t.hosts {
 		if w := h.win; w != nil && w.plat != nil {
-			if d := w.nextFrameWait(now); d < wait {
+			d := w.nextFrameWait(now)
+			if h.hidden.Load() && d < hiddenFrameInterval && w.PendingJobs() == 0 {
+				// A hidden page animates and repaints at a crawl (RFC 0005
+				// §3.7); its jobs (loads, script tasks) still run promptly.
+				d = hiddenFrameInterval
+			}
+			if d < wait {
 				wait = d
 			}
 		}
 	}
 	return wait
+}
+
+// hiddenFrameInterval paces a hidden page's frames.
+const hiddenFrameInterval = 250 * time.Millisecond
+
+// SetHidden marks the page hidden (a background tab) or shown. A hidden
+// page keeps running its jobs but frames at a few per second. Any
+// goroutine.
+func (h *PageHost) SetHidden(hidden bool) {
+	if h == nil || h.hidden.Swap(hidden) == hidden {
+		return
+	}
+	h.pw.visible.Store(!hidden)
+	h.thread.wake()
 }
 
 // Pump runs one iteration of a sync thread: queued tasks, then a frame of
@@ -283,6 +303,7 @@ type PageHost struct {
 
 	closed  atomic.Bool
 	crashed atomic.Bool
+	hidden  atomic.Bool
 
 	// Commit store: the last presented frame, physical pixels. presentCPU
 	// copies the damaged area in; the host side copies out of it under the

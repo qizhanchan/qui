@@ -115,12 +115,60 @@ func (s *ScrollView) cacheWanted(layers []cacheLayer) bool {
 	if s.cache != nil && s.cache.disabled && s.cache.content == s.Content {
 		return false
 	}
+	// A box that cannot be drawn on its own exactly as in place (an
+	// ancestor transforms, clips or applies an effect — a fixed box under a
+	// transform is not even fixed in CSS) is painted into the tiles like
+	// the rest of the content; its moves are content damage (blitScroll).
+	s.tileBoxes = s.tileBoxes[:0]
 	for _, w := range s.vpBoxes {
 		if !plainPathToContent(w, s.Content) {
-			return false
+			if debugTiles {
+				noteTileBypass(fmt.Sprintf("viewport box %T pos=%v in tiles: %s", w, ViewportPositioningOf(w), whyNotPlain(w, s.Content)))
+			}
+			s.tileBoxes = append(s.tileBoxes, w)
 		}
 	}
 	return true
+}
+
+// inTiles reports whether viewport box w is painted into the tiles.
+func (s *ScrollView) inTiles(w Widget) bool { return slices.Contains(s.tileBoxes, w) }
+
+// coverBoxes are the viewport boxes drawn over the tiles.
+func (s *ScrollView) coverBoxes() []Widget {
+	if len(s.tileBoxes) == 0 {
+		return s.vpBoxes
+	}
+	out := make([]Widget, 0, len(s.vpBoxes))
+	for _, w := range s.vpBoxes {
+		if !s.inTiles(w) {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// whyNotPlain names the first ancestor property that makes plainPathToContent
+// false (QUI_DEBUG_TILES).
+func whyNotPlain(w, content Widget) string {
+	for cur := w.Parent(); cur != nil && cur != content; cur = cur.Parent() {
+		if t, ok := cur.(ChildPaintTransformer); ok && t.ChildPaintTransform() != IdentityMatrix() {
+			return fmt.Sprintf("%T child transform", cur)
+		}
+		if t, ok := cur.(PaintTransformer); ok && t.PaintTransform() != IdentityMatrix() {
+			return fmt.Sprintf("%T transform", cur)
+		}
+		if c, ok := cur.(PaintClipper); ok && !c.PaintClip().IsEmpty() {
+			return fmt.Sprintf("%T clip", cur)
+		}
+		if b := asStackBox(cur); b != nil {
+			op := b.Style().Opacity
+			if (op > 0 && op < 1) || b.Filter != nil || b.ClipPath != nil || b.Mask != nil || b.BackdropFilter != nil || b.ClipChildren {
+				return fmt.Sprintf("box opacity=%v filter=%v clipPath=%v mask=%v backdrop=%v clipChildren=%v", op, b.Filter != nil, b.ClipPath != nil, b.Mask != nil, b.BackdropFilter != nil, b.ClipChildren)
+			}
+		}
+	}
+	return "?"
 }
 
 // tiledCacheOff (QUI_CONTENT_TILES=0) keeps the cache to views with
@@ -300,7 +348,7 @@ func (s *ScrollView) drawCached(canvas Canvas, effClip, vp Rect) bool {
 	depth := canvas.Save()
 	canvas.ClipRect(effClip)
 	s.applyContentTransform(canvas)
-	for _, w := range s.vpBoxes {
+	for _, w := range s.coverBoxes() {
 		if !isWidgetHiddenOrCollapsed(w) {
 			w.Draw(canvas)
 		}
@@ -568,9 +616,9 @@ func (s *ScrollView) drawContentInto(window, cc Canvas, m Matrix, off image.Poin
 	cc.Translate(float32(off.X), float32(off.Y))
 	cc.Concat(m)
 	s.applyContentTransform(cc)
-	suppressed := s.vpBoxes
+	suppressed := s.coverBoxes()
 	if len(layers) > 0 {
-		suppressed = slices.Clone(s.vpBoxes)
+		suppressed = slices.Clone(suppressed)
 		for _, l := range layers {
 			suppressed = append(suppressed, l.box.Self())
 		}

@@ -83,6 +83,7 @@ type ScrollView struct {
 	// root); ScrollTo still moves it.
 	UserScrollLocked func() bool
 	vpBoxes          []Widget        // fixed / sticky boxes of the content
+	tileBoxes        []Widget        // vpBoxes painted into the content tiles (scroll_cache.go)
 	cache            *scrollCache    // content cache, see scroll_cache.go
 	gpuSet           *gpuLayerSet    // layers composited on the GPU (anim_layer_gpu.go)
 	stickyBase       map[Widget]Rect // sticky boxes' in-flow rects

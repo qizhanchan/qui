@@ -69,12 +69,17 @@ func (s *ScrollView) blitScroll(dx, dy float32, before []Rect) bool {
 	win.InvalidateCompositeRect(RectInWindow(s, Rect{X: in.X + in.W - barStrip, Y: in.Y, W: barStrip, H: in.H}))
 	win.InvalidateCompositeRect(RectInWindow(s, Rect{X: in.X, Y: in.Y + in.H - barStrip, W: in.W, H: barStrip}))
 	for i, w := range s.vpBoxes {
+		// A box painted into the content tiles changes the content there.
+		inval := win.InvalidateCompositeRect
+		if s.inTiles(w) {
+			inval = win.InvalidateRect
+		}
 		if i < len(before) {
 			old := before[i]
-			win.InvalidateCompositeRect(old)
-			win.InvalidateCompositeRect(Rect{X: old.X + mx, Y: old.Y + my, W: old.W, H: old.H}.Intersect(vpWin))
+			inval(old)
+			inval(Rect{X: old.X + mx, Y: old.Y + my, W: old.W, H: old.H}.Intersect(vpWin))
 		}
-		win.InvalidateCompositeRect(PaintBoundsInWindow(w))
+		inval(PaintBoundsInWindow(w))
 	}
 	return true
 }

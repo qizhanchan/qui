@@ -2,7 +2,9 @@ package widgets
 
 import (
 	"image"
+	"log"
 	"math"
+	"os"
 
 	. "github.com/qizhanchan/qui"
 )
@@ -67,6 +69,14 @@ func (s *ScrollView) ScrollLayer() (ScrollLayerFrame, bool) {
 	// enclosing scroller's recording, whose device space is another).
 	if c == nil || !c.committed || c.disabled || c.content != s.Content || c.commitScroll != f.Offset ||
 		!nearRect(c.commitPhys, f.Viewport, 1) {
+		if debugScrollLayers {
+			if c == nil {
+				log.Printf("qui/scroll-layer: %p not composited: no cache", s)
+			} else {
+				log.Printf("qui/scroll-layer: %p not composited: committed=%v disabled=%v content=%v scroll=%v/%v phys=%v/%v",
+					s, c.committed, c.disabled, c.content == s.Content, c.commitScroll, f.Offset, c.commitPhys, f.Viewport)
+			}
+		}
 		return f, true
 	}
 	f.Composited = true
@@ -86,7 +96,7 @@ func (s *ScrollView) ScrollLayer() (ScrollLayerFrame, bool) {
 			f.Covers = append(f.Covers, d)
 		}
 	}
-	for _, w := range s.vpBoxes {
+	for _, w := range s.coverBoxes() {
 		if !isWidgetHiddenOrCollapsed(w) {
 			cover(PaintBoundsInWindow(w))
 		}
@@ -133,3 +143,7 @@ func nearRect(a, b image.Rectangle, tol int) bool {
 	return abs(a.Min.X-b.Min.X) <= tol && abs(a.Min.Y-b.Min.Y) <= tol &&
 		abs(a.Max.X-b.Max.X) <= tol && abs(a.Max.Y-b.Max.Y) <= tol
 }
+
+// debugScrollLayers (QUI_DEBUG_PAGEVIEW=1) logs why a scroller is not
+// composited.
+var debugScrollLayers = os.Getenv("QUI_DEBUG_PAGEVIEW") != ""
