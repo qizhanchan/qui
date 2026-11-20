@@ -300,7 +300,7 @@ func (b *Box) HitTest(p Point) Widget {
 		if b.inInheritedFloat(p) {
 			return nil
 		}
-		return b.Container.HitTest(p)
+		return b.hitContent(p)
 	}
 	// Layers paint over the in-flow content, so they are hit first —
 	// topmost (last painted) first — even outside this box's own bounds
@@ -322,7 +322,7 @@ func (b *Box) HitTest(p Point) Widget {
 			return hit
 		}
 	}
-	if hit := b.Container.HitTest(p); !b.inInheritedFloat(p) && hit != nil && hit != Widget(b) && hit != b.Self() {
+	if hit := b.hitContent(p); !b.inInheritedFloat(p) && hit != nil && hit != Widget(b) && hit != b.Self() {
 		return hit
 	}
 	for i := split - 1; i >= 0; i-- {
@@ -336,7 +336,41 @@ func (b *Box) HitTest(p Point) Widget {
 	if b.inInheritedFloat(p) {
 		return nil
 	}
-	return b.Container.HitTest(p)
+	return b.hitContent(p)
+}
+
+// hitContent is Container.HitTest — the children topmost first, then the
+// box itself — except that content overflowing the box (overflow:
+// visible) is hit where it paints, outside the box too, as in browsers: a
+// marquee's row of cards wider than its box, a menu hanging out of its
+// header. Outside its own bounds the box is never the target itself.
+func (b *Box) hitContent(p Point) Widget {
+	if b.Bounds().Contains(p) || b.ClipChildren {
+		return b.Container.HitTest(p)
+	}
+	if !b.overflowBounds().Contains(p) || isWidgetHiddenOrCollapsed(b.Self()) {
+		return nil
+	}
+	children := ChildrenInPaintOrder(b.ChildList())
+	for i := len(children) - 1; i >= 0; i-- {
+		if isWidgetHiddenOrCollapsed(children[i]) {
+			continue
+		}
+		if hit := AcceptHit(children[i].HitTest(p)); hit != nil {
+			return hit
+		}
+	}
+	return nil
+}
+
+// overflowBounds is where the box's content can paint, untransformed: as
+// of the last paint pass (hit testing follows what was painted), computed
+// now if the box was never painted.
+func (b *Box) overflowBounds() Rect {
+	if b.pbGen != 0 {
+		return b.paintBounds
+	}
+	return b.computePaintBounds()
 }
 
 // Normal blocks span the full containing width underneath a float, while
